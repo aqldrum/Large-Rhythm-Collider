@@ -123,23 +123,23 @@
                 <button class="minimize-btn">+</button>
             </div>
             <div class="info-content">
-                <div class="info-section">
+            <div class="info-section">
+                <div class="info-metrics-grid">
                     <div class="layers-display">Layers: <span id="layers-display">--</span></div>
                     <div class="grid-display">Grid: <span id="grid-display">--</span></div>
                     <div class="fundamental-display">Fundamental: <span id="fundamental-display">--</span></div>
-                    <div class="avg-dev-display">Avg Dev: <span id="avg-dev-display">--</span></div>
                     <div class="range-display">Range: <span id="range-display">--</span></div>
-                </div>
-                
-                <div class="scale-chart" id="scale-chart">
-                    <!-- Scale chart will be populated by JS -->
-                </div>
-                
-                <div class="metrics-section">
+                    <div class="avg-dev-display">Avg Dev: <span id="avg-dev-display">--</span></div>
                     <div class="rhythm-density">Density: <span id="rhythm-density">--</span>%</div>
+                    <div class="pg-ratio">P/G Ratio: <span id="pg-ratio">--</span></div>
                     <div class="composite-length">Composite Length: <span id="composite-length">--</span></div>
                     <div class="layer-sum">Layer Sum: <span id="layer-sum">--</span></div>
                 </div>
+            </div>
+
+            <div class="scale-chart" id="scale-chart">
+                <!-- Scale chart will be populated by JS -->
+            </div>
                 
                 <div class="info-subsection">
                     <div class="subsection-header" data-target="spaces-plot-content">Spaces Plot</div>
@@ -219,8 +219,17 @@
                         <div class="hinges-controls">
                             <button id="hinges-animate-btn" class="hinges-animate-btn">🔗 Animate Chain</button>
                             <div class="hinges-options">
-                                <label><input type="checkbox" id="hinges-show-forces"> Show Forces</label>
-                                <button id="hinges-tension-btn" class="hinges-tension-btn">Tension</button>
+                                <label class="hinges-show-forces"><input type="checkbox" id="hinges-show-forces"> Show Forces</label>
+                                <div class="hinges-mode-row">
+                                    <label>Mode:
+                                        <select id="hinges-mode">
+                                            <option value="progression" selected>Layer Progression</option>
+                                            <option value="mirror">Mirrors</option>
+                                            <option value="anchors">Anchors</option>
+                                        </select>
+                                    </label>
+                                    <button id="hinges-tension-btn" class="hinges-tension-btn">⚡ Tension</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -376,6 +385,14 @@
         console.log('📊 Collections: Firebase not configured - running in demo mode');
     </script>
 
+    <!-- WorldMaps Core -->
+    <script src="Visualizations/LRCWorldMaps.js"></script>
+    <script src="Visualizations/LandmarkLights.js"></script>
+    <script src="Visualizations/AroundTheWorld.js"></script>
+
+    <!-- WorldMaps Integration Wrapper -->
+    <script src="Visualizations/LRCWorldMapsIntegration.js"></script>
+
     <!-- Interface Core Modules -->
     <script src="Core Interface/LRCModule.js"></script>
     <script src="Core Interface/LRCHudController.js"></script>
@@ -394,6 +411,7 @@
     <script src="Visualizations/Centrifuge.js"></script>
     <script src="Visualizations/Hinges.js"></script>
     <script src="Visualizations/HingeExpand.js"></script>
+    <script src="Visualizations/HingesAdvanced.js"></script>
 
         <!-- Collider -->
         <script src="Collider/ColliderAudio.js"></script>

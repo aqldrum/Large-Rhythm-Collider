@@ -652,20 +652,28 @@ body {
 
 /* Info Section Styles */
 .info-section {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
     margin-bottom: 12px;
+}
+
+.info-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 12px;
     font-size: 11px;
 }
 
-.info-section > div {
+.info-metrics-grid > div {
     color: var(--hud-text-muted);
 }
 
-.info-section span {
+.info-metrics-grid span {
     color: var(--hud-accent);
     font-weight: 500;
+}
+
+.input-error {
+    border: 1px solid #ff6464 !important;
+    box-shadow: 0 0 6px rgba(255, 100, 100, 0.6);
 }
 
 .scale-chart {
@@ -865,6 +873,11 @@ body {
     text-align: left;
 }
 
+.count-cell {
+    color: var(--hud-text-muted);
+    text-align: left;
+}
+
 .no-scale-data {
     color: var(--hud-text-muted);
     font-style: italic;
@@ -888,22 +901,6 @@ body {
 
 .scale-table-container::-webkit-scrollbar-thumb:hover {
     background: var(--hud-accent);
-}
-
-.metrics-section {
-    display: flex;
-    justify-content: space-between;
-    margin: 12px 0;
-    font-size: 11px;
-}
-
-.metrics-section > div {
-    color: var(--hud-text-muted);
-}
-
-.metrics-section span {
-    color: var(--hud-accent);
-    font-weight: 500;
 }
 
 /* Collapsible Sections */
@@ -1150,6 +1147,21 @@ body {
     font-size: 11px;
 }
 
+.hinges-mode-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+#hinges-controls-section.tension-mode-active .hinges-options {
+    align-items: flex-start;
+}
+
+#hinges-controls-section.tension-mode-active .hinges-show-forces {
+    display: none;
+}
+
 .hinges-options label {
     display: flex;
     align-items: center;
@@ -1160,6 +1172,16 @@ body {
 
 .hinges-options input[type="checkbox"] {
     margin: 0;
+}
+
+/* Match select styling to other HUD controls */
+.hinges-options select {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--hud-border);
+    color: var(--hud-text);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
 }
 
 .hinges-tension-btn {
@@ -1648,11 +1670,66 @@ body {
     border-radius: 3px;
     max-height: 200px;
     overflow-y: auto;
+    overflow-x: auto;
     font-family: monospace;
     font-size: 12px;
     padding: 6px;
     color: var(--hud-text-muted);
     min-height: 20px;
+    position: relative;
+}
+
+.search-results-body {
+    opacity: 1;
+    transition: opacity 0.2s ease;
+}
+
+.search-results.search-loading .search-results-body {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.search-loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: inherit;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.search-results.search-loading .search-loading-overlay {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.search-results.search-loading {
+    overflow-y: hidden;
+}
+
+.search-loading-spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 25% 25%, #ffffff 0%, #c0ffde 25%, #00ff88 65%, #008a52 100%);
+    box-shadow: 0 0 14px rgba(0, 255, 136, 0.7);
+    animation: search-ball-spin 0.9s linear infinite;
+}
+
+@keyframes search-ball-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .results-table {
@@ -1699,11 +1776,7 @@ body {
     color: var(--hud-text);
 }
 
-.search-results:empty::before {
-    content: "No results";
-    color: var(--hud-text-muted);
-    font-style: italic;
-}
+
 
 /* Table Styles */
 .scale-table, .result-table {
@@ -2112,6 +2185,35 @@ body {
 }
 
 .playback-layer-btn:hover {
+    opacity: 1;
+    transform: scale(1.05);
+}
+
+.playback-legato-row {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 12px;
+}
+
+.legato-toggle-btn {
+    border: 2px solid #2ecc71;
+    background: rgba(46, 204, 113, 0.1);
+    color: #d5f5e3;
+    padding: 6px 14px;
+    border-radius: 4px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s;
+    opacity: 0.8;
+}
+
+.legato-toggle-btn.active {
+    background: #2ecc71;
+    color: #052b17;
+    opacity: 1;
+}
+
+.legato-toggle-btn:hover {
     opacity: 1;
     transform: scale(1.05);
 }

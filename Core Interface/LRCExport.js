@@ -72,48 +72,96 @@ class LRCExport {
 
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF();
-        
+
+        // Palette for PDF styling
+        const colors = {
+            accent: { r: 0, g: 197, b: 168 },
+            header: { r: 22, g: 27, b: 35 },
+            headerGlow: { r: 33, g: 39, b: 51 },
+            cardBackground: { r: 246, g: 247, b: 251 },
+            cardBorder: { r: 214, g: 219, b: 227 },
+            textPrimary: { r: 39, g: 45, b: 56 },
+            textMuted: { r: 111, g: 120, b: 135 }
+        };
+
         // Set up document
         const pageWidth = doc.internal.pageSize.getWidth();
         const pageHeight = doc.internal.pageSize.getHeight();
         const margin = 20;
         const contentWidth = pageWidth - 2 * margin;
         const maxContentHeight = pageHeight - 2 * margin;
-        let yPos = margin;
 
-        // Title with light silver background - center aligned with equal margins
-        const title = `Rhythm Info - ${rhythmInfo.layers.join(':')}`;
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(18);
-        const titleTextWidth = doc.getTextWidth(title);
-        const titleMargin = 15; // Equal margins on both sides
-        const titleBarWidth = titleTextWidth + (titleMargin * 2);
-        const titleHeight = 12;
-        const titleBarX = (pageWidth - titleBarWidth) / 2; // Center the title bar
-        
-        // Light silver background for title - centered
-        doc.setFillColor(220, 220, 220);
-        doc.rect(titleBarX, yPos - 8, titleBarWidth, titleHeight, 'F');
-        
-        // Title text - centered within the bar
-        doc.setTextColor(0, 0, 0);
-        doc.text(title, titleBarX + titleMargin, yPos);
-        yPos += 18;
+        // Header banner
+        const headerHeight = 26;
+        doc.setFillColor(colors.header.r, colors.header.g, colors.header.b);
+        doc.rect(0, 0, pageWidth, headerHeight, 'F');
+        doc.setFillColor(colors.headerGlow.r, colors.headerGlow.g, colors.headerGlow.b);
+        doc.rect(0, headerHeight - 2.5, pageWidth, 2.5, 'F');
+        doc.setFillColor(colors.accent.r, colors.accent.g, colors.accent.b);
+        doc.rect(0, headerHeight, pageWidth, 2, 'F');
 
-        // Capture existing linear plot image - full width, reduce file size
-        const linearPlotImage = this.captureExistingLinearPlot(true); // Add compression flag
-        const plotWidth = contentWidth;
-        const plotHeight = 60;
-        
-        // Check if we need a new page
-        if (yPos + plotHeight > maxContentHeight) {
-            doc.addPage();
-            yPos = margin;
+        const displayLayers = (rhythmInfo.displayLayers && rhythmInfo.displayLayers.length > 0)
+            ? rhythmInfo.displayLayers
+            : rhythmInfo.layers;
+        const titleLayersText = displayLayers.length > 0 ? displayLayers.join(':') : '—';
+        const title = `Rhythm Info · ${titleLayersText}`;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(16);
+        doc.setTextColor(255, 255, 255);
+        doc.text(title, margin, headerHeight - 9);
+
+        let yPos = headerHeight + 12;
+
+        // Capture existing linear plot image at a higher resolution
+        const plotCapture = this.captureExistingLinearPlot({
+            targetWidth: 1400,
+            backgroundColor: '#050607',
+            format: 'image/png',
+            quality: 0.96
+        });
+
+        if (plotCapture?.dataUrl) {
+            const intrinsicWidth = plotCapture.width || 1400;
+            const intrinsicHeight = plotCapture.height || 400;
+            const plotAspect = intrinsicHeight / intrinsicWidth || 0.3;
+            const plotWidth = contentWidth - 24;
+            const plotHeight = plotWidth * plotAspect;
+            const cardHeight = plotHeight + 28;
+
+            if (yPos + cardHeight > maxContentHeight) {
+                doc.addPage();
+                yPos = margin;
+            }
+
+            // Plot card container
+            doc.setFillColor(colors.cardBackground.r, colors.cardBackground.g, colors.cardBackground.b);
+            doc.roundedRect(margin, yPos, contentWidth, cardHeight, 4, 4, 'F');
+            doc.setDrawColor(colors.cardBorder.r, colors.cardBorder.g, colors.cardBorder.b);
+            doc.setLineWidth(0.4);
+            doc.roundedRect(margin, yPos, contentWidth, cardHeight, 4, 4);
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(9.5);
+            doc.setTextColor(colors.textPrimary.r, colors.textPrimary.g, colors.textPrimary.b);
+            doc.text('Linear Plot', margin + 12, yPos + 12);
+            doc.setDrawColor(colors.accent.r, colors.accent.g, colors.accent.b);
+            doc.setLineWidth(0.8);
+            doc.line(margin + 12, yPos + 13.5, margin + 48, yPos + 13.5);
+
+            const imageFormat = (plotCapture.format || 'image/png').split('/')[1].toUpperCase();
+            doc.addImage(
+                plotCapture.dataUrl,
+                imageFormat,
+                margin + 12,
+                yPos + 16,
+                plotWidth,
+                plotHeight,
+                undefined,
+                'FAST'
+            );
+
+            yPos += cardHeight + 14;
         }
-        
-        // Add linear plot image - full width
-        doc.addImage(linearPlotImage, 'JPEG', margin, yPos, plotWidth, plotHeight);
-        yPos += plotHeight + 15;
 
         // Check if we need a new page for metrics
         if (yPos + 60 > maxContentHeight) {
@@ -141,238 +189,371 @@ class LRCExport {
         yPos = this.addCompactScaleTable(doc, ratios, rhythmInfo, margin, yPos, contentWidth, pageHeight, maxContentHeight);
 
         // Save the PDF
-        const filename = `Rhythm Info - ${rhythmInfo.layers.join(':')}.pdf`;
+        const filenameLayers = displayLayers.length > 0 ? displayLayers.join(':') : rhythmInfo.layers.join(':');
+        const filename = `Rhythm Info - ${filenameLayers || '1'}.pdf`;
         doc.save(filename);
     }
 
-    captureExistingLinearPlot(compress = false) {
-        // Try to capture the existing visualization canvas
+    captureExistingLinearPlot(options = {}) {
+        // Try to capture the existing visualization canvas with upgraded fidelity
+        const {
+            targetWidth = 1400,
+            targetHeight = null,
+            backgroundColor = '#050607',
+            format = 'image/png',
+            quality = 0.96
+        } = options;
+
         const canvas = document.getElementById('visualization-canvas');
         if (canvas && canvas.getContext) {
             try {
-                // Create a smaller canvas to reduce file size
+                const sourceWidth = canvas.width || canvas.getBoundingClientRect().width || 800;
+                const sourceHeight = canvas.height || canvas.getBoundingClientRect().height || 200;
+                const aspectRatio = sourceWidth > 0 ? sourceHeight / sourceWidth : 0.25;
+
+                const exportWidth = targetWidth;
+                const exportHeight = targetHeight || Math.round(exportWidth * aspectRatio);
+
                 const exportCanvas = document.createElement('canvas');
+                exportCanvas.width = exportWidth;
+                exportCanvas.height = exportHeight;
+
                 const exportCtx = exportCanvas.getContext('2d');
-                
-                // Use smaller dimensions to reduce file size
-                const targetWidth = compress ? 400 : (canvas.width || 800);
-                const targetHeight = compress ? 120 : (canvas.height || 200);
-                
-                exportCanvas.width = targetWidth;
-                exportCanvas.height = targetHeight;
-                
-                // Fill with white background
-                exportCtx.fillStyle = '#FFFFFF';
-                exportCtx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-                
-                // Draw the existing canvas content scaled down
-                exportCtx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
-                
-                // Use JPEG with higher quality - balance between file size and quality
-                return compress ? 
-                    exportCanvas.toDataURL('image/jpeg', 0.92) : 
-                    exportCanvas.toDataURL('image/png');
+                exportCtx.imageSmoothingEnabled = true;
+                exportCtx.imageSmoothingQuality = 'high';
+                exportCtx.fillStyle = backgroundColor;
+                exportCtx.fillRect(0, 0, exportWidth, exportHeight);
+                exportCtx.drawImage(canvas, 0, 0, exportWidth, exportHeight);
+
+                const dataUrl = format === 'image/jpeg'
+                    ? exportCanvas.toDataURL(format, quality)
+                    : exportCanvas.toDataURL(format);
+
+                return { dataUrl, width: exportWidth, height: exportHeight, format };
             } catch (error) {
                 console.warn('📤 Could not capture existing canvas, creating fallback:', error);
-                return this.createFallbackLinearPlot();
+                return this.createFallbackLinearPlot(targetWidth, targetHeight, backgroundColor, format, quality);
             }
         } else {
             console.warn('📤 Visualization canvas not found, creating fallback');
-            return this.createFallbackLinearPlot();
+            return this.createFallbackLinearPlot(targetWidth, targetHeight, backgroundColor, format, quality);
         }
     }
 
-    createFallbackLinearPlot() {
-        // Simple fallback that doesn't interfere with main system
+    createFallbackLinearPlot(targetWidth = 1400, targetHeight = null, backgroundColor = '#0B0E13', format = 'image/png', quality = 0.96) {
+        // Stylish fallback in case the live visualization is not available
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        
-        canvas.width = 400;
-        canvas.height = 100;
-        
-        // White background
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        // Simple placeholder text
-        ctx.fillStyle = '#000000';
-        ctx.font = '14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('Linear Plot (Visualization not available)', canvas.width / 2, canvas.height / 2);
-        
-        return canvas.toDataURL('image/png');
+
+        const width = targetWidth;
+        const height = targetHeight || Math.round(width * 0.28);
+
+        canvas.width = width;
+        canvas.height = height;
+
+        ctx.fillStyle = backgroundColor;
+        ctx.fillRect(0, 0, width, height);
+
+        // Subtle gradient accent
+        const gradient = ctx.createLinearGradient(0, 0, 0, height);
+        gradient.addColorStop(0, 'rgba(0, 197, 168, 0.12)');
+        gradient.addColorStop(1, 'rgba(0, 197, 168, 0.02)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.lineWidth = 1;
+        const gridLines = 12;
+        for (let i = 0; i <= gridLines; i++) {
+            const x = 40 + (i / gridLines) * (width - 80);
+            ctx.beginPath();
+            ctx.moveTo(x, 32);
+            ctx.lineTo(x, height - 32);
+            ctx.stroke();
+        }
+
+        // Stylized pulse points
+        ctx.fillStyle = 'rgba(0, 197, 168, 0.8)';
+        const pointCount = 18;
+        for (let i = 0; i < pointCount; i++) {
+            const x = 40 + (i / (pointCount - 1)) * (width - 80);
+            const yOffset = Math.sin(i * 0.45) * (height * 0.22);
+            const baseLine = height / 2;
+            const radius = 6 + Math.cos(i * 0.3) * 2;
+
+            ctx.beginPath();
+            ctx.arc(x, baseLine + yOffset, radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '22px Helvetica';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Linear Plot Preview', 40, height / 2);
+
+        const dataUrl = format === 'image/jpeg'
+            ? canvas.toDataURL(format, quality)
+            : canvas.toDataURL(format);
+
+        return { dataUrl, width, height, format };
     }
 
     addSectionTitleBar(doc, title, x, y, width) {
-        // Light silver background
-        doc.setFillColor(220, 220, 220);
-        doc.rect(x, y - 8, width, 12, 'F');
-        
-        // Title text
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(14);
-        doc.setTextColor(0, 0, 0);
-        doc.text(title, x + 10, y);
-        
-        return y + 15;
+        const barHeight = 12;
+        doc.setFillColor(233, 236, 244);
+        doc.roundedRect(x, y, width, barHeight, 3, 3, 'F');
+        doc.setDrawColor(214, 219, 227);
+        doc.setLineWidth(0.3);
+        doc.roundedRect(x, y, width, barHeight, 3, 3);
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(8);
+        doc.setTextColor(53, 60, 73);
+        doc.text(title.toUpperCase(), x + 7, y + 8.5);
+
+        return y + barHeight + 6;
     }
 
     addCompactScaleTable(doc, ratios, rhythmInfo, x, y, width, pageHeight, maxContentHeight) {
-        // Check if we need a new page
-        if (y + 40 > maxContentHeight) {
+        const colors = {
+            cardBackground: { r: 247, g: 248, b: 252 },
+            cardBorder: { r: 214, g: 219, b: 227 },
+            textPrimary: { r: 39, g: 45, b: 56 },
+            textMuted: { r: 111, g: 120, b: 135 }
+        };
+
+        if (ratios.length === 0) {
+            return y;
+        }
+
+        if (y + 60 > maxContentHeight) {
             doc.addPage();
             y = 20;
         }
 
-        // Scale title bar
         y = this.addSectionTitleBar(doc, 'Scale', x, y, width);
 
-        // Calculate optimal cell width based on content - much more compact
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(9); // Smaller font for spreadsheet style
-        
-        let maxRatioWidth = 0;
-        let maxCentsWidth = 0;
-        
-        ratios.forEach(ratio => {
-            const ratioWidth = doc.getTextWidth(ratio.fraction);
-            const cents = ratio.cents ? ratio.cents.toFixed(1) : '0.0';
-            const centsWidth = doc.getTextWidth(cents);
-            
-            maxRatioWidth = Math.max(maxRatioWidth, ratioWidth);
-            maxCentsWidth = Math.max(maxCentsWidth, centsWidth);
-        });
-        
-        // Minimal padding for compact spreadsheet style
-        const cellWidth = Math.max(maxRatioWidth, maxCentsWidth) + 4;
-        const ratiosPerRow = Math.floor(width / cellWidth);
-        const numRows = Math.ceil(ratios.length / ratiosPerRow);
-        const cellHeight = 8; // Very compact row height
-        
-        // Create compact table structure
-        for (let row = 0; row < numRows; row++) {
-            const startIndex = row * ratiosPerRow;
-            const endIndex = Math.min(startIndex + ratiosPerRow, ratios.length);
-            const currentRatios = ratios.slice(startIndex, endIndex);
-            
-            // Check if we need a new page for this row set
-            if (y + (cellHeight * 2) > maxContentHeight) {
-                doc.addPage();
-                y = 20;
-                y = this.addSectionTitleBar(doc, 'Scale (continued)', x, y, width);
-            }
-            
-            // Draw ratios row with minimal styling
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(7);
-            doc.setTextColor(0, 0, 0);
-            
-            currentRatios.forEach((ratio, index) => {
-                const cellX = x + (index * cellWidth);
-                
-                // Minimal border
-                doc.setLineWidth(0.1);
-                doc.setDrawColor(180, 180, 180);
-                doc.rect(cellX, y, cellWidth, cellHeight);
-                
-                // Ratio text - compact positioning
-                doc.text(ratio.fraction, cellX + 2, y + 6);
-            });
-            
-            y += cellHeight;
-            
-            // Draw cents row
-            currentRatios.forEach((ratio, index) => {
-                const cellX = x + (index * cellWidth);
-                const cents = ratio.cents ? ratio.cents.toFixed(1) : '0.0';
-                
-                // Minimal border
-                doc.setLineWidth(0.1);
-                doc.setDrawColor(180, 180, 180);
-                doc.rect(cellX, y, cellWidth, cellHeight);
-                
-                // Cents text - compact positioning
-                doc.text(cents, cellX + 2, y + 6);
-            });
-            
-            y += cellHeight + 3; // Minimal space between row sets
+        const cardPadding = 12;
+        const availableWidth = width - cardPadding * 2;
+        const ratioColumnWidth = Math.round(availableWidth * 0.48);
+        const centsColumnWidth = Math.round(availableWidth * 0.30);
+        const countColumnWidth = availableWidth - ratioColumnWidth - centsColumnWidth;
+        const rowHeight = 8.5;
+        const headerHeight = 8;
+        const cardHeight = cardPadding * 2 + headerHeight + ratios.length * rowHeight;
+
+        if (y + cardHeight > maxContentHeight) {
+            doc.addPage();
+            y = 20;
+            y = this.addSectionTitleBar(doc, 'Scale (continued)', x, y, width);
         }
 
-        return y + 5;
+        doc.setFillColor(colors.cardBackground.r, colors.cardBackground.g, colors.cardBackground.b);
+        doc.roundedRect(x, y, width, cardHeight, 4, 4, 'F');
+        doc.setDrawColor(colors.cardBorder.r, colors.cardBorder.g, colors.cardBorder.b);
+        doc.setLineWidth(0.4);
+        doc.roundedRect(x, y, width, cardHeight, 4, 4);
+
+        const headerY = y + cardPadding;
+        doc.setFillColor(233, 236, 244);
+        doc.roundedRect(x + cardPadding - 1, headerY - 2.5, width - cardPadding * 2 + 2, headerHeight + 2.5, 2, 2, 'F');
+        doc.setDrawColor(214, 219, 227);
+        doc.setLineWidth(0.2);
+        doc.roundedRect(x + cardPadding - 1, headerY - 2.5, width - cardPadding * 2 + 2, headerHeight + 2.5, 2, 2);
+
+        const ratioColumnStart = x + cardPadding;
+        const centsColumnStart = ratioColumnStart + ratioColumnWidth;
+        const countColumnStart = centsColumnStart + centsColumnWidth;
+
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6.8);
+        doc.setTextColor(colors.textMuted.r, colors.textMuted.g, colors.textMuted.b);
+        doc.text('RATIO', ratioColumnStart + 2, headerY + 4.5);
+        doc.text('CENTS', centsColumnStart + 2, headerY + 4.5);
+        doc.text('COUNT', countColumnStart + 2, headerY + 4.5);
+
+        let rowY = headerY + headerHeight;
+        ratios.forEach(ratio => {
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(8);
+            doc.setTextColor(colors.textPrimary.r, colors.textPrimary.g, colors.textPrimary.b);
+            doc.text(ratio.fraction || '', ratioColumnStart + 2, rowY + 6);
+
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(7.5);
+            doc.setTextColor(colors.textPrimary.r, colors.textPrimary.g, colors.textPrimary.b);
+            const centsValue = ratio.cents != null ? `${ratio.cents.toFixed(2)} ¢` : '0.00 ¢';
+            doc.text(centsValue, centsColumnStart + 2, rowY + 6);
+
+            const countValue = ratio.frequency != null ? String(ratio.frequency) : '0';
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(7.5);
+            doc.text(countValue, countColumnStart + 2, rowY + 6);
+
+            doc.setDrawColor(225, 229, 236);
+            doc.setLineWidth(0.1);
+            doc.line(x + cardPadding, rowY + rowHeight, x + width - cardPadding, rowY + rowHeight);
+
+            rowY += rowHeight;
+        });
+
+        return y + cardHeight + 18;
     }
 
     addMetricsToPDF(doc, rhythmInfo, x, y, pageHeight, maxContentHeight, contentWidth) {
-        // Check if we need a new page
-        if (y + 80 > maxContentHeight) {
-            doc.addPage();
-            y = 20;
-        }
+        const colors = {
+            cardBackground: { r: 246, g: 247, b: 251 },
+            cardBorder: { r: 214, g: 219, b: 227 },
+            textPrimary: { r: 39, g: 45, b: 56 },
+            textMuted: { r: 111, g: 120, b: 135 }
+        };
 
-        // Metrics title bar
-        y = this.addSectionTitleBar(doc, 'Metrics', x, y, contentWidth);
+        const displayLayers = (rhythmInfo.displayLayers && rhythmInfo.displayLayers.length > 0)
+            ? rhythmInfo.displayLayers
+            : rhythmInfo.layers;
+        const displayGroupings = (rhythmInfo.displayGroupings && rhythmInfo.displayGroupings.length > 0)
+            ? rhythmInfo.displayGroupings
+            : displayLayers.map(layer => Math.round(rhythmInfo.grid / layer));
 
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(10);
-        doc.setTextColor(0, 0, 0);
-        
-        // Simple, safe metrics - exactly like before, no complex logic that could interfere
-        const groupings = rhythmInfo.layers.map(layer => Math.round(rhythmInfo.grid / layer));
-        
-        // Metrics data - simple fixed layout
+        const layersValue = displayLayers.length > 0 ? displayLayers.join(':') : '—';
+        const groupingsValue = displayGroupings.length > 0 ? displayGroupings.join(', ') : '—';
+
         const metrics = [
-            [`Layers: ${rhythmInfo.layers.join(':')}`, `Grid: ${rhythmInfo.grid}`, `Groupings: ${groupings.join(', ')}`],
-            [`Fundamental: ${Math.round(rhythmInfo.fundamental)}`, `Avg Dev: ${rhythmInfo.avgDeviation?.toFixed(3) || 'N/A'}`, `Range: ${rhythmInfo.range.toFixed(2)}`],
-            [`Density: ${rhythmInfo.density.toFixed(1)}%`, `Composite Length: ${rhythmInfo.compositeLength}`, `Layer Sum: ${rhythmInfo.layerSum}`]
+            { label: 'Layers', value: layersValue },
+            { label: 'Grid', value: String(rhythmInfo.grid) },
+            { label: 'Groupings', value: groupingsValue },
+            { label: 'Fundamental', value: String(Math.round(rhythmInfo.fundamental)) },
+            { label: 'Average Deviation', value: rhythmInfo.avgDeviation != null ? rhythmInfo.avgDeviation.toFixed(3) : 'N/A' },
+            { label: 'Range', value: rhythmInfo.range.toFixed(2) },
+            { label: 'Density', value: `${rhythmInfo.density.toFixed(1)}%` },
+            { label: 'P/G Ratio', value: rhythmInfo.pulseToGrouping.toFixed(6) },
+            { label: 'Composite Nodes', value: String(rhythmInfo.compositeLength) }
         ];
 
-        // Simple display without complex logic
-        metrics.forEach(row => {
-            row.forEach((metric, index) => {
-                doc.text(metric, x + index * 65, y);
-            });
-            y += 12;
+        y = this.addSectionTitleBar(doc, 'Metrics', x, y, contentWidth);
+
+        const cardPadding = 12;
+        const columnCount = 3;
+        const columnGap = 14;
+        const columnWidth = (contentWidth - cardPadding * 2 - columnGap * (columnCount - 1)) / columnCount;
+
+        const rows = Math.ceil(metrics.length / columnCount);
+        const rowHeights = new Array(rows).fill(0);
+
+        const preparedMetrics = metrics.map((metric, index) => {
+            const lines = doc.splitTextToSize(String(metric.value), columnWidth);
+            const blockHeight = 18 + Math.max(0, lines.length - 1) * 5;
+            const rowIndex = Math.floor(index / columnCount);
+            rowHeights[rowIndex] = Math.max(rowHeights[rowIndex], blockHeight);
+            return { ...metric, lines, blockHeight };
         });
 
-        return y + 10;
+        const cardHeight = cardPadding * 2 + rowHeights.reduce((sum, h) => sum + h, 0);
+
+        if (y + cardHeight > maxContentHeight) {
+            doc.addPage();
+            y = 20;
+            y = this.addSectionTitleBar(doc, 'Metrics', x, y, contentWidth);
+        }
+
+        doc.setFillColor(colors.cardBackground.r, colors.cardBackground.g, colors.cardBackground.b);
+        doc.roundedRect(x, y, contentWidth, cardHeight, 4, 4, 'F');
+        doc.setDrawColor(colors.cardBorder.r, colors.cardBorder.g, colors.cardBorder.b);
+        doc.setLineWidth(0.4);
+        doc.roundedRect(x, y, contentWidth, cardHeight, 4, 4);
+
+        let rowBaseline = y + cardPadding;
+        for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
+            for (let columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                const metricIndex = rowIndex * columnCount + columnIndex;
+                if (metricIndex >= preparedMetrics.length) {
+                    continue;
+                }
+
+                const metric = preparedMetrics[metricIndex];
+                const cellX = x + cardPadding + columnIndex * (columnWidth + columnGap);
+                const cellY = rowBaseline;
+
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(7);
+                doc.setTextColor(colors.textMuted.r, colors.textMuted.g, colors.textMuted.b);
+                doc.text(metric.label.toUpperCase(), cellX, cellY + 3.5);
+
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(9.5);
+                doc.setTextColor(colors.textPrimary.r, colors.textPrimary.g, colors.textPrimary.b);
+                doc.text(metric.lines, cellX, cellY + 11);
+            }
+            rowBaseline += rowHeights[rowIndex];
+        }
+
+        return y + cardHeight + 18;
     }
 
     addNestedRatiosToPDF(doc, nestedRatios, x, y, pageHeight, maxContentHeight, contentWidth) {
-        // Nested Ratios title bar
+        const colors = {
+            cardBackground: { r: 246, g: 247, b: 251 },
+            cardBorder: { r: 214, g: 219, b: 227 },
+            textPrimary: { r: 39, g: 45, b: 56 },
+            textMuted: { r: 111, g: 120, b: 135 },
+            accent: { r: 0, g: 197, b: 168 }
+        };
+
         y = this.addSectionTitleBar(doc, 'Nested Ratios', x, y, contentWidth);
 
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(10);
-        doc.setTextColor(0, 0, 0);
-        
-        let currentRepetitions = -1;
-        nestedRatios.forEach(ratio => {
-            // Check if we need a new page
-            if (y + 25 > maxContentHeight) {
-                doc.addPage();
-                y = 20;
-                y = this.addSectionTitleBar(doc, 'Nested Ratios (continued)', x, y, contentWidth);
-            }
+        const cardPadding = 12;
+        const lines = [];
+        let currentRepetitions = null;
 
+        nestedRatios.forEach(ratio => {
             if (ratio.repetitions !== currentRepetitions) {
                 currentRepetitions = ratio.repetitions;
-                doc.setFontSize(12);
-                doc.text(`${currentRepetitions}x`, x, y);
-                y += 10;
-                doc.setFontSize(10);
+                lines.push({ type: 'header', text: `${currentRepetitions}x` });
             }
-
             const layerStr = ratio.layers.join(':');
             const originalStr = ratio.originalValues.join(':');
             const simplifiedStr = ratio.simplified.join(':');
-            
-            // Use equals sign for all nested ratios (consistent with EIV)
-            const text = `${layerStr} ${originalStr} = ${simplifiedStr}`;
-            
-            doc.text(text, x + 10, y);
-            y += 8;
+            const text = `${layerStr}  ${originalStr} = ${simplifiedStr}`;
+            lines.push({ type: 'entry', text });
         });
 
-        return y + 10;
+        const cardHeight = cardPadding * 2 + lines.reduce((total, line) => {
+            return total + (line.type === 'header' ? 14 : 10);
+        }, 0);
+
+        if (y + cardHeight > maxContentHeight) {
+            doc.addPage();
+            y = 20;
+            y = this.addSectionTitleBar(doc, 'Nested Ratios (continued)', x, y, contentWidth);
+        }
+
+        doc.setFillColor(colors.cardBackground.r, colors.cardBackground.g, colors.cardBackground.b);
+        doc.roundedRect(x, y, contentWidth, cardHeight, 4, 4, 'F');
+        doc.setDrawColor(colors.cardBorder.r, colors.cardBorder.g, colors.cardBorder.b);
+        doc.setLineWidth(0.4);
+        doc.roundedRect(x, y, contentWidth, cardHeight, 4, 4);
+
+        let cursorY = y + cardPadding;
+        lines.forEach(line => {
+            if (line.type === 'header') {
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(9);
+                doc.setTextColor(colors.accent.r, colors.accent.g, colors.accent.b);
+                doc.text(line.text, x + cardPadding, cursorY + 5.5);
+                cursorY += 14;
+            } else {
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(8.5);
+                doc.setTextColor(colors.textPrimary.r, colors.textPrimary.g, colors.textPrimary.b);
+                doc.text(line.text, x + cardPadding + 4, cursorY + 4.5);
+                doc.setDrawColor(colors.cardBorder.r, colors.cardBorder.g, colors.cardBorder.b);
+                doc.setLineWidth(0.1);
+                doc.line(x + cardPadding + 4, cursorY + 6.5, x + contentWidth - cardPadding - 4, cursorY + 6.5);
+                cursorY += 10;
+            }
+        });
+
+        return y + cardHeight + 18;
     }
 
     // ====================================

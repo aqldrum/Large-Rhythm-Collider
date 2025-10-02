@@ -9,7 +9,7 @@ class HingeExpand {
 
     enterExpansionMode() {
         if (!this.hinges.isAnimating) {
-            console.log("⚠️ Expansion mode requires animation to be running");
+            console.warn("⚠️ Expansion mode requires animation to be running");
             return;
         }
         
@@ -23,8 +23,6 @@ class HingeExpand {
         // Optimize physics for expansion
         this.hinges.tensionStrength = 0.95;
         this.hinges.damping = 0.97;
-        
-        console.log("⚡ Entering Expansion Mode - Nodes seeking maximum angles");
     }
 
     exitExpansionMode() {
@@ -37,8 +35,6 @@ class HingeExpand {
         // Restore physics settings
         this.hinges.tensionStrength = 0.3;
         this.hinges.damping = 0.995;
-        
-        console.log("🔙 Exiting Expansion Mode");
     }
 
     calculateExpansionForces() {

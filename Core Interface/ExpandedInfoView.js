@@ -17,6 +17,9 @@ class ExpandedInfoView {
             visualizationType: 'linear',
             panels: {}
         };
+
+        // Cached handler references for collapsible sections
+        this.leftSectionCollapsibleHandler = null;
         
         console.log('📊 ExpandedInfoView initialized with live mirroring support');
     }
@@ -377,7 +380,10 @@ class ExpandedInfoView {
         const title = document.createElement('h3');
         // Get current layers for title
         const rhythmInfo = window.lrcModule ? window.lrcModule.getRhythmInfoData() : null;
-        const layersText = rhythmInfo ? rhythmInfo.layers.join(':') : '';
+        const displayLayers = rhythmInfo && rhythmInfo.displayLayers && rhythmInfo.displayLayers.length > 0
+            ? rhythmInfo.displayLayers
+            : rhythmInfo?.layers || [];
+        const layersText = displayLayers.length > 0 ? displayLayers.join(':') : '';
         title.textContent = `Expanded Info View ${layersText ? '- ' + layersText : ''}`;
         title.style.cssText = `
             color: #00ff88;
@@ -486,6 +492,8 @@ class ExpandedInfoView {
     }
 
     removeExpandedLayout() {
+        this.teardownCollapsibleListeners();
+
         if (this.expandedContainer) {
             // Remove added styles
             const styles = document.head.querySelectorAll('style');
@@ -686,10 +694,16 @@ class ExpandedInfoView {
         if (!this.leftSection || !window.lrcModule) return;
 
         const rhythmInfo = window.lrcModule.getRhythmInfoData();
-        const activeLayers = rhythmInfo.layers;
+        const activeLayers = (rhythmInfo.displayLayers && rhythmInfo.displayLayers.length > 0)
+            ? rhythmInfo.displayLayers
+            : rhythmInfo.layers;
 
         // Calculate groupings (grid/layer for each layer)
-        const groupings = activeLayers.map(layer => Math.round(rhythmInfo.grid / layer));
+        const groupings = (rhythmInfo.displayGroupings && rhythmInfo.displayGroupings.length > 0)
+            ? rhythmInfo.displayGroupings
+            : activeLayers.map(layer => Math.round(rhythmInfo.grid / layer));
+        const layerDisplayText = activeLayers.length > 0 ? activeLayers.join(':') : '—';
+        const groupingDisplayText = groupings.length > 0 ? groupings.join(', ') : '—';
 
         // Calculate nested ratios
         const nestedRatios = this.calculateNestedRatios(activeLayers, rhythmInfo.grid);
@@ -720,20 +734,21 @@ class ExpandedInfoView {
                 </div>
                 
                 <div style="display: grid; grid-template-rows: auto auto auto; gap: 12px; margin-bottom: 20px;">
-                    <div class="metric-row" style="display: flex; align-items: center; gap: 20px;">
-                        <div class="layers-display" style="color: #ffffff; white-space: nowrap;">Layers: <span>${activeLayers.join(':')}</span></div>
+                    <div class="metric-row" style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+                        <div class="layers-display" style="color: #ffffff; white-space: nowrap;">Layers: <span>${layerDisplayText}</span></div>
                         <div class="grid-display" style="color: #ffffff;">Grid: <span>${rhythmInfo.grid}</span></div>
-                        <div class="groupings-display" style="color: #ffffff;">Groupings: <span>${groupings.join(', ')}</span></div>
+                        <div class="groupings-display" style="color: #ffffff;">Groupings: <span>${groupingDisplayText}</span></div>
                     </div>
-                    <div class="metric-row" style="display: flex; align-items: center; gap: 20px;">
+                    <div class="metric-row" style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
                         <div class="fundamental-display" style="color: #ffffff;">Fundamental: <span>${Math.round(rhythmInfo.fundamental)}</span></div>
                         ${rhythmInfo.avgDeviation !== null ? 
                             `<div class="avg-dev-display" style="color: #ffffff;">Avg Dev: <span>${rhythmInfo.avgDeviation.toFixed(3)}</span></div>` : ''
                         }
                         <div class="range-display" style="color: #ffffff;">Range: <span>${rhythmInfo.range.toFixed(2)}</span></div>
-                    </div>
-                    <div class="metric-row" style="display: flex; align-items: center; gap: 20px;">
                         <div class="rhythm-density" style="color: #ffffff;">Density: <span>${rhythmInfo.density.toFixed(1)}%</span></div>
+                    </div>
+                    <div class="metric-row" style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+                        <div class="pg-ratio" style="color: #ffffff;">P/G Ratio: <span>${rhythmInfo.pulseToGrouping.toFixed(6)}</span></div>
                         <div class="composite-length" style="color: #ffffff;">Composite Length: <span>${rhythmInfo.compositeLength}</span></div>
                         <div class="layer-sum" style="color: #ffffff;">Layer Sum: <span>${rhythmInfo.layerSum}</span></div>
                     </div>
@@ -921,6 +936,7 @@ class ExpandedInfoView {
                                 <tr>
                                     <th>Ratio</th>
                                     <th>Cents</th>
+                                    <th>Count</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -933,6 +949,7 @@ class ExpandedInfoView {
                     <tr class="pitch-row" data-pitch-index="${index}" onclick="window.expandedInfoView.selectPitch(${index})" style="cursor: pointer;">
                         <td class="ratio-cell">${ratio.fraction}</td>
                         <td class="cents-cell">${cents}</td>
+                        <td class="count-cell">${ratio.frequency ?? 0}</td>
                     </tr>
                 `;
             });
@@ -1495,46 +1512,90 @@ class ExpandedInfoView {
     }
 
     setupDirectCollapsibleListeners() {
-        // Setup direct click listeners for collapsible sections in EIV
+        if (!this.leftSection) return;
+
+        this.teardownCollapsibleListeners();
+
         const headers = this.leftSection.querySelectorAll('.subsection-header[data-target]');
-        
+        if (headers.length === 0) {
+            return;
+        }
+
         headers.forEach(header => {
             const targetId = header.dataset.target;
-            
-            // Enable pointer events for this header (may be disabled by CSS)
             header.style.pointerEvents = 'auto';
-            
-            header.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                
+            header.style.cursor = 'pointer';
+            header.setAttribute('role', 'button');
+            if (!header.hasAttribute('tabindex')) {
+                header.setAttribute('tabindex', '0');
+            }
+
+            if (targetId) {
+                header.setAttribute('aria-controls', targetId);
                 const content = document.getElementById(targetId);
-                
                 if (content) {
-                    const isCurrentlyVisible = content.style.display !== 'none';
-                    content.style.display = isCurrentlyVisible ? 'none' : 'block';
-                    
-                    // Visual feedback on header
-                    if (isCurrentlyVisible) {
-                        header.classList.remove('expanded');
-                        header.classList.add('collapsed');
-                    } else {
-                        header.classList.remove('collapsed');
-                        header.classList.add('expanded');
-                    }
-                }
-            });
-        });
-        
-        // Handle clicks on parent containers that may not reach headers directly
-        this.leftSection.addEventListener('click', (e) => {
-            if (e.target.classList.contains('info-subsection')) {
-                const header = e.target.querySelector('.subsection-header[data-target]');
-                if (header && (header.textContent.includes('Spaces Plot') || header.textContent.includes('Composite Rhythm'))) {
-                    header.click();
+                    const isVisible = content.style.display !== 'none';
+                    header.classList.toggle('expanded', isVisible);
+                    header.classList.toggle('collapsed', !isVisible);
+                    header.setAttribute('aria-expanded', isVisible ? 'true' : 'false');
                 }
             }
         });
+
+        this.leftSectionCollapsibleHandler = (event) => {
+            if (!this.leftSection) return;
+
+            let header = event.target.closest('.subsection-header[data-target]');
+
+            if ((!header || !this.leftSection.contains(header)) && event.type === 'click') {
+                const subsection = event.target.closest('.info-subsection');
+                if (subsection && this.leftSection.contains(subsection)) {
+                    header = subsection.querySelector('.subsection-header[data-target]');
+                }
+            }
+
+            if (!header || !this.leftSection.contains(header)) {
+                return;
+            }
+
+            if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            this.toggleExpandedSection(header);
+        };
+
+        this.leftSection.addEventListener('click', this.leftSectionCollapsibleHandler);
+        this.leftSection.addEventListener('keydown', this.leftSectionCollapsibleHandler);
+    }
+
+    teardownCollapsibleListeners() {
+        if (this.leftSection && this.leftSectionCollapsibleHandler) {
+            this.leftSection.removeEventListener('click', this.leftSectionCollapsibleHandler);
+            this.leftSection.removeEventListener('keydown', this.leftSectionCollapsibleHandler);
+        }
+        this.leftSectionCollapsibleHandler = null;
+    }
+
+    toggleExpandedSection(header) {
+        if (!header) return;
+
+        const targetId = header.dataset?.target;
+        if (!targetId) return;
+
+        const content = document.getElementById(targetId);
+        if (!content) return;
+
+        const isVisible = content.style.display !== 'none';
+        const nextVisibleState = !isVisible;
+
+        content.style.display = nextVisibleState ? 'block' : 'none';
+        header.classList.toggle('expanded', nextVisibleState);
+        header.classList.toggle('collapsed', !nextVisibleState);
+        header.setAttribute('aria-expanded', nextVisibleState ? 'true' : 'false');
     }
 
     getMirroredSpacesPlotSection() {

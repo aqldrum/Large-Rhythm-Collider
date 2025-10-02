@@ -174,33 +174,53 @@ class LRCModule {
         // Exclude layer values of 1 (inactive layers)
         const activeLayers = this.currentRhythms.filter(layer => layer > 1);
         if (activeLayers.length === 0) return 0;
-        
+
         const fastest = Math.max(...activeLayers);
         const slowest = Math.min(...activeLayers);
         return fastest / slowest;
     }
 
+    calculatePulseToGrouping() {
+        // P/G = (sum of layer values) / (sum of groupings)
+        // Exclude layers with value 1 from both calculations
+        const activeLayers = this.currentRhythms.filter(layer => layer > 1);
+        if (activeLayers.length === 0) return 0;
+
+        const layerSum = activeLayers.reduce((sum, layer) => sum + layer, 0);
+        const groupingSum = activeLayers.reduce((sum, layer) => sum + (this.currentGrid / layer), 0);
+
+        return groupingSum > 0 ? layerSum / groupingSum : 0;
+    }
+
     getRhythmInfoData() {
         const activeLayers = this.currentRhythms.filter(layer => layer > 0);
+        const displayLayers = activeLayers.filter(layer => layer > 1);
+        const layersForDisplay = displayLayers.length > 0 ? displayLayers : [...activeLayers];
+        const displayGroupings = layersForDisplay.map(layer => Math.round(this.currentGrid / layer));
+
         const fundamental = this.calculateFundamental();
         const range = this.calculateRange();
-        
+        const pulseToGrouping = this.calculatePulseToGrouping();
+
         // Calculate average deviation only for 12-tone scales
         const uniqueTones = new Set(this.currentRatios.map(r => r.fraction));
         uniqueTones.delete("2/1"); // Exclude octave
         const avgDeviation = uniqueTones.size === 12 ? this.calculateAverageDeviation(this.currentSpacesPlot) : null;
-        
+
         // Calculate additional metrics
         const layerSum = activeLayers.reduce((sum, layer) => sum + layer, 0);
         const density = layerSum / this.currentGrid * 100;
-            
-        
-        
+
+
+
         return {
             layers: activeLayers,
+            displayLayers: layersForDisplay,
+            displayGroupings: displayGroupings,
             grid: this.currentGrid,
             fundamental: fundamental,
             range: range,
+            pulseToGrouping: pulseToGrouping,
             avgDeviation: avgDeviation,
             density: density,
             compositeLength: this.currentCompositeRhythm.length,

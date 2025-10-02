@@ -11,8 +11,11 @@ class ToneRowPlayback {
         
         // Defaults
         this.cycleDuration = 10.0; // seconds
+        this.cycleDurationLimits = { min: 0.1, max: 6000 };
         this.fundamentalFreq = 110;
-        this.maxFrequencyMultiplier = 32; // 32x fundamental = max frequency
+        this.fundamentalLimits = { min: 55, max: 880 };
+        this.filterLimits = { min: 20, max: 20000 };
+        this.maxFrequencyHz = 3520; // Five octaves above A110
         this.masterVolumeDb = -24;
         this.lastUpdateTime = 0;
         
@@ -27,6 +30,8 @@ class ToneRowPlayback {
         this.layerNodes = [];
         this.activeOscillators = [];
         this.scheduledEvents = [];
+        this.activeLayerVoices = [null, null, null, null];
+        this.legatoEnabled = false;
         
         // Global filters
         this.globalHighpassFilter = null;
@@ -202,7 +207,19 @@ class ToneRowPlayback {
         const cycleDurationInput = document.getElementById('cycle-duration');
         if (cycleDurationInput) {
             cycleDurationInput.addEventListener('input', (e) => {
-                this.updateTempo(parseFloat(e.target.value));
+                this.updateTempo(parseFloat(e.target.value), { syncInput: false });
+            });
+
+            const snapCycleDuration = () => {
+                this.updateTempo(parseFloat(cycleDurationInput.value));
+            };
+
+            cycleDurationInput.addEventListener('blur', snapCycleDuration);
+            cycleDurationInput.addEventListener('change', snapCycleDuration);
+            cycleDurationInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    snapCycleDuration();
+                }
             });
         }
 
@@ -210,7 +227,19 @@ class ToneRowPlayback {
         const freqInput = document.getElementById('fundamental-freq');
         if (freqInput) {
             freqInput.addEventListener('input', (e) => {
-                this.updateFundamentalFreq(parseFloat(e.target.value));
+                this.updateFundamentalFreq(parseFloat(e.target.value), { syncInput: false });
+            });
+
+            const snapToBounds = () => {
+                this.updateFundamentalFreq(parseFloat(freqInput.value));
+            };
+
+            freqInput.addEventListener('blur', snapToBounds);
+            freqInput.addEventListener('change', snapToBounds);
+            freqInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    snapToBounds();
+                }
             });
         }
 
@@ -230,10 +259,18 @@ class ToneRowPlayback {
         const globalHipassInput = document.getElementById('global-hipass-freq');
         if (globalHipassInput) {
             globalHipassInput.addEventListener('input', (e) => {
-                const freq = parseFloat(e.target.value);
-                if (freq >= 20 && freq <= 20000) {
-                    this.globalFilterSettings.highpass = freq;
-                    this.updateGlobalHighpassFilter(freq);
+                this.setGlobalHighpass(parseFloat(e.target.value), { syncInput: false });
+            });
+
+            const snapGlobalHipass = () => {
+                this.setGlobalHighpass(parseFloat(globalHipassInput.value));
+            };
+
+            globalHipassInput.addEventListener('blur', snapGlobalHipass);
+            globalHipassInput.addEventListener('change', snapGlobalHipass);
+            globalHipassInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    snapGlobalHipass();
                 }
             });
         }
@@ -242,13 +279,25 @@ class ToneRowPlayback {
         const globalLopassInput = document.getElementById('global-lopass-freq');
         if (globalLopassInput) {
             globalLopassInput.addEventListener('input', (e) => {
-                const freq = parseFloat(e.target.value);
-                if (freq >= 20 && freq <= 20000) {
-                    this.globalFilterSettings.lowpass = freq;
-                    this.updateGlobalLowpassFilter(freq);
+                this.setGlobalLowpass(parseFloat(e.target.value), { syncInput: false });
+            });
+
+            const snapGlobalLopass = () => {
+                this.setGlobalLowpass(parseFloat(globalLopassInput.value));
+            };
+
+            globalLopassInput.addEventListener('blur', snapGlobalLopass);
+            globalLopassInput.addEventListener('change', snapGlobalLopass);
+            globalLopassInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    snapGlobalLopass();
                 }
             });
         }
+
+        // Ensure filter values are clamped and synced on load
+        this.setGlobalHighpass(this.globalFilterSettings.highpass);
+        this.setGlobalLowpass(this.globalFilterSettings.lowpass);
 
         // Setup collapsible sections
         this.setupCollapsibleSections();
@@ -269,6 +318,14 @@ class ToneRowPlayback {
                 }
             });
         });
+
+        const legatoBtn = document.getElementById('legato-toggle');
+        if (legatoBtn) {
+            legatoBtn.addEventListener('click', () => {
+                this.toggleLegatoMode();
+            });
+            this.updateLegatoButton();
+        }
         
         // Show initial layer controls
         this.showLayerControls('a');
@@ -302,6 +359,7 @@ class ToneRowPlayback {
         const layerColors = {
             a: '#ff6b6b', b: '#4ecdc4', c: '#00a638ff', d: '#f9ca24'
         };
+        const { min: filterMin, max: filterMax } = this.filterLimits;
         
         container.innerHTML = `
             <div class="layer-control-header">
@@ -338,11 +396,11 @@ class ToneRowPlayback {
             <div class="layer-filters">
                 <div class="control-group">
                     <label for="layer-hipass-${layer}">Hi-Pass (Hz):</label>
-                    <input type="number" id="layer-hipass-${layer}" min="20" max="20000" value="${state.filters.highpass}">
+                    <input type="number" id="layer-hipass-${layer}" min="${filterMin}" max="${filterMax}" value="${state.filters.highpass}">
                 </div>
                 <div class="control-group">
                     <label for="layer-lopass-${layer}">Lo-Pass (Hz):</label>
-                    <input type="number" id="layer-lopass-${layer}" min="20" max="20000" value="${state.filters.lowpass}">
+                    <input type="number" id="layer-lopass-${layer}" min="${filterMin}" max="${filterMax}" value="${state.filters.lowpass}">
                 </div>
             </div>
             
@@ -388,6 +446,8 @@ class ToneRowPlayback {
         const container = document.getElementById('playback-controls-container');
         if (!container) return;
         
+        const { min: filterMin, max: filterMax } = this.filterLimits;
+
         container.innerHTML = `
             <!-- Main Section (always expanded) -->
             <div class="playback-section main-section">
@@ -400,12 +460,12 @@ class ToneRowPlayback {
                         
                         <div class="control-group">
                             <label>Cycle Time (s):</label>
-                            <input type="number" id="cycle-duration" min="0.1" max="6000" step="0.1" value="${this.cycleDuration}">
+                            <input type="number" id="cycle-duration" min="${this.cycleDurationLimits.min}" max="${this.cycleDurationLimits.max}" step="0.1" value="${this.cycleDuration}">
                         </div>
                         
                         <div class="control-group">
                             <label>Fundamental (Hz):</label>
-                            <input type="number" id="fundamental-freq" min="20" max="2000" value="${this.fundamentalFreq}">
+                            <input type="number" id="fundamental-freq" min="${this.fundamentalLimits.min}" max="${this.fundamentalLimits.max}" value="${this.fundamentalFreq}">
                         </div>
                         
                         <div class="control-group">
@@ -419,11 +479,11 @@ class ToneRowPlayback {
                     <div class="global-filters">
                         <div class="control-group">
                             <label>Hi-Pass (Hz):</label>
-                            <input type="number" id="global-hipass-freq" min="20" max="20000" value="${this.globalFilterSettings.highpass}">
+                            <input type="number" id="global-hipass-freq" min="${filterMin}" max="${filterMax}" value="${this.globalFilterSettings.highpass}">
                         </div>
                         <div class="control-group">
                             <label>Lo-Pass (Hz):</label>
-                            <input type="number" id="global-lopass-freq" min="20" max="20000" value="${this.globalFilterSettings.lowpass}">
+                            <input type="number" id="global-lopass-freq" min="${filterMin}" max="${filterMax}" value="${this.globalFilterSettings.lowpass}">
                         </div>
                     </div>
                 </div>
@@ -441,6 +501,10 @@ class ToneRowPlayback {
                         <button class="playback-layer-btn" data-layer="b" style="background: #4ecdc4;">B</button>
                         <button class="playback-layer-btn" data-layer="c" style="background: #00a638ff;">C</button>
                         <button class="playback-layer-btn" data-layer="d" style="background: #f9ca24;">D</button>
+                    </div>
+
+                    <div class="playback-legato-row">
+                        <button id="legato-toggle" class="legato-toggle-btn" title="Sustain layer notes until another retriggers">Legato</button>
                     </div>
                     
                     <!-- Dynamic Layer Controls -->
@@ -537,10 +601,18 @@ class ToneRowPlayback {
         const layerHipassInput = document.getElementById(`layer-hipass-${layer}`);
         if (layerHipassInput) {
             layerHipassInput.addEventListener('input', (e) => {
-                const freq = parseFloat(e.target.value);
-                if (freq >= 20 && freq <= 20000) {
-                    state.filters.highpass = freq;
-                    this.updateLayerHighpassFilter(layer, freq);
+                this.setLayerHighpass(layer, parseFloat(e.target.value), { syncInput: false });
+            });
+
+            const snapLayerHipass = () => {
+                this.setLayerHighpass(layer, parseFloat(layerHipassInput.value));
+            };
+
+            layerHipassInput.addEventListener('blur', snapLayerHipass);
+            layerHipassInput.addEventListener('change', snapLayerHipass);
+            layerHipassInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    snapLayerHipass();
                 }
             });
         }
@@ -549,14 +621,22 @@ class ToneRowPlayback {
         const layerLopassInput = document.getElementById(`layer-lopass-${layer}`);
         if (layerLopassInput) {
             layerLopassInput.addEventListener('input', (e) => {
-                const freq = parseFloat(e.target.value);
-                if (freq >= 20 && freq <= 20000) {
-                    state.filters.lowpass = freq;
-                    this.updateLayerLowpassFilter(layer, freq);
+                this.setLayerLowpass(layer, parseFloat(e.target.value), { syncInput: false });
+            });
+
+            const snapLayerLopass = () => {
+                this.setLayerLowpass(layer, parseFloat(layerLopassInput.value));
+            };
+
+            layerLopassInput.addEventListener('blur', snapLayerLopass);
+            layerLopassInput.addEventListener('change', snapLayerLopass);
+            layerLopassInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    snapLayerLopass();
                 }
             });
         }
-        
+
         // ADSR controls
         ['attack', 'decay', 'sustain', 'release'].forEach(param => {
             const slider = document.getElementById(`${param}-${layer}`);
@@ -575,6 +655,10 @@ class ToneRowPlayback {
                 });
             }
         });
+
+        // Clamp and sync current filter values after listeners are attached
+        this.setLayerHighpass(layer, state.filters.highpass);
+        this.setLayerLowpass(layer, state.filters.lowpass);
     }
 
     // ====================================
@@ -647,33 +731,149 @@ class ToneRowPlayback {
     // PARAMETER UPDATES
     // ====================================
 
-    updateTempo(newTempo) {
-        this.cycleDuration = Math.max(0.1, Math.min(6000, newTempo));
-        console.log(`⏰ Tempo updated: ${this.cycleDuration}s cycle duration`);
-        
-        if (this.isPlaying) {
-            this.stopPlayback();
-            setTimeout(() => this.startPlayback(), 100);
+    updateTempo(rawValue, options = {}) {
+        const { syncInput = true } = options;
+        const previousTempo = this.cycleDuration;
+        const numericValue = Number.isFinite(rawValue) ? rawValue : previousTempo;
+        const { min, max } = this.cycleDurationLimits || { min: 0.1, max: 6000 };
+        const clampedTempo = Math.min(max, Math.max(min, numericValue));
+
+        this.cycleDuration = clampedTempo;
+
+        if (syncInput) {
+            const cycleDurationInput = document.getElementById('cycle-duration');
+            if (cycleDurationInput) {
+                const displayValue = clampedTempo.toString();
+                if (cycleDurationInput.value !== displayValue) {
+                    cycleDurationInput.value = displayValue;
+                }
+            }
         }
-        
-        // Notify visuals
-        if (window.lrcVisuals) {
-            window.lrcVisuals.setCycleDuration(this.cycleDuration);
+
+        if (clampedTempo !== previousTempo) {
+            console.log(`⏰ Tempo updated: ${this.cycleDuration}s cycle duration`);
+
+            if (this.isPlaying) {
+                this.stopPlayback();
+                setTimeout(() => this.startPlayback(), 100);
+            }
+
+            // Notify visuals
+            if (window.lrcVisuals) {
+                window.lrcVisuals.setCycleDuration(this.cycleDuration);
+            }
         }
     }
 
-    updateFundamentalFreq(newFreq) {
-        this.fundamentalFreq = Math.max(55, Math.min(880, newFreq));
-        const maxFreq = this.fundamentalFreq * this.maxFrequencyMultiplier;
-        console.log(`🎼 Fundamental frequency updated: ${this.fundamentalFreq}Hz (max: ${maxFreq.toFixed(0)}Hz)`);
-        
-        if (this.spacesPlot.length > 0) {
-            this.generateToneRowData();
+    clampFilterFrequency(value) {
+        const { min, max } = this.filterLimits || { min: 20, max: 20000 };
+        return Math.min(max, Math.max(min, value));
+    }
+
+    setGlobalHighpass(rawValue, options = {}) {
+        const { syncInput = true } = options;
+        const numericValue = Number.isFinite(rawValue) ? rawValue : this.globalFilterSettings.highpass;
+        const clampedValue = this.clampFilterFrequency(numericValue);
+
+        this.globalFilterSettings.highpass = clampedValue;
+
+        if (syncInput) {
+            const input = document.getElementById('global-hipass-freq');
+            if (input && input.value !== clampedValue.toString()) {
+                input.value = clampedValue;
+            }
         }
-        
-        if (this.isPlaying) {
-            this.stopPlayback();
-            setTimeout(() => this.startPlayback(), 100);
+
+        this.updateGlobalHighpassFilter(clampedValue);
+    }
+
+    setGlobalLowpass(rawValue, options = {}) {
+        const { syncInput = true } = options;
+        const numericValue = Number.isFinite(rawValue) ? rawValue : this.globalFilterSettings.lowpass;
+        const clampedValue = this.clampFilterFrequency(numericValue);
+
+        this.globalFilterSettings.lowpass = clampedValue;
+
+        if (syncInput) {
+            const input = document.getElementById('global-lopass-freq');
+            if (input && input.value !== clampedValue.toString()) {
+                input.value = clampedValue;
+            }
+        }
+
+        this.updateGlobalLowpassFilter(clampedValue);
+    }
+
+    setLayerHighpass(layer, rawValue, options = {}) {
+        const state = this.layerStates[layer];
+        if (!state) return;
+
+        const { syncInput = true } = options;
+        const numericValue = Number.isFinite(rawValue) ? rawValue : state.filters.highpass;
+        const clampedValue = this.clampFilterFrequency(numericValue);
+
+        state.filters.highpass = clampedValue;
+
+        if (syncInput) {
+            const input = document.getElementById(`layer-hipass-${layer}`);
+            if (input && input.value !== clampedValue.toString()) {
+                input.value = clampedValue;
+            }
+        }
+
+        this.updateLayerHighpassFilter(layer, clampedValue);
+    }
+
+    setLayerLowpass(layer, rawValue, options = {}) {
+        const state = this.layerStates[layer];
+        if (!state) return;
+
+        const { syncInput = true } = options;
+        const numericValue = Number.isFinite(rawValue) ? rawValue : state.filters.lowpass;
+        const clampedValue = this.clampFilterFrequency(numericValue);
+
+        state.filters.lowpass = clampedValue;
+
+        if (syncInput) {
+            const input = document.getElementById(`layer-lopass-${layer}`);
+            if (input && input.value !== clampedValue.toString()) {
+                input.value = clampedValue;
+            }
+        }
+
+        this.updateLayerLowpassFilter(layer, clampedValue);
+    }
+
+    updateFundamentalFreq(rawValue, options = {}) {
+        const { syncInput = true } = options;
+        const previousFreq = this.fundamentalFreq;
+        const numericValue = Number.isFinite(rawValue) ? rawValue : previousFreq;
+        const { min, max } = this.fundamentalLimits;
+        const clampedValue = Math.min(max, Math.max(min, numericValue));
+
+        this.fundamentalFreq = clampedValue;
+
+        if (syncInput) {
+            const freqInput = document.getElementById('fundamental-freq');
+            if (freqInput) {
+                const clampedString = clampedValue.toString();
+                if (freqInput.value !== clampedString) {
+                    freqInput.value = clampedString;
+                }
+            }
+        }
+
+        if (clampedValue !== previousFreq) {
+            console.log(`🎼 Fundamental frequency updated: ${clampedValue}Hz (cap: ${this.maxFrequencyHz}Hz)`);
+
+            if (this.spacesPlot.length > 0) {
+                this.generateToneRowData();
+            }
+
+            if (this.isPlaying) {
+                this.stopPlayback();
+                setTimeout(() => this.startPlayback(), 100);
+            }
         }
     }
 
@@ -853,7 +1053,16 @@ class ToneRowPlayback {
     }
 
     applyRealtimeNoteChanges() {
-        // No action needed - the scheduled note callbacks check current selection state dynamically
+        if (this.legatoEnabled) {
+            this.activeLayerVoices.forEach((voice, layerIndex) => {
+                if (!voice) return;
+                const shouldMute = voice.noteData?.isMutedByFrequency || this.isNoteMutedBySelection(voice.noteData?.globalSpacesIndex);
+                if (shouldMute) {
+                    this.releaseLayerVoice(layerIndex);
+                }
+            });
+        }
+
         console.log('🔄 Real-time note selection changes are active - scheduled notes will check current state');
     }
 
@@ -1090,7 +1299,7 @@ class ToneRowPlayback {
     generateToneRowData() {
         if (!this.spacesPlot.length) return;
         
-        const maxFrequency = this.fundamentalFreq * this.maxFrequencyMultiplier;
+        const maxFrequency = this.maxFrequencyHz;
         
         // Use the global fundamental from the full spaces plot for all layers
         const globalFundamental = Math.max(...this.spacesPlot);
@@ -1199,6 +1408,11 @@ class ToneRowPlayback {
         
         this.isPlaying = false;
         this.updatePlayButton();
+
+        if (this.legatoEnabled) {
+            this.releaseAllLayerVoices({ immediate: true });
+        }
+        this.activeLayerVoices = [null, null, null, null];
         
         // Stop all oscillators
         this.activeOscillators.forEach(osc => {
@@ -1248,7 +1462,7 @@ class ToneRowPlayback {
                     
                     // Only play the note if it's not muted (preserve timing for all notes)
                     if (!currentlyMuted) {
-                        this.playNote(noteData.frequency, noteDuration, layerIndex, state);
+                        this.playNote(noteData, noteDuration, layerIndex, state);
                     } else {
                      //   console.log(`🔇 Muted note: ${noteData.frequency.toFixed(1)}Hz (${noteData.ratio.toFixed(2)}) in layer ${layer.toUpperCase()}`);
                     }
@@ -1269,60 +1483,160 @@ class ToneRowPlayback {
         this.scheduledEvents.push(loopTimeoutId);
     }
 
-    playNote(frequency, duration, layerIndex, layerState) {
+    playNote(noteData, duration, layerIndex, layerState) {
         if (!this.audioContext || !this.layerNodes[layerIndex]) return;
-        
+
+        const frequency = noteData.frequency;
+
         // Frequency limit check
-        const maxFrequency = this.fundamentalFreq * this.maxFrequencyMultiplier;
+        const maxFrequency = this.maxFrequencyHz;
         if (frequency > maxFrequency) {
             console.warn(`🚫 Frequency ${frequency.toFixed(2)}Hz exceeds limit ${maxFrequency.toFixed(2)}Hz`);
             return;
         }
 
+        if (this.legatoEnabled) {
+            this.startLegatoNote(noteData, layerIndex, layerState);
+        } else {
+            this.startStandardNote(noteData, duration, layerIndex, layerState);
+        }
+    }
+
+    startStandardNote(noteData, duration, layerIndex, layerState) {
         const now = this.audioContext.currentTime;
-        
-        // Create oscillator
         const oscillator = this.audioContext.createOscillator();
         oscillator.type = layerState.waveform;
-        oscillator.frequency.setValueAtTime(frequency, now);
-        
-        // Create envelope
+        oscillator.frequency.setValueAtTime(noteData.frequency, now);
+
         const envelope = this.audioContext.createGain();
         envelope.gain.setValueAtTime(0, now);
-        
-        // Connect: oscillator -> envelope -> layer gain
+
         oscillator.connect(envelope);
         envelope.connect(this.layerNodes[layerIndex].gain);
-        
-        // Apply ADSR envelope
+
         const { attack, decay, sustain, release } = layerState.adsr;
         const sustainTime = Math.max(0, duration - attack - decay - release);
-        
-        // Attack
+
         envelope.gain.linearRampToValueAtTime(1, now + attack);
-        
-        // Decay
         envelope.gain.linearRampToValueAtTime(sustain, now + attack + decay);
-        
-        // Sustain (hold)
         envelope.gain.setValueAtTime(sustain, now + attack + decay + sustainTime);
-        
-        // Release
         envelope.gain.linearRampToValueAtTime(0, now + duration);
-        
-        // Start and schedule stop
+
         oscillator.start(now);
         oscillator.stop(now + duration);
-        
+
+        this.trackOscillatorLifecycle(oscillator);
+    }
+
+    startLegatoNote(noteData, layerIndex, layerState) {
+        if (!this.audioContext) return;
+
+        // Release any currently sustained voice for this layer before starting the next one
+        this.releaseLayerVoice(layerIndex);
+
+        const now = this.audioContext.currentTime;
+        const oscillator = this.audioContext.createOscillator();
+        oscillator.type = layerState.waveform;
+        oscillator.frequency.setValueAtTime(noteData.frequency, now);
+
+        const envelope = this.audioContext.createGain();
+        envelope.gain.setValueAtTime(0, now);
+
+        oscillator.connect(envelope);
+        envelope.connect(this.layerNodes[layerIndex].gain);
+
+        const { attack, decay, sustain, release } = layerState.adsr;
+
+        envelope.gain.linearRampToValueAtTime(1, now + attack);
+        envelope.gain.linearRampToValueAtTime(sustain, now + attack + decay);
+        envelope.gain.setValueAtTime(sustain, now + attack + decay + 0.01);
+
+        oscillator.start(now);
+
+        this.activeLayerVoices[layerIndex] = {
+            oscillator,
+            envelope,
+            release: Math.max(release, 0.01),
+            noteData: {
+                globalSpacesIndex: noteData.globalSpacesIndex,
+                ratio: noteData.ratio,
+                frequency: noteData.frequency,
+                isMutedByFrequency: noteData.isMutedByFrequency
+            }
+        };
+
+        this.trackOscillatorLifecycle(oscillator, layerIndex);
+    }
+
+    trackOscillatorLifecycle(oscillator, layerIndex = null) {
         this.activeOscillators.push(oscillator);
-        
-        // Clean up when done
+
         oscillator.onended = () => {
             const index = this.activeOscillators.indexOf(oscillator);
             if (index > -1) {
                 this.activeOscillators.splice(index, 1);
             }
+
+            if (layerIndex !== null) {
+                const voice = this.activeLayerVoices[layerIndex];
+                if (voice && voice.oscillator === oscillator) {
+                    this.activeLayerVoices[layerIndex] = null;
+                }
+            }
         };
+    }
+
+    releaseLayerVoice(layerIndex, { immediate = false } = {}) {
+        const voice = this.activeLayerVoices[layerIndex];
+        if (!voice || !this.audioContext) return;
+
+        const now = this.audioContext.currentTime;
+        const releaseTime = immediate ? Math.min(voice.release, 0.05) : voice.release;
+        const stopTime = now + Math.max(releaseTime, 0.01);
+
+        try {
+            voice.envelope.gain.cancelScheduledValues(now);
+            const currentGain = voice.envelope.gain.value;
+            voice.envelope.gain.setValueAtTime(currentGain, now);
+            voice.envelope.gain.linearRampToValueAtTime(0, stopTime);
+            voice.oscillator.stop(stopTime + 0.01);
+        } catch (err) {
+            console.warn('⚠️ Error releasing legato voice:', err);
+            try {
+                voice.oscillator.stop();
+            } catch (stopErr) {
+                // Oscillator already stopped
+            }
+        }
+
+        this.activeLayerVoices[layerIndex] = null;
+    }
+
+    releaseAllLayerVoices(options = {}) {
+        this.activeLayerVoices.forEach((voice, layerIndex) => {
+            if (voice) {
+                this.releaseLayerVoice(layerIndex, options);
+            }
+        });
+    }
+
+    toggleLegatoMode() {
+        this.legatoEnabled = !this.legatoEnabled;
+        this.updateLegatoButton();
+
+        if (!this.legatoEnabled) {
+            // Ensure any sustained notes fade out when legato is disabled
+            this.releaseAllLayerVoices();
+        }
+
+        console.log(`🎼 Legato mode ${this.legatoEnabled ? 'enabled' : 'disabled'}`);
+    }
+
+    updateLegatoButton() {
+        const legatoBtn = document.getElementById('legato-toggle');
+        if (!legatoBtn) return;
+
+        legatoBtn.classList.toggle('active', this.legatoEnabled);
     }
 
     updatePlayButton() {

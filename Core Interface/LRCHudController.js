@@ -641,12 +641,17 @@ class LRCHUDController {
         console.log('Updating rhythm info:', rhythmInfo);
         
         // Update all rhythm info displays
+        const displayLayers = (rhythmInfo.displayLayers && rhythmInfo.displayLayers.length > 0)
+            ? rhythmInfo.displayLayers
+            : rhythmInfo.layers;
+        const layersDisplayText = displayLayers.length > 0 ? displayLayers.join(':') : '—';
         const updates = [
-            { id: 'layers-display', value: rhythmInfo.layers.join(':') },
+            { id: 'layers-display', value: layersDisplayText },
             { id: 'grid-display', value: rhythmInfo.grid },
             { id: 'fundamental-display', value: Math.round(rhythmInfo.fundamental) },
             { id: 'range-display', value: rhythmInfo.range.toFixed(2) },
             { id: 'rhythm-density', value: rhythmInfo.density.toFixed(1) },
+            { id: 'pg-ratio', value: rhythmInfo.pulseToGrouping.toFixed(6) },
             { id: 'composite-length', value: rhythmInfo.compositeLength },
             { id: 'layer-sum', value: rhythmInfo.layerSum }
         ];
@@ -855,26 +860,109 @@ class LRCHUDController {
     }
     
     setupHingesControls() {
-        // Animate Chain button - toggle start/stop animation
+        const getHingesViz = () => window.lrcVisuals?.plotTypes?.['hinges'];
+        const tensionBtn = document.getElementById('hinges-tension-btn');
         const animateBtn = document.getElementById('hinges-animate-btn');
+
+        const applyTensionUIState = (hingesViz, enable) => {
+            const controlsSection = document.getElementById('hinges-controls-section');
+            if (controlsSection) {
+                controlsSection.classList.toggle('tension-mode-active', enable);
+            }
+
+            const showForcesLabel = document.querySelector('#hinges-controls-section .hinges-show-forces');
+            if (showForcesLabel) {
+                showForcesLabel.style.display = enable ? 'none' : '';
+            }
+
+            const adv = hingesViz?.advanced;
+            if (adv && adv.overlays) {
+                const { cycleGroup, forcesPanel } = adv.overlays;
+                if (cycleGroup) cycleGroup.style.display = enable ? 'none' : '';
+                if (forcesPanel) forcesPanel.style.display = enable ? 'none' : '';
+            }
+
+            if (hingesViz) {
+                if (!enable && hingesViz._tensionUIOverlayTimer) {
+                    clearTimeout(hingesViz._tensionUIOverlayTimer);
+                    hingesViz._tensionUIOverlayTimer = null;
+                }
+
+                if (enable) {
+                    const advOverlaysReady = adv && adv.overlays && (adv.overlays.cycleGroup || adv.overlays.forcesPanel);
+                    if (!advOverlaysReady) {
+                        if (hingesViz._tensionUIOverlayTimer) {
+                            clearTimeout(hingesViz._tensionUIOverlayTimer);
+                        }
+                        hingesViz._tensionUIOverlayTimer = setTimeout(() => {
+                            applyTensionUIState(hingesViz, enable);
+                            hingesViz._tensionUIOverlayTimer = null;
+                        }, 250);
+                    }
+                }
+            }
+        };
+
+        const setTensionState = (hingesViz, enable) => {
+            if (tensionBtn) {
+                tensionBtn.classList.toggle('active', !!enable);
+                tensionBtn.textContent = enable ? '↩️ Release Tension' : '⚡ Tension';
+            }
+
+            applyTensionUIState(hingesViz, enable);
+
+            if (!hingesViz) return;
+
+            if (!hingesViz.expansion) {
+                if (enable) {
+                    console.warn('Tension mode requested but Hinges expansion module is unavailable.');
+                }
+                enable = false;
+            }
+
+            hingesViz.tensionModeEnabled = enable;
+
+            if (enable) {
+                if (hingesViz.isAnimating) {
+                    if (hingesViz.animationPhase === 'settling') {
+                        hingesViz.pendingTensionActivation = false;
+                        if (hingesViz.animationPhase !== 'expanding') {
+                            hingesViz.expansion.enterExpansionMode();
+                        }
+                    } else if (hingesViz.animationPhase !== 'expanding') {
+                        hingesViz.pendingTensionActivation = true;
+                    }
+                } else {
+                    hingesViz.pendingTensionActivation = true;
+                }
+            } else {
+                hingesViz.pendingTensionActivation = false;
+                if (hingesViz.expansion && hingesViz.animationPhase === 'expanding') {
+                    hingesViz.expansion.exitExpansionMode();
+                }
+            }
+        };
+
+        if (tensionBtn) {
+            tensionBtn.addEventListener('click', () => {
+                const hingesViz = getHingesViz();
+                const nextState = !(hingesViz ? hingesViz.tensionModeEnabled : tensionBtn.classList.contains('active'));
+                setTensionState(hingesViz, nextState);
+            });
+        }
+
         if (animateBtn) {
             animateBtn.addEventListener('click', () => {
-                const hingesViz = window.lrcVisuals?.plotTypes?.['hinges'];
+                const hingesViz = getHingesViz();
                 if (!hingesViz) return;
 
-                // Apply current mode selection before starting
                 const modeSelect = document.getElementById('hinges-mode');
                 if (modeSelect && hingesViz.advanced) {
-                    const val = modeSelect.value;
-                    const advancedMode = (val === 'mirror' || val === 'anchors') ? val : (val === 'tension' ? 'tension' : 'off');
+                    const advancedMode = (modeSelect.value === 'mirror' || modeSelect.value === 'anchors') ? modeSelect.value : 'off';
                     hingesViz.advanced.setMode(advancedMode);
                 }
 
                 if (hingesViz.isAnimating) {
-                    // Clean stop (exit expansion if active)
-                    if (hingesViz.expansion && hingesViz.animationPhase === 'expanding') {
-                        hingesViz.expansion.exitExpansionMode();
-                    }
                     hingesViz.stopAnimation();
                     animateBtn.textContent = '🔗 Animate Chain';
                     animateBtn.classList.remove('animating');
@@ -882,6 +970,10 @@ class LRCHUDController {
                     hingesViz.startAnimation();
                     animateBtn.textContent = '⏹ Stop Animation';
                     animateBtn.classList.add('animating');
+
+                    if (hingesViz.tensionModeEnabled) {
+                        setTensionState(hingesViz, true);
+                    }
                 }
             });
         }
@@ -900,42 +992,58 @@ class LRCHUDController {
         // Mode selector
         const modeSelect = document.getElementById('hinges-mode');
         if (modeSelect) {
-            // Apply selected mode; if animating, STOP and RESET for a clean switch
-            const applyMode = () => {
-                const hingesViz = window.lrcVisuals?.plotTypes?.['hinges'];
+            modeSelect.addEventListener('change', () => {
+                const hingesViz = getHingesViz();
                 if (!hingesViz) return;
-                const val = modeSelect.value;
-                const advancedMode = (val === 'mirror' || val === 'anchors') ? val : (val === 'tension' ? 'tension' : 'off');
 
-                // If currently expanding, exit expansion first
+                const val = modeSelect.value;
+                const advancedMode = (val === 'mirror' || val === 'anchors') ? val : 'off';
+
                 if (hingesViz.expansion && hingesViz.animationPhase === 'expanding') {
                     hingesViz.expansion.exitExpansionMode();
                 }
 
-                // Stop animation if running
                 if (hingesViz.isAnimating) {
                     hingesViz.stopAnimation();
+                    if (animateBtn) {
+                        animateBtn.textContent = '🔗 Animate Chain';
+                        animateBtn.classList.remove('animating');
+                    }
                 }
 
-                // Set mode and reset chain
                 if (hingesViz.advanced) {
                     hingesViz.advanced.setMode(advancedMode);
                 }
+
                 if (typeof hingesViz.initializeChain === 'function') {
                     hingesViz.initializeChain();
                     hingesViz.animationPhase = 'hanging';
                     hingesViz.draw();
                 }
 
-                // Reset animate button UI state
-                const animateBtn = document.getElementById('hinges-animate-btn');
-                if (animateBtn) {
-                    animateBtn.textContent = '🔗 Animate Chain';
-                    animateBtn.classList.remove('animating');
-                }
-            };
-            modeSelect.addEventListener('change', applyMode);
+                setTensionState(hingesViz, hingesViz.tensionModeEnabled);
+            });
         }
+
+        window.addEventListener('rhythmGenerated', () => {
+            const hingesViz = getHingesViz();
+            const animateBtnEl = document.getElementById('hinges-animate-btn');
+            if (hingesViz && hingesViz.isAnimating) {
+                hingesViz.stopAnimation();
+            }
+            if (animateBtnEl) {
+                animateBtnEl.textContent = '🔗 Animate Chain';
+                animateBtnEl.classList.remove('animating');
+            }
+
+            if (hingesViz) {
+                hingesViz.pendingTensionActivation = hingesViz.tensionModeEnabled;
+                setTensionState(hingesViz, hingesViz.tensionModeEnabled);
+            }
+        });
+
+        // Initialize UI state
+        setTensionState(getHingesViz(), false);
     }
     
     setupCentrifugeControls() {

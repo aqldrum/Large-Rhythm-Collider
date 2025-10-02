@@ -27,7 +27,7 @@
       // Anchors state
       this.anchors = {
         expansion: 0.0,
-        layerLocks: { A: true, B: true, C: true, D: true },
+        layerLocks: { A: false, B: false, C: false, D: false },
         nestedOptions: [], // {key, rep, nodes: [nodeIndex]}
         nestedLocked: new Set(),
         pinnedNodes: new Set(),
@@ -49,7 +49,6 @@
       const prev = this.mode;
       // If selecting the same mode again, do not reset any Anchors state
       if (prev === mode) {
-        console.log(`🎛️ HingesAdvanced mode unchanged: ${mode}`);
         return;
       }
       this.mode = mode;
@@ -61,7 +60,9 @@
         if (!this.anchors.initialized) {
           const vals = window.lrcModule?.currentRhythms || [0,0,0,0];
           const letters = ['A','B','C','D'];
-          letters.forEach((L,idx)=>{ if ((vals[idx]||0)>1) this.anchors.layerLocks[L]=true; });
+          letters.forEach((L,idx)=>{
+            if ((vals[idx]||0)>1) this.anchors.layerLocks[L] = false;
+          });
           this.computeNestedOptions();
           this.anchors.initialized = true;
         }
@@ -81,7 +82,7 @@
           this.overlays.updateAnchorsVisibility();
         }
       } catch(e) { /* noop */ }
-      console.log(`🎛️ HingesAdvanced mode: ${this.mode}`);
+      
     }
 
     ensureHookInstalled() {
@@ -122,7 +123,7 @@
       };
 
       this._hookInstalled = true;
-      console.log('🎛️ HingesAdvanced hook installed');
+      
     }
 
     setAnchorCount(n) {
@@ -151,7 +152,7 @@
           arr.forEach(i => indices.add(i));
         });
         this.anchorIndices = [...indices].sort((a,b)=>a-b);
-        console.log(`🎯 HingesAdvanced anchors selected: ${this.anchorIndices.length} indices (top ${this.anchorCount} ratios)`);
+        
       } catch (e) {
         console.warn('HingesAdvanced.refreshAnchors error:', e);
         this.anchorIndices = [];
@@ -411,8 +412,6 @@
     }
 
     // No UI injected here; HUD controls handle mode selection
-
-    console.log('🎛️ HingesAdvanced integrated');
 
     // Enable local clock; user Cycle (s) controls Hinges independently
     hinges.useLocalClock = true;
@@ -685,6 +684,14 @@
     document.addEventListener('keydown', handleKey);
 
     // Anchors panel (below Layer Forces)
+    // Force default lock state on initial build
+    const initVals = window.lrcModule?.currentRhythms || [0,0,0,0];
+    ['A','B','C','D'].forEach((L, idx) => {
+      if ((initVals[idx] || 0) > 1) {
+        adv.anchors.layerLocks[L] = true;
+      }
+    });
+
     const anchorsPanel = document.createElement('div');
     anchorsPanel.style.background = 'rgba(0,0,0,0.45)';
     anchorsPanel.style.border = '1px solid var(--hud-border)';
@@ -789,6 +796,12 @@
         const name = document.createElement('span'); name.textContent = `Layer ${L}`; name.style.color='var(--hud-text-muted)';
         const btn = document.createElement('button');
         btn.style.background = 'rgba(255,255,255,0.1)'; btn.style.border='1px solid var(--hud-border)'; btn.style.color='var(--hud-text)'; btn.style.borderRadius='3px'; btn.style.fontSize='11px'; btn.style.padding='2px 8px'; btn.style.cursor='pointer';
+        const ensureDefaultLock = () => {
+          if (typeof adv.anchors.layerLocks[L] === 'undefined') {
+            adv.anchors.layerLocks[L] = false;
+          }
+        };
+        ensureDefaultLock();
         const syncBtnText = ()=> { btn.textContent = adv.anchors.layerLocks[L] ? 'Unlock' : 'Lock'; };
         syncBtnText();
         btn.addEventListener('click', ()=>{ adv.anchors.layerLocks[L] = !adv.anchors.layerLocks[L]; syncBtnText(); adv.applyPinnedNodes(); });
@@ -819,7 +832,12 @@
     rebuildNested();
 
     // Respond to new rhythm generations after UI is fully initialized
-    const onRhythmGenerated = () => { rebuildRows(); rebuildLayerLocks(); rebuildNested(); };
+    const onRhythmGenerated = () => {
+      adv.anchors.layerLocks = { A: false, B: false, C: false, D: false };
+      rebuildRows();
+      rebuildLayerLocks();
+      rebuildNested();
+    };
     window.addEventListener('rhythmGenerated', onRhythmGenerated);
 
     // Assemble and mount overlays
@@ -847,6 +865,9 @@
       try {
         anchorsPanel.style.display = (adv.mode === 'anchors') ? 'block' : 'none';
       } catch(e) {}
+      if (adv.mode !== 'anchors') {
+        adv.anchors.layerLocks = { A: false, B: false, C: false, D: false };
+      }
     };
     // Initialize visibility
     if (typeof adv.overlays.updateAnchorsVisibility === 'function') {

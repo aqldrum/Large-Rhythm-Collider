@@ -10,7 +10,7 @@ class ColliderAudio {
         
         // Audio parameters (matching your specifications)
         this.fundamentalFreq = 110; // Fixed at 110Hz (no longer controllable)
-        this.maxFrequencyMultiplier = 32; // Same limit as ToneRowPlayback
+        this.maxFrequencyHz = 3520; // Hard cap shared with ToneRowPlayback
         this.masterVolumeDb = -24; // Default -24dB like ToneRowPlayback
         
         // Note management for polyphony (up to 4 players can trigger simultaneously)
@@ -96,7 +96,7 @@ class ColliderAudio {
         const frequency = this.fundamentalFreq * (globalFundamental / spaceValue);
         
         // Check frequency limits (same as ToneRowPlayback)
-        const maxFrequency = this.fundamentalFreq * this.maxFrequencyMultiplier;
+        const maxFrequency = this.maxFrequencyHz;
         const isMuted = frequency > maxFrequency;
         
         return {
@@ -251,7 +251,7 @@ class ColliderAudio {
             contextState: this.audioContext?.state || 'not initialized',
             activeNotes: this.activeNotes.size,
             fundamentalFreq: this.fundamentalFreq,
-            maxFrequency: this.fundamentalFreq * this.maxFrequencyMultiplier,
+            maxFrequency: this.maxFrequencyHz,
             masterVolumeDb: this.masterVolumeDb
         };
     }

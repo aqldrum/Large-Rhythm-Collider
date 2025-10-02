@@ -224,8 +224,9 @@ class ColliderUI {
             
             .battle-controls-panel {
                 position: fixed;
-                top: 20px;
+                top: 50%;
                 right: 20px;
+                transform: translateY(-50%);
                 background: var(--hud-bg);
                 border: 1px solid var(--hud-border);
                 border-radius: var(--border-radius);
@@ -400,7 +401,16 @@ class ColliderUI {
         `;
         
         battleStage.appendChild(controlsPanel);
-        
+
+        // Position panel vertically centered on the right edge
+        this.popupWindow.requestAnimationFrame(() => {
+            const panelHeight = controlsPanel.offsetHeight || 0;
+            const availableHeight = this.popupWindow.innerHeight || 0;
+            const computedTop = Math.max(20, (availableHeight - panelHeight) / 2);
+            controlsPanel.style.top = computedTop + 'px';
+            controlsPanel.style.transform = 'none';
+        });
+
         // Make it draggable
         this.makeDraggable(controlsPanel);
         

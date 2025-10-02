@@ -13,11 +13,12 @@ class LRCCollider {
         
         this.battleController = new BattleController();
         this.colliderUI = new ColliderUI(this.battleController);
-        
+
         // Animation state
         this.isAnimating = false;
         this.animationId = null;
-        
+        this.animationFrameWindow = null;
+
         // Visual controls
         this.lineThickness = 3; // Default line thickness
         
@@ -28,7 +29,6 @@ class LRCCollider {
             smoothing: 0.08
         };
         
-        console.log('⚔️ LRC Collider initialized');
     }
 
     // ====================================
@@ -36,8 +36,6 @@ class LRCCollider {
     // ====================================
 
     activate() {
-        console.log('⚔️ Activating Collider Battle - opening popup window');
-        
         // Open popup window instead of using main canvas
         this.colliderUI.openColliderPopup();
     }
@@ -45,7 +43,6 @@ class LRCCollider {
     deactivate() {
         this.stopAnimation();
         this.colliderUI.removePlayerDivs();
-        console.log('⚔️ Collider deactivated');
     }
 
     setupCanvas() {
@@ -56,7 +53,6 @@ class LRCCollider {
         } else {
             this.canvas = this.parent?.canvas;
             this.ctx = this.parent?.ctx;
-            console.log('⚔️ Using main canvas fallback');
         }
         
         if (!this.canvas || !this.ctx) {
@@ -71,7 +67,6 @@ class LRCCollider {
         
         // Initialize camera state only if canvas is valid and camera hasn't been initialized
         if (this.canvas.width > 0 && this.canvas.height > 0 && this.camera.scale === 1) {
-            console.log('📹 Initializing camera for first time...');
             this.updateCamera();
         }
         return true;
@@ -137,37 +132,47 @@ class LRCCollider {
         
         // Ensure canvas is set up before starting battle
         if (!this.canvas || !this.ctx) {
-            console.log('📹 Setting up canvas for battle...');
             this.setupCanvas();
         }
-        
-        // Update battle center based on actual canvas size
+
         if (this.canvas) {
             this.battleController.updateBattleCenterFromCanvas(this.canvas);
-            console.log(`📹 Canvas ready: ${this.canvas.width}x${this.canvas.height}, battle center: (${this.battleController.battleCenter.x}, ${this.battleController.battleCenter.y})`);
         }
-        
+
         // Start the battle
         this.battleController.startBattle();
         
         this.isAnimating = true;
-        this.animate();
+        this.scheduleNextFrame();
         
         // Switch UI to battle mode
         setTimeout(() => {
             this.colliderUI.updateBattleUI();
         }, 100);
-        
-        console.log('⚔️ Collider animation started - BATTLE BEGINS!');
     }
 
     stopAnimation() {
         this.isAnimating = false;
-        if (this.animationId) {
-            cancelAnimationFrame(this.animationId);
-            this.animationId = null;
+        if (this.animationId && this.animationFrameWindow) {
+            this.animationFrameWindow.cancelAnimationFrame(this.animationId);
         }
-        console.log('⚔️ Collider animation stopped');
+        this.animationId = null;
+        this.animationFrameWindow = null;
+    }
+
+    getActiveAnimationWindow() {
+        const popupWin = this.colliderUI?.popupWindow;
+        if (popupWin && !popupWin.closed) {
+            return popupWin;
+        }
+        return window;
+    }
+
+    scheduleNextFrame() {
+        if (!this.isAnimating) return;
+        const frameWindow = this.getActiveAnimationWindow();
+        this.animationFrameWindow = frameWindow;
+        this.animationId = frameWindow.requestAnimationFrame(() => this.animate());
     }
 
     animate() {
@@ -188,8 +193,8 @@ class LRCCollider {
             this.stopAnimation();
             return;
         }
-        
-        this.animationId = requestAnimationFrame(() => this.animate());
+
+        this.scheduleNextFrame();
     }
 
     // ====================================

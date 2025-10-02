@@ -42,7 +42,11 @@ class LRCSearch {
             fundamental: { column: 'grid', direction: 'asc' },
             inversePG: { column: 'grid', direction: 'asc' }
         };
-        
+
+        // UI yielding controls
+        this.lastYieldTime = 0;
+        this.yieldIntervalMs = 32;
+
         // Track last search parameters to detect changes
         this.lastSearchParams = {
             rhythm: null,
@@ -59,12 +63,20 @@ class LRCSearch {
             inversePG: new InversePGSearch()
         };
 
+        this.resultContainers = {
+            rhythm: 'rhythm-search-results',
+            grid: 'grid-search-results',
+            fundamental: 'fundamental-search-results',
+            inversePG: 'inverse-pg-results'
+        };
+
         // Set parent reference for validation methods
         Object.values(this.algorithms).forEach(algorithm => {
             algorithm.lrcSearch = this;
         });
-        
+
         this.setupEventListeners();
+        this.initializeResultContainers();
         console.log('LRC Search module initialized with result accumulation');
     }
 
@@ -93,12 +105,49 @@ class LRCSearch {
             });
         }
 
-        // Max search time (now a simple number input in seconds)
+        // Max search time (seconds)
         const maxTimeInput = document.getElementById('max-search-time');
         if (maxTimeInput) {
+            const clampSearchTime = (rawValue) => {
+                const min = parseInt(maxTimeInput.min, 10) || 1;
+                const max = parseInt(maxTimeInput.max, 10) || 600;
+                const value = parseInt(rawValue, 10);
+
+                if (!Number.isFinite(value)) {
+                    this.maxSearchTime = null;
+                    maxTimeInput.classList.add('input-error');
+                    return;
+                }
+
+                const clamped = Math.min(Math.max(value, min), max);
+                this.maxSearchTime = clamped;
+                maxTimeInput.classList.remove('input-error');
+
+                if (clamped !== value) {
+                    maxTimeInput.value = clamped;
+                }
+            };
+
             maxTimeInput.addEventListener('input', (e) => {
-                this.maxSearchTime = parseInt(e.target.value) || 5;
+                if (e.target.value === '') {
+                    this.maxSearchTime = null;
+                    maxTimeInput.classList.add('input-error');
+                    return;
+                }
+                clampSearchTime(e.target.value);
             });
+
+            maxTimeInput.addEventListener('blur', () => {
+                if (maxTimeInput.value === '') {
+                    maxTimeInput.classList.add('input-error');
+                    this.maxSearchTime = null;
+                } else {
+                    clampSearchTime(maxTimeInput.value);
+                }
+            });
+
+            // Ensure initial value is valid
+            clampSearchTime(maxTimeInput.value);
         }
 
         // Range limit
@@ -169,9 +218,137 @@ class LRCSearch {
         });
     }
 
+    validateMaxSearchTime() {
+        const maxTimeInput = document.getElementById('max-search-time');
+        if (!maxTimeInput) {
+            return true;
+        }
+
+        const min = parseInt(maxTimeInput.min, 10) || 1;
+        const max = parseInt(maxTimeInput.max, 10) || 600;
+        const value = parseInt(maxTimeInput.value, 10);
+
+        if (!Number.isFinite(value)) {
+            maxTimeInput.classList.add('input-error');
+            maxTimeInput.focus();
+            alert('Please set a max search time before running a search.');
+            this.maxSearchTime = null;
+            return false;
+        }
+
+        const clamped = Math.min(Math.max(value, min), max);
+        if (clamped !== value) {
+            maxTimeInput.value = clamped;
+        }
+
+        this.maxSearchTime = clamped;
+        maxTimeInput.classList.remove('input-error');
+        return true;
+    }
+
     // ====================================
     // RESULT MANAGEMENT
     // ====================================
+
+    initializeResultContainers() {
+        Object.entries(this.resultContainers).forEach(([algorithmName, containerId]) => {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            const { body } = this.ensureSearchContainerStructure(container, algorithmName);
+            if (body && !body.innerHTML.trim()) {
+                body.innerHTML = `<div class="no-results">No ${this.getSearchTitle(algorithmName)} results yet.</div>`;
+            }
+        });
+    }
+
+    ensureSearchContainerStructure(container, algorithmName) {
+        if (!container) return {};
+
+        container.classList.add('search-results-container');
+
+        let overlay = container.querySelector('.search-loading-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.className = 'search-loading-overlay';
+            overlay.dataset.algorithm = algorithmName;
+            overlay.innerHTML = '<div class="search-loading-spinner" aria-hidden="true"></div>';
+            container.appendChild(overlay);
+        }
+
+        let body = container.querySelector('.search-results-body');
+        if (!body) {
+            body = document.createElement('div');
+            body.className = 'search-results-body';
+            container.insertBefore(body, overlay);
+        }
+
+        return { body, overlay };
+    }
+
+    toggleSearchLoading(algorithmName, isLoading) {
+        const containerId = this.getResultsContainerId(algorithmName);
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        this.ensureSearchContainerStructure(container, algorithmName);
+
+        if (isLoading) {
+            if (typeof container.scrollTo === 'function') {
+                container.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+            }
+            container.scrollTop = 0;
+            container.scrollLeft = 0;
+            container.classList.add('search-loading');
+        } else {
+            container.classList.remove('search-loading');
+        }
+    }
+
+    getResultsContainerId(algorithmName) {
+        return this.resultContainers[algorithmName];
+    }
+
+    getSearchTitle(algorithmName) {
+        switch (algorithmName) {
+            case 'rhythm':
+                return 'Rhythm Layer Search';
+            case 'grid':
+                return 'Grid Search';
+            case 'fundamental':
+                return 'Fundamental Search';
+            case 'inversePG':
+                return 'Inverse PG Search';
+            default:
+                return 'Search';
+        }
+    }
+
+    resetYieldClock() {
+        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        this.lastYieldTime = now;
+    }
+
+    yieldIfNeeded(force = false) {
+        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+        if (!force && (now - this.lastYieldTime) < this.yieldIntervalMs) {
+            return null;
+        }
+
+        this.lastYieldTime = now;
+
+        return new Promise((resolve) => {
+            const finalize = () => {
+                this.resetYieldClock();
+                resolve();
+            };
+
+            if (typeof window !== 'undefined' && window.requestAnimationFrame) {
+                window.requestAnimationFrame(() => finalize());
+            } else {
+                setTimeout(finalize, 0);
+            }
+        });
+    }
 
     clearAlgorithmResults(algorithmName) {
         this.algorithmResults[algorithmName].clear();
@@ -197,6 +374,16 @@ class LRCSearch {
         this.lastSearchParams[algorithmName] = null;
         
         console.log(`Cleared ${algorithmName} search results and reset search state`);
+
+        const containerId = this.getResultsContainerId(algorithmName);
+        const container = document.getElementById(containerId);
+        if (container) {
+            this.toggleSearchLoading(algorithmName, false);
+            const { body } = this.ensureSearchContainerStructure(container, algorithmName);
+            if (body) {
+                body.innerHTML = `<div class="no-results">No ${this.getSearchTitle(algorithmName)} results yet.</div>`;
+            }
+        }
     }
 
     checkAndClearIfParamsChanged(algorithmName, currentParams) {
@@ -272,6 +459,8 @@ class LRCSearch {
     // ====================================
 
     async performRhythmLayerSearch() {
+        if (!this.validateMaxSearchTime()) return;
+
         const layer = document.getElementById('search-layer').value;
         const value = parseInt(document.getElementById('search-layer-value').value);
         
@@ -290,20 +479,32 @@ class LRCSearch {
         this.checkAndClearIfParamsChanged('rhythm', currentParams);
 
         console.log(`🔍 Starting ${layer} = ${value} search (accumulating results)`);
-        
-        await this.algorithms.rhythm.search({
-            layer: layer,
-            value: value,
-            targetPitches: this.targetPitches,
-            maxSearchTime: this.maxSearchTime * 1000, // Convert to milliseconds
-            rangeLimit: this.rangeLimit,
-            algorithmName: 'rhythm'
-        });
+
+        this.toggleSearchLoading('rhythm', true);
+        this.resetYieldClock();
+        const rhythmInitialYield = this.yieldIfNeeded(true);
+        if (rhythmInitialYield) {
+            await rhythmInitialYield;
+        }
+        try {
+            await this.algorithms.rhythm.search({
+                layer: layer,
+                value: value,
+                targetPitches: this.targetPitches,
+                maxSearchTime: this.maxSearchTime * 1000, // Convert to milliseconds
+                rangeLimit: this.rangeLimit,
+                algorithmName: 'rhythm'
+            });
+        } finally {
+            this.toggleSearchLoading('rhythm', false);
+        }
 
         this.displayAccumulatedResults('rhythm-search-results', 'rhythm', 'Rhythm Layer Search');
     }
 
     async performGridSearch() {
+        if (!this.validateMaxSearchTime()) return;
+
         const gridValue = parseInt(document.getElementById('search-grid-value').value);
         
         if (!gridValue || gridValue < 1) {
@@ -320,19 +521,31 @@ class LRCSearch {
         this.checkAndClearIfParamsChanged('grid', currentParams);
 
         console.log(`🔍 Starting Grid ${gridValue} search (accumulating results)`);
-        
-        await this.algorithms.grid.search({
-            gridValue: gridValue,
-            targetPitches: this.targetPitches,
-            maxSearchTime: this.maxSearchTime * 1000, // Convert to milliseconds
-            rangeLimit: this.rangeLimit,
-            algorithmName: 'grid'
-        });
+
+        this.toggleSearchLoading('grid', true);
+        this.resetYieldClock();
+        const gridInitialYield = this.yieldIfNeeded(true);
+        if (gridInitialYield) {
+            await gridInitialYield;
+        }
+        try {
+            await this.algorithms.grid.search({
+                gridValue: gridValue,
+                targetPitches: this.targetPitches,
+                maxSearchTime: this.maxSearchTime * 1000, // Convert to milliseconds
+                rangeLimit: this.rangeLimit,
+                algorithmName: 'grid'
+            });
+        } finally {
+            this.toggleSearchLoading('grid', false);
+        }
 
         this.displayAccumulatedResults('grid-search-results', 'grid', 'Grid Search');
     }
 
     async performFundamentalSearch() {
+        if (!this.validateMaxSearchTime()) return;
+
         const fundamental = parseInt(document.getElementById('search-fundamental').value);
         const minLayerA = parseInt(document.getElementById('min-layer-a').value) || 1;
         
@@ -351,20 +564,32 @@ class LRCSearch {
         this.checkAndClearIfParamsChanged('fundamental', currentParams);
 
         console.log(`🔍 Starting Fundamental ${fundamental} search (accumulating results)`);
-        
-        await this.algorithms.fundamental.search({
-            fundamental: fundamental,
-            minLayerA: minLayerA,
-            targetPitches: this.targetPitches,
-            maxSearchTime: this.maxSearchTime * 1000, // Convert to milliseconds
-            rangeLimit: this.rangeLimit,
-            algorithmName: 'fundamental'
-        });
+
+        this.toggleSearchLoading('fundamental', true);
+        this.resetYieldClock();
+        const fundamentalInitialYield = this.yieldIfNeeded(true);
+        if (fundamentalInitialYield) {
+            await fundamentalInitialYield;
+        }
+        try {
+            await this.algorithms.fundamental.search({
+                fundamental: fundamental,
+                minLayerA: minLayerA,
+                targetPitches: this.targetPitches,
+                maxSearchTime: this.maxSearchTime * 1000, // Convert to milliseconds
+                rangeLimit: this.rangeLimit,
+                algorithmName: 'fundamental'
+            });
+        } finally {
+            this.toggleSearchLoading('fundamental', false);
+        }
 
         this.displayAccumulatedResults('fundamental-search-results', 'fundamental', 'Fundamental Search');
     }
 
     async performInversePGSearch() {
+        if (!this.validateMaxSearchTime()) return;
+
         const layerA = parseInt(document.getElementById('inverse-pg-a').value);
         
         if (!layerA || layerA < 1) {
@@ -381,13 +606,23 @@ class LRCSearch {
         this.checkAndClearIfParamsChanged('inversePG', currentParams);
 
         console.log(`🔍 Starting Inverse PG A=${layerA} search (accumulating results)`);
-        
-        await this.algorithms.inversePG.search({
-            layerA: layerA,
-            maxSearchTime: this.maxSearchTime * 1000, // Convert to milliseconds
-            rangeLimit: this.rangeLimit,
-            algorithmName: 'inversePG'
-        });
+
+        this.toggleSearchLoading('inversePG', true);
+        this.resetYieldClock();
+        const inverseInitialYield = this.yieldIfNeeded(true);
+        if (inverseInitialYield) {
+            await inverseInitialYield;
+        }
+        try {
+            await this.algorithms.inversePG.search({
+                layerA: layerA,
+                maxSearchTime: this.maxSearchTime * 1000, // Convert to milliseconds
+                rangeLimit: this.rangeLimit,
+                algorithmName: 'inversePG'
+            });
+        } finally {
+            this.toggleSearchLoading('inversePG', false);
+        }
 
         this.displayAccumulatedResults('inverse-pg-results', 'inversePG', 'Inverse PG Search');
     }
@@ -400,11 +635,14 @@ class LRCSearch {
         const container = document.getElementById(containerId);
         if (!container) return;
 
+        const { body } = this.ensureSearchContainerStructure(container, algorithmName);
+        if (!body) return;
+
         const resultsMap = this.algorithmResults[algorithmName];
         const resultsArray = Array.from(resultsMap.entries()).map(([, value]) => value);
 
         if (resultsArray.length === 0) {
-            container.innerHTML = `<div class="no-results">No ${searchType} results found yet.</div>`;
+            body.innerHTML = `<div class="no-results">No ${searchType} results found yet.</div>`;
             return;
         }
 
@@ -414,6 +652,7 @@ class LRCSearch {
 
         // Determine which columns to show
         const showPitchesColumn = (algorithmName === 'inversePG') || (this.targetPitches === null); // Show for Inverse PG or when target pitches is blank
+        const showPgColumn = algorithmName === 'inversePG';
         const showAvgDevColumn = this.targetPitches === 12; // Only show for 12-tone searches
 
         // Helper function to add sort indicators
@@ -432,19 +671,24 @@ class LRCSearch {
                 <table class="results-table">
                     <thead>
                         <tr>
-                            <th class="${getSortClass('layers')}" onclick="window.lrcSearch.sortResults('${containerId}', 'layers')">Layers</th>
-                            <th class="${getSortClass('grid')}" onclick="window.lrcSearch.sortResults('${containerId}', 'grid')">Grid</th>`;
-        
+                            <th class="${getSortClass('layers')}" onclick="window.lrcSearch.sortSearchResults('${containerId}', 'layers')">Layers</th>
+                            <th class="${getSortClass('grid')}" onclick="window.lrcSearch.sortSearchResults('${containerId}', 'grid')">Grid</th>`;
+
         if (showPitchesColumn) {
-            html += `<th class="${getSortClass('pitches')}" onclick="window.lrcSearch.sortResults('${containerId}', 'pitches')">Pitches</th>`;
+            html += `<th class="${getSortClass('pitches')}" onclick="window.lrcSearch.sortSearchResults('${containerId}', 'pitches')">Pitches</th>`;
         }
-        
+
         if (showAvgDevColumn) {
-            html += `<th class="${getSortClass('avgDeviation')}" onclick="window.lrcSearch.sortResults('${containerId}', 'avgDeviation')">Avg Dev</th>`;
+            html += `<th class="${getSortClass('avgDeviation')}" onclick="window.lrcSearch.sortSearchResults('${containerId}', 'avgDeviation')">Avg Dev</th>`;
         }
-        
-        html += `           <th class="${getSortClass('range')}" onclick="window.lrcSearch.sortResults('${containerId}', 'range')">Range</th>
-                            <th>Action</th>
+
+        html += `           <th class="${getSortClass('range')}" onclick="window.lrcSearch.sortSearchResults('${containerId}', 'range')">Range</th>`;
+
+        if (showPgColumn) {
+            html += `<th class="${getSortClass('pgRatio')}" onclick="window.lrcSearch.sortSearchResults('${containerId}', 'pgRatio')">P/G</th>`;
+        }
+
+        html += `           <th>Action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -453,35 +697,41 @@ class LRCSearch {
         resultsArray.forEach((result) => {
             const avgDev = result.avgDeviation ? result.avgDeviation.toFixed(3) : 'N/A';
             const range = result.range ? result.range.toFixed(2) : 'N/A';
-            
+            const pgRatioDisplay = result.pgRatio != null ? result.pgRatio.toFixed(3) : '—';
+
             html += `
                 <tr>
                     <td>${result.layers.join(':')}</td>
                     <td>${result.grid}</td>`;
-            
+
             if (showPitchesColumn) {
                 html += `<td>${result.pitches}</td>`;
             }
-            
+
             if (showAvgDevColumn) {
                 html += `<td>${avgDev}</td>`;
             }
-            
-            html += `   <td>${range}</td>
-                    <td><button onclick="window.lrcSearch.applyResult([${result.layers.join(',')}])" class="apply-btn">Apply</button></td>
+
+            html += `   <td>${range}</td>`;
+
+            if (showPgColumn) {
+                html += `<td>${pgRatioDisplay}</td>`;
+            }
+
+            html += `   <td><button onclick="window.lrcSearch.applyResult([${result.layers.join(',')}])" class="apply-btn">Apply</button></td>
                 </tr>
             `;
         });
 
         html += '</tbody></table></div>';
-        container.innerHTML = html;
+        body.innerHTML = html;
     }
 
     // ====================================
     // SORTING AND UTILITY FUNCTIONS
     // ====================================
 
-    sortResults(containerId, column) {
+    sortSearchResults(containerId, column) {
         // Determine algorithm name from container ID
         const algorithmName = containerId.replace('-search-results', '').replace('-results', '');
         const mappedAlgorithmName = algorithmName === 'inverse-pg' ? 'inversePG' : algorithmName;
@@ -612,6 +862,7 @@ class RhythmLayerSearch {
     async search({ layer, value, targetPitches, maxSearchTime, rangeLimit, algorithmName }) {
         const startTime = Date.now();
         let newResultsCount = 0;
+        const isFiniteSearch = Number.isFinite(rangeLimit) || layer === 'A';
         
         // Resume from saved state
         const state = this.lrcSearch.searchState.rhythm;
@@ -623,10 +874,13 @@ class RhythmLayerSearch {
                         if ((Date.now() - startTime) > maxSearchTime) {
                             // Save state for resume
                             this.lrcSearch.searchState.rhythm = { a, b, c, d };
-                            console.log(`⏰ Search time limit reached. Found ${newResultsCount} new results.`);
+                            console.log(`⏰ Time limit reached for Rhythm Layer Search. Found ${newResultsCount} new results.`);
                             return newResultsCount;
                         }
-                        
+
+                        const maybeYield = this.lrcSearch.yieldIfNeeded();
+                        if (maybeYield) await maybeYield;
+
                         const testLayers = [a, b, c, d];
                         let hasTargetLayer = false;
                         
@@ -693,7 +947,11 @@ class RhythmLayerSearch {
         
         // Search completed - reset state for next run
         this.lrcSearch.searchState.rhythm = { a: 1, b: 1, c: 1, d: 1 };
-        console.log(`✅ Rhythm Layer Search completed. Found ${newResultsCount} new results.`);
+        if (isFiniteSearch) {
+            console.log(`✅ Rhythm Layer Search completed. Found ${newResultsCount} new results.`);
+        } else {
+            console.log(`⏰ Rhythm Layer Search reached scan bounds (additional combinations remain with current settings). Found ${newResultsCount} new results.`);
+        }
         return newResultsCount;
     }
 }
@@ -716,27 +974,31 @@ class GridSearch {
                 factors.push(i);
             }
         }
-        console.log('Factors of grid value:', factors);
-        
+        const prioritizedFactors = this.prioritizeFactors(factors);
+        console.log('Factors of grid value (prioritized order):', prioritizedFactors);
+
         // Resume from saved state  
         const state = this.lrcSearch.searchState.grid.factorIndex;
-        
+
         // Iterate over combinations of factors for Special Scales by Grid
-        for (let i = state.i; i < factors.length; i++) {
-            for (let j = (i === state.i ? state.j : i); j < factors.length; j++) {
-                for (let k = (i === state.i && j === state.j ? state.k : j); k < factors.length; k++) {
-                    for (let l = (i === state.i && j === state.j && k === state.k ? state.l : k); l < factors.length; l++) {
+        for (let i = state.i; i < prioritizedFactors.length; i++) {
+            for (let j = (i === state.i ? state.j : i); j < prioritizedFactors.length; j++) {
+                for (let k = (i === state.i && j === state.j ? state.k : j); k < prioritizedFactors.length; k++) {
+                    for (let l = (i === state.i && j === state.j && k === state.k ? state.l : k); l < prioritizedFactors.length; l++) {
                         if ((Date.now() - startTime) > maxSearchTime) {
                             // Save state for resume
                             this.lrcSearch.searchState.grid.factorIndex = { i, j, k, l };
                             console.log(`⏰ Grid search time limit reached. Found ${newResultsCount} new results.`);
                             return newResultsCount;
                         }
-                        
+
+                        const maybeYield = this.lrcSearch.yieldIfNeeded();
+                        if (maybeYield) await maybeYield;
+
                         const layersList = [
-                            [factors[i], factors[j]],
-                            [factors[i], factors[j], factors[k]],
-                            [factors[i], factors[j], factors[k], factors[l]]
+                            [prioritizedFactors[i], prioritizedFactors[j]],
+                            [prioritizedFactors[i], prioritizedFactors[j], prioritizedFactors[k]],
+                            [prioritizedFactors[i], prioritizedFactors[j], prioritizedFactors[k], prioritizedFactors[l]]
                         ];
                         
                         for (const layers of layersList) {
@@ -814,6 +1076,38 @@ class GridSearch {
         console.log(`✅ Grid Search completed. Found ${newResultsCount} new results.`);
         return newResultsCount;
     }
+
+    prioritizeFactors(factors) {
+        if (!Array.isArray(factors) || factors.length <= 2) {
+            return [...factors];
+        }
+
+        const sorted = [...factors].sort((a, b) => a - b);
+        const result = [];
+
+        if (sorted.length % 2 === 1) {
+            let mid = Math.floor(sorted.length / 2);
+            result.push(sorted[mid]);
+            let left = mid - 1;
+            let right = mid + 1;
+            while (left >= 0 || right < sorted.length) {
+                if (right < sorted.length) result.push(sorted[right++]);
+                if (left >= 0) result.push(sorted[left--]);
+            }
+        } else {
+            let left = sorted.length / 2 - 1;
+            let right = left + 1;
+            result.push(sorted[left], sorted[right]);
+            left--;
+            right++;
+            while (left >= 0 || right < sorted.length) {
+                if (right < sorted.length) result.push(sorted[right++]);
+                if (left >= 0) result.push(sorted[left--]);
+            }
+        }
+
+        return result;
+    }
 }
 
 class FundamentalSearch {
@@ -851,7 +1145,10 @@ class FundamentalSearch {
                                 console.log(`⏰ Fundamental search time limit reached. Found ${newResultsCount} new results.`);
                                 return newResultsCount;
                             }
-                            
+
+                            const maybeYield = this.lrcSearch.yieldIfNeeded();
+                            if (maybeYield) await maybeYield;
+
                             const testLayers = [factors[i], factors[j], factors[k], factors[l]];
                             if (!this.lrcSearch.isValidLayerSet(testLayers)) continue;
                             
@@ -943,7 +1240,10 @@ class InversePGSearch {
                         console.log(`⏰ Inverse PG search time limit reached. Found ${newResultsCount} new results.`);
                         return newResultsCount;
                     }
-                    
+
+                    const maybeYield = this.lrcSearch.yieldIfNeeded();
+                    if (maybeYield) await maybeYield;
+
                     const layers = [layerA, b, c, d].filter(x => x !== 1).sort((a, b) => b - a);
                     if (layers.length !== 4) continue;
                     
@@ -963,10 +1263,33 @@ class InversePGSearch {
                     if (!window.lrcModule) continue;
 
                     // Pad layers to 4 elements for LRCModule compatibility
+                    const grid = this.lrcSearch.calculateTotalLCM(...layers);
+
+                    // Calculate Pulse/Grouping ratio and ensure it is exactly 1 for Inverse PG
+                    const pulseSum = layers.reduce((sum, layer) => sum + layer, 0);
+                    let groupingSum = 0;
+                    let groupingValid = true;
+                    for (const layer of layers) {
+                        const groupingValue = grid / layer;
+                        if (!Number.isFinite(groupingValue)) {
+                            groupingValid = false;
+                            break;
+                        }
+                        groupingSum += groupingValue;
+                    }
+
+                    if (!groupingValid || pulseSum !== groupingSum) {
+                        continue;
+                    }
+
+                    const pgRatio = pulseSum / groupingSum; // Should be exactly 1
+                    if (pgRatio !== 1) {
+                        continue;
+                    }
+
                     const paddedLayers = [...layers];
                     while (paddedLayers.length < 4) paddedLayers.push(1);
 
-                    const grid = window.lrcModule.calculateTotalLCM(...paddedLayers);
                     const { rhythm, layerMap } = window.lrcModule.generateCompositeRhythm(paddedLayers);
                     const { spacesPlot } = window.lrcModule.generateSpacesPlot(rhythm, grid, layerMap);
                     const { ratios } = window.lrcModule.generateRatiosWithFrequency(spacesPlot);
@@ -982,11 +1305,11 @@ class InversePGSearch {
                         const deviations = ratios.map(r => Math.abs(100 - (r.cents % 100)));
                         const avgDeviation = uniqueTones.size === 12 ? 
                             (deviations.reduce((sum, dev) => sum + dev, 0) / deviations.length) : null;
-                        
                         const result = {
                             grid,
                             pitches: uniqueTones.size,
                             avgDeviation: avgDeviation || 0,
+                            pgRatio,
                             ratios: Array.from(uniqueTones).sort((a, b) => {
                                 const [numA, denA] = a.split('/').map(Number);
                                 const [numB, denB] = b.split('/').map(Number);

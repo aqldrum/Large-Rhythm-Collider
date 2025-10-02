@@ -11,8 +11,7 @@ class LRCHinges {
         this.isAnimating = false;
         this.animationId = null;
         this.startTime = 0;
-        this.cycleDuration = 10000; // ms (can be overridden by local Hinges clock)
-        this.useLocalClock = false;   // when true, ignore external playback cycle updates
+        this.cycleDuration = 10000; // ms
         this.animationPhase = 'hanging'; // 'hanging', 'connecting', 'settling'
         this.phaseStartTime = 0;
         
@@ -44,6 +43,10 @@ class LRCHinges {
         this.highlightColor = '#ffff00';
         this.currentHighlight = -1;
         this.showForces = false;
+
+        // Tension/Expansion integration flags
+        this.tensionModeEnabled = false;
+        this.pendingTensionActivation = false;
         
         // Chain structure
         this.nodes = [];
@@ -69,8 +72,6 @@ class LRCHinges {
             targetScale: 1, // Target zoom level
             smoothing: 0.08 // Camera smoothing factor (0.01=very smooth, 0.2=snappy)
         };
-        
-        console.log('🔗 Hinges visualization initialized');
     }
 
     // ====================================
@@ -92,10 +93,6 @@ class LRCHinges {
             this.initializeChain();
             this.calculateLayerForces();
         }
-        
-        // Add debug logging
-        console.log('🔗 Hinges received - Grid:', this.grid, 'SpacesLayerMap:', this.spacesLayerMap?.length || 0, 'entries');
-        console.log('🔗 Hinges received - Grid:', this.grid, 'Expected line width:', this.calculateLineWidth());
     }
 
     setupEventListeners() {
@@ -113,7 +110,7 @@ class LRCHinges {
 
     handleMouseMove(event) {
         if (!this.isAnimating) return;
-        if (this.useOverlayAmplitude) return; // overlay slider in use
+        if (this.useOverlayAmplitude || this.tensionModeEnabled || this.animationPhase === 'expanding') return;
         
         const rect = this.parent.canvas.getBoundingClientRect();
         const mouseX = event.clientX - rect.left;
@@ -138,15 +135,13 @@ class LRCHinges {
                 
                 // Immediately apply new forces to currently active nodes
                 this.applyImmediateForceUpdate();
-                
-                console.log(`🔗 Force Amplitude updated: ${this.forceAmplitude.toFixed(2)} (applied immediately)`);
             }
         }
     }
 
     handleMouseDown(event) {
         if (!this.isAnimating) return;
-        if (this.useOverlayAmplitude) return; // overlay slider in use
+        if (this.useOverlayAmplitude || this.tensionModeEnabled || this.animationPhase === 'expanding') return;
         
         const rect = this.parent.canvas.getBoundingClientRect();
         const mouseX = event.clientX - rect.left;
@@ -171,8 +166,6 @@ class LRCHinges {
                 
                 // Immediately apply new forces to currently active nodes
                 this.applyImmediateForceUpdate();
-                
-                console.log(`🔗 Force Amplitude set: ${this.forceAmplitude.toFixed(2)} (applied immediately)`);
             }
         }
     }
@@ -217,9 +210,6 @@ class LRCHinges {
                     node.oldX = node.x - velocityX;
                     node.oldY = node.y - velocityY;
                     
-                    if (force.magnitude > 0.1) {
-                        console.log(`⚡ Immediate force applied to node ${i}: (${force.x.toFixed(2)}, ${force.y.toFixed(2)})`);
-                    }
                 }
             }
         }
@@ -231,19 +221,16 @@ class LRCHinges {
     }
 
     calculateLayerForces() {
-        // Ensure directional vectors exist once; allow dynamic overrides
-        if (!this.layerDirections) {
-            this.layerDirections = {
-                'A': 0,                 // Right (0°)
-                'B': Math.PI / 2,       // Up (90°)
-                'C': Math.PI,           // Left (180°)
-                'D': 3 * Math.PI / 2    // Down (270°)
-            };
-        }
+        // Define directional vectors for each layer (in radians)
+        this.layerDirections = {
+            'A': 0,           // Right (0°)
+            'B': Math.PI / 2, // Up (90°)  
+            'C': Math.PI,     // Left (180°)
+            'D': 3 * Math.PI / 2 // Down (270°)
+        };
         
         // Safety checks for initialization
         if (!this.spacesPlot || this.spacesPlot.length === 0) {
-            console.log('🔗 No spaces plot data available for force calculation');
             this.nodeForces = [];
             return;
         }
@@ -261,7 +248,6 @@ class LRCHinges {
         // Calculate force scaling factor (similar to segment scaling)
         const maxSpace = Math.max(...this.spacesPlot);
         if (maxSpace <= 0) {
-            console.log('🔗 Invalid max space value, using default force scaling');
             this.nodeForces = [];
             return;
         }
@@ -272,7 +258,6 @@ class LRCHinges {
         this.nodeForces = [];
         
         if (!this.spacesLayerMap || this.spacesLayerMap.length === 0) {
-            console.log('🔗 No layer map data available, using gravity-only physics');
             return;
         }
         
@@ -292,9 +277,8 @@ class LRCHinges {
                     // Apply amplitude multiplier from slider
                     const finalMagnitude = baseMagnitude * this.forceAmplitude;
                     
-                    // Canvas Y axis points downward; invert Y so angles match UI arrows
                     forceX += Math.cos(direction) * finalMagnitude;
-                    forceY += -Math.sin(direction) * finalMagnitude;
+                    forceY += Math.sin(direction) * finalMagnitude;
                 }
             });
             
@@ -312,7 +296,6 @@ class LRCHinges {
         const amplitudeStr = (typeof this.forceAmplitude === 'number') ? this.forceAmplitude.toFixed(2) : 'unknown';
         const scaleStr = (typeof baseScaleFactor === 'number') ? baseScaleFactor.toFixed(3) : 'unknown';
         
-        console.log(`🔗 Calculated ${totalForces} scaled forces (amplitude: ${amplitudeStr}, base scale: ${scaleStr})`);
     }
 
     activate() {
@@ -397,8 +380,6 @@ class LRCHinges {
         this.camera.targetX = 0;
         this.camera.targetY = 0;
         this.camera.targetScale = 1;
-        
-        console.log(`🔗 Chain initialized: ${this.nodes.length} nodes, ${this.segments.length} segments (camera-ready)`);
     }
 
     // ====================================
@@ -424,11 +405,6 @@ class LRCHinges {
         
         if (currentIndex < this.spacesPlot.length && currentIndex < this.nodeForces.length) {
             this.activeForceNodes.add(currentIndex);
-            
-            // Debug logging
-            if (Math.floor(elapsed / 100) % 10 === 0) {
-                console.log(`🎯 Force active on position ${currentIndex}`);
-            }
         }
     }
 
@@ -440,18 +416,11 @@ class LRCHinges {
             if (elapsed > forceData.duration) {
                 // Force has expired
                 this.activeForces.delete(forceIndex);
-                console.log(`💨 Force ${forceIndex} expired after ${elapsed}ms`);
             } else {
                 // Update force strength (fade out over time for smoother motion)
                 const progress = elapsed / forceData.duration;
                 forceData.strength = Math.cos(progress * Math.PI * 0.5); // Cosine fade-out
             }
-        }
-        
-        // Debug logging every 500ms
-        if (Math.floor(currentTime / 500) % 4 === 0 && this.activeForces.size > 0) {
-            const activeList = Array.from(this.activeForces.keys()).sort((a,b) => a-b);
-            console.log(`🎯 Active momentum forces: [${activeList.join(', ')}] (total: ${this.activeForces.size})`);
         }
     }
     
@@ -575,8 +544,6 @@ class LRCHinges {
             x: this.connectionStart.x - 100, // Pull left
             y: Math.min(this.connectionStart.y - 150, firstNode.y - 50) // Pull upward
         };
-        
-        console.log('🔗 Starting connection phase - folding upward and left');
     }
 
     animateConnection(progress) {
@@ -634,8 +601,13 @@ class LRCHinges {
         this.tensionStrength = 0.9;
         this.damping = 0.96;
         
-        console.log('🔗 Connection complete - ENTIRE structure now free-floating!');
-        console.log('🚀 Anchor and all nodes unpinned - ready for directional forces');
+
+        if ((this.tensionModeEnabled || this.pendingTensionActivation) && this.expansion) {
+            this.pendingTensionActivation = false;
+            if (this.animationPhase !== 'expanding') {
+                this.expansion.enterExpansionMode();
+            }
+        }
     }
    
     applyPhysics() {
@@ -666,11 +638,6 @@ class LRCHinges {
                         
                         velocityX += force.x * forceMultiplier;
                         velocityY += force.y * forceMultiplier;
-                        
-                        // Debug significant force applications
-                        if (force.magnitude > 0.1) {
-                            console.log(`🚀 Applying force to node ${i}: (${force.x.toFixed(2)}, ${force.y.toFixed(2)}) from layers: ${force.layers.join(',')}`);
-                        }
                     }
                 }
                 
@@ -765,7 +732,7 @@ class LRCHinges {
                     ctx.strokeStyle = this.chainColor;
                     ctx.lineWidth = baseLineWidth;
                 }
-            } else if (this.isAnimating && (i === this.currentHighlight || (this.currentHighlightPair && this.currentHighlightPair.includes(i)))) {
+            } else if (i === this.currentHighlight && this.isAnimating) {
                 ctx.strokeStyle = this.highlightColor;
                 ctx.lineWidth = baseLineWidth * 1.5; // 50% thicker for current highlight
             } else {
@@ -909,10 +876,14 @@ class LRCHinges {
 
     drawForceAmplitudeSlider(ctx, width, height) {
         if (this.useOverlayAmplitude) return; // draw handled by overlay UI
+        if (this.tensionModeEnabled || this.animationPhase === 'expanding') {
+            this.forceAmplitudeSlider.hovered = false;
+            this.forceAmplitudeSlider.dragging = false;
+            return;
+        }
         // Calculate responsive position - always 10px from top-left corner of visible area
         const sliderX = 12;
-        const topOffset = this.overlayTopOffset || 0;
-        const sliderY = 24 + topOffset;
+        const sliderY = 24;
         const sliderWidth = Math.min(150, width - 20); // Responsive width, never exceed canvas
         const sliderHeight = 20
         
@@ -979,17 +950,7 @@ class LRCHinges {
         
         // Apply bounds: minimum 1px, maximum 8px
         const lineWidth = Math.max(1, Math.min(10000, baseThickness));
-        
-        console.log(`🔗 Grid ${this.grid} → Line width: ${lineWidth.toFixed(1)}px`);
         return lineWidth;
-    }
-
-    testLineWidths() {
-        console.log('Line width tests:');
-        [30, 100, 500, 1000, 5000, 20000].forEach(grid => {
-            this.grid = grid;
-            console.log(`Grid ${grid}: ${this.calculateLineWidth().toFixed(1)}px`);
-        });
     }
 
     drawPhaseIndicator(ctx, width, height) {
@@ -1024,9 +985,12 @@ class LRCHinges {
         
         // Reset chain to initial hanging position
         this.initializeChain();
-        
+
+        if (this.tensionModeEnabled) {
+            this.pendingTensionActivation = true;
+        }
+
         this.animate();
-        console.log('🔗 Hinges animation started with force amplitude control');
     }
 
     stopAnimation() {
@@ -1044,8 +1008,7 @@ class LRCHinges {
         }
         
         this.currentHighlight = -1;
-        this.currentHighlightPair = null;
-        console.log('🔗 Hinges animation stopped');
+        this.animationPhase = 'hanging';
     }
 
     animate() {
@@ -1072,17 +1035,9 @@ class LRCHinges {
         // Highlight segments sequentially in sync with rhythm progression
         const exactPosition = progress * this.segments.length;
         this.currentHighlight = Math.floor(exactPosition);
-        
-        // Debug sync occasionally
-        if (Math.floor(cycleTime / 200) % 25 === 0) {
-            const rhythmPos = Math.floor(this.currentRhythmPosition);
-            console.log(`🟡 Highlight sync: rhythm=${rhythmPos}, highlight=${this.currentHighlight}`);
-        }
     }
 
     setCycleDuration(duration) {
-        // Respect local Hinges clock when enabled
-        if (this.useLocalClock) return;
         this.cycleDuration = duration * 1000; // Convert to ms
     }
 
@@ -1222,8 +1177,6 @@ function addHingesControls() {
                 }
             });
         }
-        
-        console.log('🔗 Hinges controls added to interface');
     } else {
         console.warn('🔗 Visualization controls container not found');
     }
@@ -1307,16 +1260,12 @@ function integrateHingesVisualization() {
     window.lrcVisuals.plotTypes['hinges'] = hinges;
     
     // Add to dropdown if it exists
-    const plotSelect = document.getElementById('viz-type-selector');
+    const plotSelect = document.getElementById('plot-type');
     if (plotSelect) {
-        // Avoid duplicate option if already present in HTML
-        if (!plotSelect.querySelector('option[value="hinges"]')) {
-            const option = document.createElement('option');
-            option.value = 'hinges';
-            option.textContent = 'Hinges';
-            plotSelect.appendChild(option);
-            console.log('🔗 Hinges option added to plot selector');
-        }
+        const option = document.createElement('option');
+        option.value = 'hinges';
+        option.textContent = 'Hinges';
+        plotSelect.appendChild(option);
     }
     
     // Add Hinges-specific controls (disabled - now using section-based controls)
@@ -1329,16 +1278,11 @@ function integrateHingesVisualization() {
         if (this.currentPlotType === 'hinges') {
             const hingesViz = this.plotTypes['hinges'];
             if (hingesViz) {
-                // Get the current data from LRCModule with debug logging
+                // Get the current data from LRCModule
                 const currentData = window.lrcModule?.getCurrentData();
-                console.log('🔍 Debug currentData:', currentData);
-                console.log('🔍 Debug window.lrcModule.currentGrid:', window.lrcModule?.currentGrid);
                 
                 const spacesLayerMap = currentData?.spacesLayerMap || [];
                 const grid = currentData?.grid || window.lrcModule?.currentGrid || 1;
-                
-                console.log('🔍 Final grid value being passed:', grid);
-                
                 hingesViz.updateData(
                     this.spacesPlot, 
                     this.rhythms, 
@@ -1396,7 +1340,6 @@ function integrateHingesVisualization() {
         }
     };
     
-    console.log('🔗 Hinges visualization integrated with LRC interface');
 }
 
 // Auto-integration when DOM and LRCVisuals are ready
@@ -1408,7 +1351,6 @@ if (typeof window !== 'undefined') {
             if (window.lrcVisuals) {
                 integrateHingesVisualization();
             } else {
-                console.log('🔗 LRCVisuals not ready, waiting...');
                 const checkInterval = setInterval(() => {
                     if (window.lrcVisuals) {
                         clearInterval(checkInterval);
