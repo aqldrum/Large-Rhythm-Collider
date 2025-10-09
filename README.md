@@ -185,46 +185,60 @@ Expanded Info View shows the same metrics as Rhythm Info, but it also includes t
 Valid polyrhythms must be coprime as a set, and have no layers which are direct factors of another layer. When only 2 layers are present, they may not share any factors. However, for 3 and 4 layer rhythms, common factors amongst layer tuples are allowed and provide abundance of specific classes of results by constraining scale size growth despite grid growth thanks to nested resolution patterns within the larger cycle - nested ratios. Even a simple rhythm, like the page default 8:7:6:5, has a nested ratio of 4:3 occurring twice between layers 8:6 (A and C). That's why the Nested Ratios section for this rhythm shows 2x A:C 8:6 = 4:3. 
 
 #### Interconsonance
-<div style="display:flex; gap:12px; justify-content:center; align-items:center;">
-  <img src="assets/interconsonance.png" alt="Rhythm Info" style="max-width:24%; height:auto;">
-  <img src="assets/intervalmatrix.png" alt="Expanded Info View" style="max-width:24%; height:auto;">
-</div>
+<p align="center">
+  <img src="assets/interconsonance.png" alt="Interconsonance" width="45%">
+  <img src="assets/intervalmatrix.png" alt="Interval Matrix" width="45%">
+</p>
 
 The final analytical component of the Info Divs is the Interconsonance Analyzer. Just like the Average Deviation concept, the ICA is a bridge to the "familiar" sounds of 12TET. 
 
 While the average deviation metric calculates the intervallic distance for all sequential steps, the ICA calculates the full interval matrix of all available interval pairs in the set. The number of available unique pairs can grow very large, so this feature may break down for very large scales, but it can still comfortably handle scales with 100 pitches per octave. These intervals are then assessed for "consonance", which in our system will refer to intervals which are within a +-15 cent window of a multiple of 100 cents. These intervals are relatively close to the familiar 12TET intervals most of us are used to. The analyzer then finds subsets of ratios within the rhythm which all share consonance and organizes them into Consonance Families. 
 
 #### Export
+<p align="center">
+  <img src="assets/export.png">
+</p>
+
 The export section allows the user to export a PDF with the Expanded Info View details for the generated rhythm. The user can also export MIDI and tuning file information, described in the Audio section. 
 
 ### Audio & Export
 The LRC has a detailed playback system for its tone rows, as well as all necessary export functionality to generate the tuning systems and individual layer MIDI for use in a DAW.
 
-#### Master Tempo / Fundamental Controls
+#### Main Controls
+<p align="center">
+  <img src="assets/maincontrols.png">
+</p>
+
 - Set the interval in seconds for one full cycle
 - Set the tuning of the fundamental frequency (defaults to A 110hz)
 - Master Volume with limiter
 
-The seconds value defines the length of the entire cycle- play ultra fast rhythms or stretch them out to long legato scales. Cycle Time will accept values between 0.1 and 6000 seconds.
+The seconds value defines the length of the entire cycle - play ultrafast rhythms or stretch them out to long legato scales. Cycle Time will accept values between 0.1 and 6000 seconds.
 
 The Fundamental input accepts Hz values between 55 and 880hz. Harsh high frequencies are automatically culled from playback, which is why you may hear occasional gaps correspondent to very small spaces plot values.
 
 The Master Volume slider defaults to a safe -24dB and has a final limiter, but still be cautious when playing raw sine waves at high volumes.
 
 #### Layer Controls
+<p align="center">
+  <img src="assets/layercontrols.png">
+</p>
 - Select from sine, triangle, sawtooth or square wave for each layer
 - All layers have individual volume control, soloing / muting
 - All layers have individual lo / hi pass filter
 - All layers have individual ADSR envelope
 - Legato mode ensures notes are held out for their full value
 
-The LRC offers extensive DAW-like control over individual layer audio. Layers can be soloed, muted or have their volumes set individually. Basic waveform synthesis offers sine, triangle, square and sawtooth waves, along with an individual ADSR envelope and simple filter for each layer.
+The LRC offers extensive DAW-like control over individual layer audio. Layers can be soloed, muted or have their volumes set individually. Basic waveform synthesis offers sine, triangle, square and sawtooth waves, along with an individual ADSR envelope and simple hi/lo-pass filter for each layer.
 
 The ADSR knobs can be double-clicked to manually edit their values.
 
 Legato mode is a global control which toggles retrigger behavior: when legato mode is off, each new note in the spaces plot silences the previous note. In Legato mode, notes on each layer are held out until that layer sounds again. This allows one to hear the harmonic tuning relationships within each system sustained at slower tempos.
 
 #### Scale Selection
+<p align="center">
+  <img src="assets/scaleselection.png">
+</p>
 - Turn individual pitches on and off using the scale chart in the Playback div
 - Corresponding lights will toggle on/off in the Linear Plot
 - Select Interconsonance Families directly from the Playback div
@@ -247,7 +261,6 @@ Because of the intense level of subdivision inherent in the growth of Grid value
 Playback of microtonal tuning systems in-the-box requires a software synth that can read tuning files. The LRC has export options for two common tuning file formats, .tun and .scl. Scales exported with .tun will have their root note at midi note 9, A-1, while scales exported with .scl are rooted around C.
 
 If you need other formats, I highly recommend [Sevish's scale workshop](https://sevish.com/scaleworkshop).
-
 
 ### Visualizations
 The LRC offers 5 visualization types.
