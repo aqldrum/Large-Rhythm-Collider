@@ -748,7 +748,7 @@ class ExpandedInfoView {
                         <div class="rhythm-density" style="color: #ffffff;">Density: <span>${rhythmInfo.density.toFixed(1)}%</span></div>
                     </div>
                     <div class="metric-row" style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
-                        <div class="pg-ratio" style="color: #ffffff;">P/G Ratio: <span>${rhythmInfo.pulseToGrouping.toFixed(6)}</span></div>
+                        <div class="pg-ratio" style="color: #ffffff;">P/G Ratio: <span>${rhythmInfo.pulseToGrouping.toFixed(2)}</span></div>
                         <div class="composite-length" style="color: #ffffff;">Composite Length: <span>${rhythmInfo.compositeLength}</span></div>
                         <div class="layer-sum" style="color: #ffffff;">Layer Sum: <span>${rhythmInfo.layerSum}</span></div>
                     </div>
@@ -1622,6 +1622,18 @@ class ExpandedInfoView {
                 content.id = 'expanded-spaces-plot-content';
             }
             
+            // Update the display element with fresh data
+            const displayEl = cloned.querySelector('#spaces-plot-display');
+            if (displayEl) {
+                displayEl.id = 'expanded-spaces-plot-display';
+                const spacesPlot = window.lrcModule?.currentSpacesPlot || [];
+                if (spacesPlot.length > 0) {
+                    displayEl.textContent = spacesPlot.join(', ');
+                } else {
+                    displayEl.textContent = 'Generate a rhythm to view spaces plot data';
+                }
+            }
+            
             return cloned.outerHTML;
         }
         
@@ -1650,6 +1662,18 @@ class ExpandedInfoView {
             if (header && content) {
                 header.setAttribute('data-target', 'expanded-composite-rhythm-content');
                 content.id = 'expanded-composite-rhythm-content';
+            }
+            
+            // Update the display element with fresh data
+            const displayEl = cloned.querySelector('#composite-rhythm-display');
+            if (displayEl) {
+                displayEl.id = 'expanded-composite-rhythm-display';
+                const compositeRhythm = window.lrcModule?.currentCompositeRhythm || [];
+                if (compositeRhythm.length > 0) {
+                    displayEl.textContent = compositeRhythm.join(', ');
+                } else {
+                    displayEl.textContent = 'Generate a rhythm to view composite rhythm data';
+                }
             }
             
             return cloned.outerHTML;

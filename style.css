@@ -961,15 +961,24 @@ body {
     font-size: 11px;
 }
 
-.lightswitch-btn {
+.lightswitch-btn,
+.layer-connectors-btn {
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid var(--hud-border);
     color: var(--hud-text);
-    padding: 6px;
+    padding: 3px 6px;
     cursor: pointer;
+    font-size: 11px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    min-height: 24px;
 }
 
-.lightswitch-btn:hover {
+.lightswitch-btn:hover,
+.layer-connectors-btn:hover {
     background: var(--hud-accent);
     color: #000;
 }
@@ -983,19 +992,6 @@ body {
     filter: grayscale(100%);
 }
 
-.layer-connectors-btn {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid var(--hud-border);
-    color: var(--hud-text);
-    padding: 6px;
-    cursor: pointer;
-}
-
-.layer-connectors-btn:hover {
-    background: var(--hud-accent);
-    color: #000;
-}
-
 .layer-connectors-btn.active {
     background: #4CAF50;
     border-color: #4CAF50;
@@ -1003,17 +999,20 @@ body {
 }
 
 .layer-toggles {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
     gap: 6px;
+    width: 100%;
 }
 
 .layer-toggle {
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid var(--hud-border);
     color: var(--hud-text);
-    padding: 4px 8px;
+    padding: 6px 8px;
     cursor: pointer;
     font-size: 11px;
+    width: 100%;
 }
 
 .layer-toggle:hover {
@@ -1042,6 +1041,26 @@ body {
     background: var(--layer-d);
 }
 
+.slice-toggle[data-slice="A"].active {
+    background: var(--layer-a);
+    color: #000;
+}
+
+.slice-toggle[data-slice="B"].active {
+    background: var(--layer-b);
+    color: #000;
+}
+
+.slice-toggle[data-slice="C"].active {
+    background: var(--layer-c);
+    color: #000;
+}
+
+.slice-toggle[data-slice="D"].active {
+    background: var(--layer-d);
+    color: #000;
+}
+
 /* Visualization Section Controls */
 .viz-section {
     margin-top: 12px;
@@ -1068,11 +1087,26 @@ body {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    align-items: flex-start;
+}
+
+.linear-utility-buttons {
+    display: flex;
+    gap: 6px;
+    width: 100%;
+}
+
+.linear-utility-buttons .lightswitch-btn,
+.linear-utility-buttons .layer-connectors-btn {
+    flex: 1;
+    justify-content: center;
 }
 
 .linear-controls .layer-toggles {
-    display: flex;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    width: 100%;
 }
 
 /* Centrifuge Controls */
@@ -1094,19 +1128,21 @@ body {
 }
 
 .slice-toggles .slice-buttons {
-    display: flex;
-    gap: 4px;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    width: 100%;
 }
 
 .slice-toggle {
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid var(--hud-border);
     color: var(--hud-text);
-    padding: 4px 8px;
+    padding: 6px 8px;
     cursor: pointer;
     font-size: 11px;
     border-radius: 3px;
+    width: 100%;
 }
 
 .slice-toggle:hover {
@@ -1201,6 +1237,27 @@ body {
 .hinges-tension-btn.active {
     background: var(--hud-accent);
     color: #000;
+}
+
+.hinges-constant-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--hud-border);
+    color: var(--hud-text);
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 11px;
+    border-radius: 3px;
+    margin-left: 6px;
+}
+
+.hinges-constant-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.hinges-constant-btn.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    border-color: #764ba2;
 }
 
 /* Playback Controls */

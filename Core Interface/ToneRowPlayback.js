@@ -1010,6 +1010,7 @@ class ToneRowPlayback {
         this.updateLinearPlotVisibility();
         this.updateSelectedNotesCount();
         this.generateToneRowData(); // Regenerate audio data with new selection
+        this.dispatchSelectedNotesEvent();
         
         console.log(`✅ Selected all ${this.selectedNotes.size} notes`);
     }
@@ -1021,6 +1022,7 @@ class ToneRowPlayback {
         this.updateLinearPlotVisibility();
         this.updateSelectedNotesCount();
         this.generateToneRowData(); // Regenerate audio data with new selection
+        this.dispatchSelectedNotesEvent();
         
         console.log('✅ Deselected all notes');
     }
@@ -1041,6 +1043,8 @@ class ToneRowPlayback {
         if (this.isPlaying) {
             this.applyRealtimeNoteChanges();
         }
+
+        this.dispatchSelectedNotesEvent();
         
         console.log(`🎵 Toggled note ${ratioFraction} (${this.selectedNotes.has(ratioFraction) ? 'selected' : 'deselected'})`);
     }
@@ -1064,6 +1068,15 @@ class ToneRowPlayback {
         }
 
         console.log('🔄 Real-time note selection changes are active - scheduled notes will check current state');
+    }
+
+    dispatchSelectedNotesEvent() {
+        const selectedArray = Array.from(this.selectedNotes);
+        window.dispatchEvent(new CustomEvent('scaleSelectionChanged', {
+            detail: {
+                selectedNotes: selectedArray
+            }
+        }));
     }
 
     getRatioFractionFromFrequency(frequency) {
@@ -1292,6 +1305,7 @@ class ToneRowPlayback {
         this.updateLinearPlotVisibility();
         this.updateSelectedNotesCount();
         this.generateToneRowData(); // Regenerate audio data with new selection
+        this.dispatchSelectedNotesEvent();
         
         console.log(`🎭 Selected consonance family ${familyIndex + 1} with ${family.ratios.length} ratios:`, family.ratios);
     }
@@ -1495,6 +1509,13 @@ class ToneRowPlayback {
             return;
         }
 
+        const noteEventDetail = this.createNoteEventDetail(noteData, duration, layerIndex);
+        if (noteEventDetail) {
+            window.dispatchEvent(new CustomEvent('layerNoteTriggered', {
+                detail: noteEventDetail
+            }));
+        }
+
         if (this.legatoEnabled) {
             this.startLegatoNote(noteData, layerIndex, layerState);
         } else {
@@ -1630,6 +1651,10 @@ class ToneRowPlayback {
         }
 
         console.log(`🎼 Legato mode ${this.legatoEnabled ? 'enabled' : 'disabled'}`);
+
+        window.dispatchEvent(new CustomEvent('legatoModeChanged', {
+            detail: { enabled: this.legatoEnabled }
+        }));
     }
 
     updateLegatoButton() {
@@ -1658,6 +1683,67 @@ class ToneRowPlayback {
 
     dbToLinear(db) {
         return Math.pow(10, db / 20);
+    }
+
+    normalizeRatioValue(ratioValue) {
+        if (!Number.isFinite(ratioValue) || ratioValue <= 0) return null;
+        let normalized = ratioValue;
+        while (normalized >= 2) normalized /= 2;
+        while (normalized < 1) normalized *= 2;
+        return normalized;
+    }
+
+    findFractionForRatio(ratioValue) {
+        if (!Number.isFinite(ratioValue)) return null;
+
+        if (this.availableRatios && this.availableRatios.length > 0) {
+            let bestMatch = null;
+            let smallestDiff = Infinity;
+
+            for (const ratioObj of this.availableRatios) {
+                const diff = Math.abs(ratioObj.ratio - ratioValue);
+                if (diff < smallestDiff) {
+                    smallestDiff = diff;
+                    bestMatch = ratioObj;
+                }
+            }
+
+            if (bestMatch && smallestDiff < 1e-4) {
+                return bestMatch.fraction;
+            }
+        }
+
+        if (window.lrcModule && typeof window.lrcModule.decimalToFraction === 'function') {
+            return window.lrcModule.decimalToFraction(ratioValue);
+        }
+
+        return null;
+    }
+
+    createNoteEventDetail(noteData, duration, layerIndex) {
+        if (!noteData || typeof layerIndex !== 'number') return null;
+
+        const layerNames = ['A', 'B', 'C', 'D'];
+        const layerName = layerNames[layerIndex] || `Layer${layerIndex + 1}`;
+        const normalizedRatio = this.normalizeRatioValue(noteData.ratio);
+        const ratioFraction = normalizedRatio ? this.findFractionForRatio(normalizedRatio) : null;
+
+        if (!ratioFraction) {
+            return null;
+        }
+
+        return {
+            layerIndex,
+            layerName,
+            ratioFraction,
+            ratioNormalized: normalizedRatio,
+            ratioRaw: noteData.ratio,
+            frequency: noteData.frequency,
+            globalSpacesIndex: typeof noteData.globalSpacesIndex === 'number' ? noteData.globalSpacesIndex : null,
+            durationSeconds: Number.isFinite(duration) ? duration : null,
+            legato: this.legatoEnabled,
+            timestamp: performance.now()
+        };
     }
 
     getSortedPlaybackFamilies(families) {

@@ -37,6 +37,32 @@ class LRCCentrifuge {
             'C': '#00a638ff',
             'D': '#f9ca24'
         };
+
+        // Ratio highlight tracking
+        this.layerNames = ['A', 'B', 'C', 'D'];
+        this.activeLayerRatios = [null, null, null, null];
+        this.ratioHighlightCounts = new Map();
+        this.ratioIndexLookup = new Map();
+        this.legatoModeActive = !!(window.toneRowPlayback && window.toneRowPlayback.legatoEnabled);
+        this.hasReceivedNoteEvent = false;
+        this.visibleLayerSlices = new Set(this.layerNames);
+        this.visibleRatios = null;
+        this.layerHighlightStates = this.layerNames.map(() => ({
+            ratio: null,
+            ratioIndex: null,
+            expiresAt: 0
+        }));
+
+        // Event listener bindings
+        this.listenersAttached = false;
+        this.handleLayerNoteTriggered = this.handleLayerNoteTriggered.bind(this);
+        this.handlePlaybackStopped = this.handlePlaybackStopped.bind(this);
+        this.handlePlaybackStarted = this.handlePlaybackStarted.bind(this);
+        this.handleLegatoModeChanged = this.handleLegatoModeChanged.bind(this);
+        this.handleScaleSelectionChanged = this.handleScaleSelectionChanged.bind(this);
+
+        this.attachEventListeners();
+        this.syncInitialSelectionState();
         
         console.log('🌀 Centrifuge visualization initialized');
     }
@@ -83,11 +109,550 @@ class LRCCentrifuge {
         return a;
     }
 
+    // ====================================
+    // EVENT INTEGRATION
+    // ====================================
+
+    attachEventListeners() {
+        if (this.listenersAttached || typeof window === 'undefined') return;
+
+        window.addEventListener('layerNoteTriggered', this.handleLayerNoteTriggered);
+        window.addEventListener('playbackStopped', this.handlePlaybackStopped);
+        window.addEventListener('playbackStarted', this.handlePlaybackStarted);
+        window.addEventListener('legatoModeChanged', this.handleLegatoModeChanged);
+        window.addEventListener('scaleSelectionChanged', this.handleScaleSelectionChanged);
+
+        this.listenersAttached = true;
+    }
+
+    handlePlaybackStarted() {
+        this.legatoModeActive = this.isLegatoEnabled();
+        this.clearAllRatioHighlights();
+    }
+
+    handlePlaybackStopped() {
+        this.clearAllRatioHighlights();
+    }
+
+    handleLegatoModeChanged(event) {
+        if (event && typeof event.detail?.enabled === 'boolean') {
+            this.legatoModeActive = !!event.detail.enabled;
+        } else {
+            this.legatoModeActive = this.isLegatoEnabled();
+        }
+    }
+
+    handleLayerNoteTriggered(event) {
+        const detail = event?.detail;
+        if (!detail) return;
+
+        const layerIndex = typeof detail.layerIndex === 'number' ? detail.layerIndex : null;
+        const ratioFractionRaw = detail.ratioFraction;
+        const ratioFraction = typeof ratioFractionRaw === 'string' ? ratioFractionRaw.trim() : ratioFractionRaw;
+
+        if (layerIndex === null || layerIndex < 0 || layerIndex >= this.activeLayerRatios.length) return;
+        if (!ratioFraction) return;
+
+        if (typeof detail.legato === 'boolean') {
+            this.legatoModeActive = detail.legato;
+        }
+
+        const eventTimestamp = Number.isFinite(detail.timestamp) ? detail.timestamp : performance.now();
+        const highlightDurationMs = this.calculateHighlightDurationMs(layerIndex, detail.durationSeconds);
+        const expiresAt = eventTimestamp + highlightDurationMs;
+
+        let layerState = this.layerHighlightStates[layerIndex];
+
+        if (layerState.ratio && layerState.ratio !== ratioFraction) {
+            this.removeLayerHighlight(layerState.ratio, layerIndex);
+            layerState = this.layerHighlightStates[layerIndex];
+        }
+
+        if (layerState.ratio === ratioFraction) {
+            this.extendLayerHighlight(layerIndex, expiresAt);
+        } else {
+            this.applyRatioHighlight(ratioFraction, layerIndex, expiresAt);
+        }
+    }
+
+    isLayerVisible(layerName) {
+        return this.visibleLayerSlices.has(layerName);
+    }
+
+    setVisibleLayers(layers) {
+        const newLayers = layers instanceof Set ? new Set(layers) :
+            Array.isArray(layers) ? new Set(layers) :
+            new Set(this.layerNames);
+        this.visibleLayerSlices = newLayers;
+
+        // Remove arc highlights for hidden layers
+        this.layerDiscs.forEach((disc, index) => {
+            if (!this.isLayerVisible(disc.layerName)) {
+                this.currentLitArcs.delete(index);
+            } else if (this.isAnimating) {
+                this.currentLitArcs.add(index);
+            }
+        });
+
+        // Clear ratio highlights for hidden layers
+        this.layerHighlightStates.forEach((state, layerIndex) => {
+            const layerName = this.layerNames[layerIndex];
+            if (!this.isLayerVisible(layerName) && state.ratio) {
+                this.removeLayerHighlight(state.ratio, layerIndex);
+            }
+        });
+    }
+
+    syncInitialSelectionState() {
+        if (window.toneRowPlayback && window.toneRowPlayback.selectedNotes) {
+            this.setVisibleRatios(Array.from(window.toneRowPlayback.selectedNotes));
+        } else {
+            this.setVisibleRatios(null);
+        }
+    }
+
+    handleScaleSelectionChanged(event) {
+        const selected = event?.detail?.selectedNotes;
+        if (Array.isArray(selected)) {
+            this.setVisibleRatios(selected);
+            if (!this.isAnimating) {
+                this.draw();
+            }
+        }
+    }
+
+    setVisibleRatios(ratios) {
+        if (ratios === null || ratios === undefined) {
+            this.visibleRatios = null;
+        } else if (ratios instanceof Set) {
+            this.visibleRatios = ratios.size > 0 ? new Set(ratios) : new Set();
+        } else if (Array.isArray(ratios)) {
+            this.visibleRatios = ratios.length > 0 ? new Set(ratios.map(r => typeof r === 'string' ? r.trim() : r)) : new Set();
+        } else {
+            this.visibleRatios = null;
+        }
+
+        this.updateRatioVisibility();
+    }
+
+    isRatioVisible(ratioFraction) {
+        if (!ratioFraction) return false;
+        if (!this.visibleRatios || this.visibleRatios.size === 0) {
+            // When null -> all visible, when empty set -> none visible
+            return this.visibleRatios === null;
+        }
+        return this.visibleRatios.has(ratioFraction);
+    }
+
+    updateRatioVisibility() {
+        if (!this.ratioRing) return;
+
+        this.ratioHighlightCounts.forEach((_, fraction) => {
+            if (!this.isRatioVisible(fraction)) {
+                this.ratioHighlightCounts.delete(fraction);
+            }
+        });
+
+        this.ratioRing.forEach(point => {
+            const isVisible = this.isRatioVisible(point.ratio);
+            point.hidden = !isVisible;
+            if (!isVisible) {
+                point.isLit = false;
+                point.litIntensity = 0;
+                if (point.activeLayers) {
+                    point.activeLayers.clear();
+                }
+            }
+        });
+
+        this.layerHighlightStates.forEach((state, layerIndex) => {
+            if (state.ratio && !this.isRatioVisible(state.ratio)) {
+                this.removeLayerHighlight(state.ratio, layerIndex);
+            }
+        });
+    }
+
+    isLegatoEnabled() {
+        if (typeof this.legatoModeActive === 'boolean') {
+            return this.legatoModeActive;
+        }
+        return !!(window.toneRowPlayback && window.toneRowPlayback.legatoEnabled);
+    }
+
+    calculateHighlightDurationMs(layerIndex, durationSeconds) {
+        let durationMs = Number.isFinite(durationSeconds) ? durationSeconds * 1000 : NaN;
+        if (!Number.isFinite(durationMs) || durationMs <= 0) {
+            const rhythmValue = this.rhythms && this.rhythms[layerIndex] ? this.rhythms[layerIndex] : 0;
+            if (rhythmValue > 0) {
+                durationMs = this.cycleDuration / rhythmValue;
+            } else {
+                durationMs = this.cycleDuration;
+            }
+        }
+        return Math.max(durationMs, 1);
+    }
+
+    parseFractionToDecimal(fraction) {
+        if (!fraction) return null;
+        const trimmed = fraction.trim();
+        if (trimmed.length === 0) return null;
+
+        if (trimmed.includes('/')) {
+            const [numeratorStr, denominatorStr] = trimmed.split('/');
+            const numerator = Number(numeratorStr);
+            const denominator = Number(denominatorStr);
+            if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) {
+                return null;
+            }
+            return numerator / denominator;
+        }
+
+        const numeric = Number(trimmed);
+        return Number.isFinite(numeric) ? numeric : null;
+    }
+
+    findClosestRatioIndex(decimalValue) {
+        if (!Number.isFinite(decimalValue) || this.ratioRing.length === 0) return null;
+
+        let bestIndex = null;
+        let smallestDiff = Infinity;
+
+        this.ratioRing.forEach((point, index) => {
+            const pointDecimal = this.ratioToDecimal(point.ratio);
+            if (!Number.isFinite(pointDecimal)) return;
+            const diff = Math.abs(pointDecimal - decimalValue);
+            if (diff < smallestDiff) {
+                smallestDiff = diff;
+                bestIndex = index;
+            }
+        });
+
+        if (bestIndex !== null && smallestDiff < 1e-3) {
+            return bestIndex;
+        }
+
+        return null;
+    }
+
+    getRatioIndexForFraction(ratioFraction) {
+        if (!ratioFraction) return null;
+        const trimmed = ratioFraction.trim();
+        if (trimmed.length === 0) return null;
+
+        if (this.ratioIndexLookup.has(trimmed)) {
+            return this.ratioIndexLookup.get(trimmed);
+        }
+
+        if (this.ratioIndexLookup.has(ratioFraction)) {
+            return this.ratioIndexLookup.get(ratioFraction);
+        }
+
+        const decimal = this.parseFractionToDecimal(trimmed);
+        if (decimal !== null) {
+            const fallbackIndex = this.findClosestRatioIndex(decimal);
+            if (fallbackIndex !== null) {
+                this.ratioIndexLookup.set(trimmed, fallbackIndex);
+                return fallbackIndex;
+            }
+        }
+
+        console.log(`🌀 Centrifuge could not match ratio ${ratioFraction} to ring`);
+        return null;
+    }
+
+    ensureRatioLit(ratioIndex) {
+        if (ratioIndex === null || ratioIndex === undefined) return;
+        const ratioPoint = this.ratioRing[ratioIndex];
+        if (!ratioPoint) return;
+        if (!ratioPoint.displayColor || ratioPoint.displayColor === '#fff') {
+            this.updateRatioDisplayColor(ratioIndex);
+        }
+        ratioPoint.isLit = true;
+        ratioPoint.litIntensity = 1;
+    }
+
+    ensureRatioCleared(ratioIndex) {
+        if (ratioIndex === null || ratioIndex === undefined) return;
+        const ratioPoint = this.ratioRing[ratioIndex];
+        if (!ratioPoint) return;
+        if (ratioPoint.activeLayers) {
+            ratioPoint.activeLayers.clear();
+        } else {
+            ratioPoint.activeLayers = new Set();
+        }
+        ratioPoint.displayColor = '#fff';
+        ratioPoint.isLit = false;
+        ratioPoint.litIntensity = 0;
+    }
+
+    addLayerToRatio(ratioIndex, layerIndex) {
+        const ratioPoint = this.ratioRing[ratioIndex];
+        if (!ratioPoint) return;
+        if (!ratioPoint.activeLayers) {
+            ratioPoint.activeLayers = new Set();
+        }
+        ratioPoint.activeLayers.add(layerIndex);
+        this.updateRatioDisplayColor(ratioIndex);
+    }
+
+    removeLayerFromRatio(ratioIndex, layerIndex) {
+        const ratioPoint = this.ratioRing[ratioIndex];
+        if (!ratioPoint || !ratioPoint.activeLayers) return;
+        ratioPoint.activeLayers.delete(layerIndex);
+        if (ratioPoint.activeLayers.size > 0) {
+            this.updateRatioDisplayColor(ratioIndex);
+        } else {
+            ratioPoint.displayColor = '#00ff88';
+        }
+    }
+
+    updateRatioDisplayColor(ratioIndex) {
+        const ratioPoint = this.ratioRing[ratioIndex];
+        if (!ratioPoint) return;
+
+        const activeLayers = ratioPoint.activeLayers || new Set();
+        if (activeLayers.size === 0) {
+            ratioPoint.displayColor = '#00ff88';
+            return;
+        }
+
+        const colors = [];
+        activeLayers.forEach(layerIndex => {
+            const layerName = this.layerNames[layerIndex];
+            const layerColor = this.layerColors[layerName];
+            if (layerColor) {
+                const normalized = this.normalizeHexColor(layerColor);
+                if (normalized) {
+                    colors.push(normalized);
+                }
+            }
+        });
+
+        if (colors.length === 0) {
+            ratioPoint.displayColor = '#00ff88';
+            return;
+        }
+
+        ratioPoint.displayColor = this.blendColors(colors);
+    }
+
+    normalizeHexColor(hexColor) {
+        if (!hexColor || typeof hexColor !== 'string') return null;
+        let value = hexColor.trim();
+        if (!value.startsWith('#')) return null;
+        value = value.slice(1);
+        if (value.length === 3) {
+            value = value.split('').map(char => char + char).join('');
+        } else if (value.length === 8) {
+            value = value.slice(0, 6);
+        }
+        if (value.length !== 6) return null;
+        return `#${value.toLowerCase()}`;
+    }
+
+    blendColors(hexColors) {
+        if (!hexColors || hexColors.length === 0) return '#00ff88';
+        if (hexColors.length === 1) return hexColors[0];
+
+        let totalR = 0;
+        let totalG = 0;
+        let totalB = 0;
+        let counted = 0;
+
+        hexColors.forEach(hex => {
+            const rgb = this.hexToRgb(hex);
+            if (rgb) {
+                totalR += rgb.r;
+                totalG += rgb.g;
+                totalB += rgb.b;
+                counted += 1;
+            }
+        });
+
+        if (counted === 0) return '#00ff88';
+
+        return this.rgbToHex({
+            r: Math.round(totalR / counted),
+            g: Math.round(totalG / counted),
+            b: Math.round(totalB / counted)
+        });
+    }
+
+    hexToRgb(hex) {
+        if (!hex || typeof hex !== 'string') return null;
+        let value = hex.trim();
+        if (value.startsWith('#')) {
+            value = value.slice(1);
+        }
+        if (value.length === 3) {
+            value = value.split('').map(char => char + char).join('');
+        } else if (value.length === 8) {
+            value = value.slice(0, 6);
+        }
+        if (value.length !== 6) return null;
+
+        const r = parseInt(value.slice(0, 2), 16);
+        const g = parseInt(value.slice(2, 4), 16);
+        const b = parseInt(value.slice(4, 6), 16);
+
+        if ([r, g, b].some(component => Number.isNaN(component))) {
+            return null;
+        }
+
+        return { r, g, b };
+    }
+
+    rgbToHex({ r, g, b }) {
+        const clamp = (value) => Math.max(0, Math.min(255, value));
+        const toHex = (value) => clamp(value).toString(16).padStart(2, '0');
+        return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    }
+
+    applyRatioHighlight(ratioFraction, layerIndex, expiresAt) {
+        if (!ratioFraction) return;
+
+        const fractionKey = typeof ratioFraction === 'string' ? ratioFraction.trim() : `${ratioFraction}`;
+        if (!fractionKey) return;
+
+        const ratioIndex = this.getRatioIndexForFraction(fractionKey);
+        if (ratioIndex === null) return;
+
+        const layerName = this.layerNames[layerIndex];
+        if (!this.isLayerVisible(layerName)) {
+            this.removeLayerHighlight(fractionKey, layerIndex);
+            return;
+        }
+
+        if (!this.isRatioVisible(fractionKey)) {
+            this.removeLayerHighlight(fractionKey, layerIndex);
+            return;
+        }
+
+        const currentCount = this.ratioHighlightCounts.get(fractionKey) || 0;
+        this.ratioHighlightCounts.set(fractionKey, currentCount + 1);
+
+        this.addLayerToRatio(ratioIndex, layerIndex);
+        this.ensureRatioLit(ratioIndex);
+
+        this.activeLayerRatios[layerIndex] = fractionKey;
+        this.layerHighlightStates[layerIndex] = {
+            ratio: fractionKey,
+            ratioIndex,
+            expiresAt
+        };
+        this.hasReceivedNoteEvent = true;
+    }
+
+    extendLayerHighlight(layerIndex, newExpiresAt) {
+        const state = this.layerHighlightStates[layerIndex];
+        if (!state || !state.ratio) return;
+
+        const layerName = this.layerNames[layerIndex];
+        if (!this.isLayerVisible(layerName)) {
+            this.removeLayerHighlight(state.ratio, layerIndex);
+            return;
+        }
+
+        if (!this.isRatioVisible(state.ratio)) {
+            this.removeLayerHighlight(state.ratio, layerIndex);
+            return;
+        }
+
+        state.expiresAt = Math.max(state.expiresAt, newExpiresAt);
+        this.updateRatioDisplayColor(state.ratioIndex);
+        this.ensureRatioLit(state.ratioIndex);
+    }
+
+    removeLayerHighlight(ratioFraction, layerIndex) {
+        if (!ratioFraction) return;
+
+        const fractionKey = typeof ratioFraction === 'string' ? ratioFraction.trim() : `${ratioFraction}`;
+        if (!fractionKey) return;
+
+        const state = this.layerHighlightStates[layerIndex];
+        if (!state || state.ratio !== fractionKey) return;
+
+        if (state.ratioIndex === null || state.ratioIndex === undefined) {
+            this.ratioHighlightCounts.delete(fractionKey);
+            this.activeLayerRatios[layerIndex] = null;
+            this.layerHighlightStates[layerIndex] = {
+                ratio: null,
+                ratioIndex: null,
+                expiresAt: 0
+            };
+            this.clearAllRatioHighlights();
+            if (!this.areAnyHighlightsActive()) {
+                this.hasReceivedNoteEvent = false;
+            }
+            return;
+        }
+
+        this.removeLayerFromRatio(state.ratioIndex, layerIndex);
+
+        const currentCount = this.ratioHighlightCounts.get(fractionKey) || 0;
+        const newCount = Math.max(currentCount - 1, 0);
+        if (newCount <= 0) {
+            this.ratioHighlightCounts.delete(fractionKey);
+            this.ensureRatioCleared(state.ratioIndex);
+        } else {
+            this.ratioHighlightCounts.set(fractionKey, newCount);
+            this.ensureRatioLit(state.ratioIndex);
+        }
+
+        this.activeLayerRatios[layerIndex] = null;
+        this.layerHighlightStates[layerIndex] = {
+            ratio: null,
+            ratioIndex: null,
+            expiresAt: 0
+        };
+
+        if (!this.areAnyHighlightsActive()) {
+            this.hasReceivedNoteEvent = false;
+        }
+    }
+
+    areAnyHighlightsActive() {
+        return this.layerHighlightStates.some(state => state.ratio !== null);
+    }
+
+    updateExpiredHighlights(currentTime) {
+        this.layerHighlightStates.forEach((state, layerIndex) => {
+            if (!state.ratio) return;
+            if (currentTime >= state.expiresAt) {
+                this.removeLayerHighlight(state.ratio, layerIndex);
+            }
+        });
+    }
+
+    clearAllRatioHighlights() {
+        this.ratioHighlightCounts.clear();
+        this.activeLayerRatios = [null, null, null, null];
+        this.layerHighlightStates = this.layerNames.map(() => ({
+            ratio: null,
+            ratioIndex: null,
+            expiresAt: 0
+        }));
+        this.hasReceivedNoteEvent = false;
+        this.currentLitRatio = -1;
+
+        this.ratioRing.forEach(point => {
+            if (point.activeLayers) {
+                point.activeLayers.clear();
+            } else {
+                point.activeLayers = new Set();
+            }
+            point.displayColor = '#fff';
+            point.isLit = false;
+            point.litIntensity = 0;
+        });
+    }
+
     updateData(spacesPlot, rhythms, grid, ratios) {
         this.spacesPlot = spacesPlot || [];
         this.rhythms = rhythms || [1, 1, 1, 1];
         this.grid = grid || 1;
         this.ratios = ratios || [];
+        this.cumulativeTimes = null;
         
         console.log('🌀 Centrifuge updateData called with ratios:', ratios);
         
@@ -154,8 +719,11 @@ class LRCCentrifuge {
 
     setupRatioRing() {
         this.ratioRing = [];
+        this.ratioIndexLookup.clear();
+        
         if (this.uniqueRatios.length === 0) {
             console.log('🌀 No unique ratios to create ring');
+            this.clearAllRatioHighlights();
             return;
         }
         
@@ -180,10 +748,18 @@ class LRCCentrifuge {
                 x: 0, // Will be calculated in draw()
                 y: 0,
                 isLit: false,
-                litIntensity: 0
+                litIntensity: 0,
+                activeLayers: new Set(),
+                displayColor: '#fff',
+                hidden: false
             });
+
+            this.ratioIndexLookup.set(ratio, index);
         });
-        
+
+        this.clearAllRatioHighlights();
+        this.updateRatioVisibility();
+
         console.log(`🌀 Created ratio ring with ${this.ratioRing.length} ratios:`, 
                     this.ratioRing.map(r => r.ratio));
     }
@@ -241,6 +817,10 @@ class LRCCentrifuge {
     }
 
     draw() {
+        if (this.parent && this.parent.currentPlotType !== 'centrifuge') {
+            return;
+        }
+
         if (!this.setupCanvas()) return;
         
         // Clear the canvas using parent's method (which handles DPR scaling correctly)
@@ -269,26 +849,47 @@ class LRCCentrifuge {
         
         const ringRadius = this.maxRadius + 30; // Move ring OUTSIDE the centrifuge
         
-        console.log(`🌀 Drawing ratio ring with ${this.ratioRing.length} ratios at radius ${ringRadius}`);
+        // console.log(`🌀 Drawing ratio ring with ${this.ratioRing.length} ratios at radius ${ringRadius}`);
         
         this.ratioRing.forEach((ratioPoint, index) => {
+            if (ratioPoint.hidden) return;
+
             ratioPoint.x = this.centerX + ringRadius * Math.cos(ratioPoint.angle);
             ratioPoint.y = this.centerY + ringRadius * Math.sin(ratioPoint.angle);
             
             // Draw individual ratio dot (larger and more visible)
             const intensity = ratioPoint.isLit ? ratioPoint.litIntensity : 0.8;
-            const baseColor = ratioPoint.isLit ? '#00ff88' : '#fff';
+            const highlightColor = ratioPoint.displayColor || '#00ff88';
+            const baseColor = ratioPoint.isLit ? highlightColor : '#fff';
             const dotSize = ratioPoint.isLit ? 8 : 5;
+            const activeLayerIndices = ratioPoint.activeLayers ? Array.from(ratioPoint.activeLayers).sort((a, b) => a - b) : [];
             
-            this.ctx.fillStyle = baseColor;
             this.ctx.globalAlpha = intensity;
-            this.ctx.beginPath();
-            this.ctx.arc(ratioPoint.x, ratioPoint.y, dotSize, 0, Math.PI * 2);
-            this.ctx.fill();
+            if (ratioPoint.isLit && activeLayerIndices.length > 0) {
+                const segmentAngle = (Math.PI * 2) / activeLayerIndices.length;
+                activeLayerIndices.forEach((layerIdx, segmentIdx) => {
+                    const layerName = this.layerNames[layerIdx];
+                    const layerColor = this.normalizeHexColor(this.layerColors[layerName]) || highlightColor;
+                    const startAngle = -Math.PI / 2 + segmentIdx * segmentAngle;
+                    const endAngle = startAngle + segmentAngle;
+                    
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(ratioPoint.x, ratioPoint.y);
+                    this.ctx.arc(ratioPoint.x, ratioPoint.y, dotSize, startAngle, endAngle);
+                    this.ctx.closePath();
+                    this.ctx.fillStyle = layerColor;
+                    this.ctx.fill();
+                });
+            } else {
+                this.ctx.fillStyle = baseColor;
+                this.ctx.beginPath();
+                this.ctx.arc(ratioPoint.x, ratioPoint.y, dotSize, 0, Math.PI * 2);
+                this.ctx.fill();
+            }
             this.ctx.globalAlpha = 1;
             
             // Draw ratio label (positioned outside the dot)
-            this.ctx.fillStyle = ratioPoint.isLit ? '#00ff88' : '#ccc';
+            this.ctx.fillStyle = ratioPoint.isLit ? highlightColor : '#ccc';
             this.ctx.font = '11px monospace';
             this.ctx.textAlign = 'center';
             this.ctx.textBaseline = 'middle';
@@ -305,6 +906,9 @@ class LRCCentrifuge {
         let drawnArcs = [];
         
         this.layerDiscs.forEach((disc, index) => {
+            if (!this.isLayerVisible(disc.layerName)) {
+                return;
+            }
             const discRadius = disc.normalizedRadius * (this.maxRadius - 40);
             
             // Draw disc outline
@@ -480,8 +1084,11 @@ class LRCCentrifuge {
         // Initially light up all arcs
         this.currentLitArcs.clear();
         this.layerDiscs.forEach((disc, index) => {
-            this.currentLitArcs.add(index);
+            if (this.isLayerVisible(disc.layerName)) {
+                this.currentLitArcs.add(index);
+            }
         });
+        this.clearAllRatioHighlights();
         
         console.log('🌀 Centrifuge animation started with proper timing sync');
         
@@ -489,13 +1096,12 @@ class LRCCentrifuge {
     }
 
     stopAnimation() {
-        if (!this.isAnimating) return;
-        
-        this.isAnimating = false;
         if (this.animationId) {
             cancelAnimationFrame(this.animationId);
             this.animationId = null;
         }
+        
+        this.isAnimating = false;
         
         // Reset rotation tracking
         this.rotationCounts = null;
@@ -503,11 +1109,7 @@ class LRCCentrifuge {
         // Reset other state
         this.currentLitRatio = -1;
         this.currentLitArcs.clear();
-        
-        this.ratioRing.forEach(r => {
-            r.isLit = false;
-            r.litIntensity = 0;
-        });
+        this.clearAllRatioHighlights();
         
         this.layerDiscs.forEach(disc => {
             disc.currentAngle = -Math.PI / 2;
@@ -525,9 +1127,12 @@ class LRCCentrifuge {
         
         // Update layer disc rotations and check for crossings
         this.updateLayerRotations(progress);
+
+        // Remove any highlights whose pulse durations have ended
+        this.updateExpiredHighlights(currentTime);
         
         // Update ratio ring lighting (separate system)
-        this.updateLighting(progress);
+        this.updateLighting(progress, currentTime);
         
         // Redraw
         this.draw();
@@ -562,9 +1167,9 @@ class LRCCentrifuge {
             disc.currentAngle = topAngle + (rotationMultiplier * totalRotations * Math.PI * 2) % (Math.PI * 2);
             
             // Debug rotation direction occasionally
-            if (Math.floor(progress * 1000) % 200 === 0 && index === 0) {
-                console.log(`🌀 Layer ${disc.layerName} (${index}): ${isClockwise ? 'clockwise' : 'counterclockwise'}, angle=${(disc.currentAngle * 180 / Math.PI).toFixed(1)}°`);
-            }
+            // if (Math.floor(progress * 1000) % 200 === 0 && index === 0) {
+            //     console.log(`🌀 Layer ${disc.layerName} (${index}): ${isClockwise ? 'clockwise' : 'counterclockwise'}, angle=${(disc.currentAngle * 180 / Math.PI).toFixed(1)}°`);
+            // }
             
             // Check if rotation count increased (crossing detection remains the same)
             if (currentRotationCount > prevRotationCount) {
@@ -576,7 +1181,7 @@ class LRCCentrifuge {
                     direction: isClockwise ? 'CW' : 'CCW'
                 });
                 
-                console.log(`🌀 *** CROSSING: ${disc.layerName} (${isClockwise ? 'CW' : 'CCW'}) went from ${prevRotationCount} to ${currentRotationCount} rotations ***`);
+                // console.log(`🌀 *** CROSSING: ${disc.layerName} (${isClockwise ? 'CW' : 'CCW'}) went from ${prevRotationCount} to ${currentRotationCount} rotations ***`);
             }
             
             // Update rotation count in our tracking array
@@ -585,7 +1190,7 @@ class LRCCentrifuge {
         
         // STEP 2: If ANY disc crossed, clear ALL arcs and light only the new ones
         if (discsThatCrossed.length > 0) {
-            console.log(`🌀 CLEARING ALL ARCS - Discs that crossed: ${discsThatCrossed.map(d => `${d.layerName}(${d.direction})`).join(', ')}`);
+            // console.log(`🌀 CLEARING ALL ARCS - Discs that crossed: ${discsThatCrossed.map(d => `${d.layerName}(${d.direction})`).join(', ')}`);
             
             // Clear ALL existing arcs first
             this.currentLitArcs.clear();
@@ -595,29 +1200,46 @@ class LRCCentrifuge {
                 this.currentLitArcs.add(crossedDisc.index);
             });
             
-            console.log(`🌀 Now lighting arcs: ${discsThatCrossed.map(d => d.layerName).join(', ')}`);
+            // console.log(`🌀 Now lighting arcs: ${discsThatCrossed.map(d => d.layerName).join(', ')}`);
         }
     }  
     
-    updateLighting(progress) {
-        if (this.spacesPlot.length === 0 || this.ratioRing.length === 0) return;
-        
-        // Calculate cumulative times for each spaces plot position
+    updateLighting(progress, _currentTime) {
+        if (this.ratioRing.length === 0) return;
+
+        // Smooth intensities for currently lit/unlit ratios
+        const decayFactor = 0.85;
+        const riseFactor = 0.3;
+
+        this.ratioRing.forEach(point => {
+            if (point.isLit) {
+                const delta = (1 - point.litIntensity) * riseFactor;
+                point.litIntensity = Math.min(1, point.litIntensity + delta);
+            } else if (point.litIntensity > 0) {
+                point.litIntensity = Math.max(0, (point.litIntensity * decayFactor) - 0.02);
+            }
+        });
+
+        // When driven by playback events, do not override active highlights
+        if (this.hasReceivedNoteEvent) {
+            return;
+        }
+
+        if (this.spacesPlot.length === 0) return;
+
+        // Calculate cumulative times for each spaces plot position if needed
         if (!this.cumulativeTimes) {
             this.cumulativeTimes = [];
             let cumulative = 0;
             const gridTotal = this.spacesPlot.reduce((sum, space) => sum + space, 0);
-            
+
             this.spacesPlot.forEach((space, index) => {
                 this.cumulativeTimes[index] = cumulative / gridTotal;
                 cumulative += space;
             });
-            
-            console.log('🌀 Calculated cumulative times:', this.cumulativeTimes);
-            console.log('🌀 Grid total:', gridTotal);
         }
-        
-        // Find which spaces plot position we should be at based on current progress
+
+        // Determine current spaces index from progress
         let currentSpacesIndex = 0;
         for (let i = 0; i < this.cumulativeTimes.length; i++) {
             if (progress >= this.cumulativeTimes[i]) {
@@ -626,27 +1248,28 @@ class LRCCentrifuge {
                 break;
             }
         }
-        
+
         const spaceValue = this.spacesPlot[currentSpacesIndex];
         const ratioToLight = this.findRatioForSpaceValue(spaceValue, currentSpacesIndex);
-        
-        // Reset all ratios
-        this.ratioRing.forEach(r => {
-            r.isLit = false;
-            r.litIntensity = 0;
+
+        // Fallback highlight before any playback events have been observed
+        this.ratioRing.forEach(point => {
+            point.isLit = false;
+            point.litIntensity = 0;
+            if (!point.activeLayers || point.activeLayers.size === 0) {
+                point.displayColor = '#fff';
+            }
         });
-        
-        // Light up current ratio
+
         if (ratioToLight) {
-            const ratioIndex = this.ratioRing.findIndex(r => r.ratio === ratioToLight);
-            if (ratioIndex >= 0) {
-                this.ratioRing[ratioIndex].isLit = true;
-                this.ratioRing[ratioIndex].litIntensity = 1;
-                this.currentLitRatio = ratioIndex;
-                
-                // Debug occasionally
-                if (Math.floor(progress * 100) % 20 === 0) {
-                    console.log(`🌀 TIMING SYNC: progress=${progress.toFixed(3)}, spacesIndex=${currentSpacesIndex}, space=${spaceValue}, ratio=${ratioToLight}`);
+            const ratioIndex = this.ratioIndexLookup.get(ratioToLight);
+            if (ratioIndex !== undefined) {
+                const ratioPoint = this.ratioRing[ratioIndex];
+                if (ratioPoint && this.isRatioVisible(ratioToLight)) {
+                    ratioPoint.isLit = true;
+                    ratioPoint.litIntensity = 1;
+                    ratioPoint.displayColor = '#00ff88';
+                    this.currentLitRatio = ratioIndex;
                 }
             }
         }

@@ -651,7 +651,7 @@ class LRCHUDController {
             { id: 'fundamental-display', value: Math.round(rhythmInfo.fundamental) },
             { id: 'range-display', value: rhythmInfo.range.toFixed(2) },
             { id: 'rhythm-density', value: rhythmInfo.density.toFixed(1) },
-            { id: 'pg-ratio', value: rhythmInfo.pulseToGrouping.toFixed(6) },
+            { id: 'pg-ratio', value: rhythmInfo.pulseToGrouping.toFixed(2) },
             { id: 'composite-length', value: rhythmInfo.compositeLength },
             { id: 'layer-sum', value: rhythmInfo.layerSum }
         ];
@@ -1047,13 +1047,49 @@ class LRCHUDController {
     }
     
     setupCentrifugeControls() {
-        // Setup slice toggle functionality (placeholder for now)
-        document.addEventListener('click', (e) => {
-            if (e.target.classList.contains('slice-toggle')) {
-                e.target.classList.toggle('active');
-                console.log(`Centrifuge slice ${e.target.dataset.slice} toggled`);
+        const sliceButtons = Array.from(document.querySelectorAll('.slice-toggle'));
+        if (sliceButtons.length === 0) return;
+
+        const getCentrifuge = () => window.lrcVisuals && window.lrcVisuals.centrifuge ? window.lrcVisuals.centrifuge : null;
+
+        const applySliceVisibility = () => {
+            const centrifuge = getCentrifuge();
+            if (!centrifuge) return;
+
+            const visibleLayers = new Set();
+            sliceButtons.forEach(btn => {
+                if (btn.classList.contains('active')) {
+                    const layer = btn.dataset.slice;
+                    if (layer) visibleLayers.add(layer);
+                }
+            });
+
+            centrifuge.setVisibleLayers(visibleLayers);
+
+            if (window.lrcVisuals && window.lrcVisuals.currentPlotType === 'centrifuge') {
+                window.lrcVisuals.drawCentrifugePlot();
             }
+        };
+
+        sliceButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                btn.classList.toggle('active');
+                applySliceVisibility();
+            });
         });
+
+        // Ensure state reapplies when rhythm regenerates or centrifuge initializes
+        window.addEventListener('rhythmGenerated', () => applySliceVisibility());
+
+        const waitForCentrifuge = () => {
+            if (getCentrifuge()) {
+                applySliceVisibility();
+            } else {
+                setTimeout(waitForCentrifuge, 200);
+            }
+        };
+
+        waitForCentrifuge();
     }
 
     toggleLights() {

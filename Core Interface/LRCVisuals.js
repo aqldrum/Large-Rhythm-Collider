@@ -828,10 +828,12 @@ class LRCVisuals {
                 this.ctx.lineCap = 'round';
                 this.ctx.setLineDash([]); // Solid line
                 
-                // Handle hidden dots by making connector lines more transparent
-                const hasHiddenDots = layerPositions.some(pos => pos.isHiddenByScale);
-                if (hasHiddenDots) {
-                    this.ctx.globalAlpha = 0.3;
+                // Handle hidden dots: only dim connector if ALL dots for this layer are hidden
+                const hiddenCount = layerPositions.filter(pos => pos.isHiddenByScale).length;
+                const allHidden = hiddenCount === layerPositions.length;
+                if (allHidden) {
+                    this.ctx.globalAlpha = 1.0;
+                    return;
                 }
                 
                 this.ctx.beginPath();

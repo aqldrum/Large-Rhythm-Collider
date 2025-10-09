@@ -3,7 +3,9 @@
 ## Overview
 You've found the Large Rhythm Collider! This website houses a multifaceted apparatus designed for the analysis of Polyrhythms. 
 
-![](2025-08-07-01-14-20.png)
+<p align="center">
+  <img src="assets/mainpage1.png">
+</p>
 
 The Large Rhythm Collider offers a suite of analytical and creative tools which parse the fine details of polyrhythmic structures and deploy this information as the source code for a range of audiovisual applications. This intersection of art and mathematics possesses intricate generative beauty.
 
@@ -11,11 +13,15 @@ If you've never encountered polyrhythms before, there are lots of great resource
 
 On the main page, you'll find 5 draggable, expandable control modules: Rhythm Input, Rhythm Info, Visualizations, Playback, and Search Algorithms. These sections provide full control of the LRC's functionality.
 
-The LRC is designed to analyze polyrhythms of up to 4 layers. These ratio layer combinations a:b:c:d are bound by a simple multiplicative logic which encodes the DNA of each rhythm. The limitation to 4 layers is both a drummer's analogy and a combinatorial consideration. The mathematical flow, while detailed, is mostly arithmetic. 
+<p align="center">
+  <img src="assets/mainpage_divs.png">
+</p>
+
+The LRC is designed to analyze polyrhythms of up to 4 layers. These ratio layer combinations a:b:c:d are bound by a simple multiplicative logic which encodes the internal strucutre of each rhythm. The core algorithm, while detailed, is simple arithmetic. The limitation to 4 layers is both a drummer's analogy and a computational consideration to keep the internal architecture manageable. 
 
 ## Quick Start
 ### Technical Requirements
-As a fully JS / HTML / CSS based web app, the basic LRC functionality should run easily on most systems. However, the system is designed to investigate Large Rhythms, so just know that big numbers = more processing power.
+As a fully JavaScript / HTML / CSS based web app, basic functionality should run smoothly on most systems. However, the system is designed to investigate Large Rhythms, so just remember that big numbers = more processing power.
 
 #### Browser Compatibility
 - **Required**: Modern browser with Web Audio API support
@@ -39,6 +45,8 @@ As a fully JS / HTML / CSS based web app, the basic LRC functionality should run
 - **Channels**: Stereo output supported
 
 ### Installation & Launch
+The LRC is available at https://www.largerhythmcollider.com.
+
 1. Download or clone the repository
 2. **Simply double-click `index.html`** to open in your default browser
    - Or right-click → "Open with" → choose your preferred browser
@@ -53,27 +61,45 @@ As a fully JS / HTML / CSS based web app, the basic LRC functionality should run
 - [ ] Check export functionality (MIDI download)
 
 ## Mathematical Foundation
-What follows is a concise explanation which still contains sufficient detail for someone unfamiliar with these topics, but some background research regarding: rhythmic subdivision and meter, polyrhythms, the harmonic series, tuning and temperaments, Just Intonation and the general physics of sound might help all this "click" for you.
+The Large Rhythm Collider employs a simple, naturally emergent algorithm to describe the composite structure of any given polyrhythm, but the real novelty is in the subsequent serialization of this polyrhythmic DNA into musical tuning systems. The following explanation is concise, but some background research regarding: rhythmic subdivision and meter, polyrhythms, the harmonic series, tuning and temperaments, just intonation and the general physics of sound might help everything "click".
 
 ### Core Concepts
-Up to 4 frequency layers are defined a:b:c:d. To be a valid polyrhythm, the layers must be coprime as a set (no common factors), and no layers may be direct factors of another. However, individual layer pairs or tuples may share common factors. For example. 8:7:6:5 is valid because while 8:6 share a common factor, the entire layer set is comprime thanks to the 7 and 5. However, 8:7:6:4 would be invalid, because the 4 is already described by the 8 - it adds no new information to the rhythm. Regardless, you can still enter these results into the LRC.
+Up to 4 frequency layers are defined a:b:c:d. To be a valid polyrhythm, the layers must be coprime as a set (share no common factors), and no layers may be direct factors of another. However, individual layer pairs or tuples may share common factors. For example. 8:7:6:5 is valid because while 8:6 share a common factor, the entire layer set is comprime thanks to the 7 and 5. 8:7:6:4, on the other hand, would be invalid: the 4 adds no new information to the rhythm as it is already described by the 8. Note also that a layer value of 1 merely represents the entire cycle undivided.
 
-The least common multiple of these layer frequency values is the Grid, which is the length of the total cycle for this polyrhythm. When we divide the Grid by each of the layers, we get the grid duration or grouping size of each of those layers' pulses. 
+The LRC still allows for layer values that do not meet these criteria, but Search Algorithms will only return valid results. 
+
+The least common multiple of the layer frequency values is the Grid, which is the length of the total cycle for this polyrhythm. When we divide the Grid by each of the layers, we get the grid duration or grouping size of each of those layers' pulses. 
+
+<p align="center">
+  <img src="assets/metrics1.png">
+</p>
 
 Note that "polyrhythm" and "polymeter" are here shown to be two sides of the same coin. Polyrhythms (frequency layers) are described by stacks of differently-sized meters (grouping sizes). This fundamentally "relativistic" relationship of two interdependent dimensions is what truly defines the deterministic, yet mysterious behavior of polyrhythmic systems.
 
 When we construct a flattened list of all multiples of grouping sizes (pulse durations) up to the Grid value, we get the attack positions of every note in the Composite Rhythm. 
 
+<p align="center">
+  <img src="assets/compositerhythm.png">
+</p>
+
 By analyzing the pulse layers as one whole, we extract their synergy. If we take the difference between every position in the Composite Rhythm, we get the Spaces Plot - the unique series of durations encoded specifically by interference pattern of the layer inputs. We also track which layers generate which values in the spaces plot. This sequence is always a palindrome, as a consequence of its cyclic, multiplicative construction.
+
+<p align="center">
+  <img src="assets/spacesplot.png">
+</p>
 
 From here, we move to the core innovation of the Collider concept: serialization of the spaces plot into pitch information!
 
 ### Scale Creation
-Just as the generating layer values represent ratios of frequencies, the unique durations of time generated by their interference patterns can also be assessed by their relative size. If we think of each of these values as the length of a period of a sound wave relative to all others in the set, we extract a tuning system! This is the conceptual leap, but is grounded in the ratio logic of polyrhythmic / harmonic series behavior. Essentially, the polyrhythm's structure encodes various little segments of time, all measured in relation to one another on the underlying grid; if we use all of those little segments to define the literal sizes of sound waves, that group of sound waves will have relative frequency relationships describable by ratios (just like the generating layers).
+Just as the generating layer values represent ratios of frequencies, the unique slices of time generated by their interference patterns can also be assessed by their relative size/speed relationships. If we think of each of these values as the length of a period of a sound wave relative to all others in the set, we extract a tuning system! This is the conceptual leap, but is grounded in the ratio logic of polyrhythmic / harmonic series behavior. Essentially, the polyrhythm's structure encodes various little segments of time, all measured in relation to one another on the underlying grid; if we use all of those little segments to define the literal sizes of sound waves periods, that group of sound waves will possess a "scale" of relative frequency relationships, described by ratios (just like the generating layers). 
 
 Here's the simplest example - 3:2. This rhythm has a grid of 6, and is comprised of 3 groups of 2 and 2 groups of 3. We have a composite rhythm 0,2,3,4 (6) which gives the spaces plot 2, 1, 1, 2 (notice that we calculate the distance from 4 to 6, the beginning of the next cycle). Two unique values, 2 and 1. What ratio relationship does this give us?
 
 We have a sound wave with length 2, and a sound wave with length 1. It's easy to see that we'll have two ones for every two - the shorter soundwave has a frequency of 2/1 relative to the largest sound wave in the set. 2/1 is exactly equivalent to an octave. So our tuning system really just has one note, which is repeated an octave higher. Try inputting 3:2 and playing it back to hear what this sounds like when we apply the proper pitches to corresponding note sizes in the spaces plot. 
+
+<p align="center">
+  <img src="assets/3over2.png">
+</p>
 
 Notice that when we convert from size to pitch, an inverse thing happens - 1/1 is 2 units long, 2/1 is 1 unit long. How does this work when with a more complex rhythm?
 
@@ -85,22 +111,26 @@ The LCM or Grid for these numbers is 210, with grouping sizes 30, 42, 70 and 105
 
 Note that the largest value in the spaces plot set is always the first, and last. It's the grouping size of the fastest layer: because this layer is the fastest, it is always the first to occur after the downbeat, and because it continues repeating with the same duration, no value in the plot can possibly be larger. As largest value, it defines the longest or slowest oscillation of a sound wave - meaning the lowest pitch. This value is our Fundamental: it becomes the numerator against which all other ratios are compared as an undertone. The Fundamental is always the quotient Grid / Layer A.
 
-The smaller the value is, the faster the wave and the higher the pitch. This is why the Fundamental or largest value becomes an undertone generator. Take 30 and 18. First we can cancel out their GCF of 6, leaving 5 and 3. Now, we know there will be five threes for every 3 fives. That means the 3 (or 18), which is the higher of the two pitches, is tuned to 30/18 or 5/3 above the Fundamental. All other unique values will initiate the same undertone comparison, generating the full pitch set.
+The smaller the value is, the faster the wave and the higher the pitch. This is why the Fundamental or largest value becomes an undertone generator. Take 30 and 18. First we can cancel out the shared factor of 6, leaving 5 and 3. Now, we know there will be five threes for every 3 fives. That means the 3 (or 18), which is the higher of the two pitches, is tuned to 30/18 or 5/3 above the Fundamental. All other unique values will initiate the same undertone comparison, generating the full pitch set.
 
 The final principle we apply to scale creation is octave compression - displaying all values within one octave. For tone row playback, we preserve the proper octave for each value, but for legible display of the tuning system, we compress all values in between 1/1 and 2/1. Take the above 7:5:3:2 scale - with 30/12, for example, we would simply move this frequency down an octave by halving it, multiplying the denominator by two and thus giving us 30/24 which simplifies to 3/2. This also means that, while every unique value in the spaces plot defines a unique octaviated interval, direct doubles (like 12 and 6 in this example) will create the same pitch in the final scale after octave compression.
 
 Try 7:5:3:2 on the main page and you'll see a 5-tone scale, 1/1, 15/14, 5/4, 3/2, and 5/3. Note that the octave 2/1 may or may not always be present in any spaces plot, but we never include it in the final scale.
 
-But hey, why do the notes sound weird? Note that our scales are comprised of ratios, with corresponding Cents values. In microtonal music theory, ratio-based or harmonic-series based tuning approaches fall under the umbrella of Just Intonation, which generates pitches not available in standard 12 tone equal temperament (12TET). Cents measure pitch space as it relates to 12TET - 1200 cents equals one octave, 100 cents equals a semitone. The Large Rhythm Collider's tuning approach is arithmetically primitive compared to more sophisticated goal-oriented just intonation systems, but the deterministic bounds of the essential rhythm math lend curious strengths thanks to the breadth of available inputs and their emergent generative behaviors. 
+<p align="center">
+  <img src="assets/first4primes.png">
+</p>
 
-The Spaces Plot conversion via relative waveform period is the core math of the Large Rhythm Collider serial concept. This tuning system concept also provides a helpful scaffolding for understanding a rhythm's complexity, because it gives us an idea of how granular the information is within any given polyrhythm. Naturally, more layer values generally equals more pitches per octave, but large rhythms can be constructed while maintaining scale size constraints by using carefully nested ratios between layer values, reducing the overall complexity of the structure through repetition. 
+But hey, why do the notes sound weird? Note that our scales are comprised of ratios, with corresponding Cents values. In microtonal music theory, ratio-based or harmonic-series based tuning approaches fall under the umbrella of Just Intonation, which generates pitches not available in standard 12 tone equal temperament (12TET). Cents measure pitch space as it relates to 12TET - 1200 cents equals one octave, 100 cents equals a semitone. The Large Rhythm Collider's tuning approach is arithmetically primitive compared to more sophisticated goal-oriented just intonation systems, but the deterministic bounds of the essential rhythm math possess curious strengths thanks to the breadth of available inputs and their emergent generative behaviors. 
 
-The LRC scale creation algorithm sonifies polyrhythms and reveals fascinating patterns hidden within dense, chaotic structures. Each frequency layer becomes a unique "arpeggiator" of the rhythm's bespoke tuning system. The scale generation concept also opens doors for organization, classification and implementation outside of the purely musical realm, as you'll see in some of the visualizations. The engine's larger purpose is to compile polyrhythmic data into a unique, natural procedural generation system with widespread potential for application.
+The Spaces Plot conversion via relative waveform period is the core math of the Large Rhythm Collider serial concept. This tuning system concept also provides a general scaffolding for understanding a polyrhythm's complexity, because it gives us an idea of the granularity of the information within. Naturally, more layer values generally equals more pitches per octave, but large rhythms can be constructed while maintaining scale size constraints by using carefully nested ratios between layer values, reducing the overall complexity of the structure through repetition. 
+
+The LRC scale creation algorithm sonifies polyrhythms and generates fascinating melodic content hidden within dense, chaotic structures. Each frequency layer becomes a pulse "arpeggiator" of the rhythm's bespoke tuning system. The scale generation concept also opens doors for organization, classification and implementation outside of the purely musical realm, as you'll see in some of the visualizations. The engine's larger purpose is to compile polyrhythmic data into a unique, natural procedural generation system with widespread potential for application.
 
 ## Key Features
 
 ### Usage
-All you really need to know is, numbers go in, intricate patterns and music come out. Use up to 4 whole numbers in the Rhythm Input section to define a polyrhythm. Pressing Generate will prepare the system with that rhythm - you can access metrics in Rhythm Info, Search for specific rhythm results, try different Visualizations, and Playback audio synced to the rhythm's internal timing and tuning systems. The following section includes detailed description of all features.
+Numbers go in, patterns and music come out. Use up to 4 whole numbers in the Rhythm Input section to define a polyrhythm. Pressing Generate will prepare the system with that rhythm. You can access metrics in Rhythm Info, Search for specific rhythm results, try different Visualizations, and Playback audio synced to the rhythm's internal timing and tuning systems. The following section includes detailed description of all features.
 
 ### Core Functionality
 - **Polyrhythm input and processing (up to 4 layers)** - In the main Rhythm Input section, the user can enter up to 4 layers of frequency and use Generate to process them through the core analytical engine.
@@ -138,7 +168,7 @@ Valid polyrhythms must be coprime as a set, and have no layers which are direct 
 #### Interconsonance
 The final analytical component of the Info Divs is the Interconsonance Analyzer. Just like the Average Deviation concept, the ICA is a bridge to the "familiar" sounds of 12TET. 
 
-While the average deviation metric calculates the intervallic distance for all sequential steps, the ICA calculates the full interval matrix of all available interval pairs in the set. The number of available unique pairs can grow very large, so this feature may break down for very large scales, but it can still comfortably handle scales with 100 pitches per octave. These intervals are then assessed for "consonance", which in our system will refer to intervals which are within a +-15 cent window of a multiple of 100 cents. These intervals are relatively close to the familiar interval 12TET intervals most of us are used to. The analyzer then finds subsets of ratios within the rhythm which all share consonance and organizes them into Consonance Families. 
+While the average deviation metric calculates the intervallic distance for all sequential steps, the ICA calculates the full interval matrix of all available interval pairs in the set. The number of available unique pairs can grow very large, so this feature may break down for very large scales, but it can still comfortably handle scales with 100 pitches per octave. These intervals are then assessed for "consonance", which in our system will refer to intervals which are within a +-15 cent window of a multiple of 100 cents. These intervals are relatively close to the familiar 12TET intervals most of us are used to. The analyzer then finds subsets of ratios within the rhythm which all share consonance and organizes them into Consonance Families. 
 
 #### Export
 The export section allows the user to export a PDF with the Expanded Info View details for the generated rhythm. The user can also export MIDI and tuning file information, described in the Audio section. 
@@ -210,6 +240,8 @@ All layer lights may be toggled off with the lightbulb switch. You can view indi
 
 The Linear Plot and its layer lights sync to playback. It also responds to Scale Selection from the Playback div, hiding notes which have been turned off. This allows the user to hew more minimal audiovisual designs from the larger rhythm structure.
 
+You can use the green arrow toggle in the bottom right hand corner of the plot to flip the vertical axis. This allows for more intuitive visual sync with audible pitch information during playback; since   smaller values correspond to higher pitches, the default view places these values lower on the y-axis, which is a bit counterintuitive.
+
 #### Reflections (popup)
 - Duplication and manipulation of inherent palindromic structure creates detailed symmetric patterns
 - Various controls allow for different levels of reflection / tessellation
@@ -262,7 +294,7 @@ The Centrifuge visualization is a simpler visualization which displays each laye
 - Controls for cycle speed and amplitude of layer vector forces
 - Toggleable layer forces display
 - User changes individual layer vector directions with arrow keys
-- 4 modes with different animation approaches
+- 3 modes with different animation approaches
 - Anchors mode allows for Expansion behavior and deep control based on nested ratios
 
 The Hinges visualization uses the internal rhythmic structure to generate a physical simulation, almost screensaver-like. Each value in the Spaces Plot defines a length of a segment in a chain, which is linked end to end upon starting the animation, binding the chain with an internal constraint system.
@@ -339,9 +371,9 @@ The five control modules offer a host of analytical and audiovisual tools and si
 - **BattleController**: [game-state brain: instantiates players, applies rhythm data, keeps the mater clock / materialized positions, triggers collision resolution and audio cues, and adjudicates victory conditions]
 
 ## Known Limitations
-All systems run fairly smoothly, but computational expense increases as the rhythms get bigger. You can enter any values you like into the main input and expect normal rhythm metric generation and playback to work even with layer values in the 5 digits; however, your machine may not be able to properly render, say, a Hinges structure with tens of thousands of individual nodes, or display a scale with hundreds of tones cleanly around the Centrifuge. Search Algorithms for large values may also take a long time to yield results. There may be room for improvement in the speed of the search algorithms generally. 
+All systems run fairly smoothly, but computational expense increases as the rhythms get bigger. You can enter any values you like into the main input and expect normal rhythm metric generation and playback to work even with layer values in the 4 to low 5 digits; however, your machine may not be able to properly render, say, a Hinges structure with tens of thousands of individual nodes, or display a scale with hundreds of tones cleanly around the Centrifuge. Search Algorithms for large values may also take a long time to yield results. There may be room for improvement in the speed of the search algorithms generally. 
 
-Refining the Reflections web encoding system for animations has proved challenging. Wenb encoding currently works best with simpler visualizations; complex plots with Difference blending may show quality reduction. 
+Web encoding for Reflections animations currently works best with simpler visualizations; complex plots with Difference blending may show quality reduction. 
 
 Collider Battle can also be buggy when trying to simulate large rhythms; collision detection may break down when increasing Line Thickness to high levels. The battle simulation tends to work best with simpler layer inputs in the double digits and below.
 

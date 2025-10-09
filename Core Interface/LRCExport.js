@@ -426,7 +426,7 @@ class LRCExport {
             { label: 'Average Deviation', value: rhythmInfo.avgDeviation != null ? rhythmInfo.avgDeviation.toFixed(3) : 'N/A' },
             { label: 'Range', value: rhythmInfo.range.toFixed(2) },
             { label: 'Density', value: `${rhythmInfo.density.toFixed(1)}%` },
-            { label: 'P/G Ratio', value: rhythmInfo.pulseToGrouping.toFixed(6) },
+            { label: 'P/G Ratio', value: rhythmInfo.pulseToGrouping.toFixed(2) },
             { label: 'Composite Nodes', value: String(rhythmInfo.compositeLength) }
         ];
 

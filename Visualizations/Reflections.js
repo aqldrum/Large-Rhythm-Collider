@@ -962,11 +962,6 @@ class LRCReflections {
                         <select class="control-select" id="blend-mode">
                             <option value="difference">Difference</option>
                             <option value="screen">Screen</option>
-                            <option value="multiply">Multiply</option>
-                            <option value="overlay">Overlay</option>
-                            <option value="color-dodge">Color Dodge</option>
-                            <option value="hard-light">Hard Light</option>
-                            <option value="soft-light">Soft Light</option>
                         </select>
                     </div>
                     <div class="control-group">

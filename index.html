@@ -178,12 +178,14 @@
                     <div class="viz-section-header">Linear Plot</div>
                     <div class="viz-section-content">
                         <div class="linear-controls">
-                            <button id="lightswitch-toggle" class="lightswitch-btn" title="Toggle Layer Lights">
-                                <span class="lightswitch-icon">💡</span>
-                            </button>
-                            <button id="layer-connectors-toggle" class="layer-connectors-btn" title="Toggle Layer Connectors">
-                                <span class="connectors-icon">🔗</span>
-                            </button>
+                            <div class="linear-utility-buttons">
+                                <button id="lightswitch-toggle" class="lightswitch-btn" title="Toggle Layer Lights">
+                                    <span class="lightswitch-icon">💡</span>
+                                </button>
+                                <button id="layer-connectors-toggle" class="layer-connectors-btn" title="Toggle Layer Connectors">
+                                    <span class="connectors-icon">🔗</span>
+                                </button>
+                            </div>
                             <div class="layer-toggles">
                                 <button class="layer-toggle" data-layer="A">A</button>
                                 <button class="layer-toggle" data-layer="B">B</button>
@@ -200,12 +202,12 @@
                     <div class="viz-section-content">
                         <div class="centrifuge-controls">
                             <div class="slice-toggles">
-                                <label>Slices (Placeholder):</label>
+                                <label>Layers:</label>
                                 <div class="slice-buttons">
-                                    <button class="slice-toggle" data-slice="1">1</button>
-                                    <button class="slice-toggle" data-slice="2">2</button>
-                                    <button class="slice-toggle" data-slice="3">3</button>
-                                    <button class="slice-toggle" data-slice="4">4</button>
+                                    <button class="slice-toggle active" data-slice="A">A</button>
+                                    <button class="slice-toggle active" data-slice="B">B</button>
+                                    <button class="slice-toggle active" data-slice="C">C</button>
+                                    <button class="slice-toggle active" data-slice="D">D</button>
                                 </div>
                             </div>
                         </div>
@@ -229,6 +231,7 @@
                                         </select>
                                     </label>
                                     <button id="hinges-tension-btn" class="hinges-tension-btn">⚡ Tension</button>
+                                    <button id="hinges-constant-btn" class="hinges-constant-btn">🌊 Constant</button>
                                 </div>
                             </div>
                         </div>
@@ -404,6 +407,7 @@
     <script src="Visualizations/Hinges.js"></script>
     <script src="Visualizations/HingeExpand.js"></script>
     <script src="Visualizations/HingesAdvanced.js"></script>
+    <script src="Visualizations/HingesConstant.js"></script>
 
         <!-- Collider -->
         <script src="Collider/ColliderAudio.js"></script>
