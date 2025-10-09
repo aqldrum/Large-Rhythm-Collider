@@ -194,6 +194,10 @@ The final analytical component of the Info Divs is the Interconsonance Analyzer.
 
 While the average deviation metric calculates the intervallic distance for all sequential steps, the ICA calculates the full interval matrix of all available interval pairs in the set. The number of available unique pairs can grow very large, so this feature may break down for very large scales, but it can still comfortably handle scales with 100 pitches per octave. These intervals are then assessed for "consonance", which in our system will refer to intervals which are within a +-15 cent window of a multiple of 100 cents. These intervals are relatively close to the familiar 12TET intervals most of us are used to. The analyzer then finds subsets of ratios within the rhythm which all share consonance and organizes them into Consonance Families. 
 
+<p align="center">
+  <img src="assets/consonancefamily.png">
+</p>
+
 #### Export
 <p align="center">
   <img src="assets/export.png">
