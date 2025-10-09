@@ -661,7 +661,7 @@ class LRCInterconsonance {
         html += `
             <div class="pitch-interaction">
                 <h4>Pitch Consonance Explorer</h4>
-                <p>Click any pitch in the scale chart above to see its consonant relationships.</p>
+                <p>Click any pitch in the scale chart to see its consonant relationships.</p>
                 ${this.selectedPitch !== null ? 
                     `<button class="clear-selection-btn" onclick="window.lrcInterconsonance.clearSelection()">Clear Selection</button>` : 
                     ''}
@@ -857,7 +857,7 @@ class LRCInterconsonance {
             const instruction = document.createElement('div');
             instruction.className = 'pitch-selection-instruction';
             instruction.innerHTML = `
-                <p><strong>💡 Interactive Mode:</strong> Click any pitch in the scale chart above to highlight its consonant relationships.</p>
+                <p><strong>💡 Interactive Mode:</strong> Click any pitch in the scale chart to highlight its consonant relationships.</p>
             `;
             displayDiv.insertBefore(instruction, displayDiv.firstChild);
         }

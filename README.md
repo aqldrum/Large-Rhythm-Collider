@@ -150,23 +150,26 @@ Numbers go in, patterns and music come out. Use up to 4 whole numbers in the Rhy
 - **4 rhythm-finding search algorithms** - Layer, Grid, Fundamental, and Inverse PG searches
 
 ### Rhythm Info / Expanded Info View
-
-<div style="display:flex; gap:12px; justify-content:center; align-items:center;">
-  <img src="assets/rhythminfo.png" alt="Rhythm Info" style="max-width:48%; height:auto;">
-  <img src="assets/eiv.png" alt="Expanded Info View" style="max-width:48%; height:auto;">
-</div>
-
+<p align="center">
+  <img src="assets/eiv.png">
+</p>
 The Rhythm Info div displays the relevant metrics and ratio scale for any generated rhythm, as well as the Interconsonance Analyzer and export functionality. Double-clicking the div opens an Expanded Info View with more detail.
 
 #### Metrics
-Rhythm info displays the Layers, Grid and Fundamental values for this rhythm-scale (recall that the Fundamental is the grouping size of Layer A), along with a few other metrics:
-Range: quotient of the fastest over slowest layer
-Density: percentage, quotient of layer sum over grid 
-P/G Ratio: percentage, quotient of layer sum over grouping sum
-Composite Length: unique positions in composite rhythm 
-Layer Sum: sum of all layer frequency values, distinct from Composite Length due to nested ratios / coincidence on downbeat
+<p align="center">
+  <img src="assets/metrics2.png">
+</p>
+Rhythm Info displays the Layers, Grid and Fundamental values for this rhythm-scale (recall that the Fundamental is the grouping size of Layer A), along with a few other metrics:
+- Range: quotient of the fastest over slowest layer
+- Density: percentage, quotient of layer sum over grid
+- P/G Ratio: percentage, quotient of layer sum over grouping sum
+- Composite Length: unique positions in composite rhythm
+- Layer Sum: sum of all layer frequency values, distinct from Composite Length due to nested ratios / coincidence on downbeat
+
 Range describes the literal frequency range of the polyrhythm layers - rhythms with smaller range values are more tightly packed. 
+
 Density percentage tells us "how much of the grid is covered by the rhythm?". I use Layer Sum instead of Composite Length to give credence to the full "weight" of all frequency layers. High-frequency nested ratios can cause higher density by adding frequency values while constraining growth of the overall LCM.
+
 P/G ratio is a subtler metric that weighs the overall sum of the frequency values against the sum of the grouping sizes which create them. The grouping sum will always be greater than the layer sum, and higher density rhythms tend to have a higher P/G ratio, but P/G generally declines as Grid values grow. Rhythms may also have a P/G value of 1 - see Inverse PG section in Search Algorithms. 
 
 One special metric, Average Deviation only applies to 12-tone rhythm scales. This metric relates our microtonal just-intonation scales to the dominant contemporary tuning system, 12 tone equal temperament (12TET) in which the octave is logarithmically partitioned into 12 equal semitones, which we measure as 100 cent intervals of pitch space. Average Deviation is calculated by determining the intervallic cents distance between each successive step in the scale, and calculating the deviation from 100 cents. For example, a 79 cent interval has a deviation of 21 cents, while a 105.6 cent interval has a deviation of 5.6 cents. We take the average of all 12 deviation values to yield the final metric. What do you think the minimum average deviation for a 12-tone scale might be? 
@@ -176,9 +179,17 @@ If you still need more numbers you can expand the Spaces Plot or Composite Rhyth
 Expanded Info View shows the same metrics as Rhythm Info, but it also includes the Grouping sizes for all layers, and a section called Nested Ratios.
 
 ##### Nested Ratios
+<p align="center">
+  <img src="assets/nestedratios.png">
+</p>
 Valid polyrhythms must be coprime as a set, and have no layers which are direct factors of another layer. When only 2 layers are present, they may not share any factors. However, for 3 and 4 layer rhythms, common factors amongst layer tuples are allowed and provide abundance of specific classes of results by constraining scale size growth despite grid growth thanks to nested resolution patterns within the larger cycle - nested ratios. Even a simple rhythm, like the page default 8:7:6:5, has a nested ratio of 4:3 occurring twice between layers 8:6 (A and C). That's why the Nested Ratios section for this rhythm shows 2x A:C 8:6 = 4:3. 
 
 #### Interconsonance
+<div style="display:flex; gap:12px; justify-content:center; align-items:center;">
+  <img src="assets/interconsonance.png" alt="Rhythm Info" style="max-width:48%; height:auto;">
+  <img src="assets/intervalmatrix.png" alt="Expanded Info View" style="max-width:48%; height:auto;">
+</div>
+
 The final analytical component of the Info Divs is the Interconsonance Analyzer. Just like the Average Deviation concept, the ICA is a bridge to the "familiar" sounds of 12TET. 
 
 While the average deviation metric calculates the intervallic distance for all sequential steps, the ICA calculates the full interval matrix of all available interval pairs in the set. The number of available unique pairs can grow very large, so this feature may break down for very large scales, but it can still comfortably handle scales with 100 pitches per octave. These intervals are then assessed for "consonance", which in our system will refer to intervals which are within a +-15 cent window of a multiple of 100 cents. These intervals are relatively close to the familiar 12TET intervals most of us are used to. The analyzer then finds subsets of ratios within the rhythm which all share consonance and organizes them into Consonance Families. 
