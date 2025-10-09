@@ -186,8 +186,8 @@ Valid polyrhythms must be coprime as a set, and have no layers which are direct 
 
 #### Interconsonance
 <div style="display:flex; gap:12px; justify-content:center; align-items:center;">
-  <img src="assets/interconsonance.png" alt="Rhythm Info" style="max-width:48%; height:auto;">
-  <img src="assets/intervalmatrix.png" alt="Expanded Info View" style="max-width:48%; height:auto;">
+  <img src="assets/interconsonance.png" alt="Rhythm Info" style="max-width:24%; height:auto;">
+  <img src="assets/intervalmatrix.png" alt="Expanded Info View" style="max-width:24%; height:auto;">
 </div>
 
 The final analytical component of the Info Divs is the Interconsonance Analyzer. Just like the Average Deviation concept, the ICA is a bridge to the "familiar" sounds of 12TET. 
