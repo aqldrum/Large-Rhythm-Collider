@@ -121,11 +121,18 @@ Try 7:5:3:2 on the main page and you'll see a 5-tone scale, 1/1, 15/14, 5/4, 3/2
   <img src="assets/first4primes.png">
 </p>
 
-But hey, why do the notes sound weird? Note that our scales are comprised of ratios, with corresponding Cents values. In microtonal music theory, ratio-based or harmonic-series based tuning approaches fall under the umbrella of Just Intonation, which generates pitches not available in standard 12 tone equal temperament (12TET). Cents measure pitch space as it relates to 12TET - 1200 cents equals one octave, 100 cents equals a semitone. The Large Rhythm Collider's tuning approach is arithmetically primitive compared to more sophisticated goal-oriented just intonation systems, but the deterministic bounds of the essential rhythm math possess curious strengths thanks to the breadth of available inputs and their emergent generative behaviors. 
+### Tuning Systems 
+You'll notice that our scales are comprised of ratios, with corresponding Cents values. In microtonal music theory, ratio-based or harmonic-series based tuning approaches fall under the umbrella of Just Intonation. "Microtonal" tuning refers to any system which formally includes pitches not available in standard 12 tone equal temperament (12TET), which divides the octave intwo twelve equal partitions. Cents measure pitch space as it relates to 12TET - 1200 cents equals one octave, 100 cents equals one semitone. In contrast to goal-oriented tunings like 12TET or sophisticated Just Intonation systems, the Large Rhythm Collider's methodology is somewhat mechanical and brutal; nonetheless, the deterministic bounds of the essential rhythm math bear curious strengths thanks to the breadth of available inputs and their emergent generative behaviors. 
 
-The Spaces Plot conversion via relative waveform period is the core math of the Large Rhythm Collider serial concept. This tuning system concept also provides a general scaffolding for understanding a polyrhythm's complexity, because it gives us an idea of the granularity of the information within. Naturally, more layer values generally equals more pitches per octave, but large rhythms can be constructed while maintaining scale size constraints by using carefully nested ratios between layer values, reducing the overall complexity of the structure through repetition. 
 
-The LRC scale creation algorithm sonifies polyrhythms and generates fascinating melodic content hidden within dense, chaotic structures. Each frequency layer becomes a pulse "arpeggiator" of the rhythm's bespoke tuning system. The scale generation concept also opens doors for organization, classification and implementation outside of the purely musical realm, as you'll see in some of the visualizations. The engine's larger purpose is to compile polyrhythmic data into a unique, natural procedural generation system with widespread potential for application.
+### Conclusion
+The Spaces Plot conversion via relative waveform period is the core math of the Large Rhythm Collider serial concept. The opaque prime factor relationships between layer values combined with the multi-step scale creation algorithm creates results with a degree of entropy that naturally drove the emergence of deeper analytical methods. I came to realize that the LRC tuning concept provides a detailed scaffolding to classify polyrhythms by their relative complexity, by assessing the granularity of the information they possess.  
+
+The kaleidoscopic inner worlds of polyrhythms are made mappable and musical through the core analysis / sonification algorithm. Each frequency layer becomes a pulse "arpeggiator" of its rhythm's bespoke tuning system, washing over one another in blurred generative counterpoint. The scale creation concept also opens doors for organization, classification and implementation outside of the purely musical realm, as you'll see in some of the visualizations. The engine's larger purpose is to compile polyrhythmic data into a unique, natural procedural generation system with widespread potential for application.
+
+<p align="center">
+  <img src="assets/mainpage2.png">
+</p>
 
 ## Key Features
 

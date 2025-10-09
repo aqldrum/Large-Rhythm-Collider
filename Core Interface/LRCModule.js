@@ -208,8 +208,9 @@ class LRCModule {
         const avgDeviation = uniqueTones.size === 12 ? this.calculateAverageDeviation(this.currentSpacesPlot) : null;
 
         // Calculate additional metrics
-        const layerSum = activeLayers.reduce((sum, layer) => sum + layer, 0);
-        const density = layerSum / this.currentGrid * 100;
+        const contributingLayers = this.currentRhythms.filter(layer => layer > 1);
+        const layerSum = contributingLayers.reduce((sum, layer) => sum + layer, 0);
+        const density = this.currentGrid > 0 ? (layerSum / this.currentGrid) * 100 : 0;
 
 
 
