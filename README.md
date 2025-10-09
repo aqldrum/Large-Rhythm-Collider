@@ -61,7 +61,7 @@ The LRC is available at https://www.largerhythmcollider.com.
 - [ ] Check export functionality (MIDI download)
 
 ## Mathematical Foundation
-The Large Rhythm Collider employs a simple, naturally emergent algorithm to describe the composite structure of any given polyrhythm, but the real novelty is in the subsequent serialization of this polyrhythmic DNA into musical tuning systems. The following explanation is concise, but some background research regarding: rhythmic subdivision and meter, polyrhythms, the harmonic series, tuning and temperaments, just intonation and the general physics of sound might help everything "click".
+The Large Rhythm Collider employs a simple, naturally emergent algorithm to describe the composite structure of any given polyrhythm, but the real novelty is in the subsequent serialization of this polyrhythmic DNA into musical tuning systems. The following explanation is detailed, but some background research regarding: rhythmic subdivision and meter, polyrhythms, the harmonic series, tuning and temperaments, just intonation and the general physics of sound will help everything "click".
 
 ### Core Concepts
 Up to 4 frequency layers are defined a:b:c:d. To be a valid polyrhythm, the layers must be coprime as a set (share no common factors), and no layers may be direct factors of another. However, individual layer pairs or tuples may share common factors. For example. 8:7:6:5 is valid because while 8:6 share a common factor, the entire layer set is comprime thanks to the 7 and 5. 8:7:6:4, on the other hand, would be invalid: the 4 adds no new information to the rhythm as it is already described by the 8. Note also that a layer value of 1 merely represents the entire cycle undivided.
@@ -126,9 +126,9 @@ You'll notice that our scales are comprised of ratios, with corresponding Cents 
 
 
 ### Conclusion
-The Spaces Plot conversion via relative waveform period is the core math of the Large Rhythm Collider serial concept. The opaque prime factor relationships between layer values combined with the multi-step scale creation algorithm creates results with a degree of entropy that naturally drove the emergence of deeper analytical methods. I came to realize that the LRC tuning concept provides a detailed scaffolding to classify polyrhythms by their relative complexity, by assessing the granularity of the information they possess.  
+The Spaces Plot conversion via relative waveform period is the core math of the Large Rhythm Collider serial concept. The opaque prime factor relationships between layer values combined with the multi-step scale creation algorithm creates results with a degree of entropy that naturally implores the emergence of deeper analytical methods. I came to realize that the LRC tuning concept provides a detailed scaffolding to classify polyrhythms by their relative complexity, by assessing the granularity of the information they possess.  
 
-The kaleidoscopic inner worlds of polyrhythms are made mappable and musical through the core analysis / sonification algorithm. Each frequency layer becomes a pulse "arpeggiator" of its rhythm's bespoke tuning system, washing over one another in blurred generative counterpoint. The scale creation concept also opens doors for organization, classification and implementation outside of the purely musical realm, as you'll see in some of the visualizations. The engine's larger purpose is to compile polyrhythmic data into a unique, natural procedural generation system with widespread potential for application.
+The kaleidoscopic inner worlds of polyrhythms are made mappable and musical through the core analysis / sonification algorithm. Frequency layers become pulse "arpeggiators" of their rhythms' bespoke tuning systems, washing over one another in blurred counterpoint. The scale creation concept also opens doors for organization, classification and implementation outside of the purely musical realm, as you'll see in some of the visualizations. The engine's larger purpose is to compile polyrhythmic data into a unique, natural procedural generation system with widespread potential for application.
 
 <p align="center">
   <img src="assets/mainpage2.png">
@@ -150,6 +150,12 @@ Numbers go in, patterns and music come out. Use up to 4 whole numbers in the Rhy
 - **4 rhythm-finding search algorithms** - Layer, Grid, Fundamental, and Inverse PG searches
 
 ### Rhythm Info / Expanded Info View
+
+<div style="display:flex; gap:12px; justify-content:center; align-items:center;">
+  <img src="assets/rhythminfo.png" alt="Rhythm Info" style="max-width:48%; height:auto;">
+  <img src="assets/eiv.png" alt="Expanded Info View" style="max-width:48%; height:auto;">
+</div>
+
 The Rhythm Info div displays the relevant metrics and ratio scale for any generated rhythm, as well as the Interconsonance Analyzer and export functionality. Double-clicking the div opens an Expanded Info View with more detail.
 
 #### Metrics
