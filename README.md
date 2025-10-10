@@ -124,7 +124,7 @@ The final principle we apply to scale creation is octave compression - displayin
 Try 7:5:3:2 on the main page and you'll see a 5-tone scale, 1/1, 15/14, 5/4, 3/2, and 5/3. Note that the octave 2/1 may or may not always be present in any spaces plot, but we never include it in the final scale.
 
 <p align="center">
-  <img src="assets/first4primes.png" width="10%">
+  <img src="assets/first4primes.png" width="30%">
 </p>
 
 ### Tuning Systems 
@@ -215,17 +215,17 @@ The export section allows the user to export a PDF with the Expanded Info View d
 The LRC has a detailed playback system for its tone rows, as well as all necessary export functionality to generate the tuning systems and individual layer MIDI for use in a DAW.
 
 #### Main Controls
+
 <table>
   <tr>
     <td width="260" align="center" valign="top">
       <img src="assets/maincontrols.png" alt="Main controls panel" width="240">
     </td>
     <td>
-      <ul>
-        <li>Set the interval in seconds for one full cycle</li>
-        <li>Set the tuning of the fundamental frequency (defaults to A 110hz)</li>
-        <li>Master Volume with limiter</li>
-      </ul>
+      <p><strong>Controls:</strong><br>
+      • Set the interval in seconds for one full cycle<br>
+      • Set the tuning of the fundamental frequency (defaults to A 110hz)<br>
+      • Master Volume with limiter</p>
 
       <p>The seconds value defines the length of the entire cycle - play ultrafast rhythms or stretch them out to long legato scales. Cycle Time will accept values between 0.1 and 6000 seconds.</p>
 
@@ -237,43 +237,41 @@ The LRC has a detailed playback system for its tone rows, as well as all necessa
 </table>
 
 #### Layer Controls
+
 <table>
   <tr>
     <td width="260" align="center" valign="top">
       <img src="assets/layercontrols.png" alt="Layer controls panel" width="240">
     </td>
     <td>
-      <ul>
-        <li>Select from sine, triangle, sawtooth or square wave for each layer</li>
-        <li>All layers have individual volume control, soloing / muting</li>
-        <li>All layers have individual lo / hi pass filter</li>
-        <li>All layers have individual ADSR envelope</li>
-        <li>Legato mode ensures notes are held out for their full value</li>
-      </ul>
-
-      <p>The seconds value defines the length of the entire cycle - play ultrafast rhythms or stretch them out to long legato scales. Cycle Time will accept values between 0.1 and 6000 seconds.</p>
+      <p><strong>Controls:</strong><br>
+      • Select from sine, triangle, sawtooth or square wave for each layer<br>
+      • All layers have individual volume control, soloing / muting<br>
+      • All layers have individual lo / hi pass filter<br>
+      • All layers have individual ADSR envelope<br>
+      • Legato mode ensures notes are held out for their full value</p>
 
       <p>The LRC offers extensive DAW-like control over individual layer audio. Layers can be soloed, muted or have their volumes set individually. Basic waveform synthesis offers sine, triangle, square and sawtooth waves, along with an individual ADSR envelope and simple hi/lo-pass filter for each layer.</p>
 
       <p>The ADSR knobs can be double-clicked to manually edit their values.</p>
-      
+
       <p>Legato mode is a global control which toggles retrigger behavior: when legato mode is off, each new note in the spaces plot silences the previous note. In Legato mode, notes on each layer are held out until that layer sounds again. This allows one to hear the harmonic tuning relationships within each system sustained at slower tempos.</p>
     </td>
   </tr>
 </table>
 
 #### Scale Selection
+
 <table>
   <tr>
     <td width="260" align="center" valign="top">
       <img src="assets/scaleselection.png" alt="Scale selection panel" width="240">
     </td>
     <td>
-      <ul>
-        <li>Turn individual pitches on and off using the scale chart in the Playback div</li>
-        <li>Corresponding lights will toggle on/off in the Linear Plot</li>
-        <li>Select Interconsonance Families directly from the Playback div</li>
-      </ul>
+      <p><strong>Controls:</strong><br>
+      • Turn individual pitches on and off using the scale chart in the Playback div<br>
+      • Corresponding lights will toggle on/off in the Linear Plot<br>
+      • Select Interconsonance Families directly from the Playback div</p>
 
       <p>With Scale Selection you can select and deselect pitches in real time to create smaller subsets of the larger tuning system. Alongside the scale chart, you'll see the Count for each ratio, which is the number of times it actually appears in the spaces plot.</p>
 
