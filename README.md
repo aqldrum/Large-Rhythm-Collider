@@ -217,6 +217,9 @@ The LRC has a detailed playback system for its tone rows, as well as all necessa
 #### Main Controls
 <table>
   <tr>
+    <td width="260" align="center" valign="top">
+      <img src="assets/maincontrols.png" alt="Main controls panel" width="240">
+    </td>
     <td>
       <ul>
         <li>Set the interval in seconds for one full cycle</li>
@@ -230,15 +233,15 @@ The LRC has a detailed playback system for its tone rows, as well as all necessa
 
       <p>The Master Volume slider defaults to a safe -24dB and has a final limiter, but still be cautious when playing raw sine waves at high volumes.</p>
     </td>
-    <td align="center" valign="bottom">
-      <img src="assets/maincontrols.png" alt="Main controls panel" width="240">
-    </td>
   </tr>
 </table>
 
 #### Layer Controls
 <table>
   <tr>
+    <td width="260" align="center" valign="top">
+      <img src="assets/layercontrols.png" alt="Layer controls panel" width="240">
+    </td>
     <td>
       <ul>
         <li>Select from sine, triangle, sawtooth or square wave for each layer</li>
@@ -256,15 +259,15 @@ The LRC has a detailed playback system for its tone rows, as well as all necessa
       
       <p>Legato mode is a global control which toggles retrigger behavior: when legato mode is off, each new note in the spaces plot silences the previous note. In Legato mode, notes on each layer are held out until that layer sounds again. This allows one to hear the harmonic tuning relationships within each system sustained at slower tempos.</p>
     </td>
-    <td align="center" valign="bottom">
-      <img src="assets/layercontrols.png" alt="Layer controls panel" width="240">
-    </td>
   </tr>
 </table>
 
 #### Scale Selection
 <table>
   <tr>
+    <td width="260" align="center" valign="top">
+      <img src="assets/scaleselection.png" alt="Scale selection panel" width="240">
+    </td>
     <td>
       <ul>
         <li>Turn individual pitches on and off using the scale chart in the Playback div</li>
@@ -277,9 +280,6 @@ The LRC has a detailed playback system for its tone rows, as well as all necessa
       <p>Toggling pitches in Scale Selection will also toggle them on and off in Linear Plot, helping you visualize what you add and subtract as you hear it.</p>
 
       <p>If Interconsonance has been run in the Rhythm Info div, individual interconsonance families can also be automatically selected in Scale Selection.</p>
-    </td>
-    <td align="center" valign="bottom">
-      <img src="assets/scaleselection.png" alt="Scale selection panel" width="240">
     </td>
   </tr>
 </table>
