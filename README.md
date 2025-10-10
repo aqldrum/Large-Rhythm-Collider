@@ -124,7 +124,7 @@ The final principle we apply to scale creation is octave compression - displayin
 Try 7:5:3:2 on the main page and you'll see a 5-tone scale, 1/1, 15/14, 5/4, 3/2, and 5/3. Note that the octave 2/1 may or may not always be present in any spaces plot, but we never include it in the final scale.
 
 <p align="center">
-  <img src="assets/first4primes.png" width="50%">
+  <img src="assets/first4primes.png" width="10%">
 </p>
 
 ### Tuning Systems 
