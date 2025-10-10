@@ -218,9 +218,11 @@ The LRC has a detailed playback system for its tone rows, as well as all necessa
 <table>
   <tr>
     <td>
-      <p>- Set the interval in seconds for one full cycle
-         - Set the tuning of the fundamental frequency (defaults to A 110hz)
-         - Master Volume with limiter</p>
+      <ul>
+        <li>Set the interval in seconds for one full cycle</li>
+        <li>Set the tuning of the fundamental frequency (defaults to A 110hz)</li>
+        <li>Master Volume with limiter</li>
+      </ul>
 
       <p>The seconds value defines the length of the entire cycle - play ultrafast rhythms or stretch them out to long legato scales. Cycle Time will accept values between 0.1 and 6000 seconds.</p>
 
@@ -229,7 +231,7 @@ The LRC has a detailed playback system for its tone rows, as well as all necessa
       <p>The Master Volume slider defaults to a safe -24dB and has a final limiter, but still be cautious when playing raw sine waves at high volumes.</p>
     </td>
     <td align="center" valign="bottom">
-      <img src="assets/maincontrols.png" alt="3 over 2 example" width="240">
+      <img src="assets/maincontrols.png" alt="Main controls panel" width="240">
     </td>
   </tr>
 </table>
@@ -238,11 +240,13 @@ The LRC has a detailed playback system for its tone rows, as well as all necessa
 <table>
   <tr>
     <td>
-      <p>- Select from sine, triangle, sawtooth or square wave for each layer
-         - All layers have individual volume control, soloing / muting
-         - All layers have individual lo / hi pass filter
-         - All layers have individual ADSR envelope
-         - Legato mode ensures notes are held out for their full value</p>
+      <ul>
+        <li>Select from sine, triangle, sawtooth or square wave for each layer</li>
+        <li>All layers have individual volume control, soloing / muting</li>
+        <li>All layers have individual lo / hi pass filter</li>
+        <li>All layers have individual ADSR envelope</li>
+        <li>Legato mode ensures notes are held out for their full value</li>
+      </ul>
 
       <p>The seconds value defines the length of the entire cycle - play ultrafast rhythms or stretch them out to long legato scales. Cycle Time will accept values between 0.1 and 6000 seconds.</p>
 
@@ -253,25 +257,20 @@ The LRC has a detailed playback system for its tone rows, as well as all necessa
       <p>Legato mode is a global control which toggles retrigger behavior: when legato mode is off, each new note in the spaces plot silences the previous note. In Legato mode, notes on each layer are held out until that layer sounds again. This allows one to hear the harmonic tuning relationships within each system sustained at slower tempos.</p>
     </td>
     <td align="center" valign="bottom">
-      <img src="assets/layercontrols.png" alt="3 over 2 example" width="240">
+      <img src="assets/layercontrols.png" alt="Layer controls panel" width="240">
     </td>
   </tr>
 </table>
 
 #### Scale Selection
-<p align="center">
-  <img src="assets/scaleselection.png"width="60%">
-</p>
-
-
-
-
 <table>
   <tr>
     <td>
-      <p>- Turn individual pitches on and off using the scale chart in the Playback div
-         - Corresponding lights will toggle on/off in the Linear Plot
-         - Select Interconsonance Families directly from the Playback div</p>
+      <ul>
+        <li>Turn individual pitches on and off using the scale chart in the Playback div</li>
+        <li>Corresponding lights will toggle on/off in the Linear Plot</li>
+        <li>Select Interconsonance Families directly from the Playback div</li>
+      </ul>
 
       <p>With Scale Selection you can select and deselect pitches in real time to create smaller subsets of the larger tuning system. Alongside the scale chart, you'll see the Count for each ratio, which is the number of times it actually appears in the spaces plot.</p>
 
@@ -280,7 +279,7 @@ The LRC has a detailed playback system for its tone rows, as well as all necessa
       <p>If Interconsonance has been run in the Rhythm Info div, individual interconsonance families can also be automatically selected in Scale Selection.</p>
     </td>
     <td align="center" valign="bottom">
-      <img src="assets/scaleselection.png" alt="3 over 2 example" width="240">
+      <img src="assets/scaleselection.png" alt="Scale selection panel" width="240">
     </td>
   </tr>
 </table>
@@ -461,4 +460,3 @@ I'm a musician and came into this process a novice programmer; as such, this pro
 
 ## License
 [Your chosen license]
-
