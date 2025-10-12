@@ -24,7 +24,6 @@
                         <div class="collections-content">
                             <div class="collections-tabs">
                                 <button class="tab-button active" data-tab="browse">Browse</button>
-                                <button class="tab-button" data-tab="submit">Submit</button>
                                 <button class="tab-button" data-tab="vote">Vote</button>
                             </div>
                             
@@ -34,36 +33,36 @@
                                     <label for="browse-category">Category:</label>
                                     <select id="browse-category">
                                         <option value="playback">Playback</option>
-                                        <option value="viuals">Visualizations</option>
+                                        <option value="visuals">Visualizations</option>
                                     </select>
                                 </div>
                                 <div id="top-rhythms-list" class="rhythms-list">
                                     <p>Loading top rhythms...</p>
                                 </div>
                             </div>
-                            
-                            <!-- Submit Tab -->
-                            <div id="submit-tab" class="tab-content">
-                                <p>Submit your current rhythm to Collections:</p>
-                                <div id="current-rhythm-display" class="current-rhythm">
-                                    <span id="current-layers">8:7:6:5</span>
-                                </div>
-                                <button id="submit-current-rhythm" class="submit-btn">Submit Current Rhythm</button>
-                                <div id="submit-status" class="status-message"></div>
-                            </div>
-                            
+
                             <!-- Vote Tab -->
                             <div id="vote-tab" class="tab-content">
-                                <div id="voting-interface" class="voting-interface">
-                                    <p>Select a rhythm to vote on:</p>
-                                    <div class="rhythm-selector">
-                                        <input type="text" id="vote-rhythm-input" placeholder="Enter layers (e.g., 8:7:6:5)" />
-                                        <button id="load-rhythm-for-voting">Load</button>
+                                <div class="vote-tab-layout">
+                                    <div class="vote-submit">
+                                        <p>Submit your current rhythm to Collections:</p>
+                                        <div class="vote-submit-current">
+                                            <span id="current-layers">—</span>
+                                            <div class="vote-submit-controls">
+                                                <label for="collection-category">Category:</label>
+                                                <select id="collection-category">
+                                                    <option value="playback">Playback</option>
+                                                    <option value="visuals">Visualizations</option>
+                                                </select>
+                                                <button id="submit-current-rhythm" class="submit-btn">Submit</button>
+                                            </div>
+                                        </div>
+                                        <div id="submit-status" class="status-message"></div>
                                     </div>
-                                    <div id="voting-categories" class="voting-categories" style="display: none;">
-                                        <h4>Vote in categories:</h4>
-                                        <div class="category-votes">
-                                            <!-- Categories will be populated by JavaScript -->
+                                    <div class="vote-results">
+                                        <h4>Vote on community rhythms</h4>
+                                        <div id="vote-rhythms-list" class="rhythms-list">
+                                            <p>Loading rhythms for voting...</p>
                                         </div>
                                     </div>
                                 </div>
@@ -366,6 +365,7 @@
     <!-- Firebase SDK for Collections (optional - runs in demo mode without Firebase) -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="Core Interface/firebase-config.js"></script>
     
     <!-- Firebase Configuration (Replace with your own for production) -->
     <script>
@@ -384,8 +384,10 @@
         // Uncomment to enable Firebase
         // firebase.initializeApp(firebaseConfig);
         */
-        
-        console.log('📊 Collections: Firebase not configured - running in demo mode');
+       
+        if (!window.firebaseConfig) {
+            console.log('📊 Collections: Firebase not configured - running in demo mode');
+        }
     </script>
 
     <!-- Interface Core Modules -->

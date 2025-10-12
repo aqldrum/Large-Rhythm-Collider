@@ -326,13 +326,6 @@ class LRCExport {
             return y;
         }
 
-        if (y + 60 > maxContentHeight) {
-            doc.addPage();
-            y = 20;
-        }
-
-        y = this.addSectionTitleBar(doc, 'Scale', x, y, width);
-
         const cardPadding = 12;
         const availableWidth = width - cardPadding * 2;
         const ratioColumnWidth = Math.round(availableWidth * 0.48);
@@ -340,64 +333,87 @@ class LRCExport {
         const countColumnWidth = availableWidth - ratioColumnWidth - centsColumnWidth;
         const rowHeight = 8.5;
         const headerHeight = 8;
-        const cardHeight = cardPadding * 2 + headerHeight + ratios.length * rowHeight;
+        let remainingRatios = [...ratios];
+        let sectionTitle = 'Scale';
 
-        if (y + cardHeight > maxContentHeight) {
-            doc.addPage();
-            y = 20;
-            y = this.addSectionTitleBar(doc, 'Scale (continued)', x, y, width);
+        while (remainingRatios.length > 0) {
+            if (y + 60 > maxContentHeight) {
+                doc.addPage();
+                y = 20;
+            }
+
+            y = this.addSectionTitleBar(doc, sectionTitle, x, y, width);
+            sectionTitle = 'Scale (continued)';
+
+            // Determine how many rows fit on this page
+            const availableHeight = maxContentHeight - y;
+            const usableHeight = availableHeight - cardPadding * 2 - headerHeight;
+            const rowsFit = Math.floor(usableHeight / rowHeight);
+
+            if (rowsFit <= 0) {
+                doc.addPage();
+                y = 20;
+                continue;
+            }
+
+            const rowsForPage = remainingRatios.slice(0, rowsFit);
+            remainingRatios = remainingRatios.slice(rowsFit);
+
+            const cardHeight = cardPadding * 2 + headerHeight + rowsForPage.length * rowHeight;
+
+            doc.setFillColor(colors.cardBackground.r, colors.cardBackground.g, colors.cardBackground.b);
+            doc.roundedRect(x, y, width, cardHeight, 4, 4, 'F');
+            doc.setDrawColor(colors.cardBorder.r, colors.cardBorder.g, colors.cardBorder.b);
+            doc.setLineWidth(0.4);
+            doc.roundedRect(x, y, width, cardHeight, 4, 4);
+
+            const headerY = y + cardPadding;
+            doc.setFillColor(233, 236, 244);
+            doc.roundedRect(x + cardPadding - 1, headerY - 2.5, width - cardPadding * 2 + 2, headerHeight + 2.5, 2, 2, 'F');
+            doc.setDrawColor(214, 219, 227);
+            doc.setLineWidth(0.2);
+            doc.roundedRect(x + cardPadding - 1, headerY - 2.5, width - cardPadding * 2 + 2, headerHeight + 2.5, 2, 2);
+
+            const ratioColumnStart = x + cardPadding;
+            const centsColumnStart = ratioColumnStart + ratioColumnWidth;
+            const countColumnStart = centsColumnStart + centsColumnWidth;
+
+            doc.setFont('helvetica', 'bold');
+            doc.setFontSize(6.8);
+            doc.setTextColor(colors.textMuted.r, colors.textMuted.g, colors.textMuted.b);
+            doc.text('RATIO', ratioColumnStart + 2, headerY + 4.5);
+            doc.text('CENTS', centsColumnStart + 2, headerY + 4.5);
+            doc.text('COUNT', countColumnStart + 2, headerY + 4.5);
+
+            let rowY = headerY + headerHeight;
+            rowsForPage.forEach(ratio => {
+                doc.setFont('helvetica', 'bold');
+                doc.setFontSize(8);
+                doc.setTextColor(colors.textPrimary.r, colors.textPrimary.g, colors.textPrimary.b);
+                doc.text(ratio.fraction || '', ratioColumnStart + 2, rowY + 6);
+
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(7.5);
+                doc.setTextColor(colors.textPrimary.r, colors.textPrimary.g, colors.textPrimary.b);
+                const centsValue = ratio.cents != null ? `${ratio.cents.toFixed(2)} ¢` : '0.00 ¢';
+                doc.text(centsValue, centsColumnStart + 2, rowY + 6);
+
+                const countValue = ratio.frequency != null ? String(ratio.frequency) : '0';
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(7.5);
+                doc.text(countValue, countColumnStart + 2, rowY + 6);
+
+                doc.setDrawColor(225, 229, 236);
+                doc.setLineWidth(0.1);
+                doc.line(x + cardPadding, rowY + rowHeight, x + width - cardPadding, rowY + rowHeight);
+
+                rowY += rowHeight;
+            });
+
+            y += cardHeight + 18;
         }
 
-        doc.setFillColor(colors.cardBackground.r, colors.cardBackground.g, colors.cardBackground.b);
-        doc.roundedRect(x, y, width, cardHeight, 4, 4, 'F');
-        doc.setDrawColor(colors.cardBorder.r, colors.cardBorder.g, colors.cardBorder.b);
-        doc.setLineWidth(0.4);
-        doc.roundedRect(x, y, width, cardHeight, 4, 4);
-
-        const headerY = y + cardPadding;
-        doc.setFillColor(233, 236, 244);
-        doc.roundedRect(x + cardPadding - 1, headerY - 2.5, width - cardPadding * 2 + 2, headerHeight + 2.5, 2, 2, 'F');
-        doc.setDrawColor(214, 219, 227);
-        doc.setLineWidth(0.2);
-        doc.roundedRect(x + cardPadding - 1, headerY - 2.5, width - cardPadding * 2 + 2, headerHeight + 2.5, 2, 2);
-
-        const ratioColumnStart = x + cardPadding;
-        const centsColumnStart = ratioColumnStart + ratioColumnWidth;
-        const countColumnStart = centsColumnStart + centsColumnWidth;
-
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(6.8);
-        doc.setTextColor(colors.textMuted.r, colors.textMuted.g, colors.textMuted.b);
-        doc.text('RATIO', ratioColumnStart + 2, headerY + 4.5);
-        doc.text('CENTS', centsColumnStart + 2, headerY + 4.5);
-        doc.text('COUNT', countColumnStart + 2, headerY + 4.5);
-
-        let rowY = headerY + headerHeight;
-        ratios.forEach(ratio => {
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(8);
-            doc.setTextColor(colors.textPrimary.r, colors.textPrimary.g, colors.textPrimary.b);
-            doc.text(ratio.fraction || '', ratioColumnStart + 2, rowY + 6);
-
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(7.5);
-            doc.setTextColor(colors.textPrimary.r, colors.textPrimary.g, colors.textPrimary.b);
-            const centsValue = ratio.cents != null ? `${ratio.cents.toFixed(2)} ¢` : '0.00 ¢';
-            doc.text(centsValue, centsColumnStart + 2, rowY + 6);
-
-            const countValue = ratio.frequency != null ? String(ratio.frequency) : '0';
-            doc.setFont('helvetica', 'normal');
-            doc.setFontSize(7.5);
-            doc.text(countValue, countColumnStart + 2, rowY + 6);
-
-            doc.setDrawColor(225, 229, 236);
-            doc.setLineWidth(0.1);
-            doc.line(x + cardPadding, rowY + rowHeight, x + width - cardPadding, rowY + rowHeight);
-
-            rowY += rowHeight;
-        });
-
-        return y + cardHeight + 18;
+        return y;
     }
 
     addMetricsToPDF(doc, rhythmInfo, x, y, pageHeight, maxContentHeight, contentWidth) {

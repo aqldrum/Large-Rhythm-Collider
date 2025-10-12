@@ -51,12 +51,6 @@
 
             if (firebase.apps.length === 0) {
                 firebase.initializeApp(window.firebaseConfig);
-                try {
-                    const projectId = window.firebaseConfig?.projectId || firebase.app().options?.projectId;
-                    console.log('📦 Collections Firebase initialized with project:', projectId || '(unknown)');
-                } catch (logErr) {
-                    console.warn('📦 Collections Firebase initialization log failed:', logErr);
-                }
             }
 
             // Optional anonymous auth. Helps enforce Firestore security rules without user accounts.
@@ -83,7 +77,8 @@
                     this.collectionsPanel.style.display = isVisible ? 'none' : 'block';
 
                     if (!isVisible) {
-                        this.refreshCollectionsLists();
+                        this.loadTopRhythms().catch((err) => console.error('Failed to load collections:', err));
+                        this.loadTopRhythms(this.voteRhythmsList).catch((err) => console.error('Failed to load vote list:', err));
                     }
                 });
             }
@@ -99,7 +94,8 @@
 
             if (this.browseCategorySelect) {
                 this.browseCategorySelect.addEventListener('change', () => {
-                    this.refreshCollectionsLists();
+                    this.loadTopRhythms().catch((err) => console.error('Failed to load collections:', err));
+                    this.loadTopRhythms(this.voteRhythmsList).catch((err) => console.error('Failed to load vote list:', err));
                 });
             }
         }
@@ -130,15 +126,28 @@
                 return;
             }
 
-            await this.submitRhythm({
+            const category = this.getSubmitCategory();
+
+            const submissionResult = await this.submitRhythm({
                 layers: layerArray,
                 submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 pitches: this.extractPitchCount(),
                 summary: this.getRhythmSummary(),
-                category: this.getSubmitCategory()
+                category
             });
 
-            this.showStatus('Rhythm submitted to Collections!', 'success');
+            if (submissionResult.status === 'duplicate') {
+                const usedCategory = submissionResult.category || category;
+                this.showStatus(`Already in Collections—counted as a fresh ${this.formatCategoryLabel(usedCategory)} vote. Thanks!`, 'info');
+            } else {
+                this.showStatus(`Thanks for submitting! Your rhythm is now in Collections (${this.formatCategoryLabel(category)}).`, 'success');
+            }
+
+            // Refresh the leaderboard if the panel is open so the user sees their contribution instantly.
+            if (this.collectionsPanel && this.collectionsPanel.style.display === 'block') {
+                this.loadTopRhythms().catch((err) => console.error('Post-submit refresh failed:', err));
+                this.loadTopRhythms(this.voteRhythmsList).catch((err) => console.error('Post-submit vote refresh failed:', err));
+            }
         }
 
         containsBlacklistedDigits(text) {
@@ -166,10 +175,7 @@
                 throw new Error('Firestore not initialized');
             }
 
-            const normalizedCategory = this.normalizeCategory(payload.category) || this.defaultVoteCategory();
             const collectionRef = this.db.collection('collections_rhythms');
-
-            // Basic duplicate detection by layers
             const duplicateSnapshot = await collectionRef
                 .where('layers', '==', payload.layers)
                 .limit(1)
@@ -177,28 +183,38 @@
 
             if (!duplicateSnapshot.empty) {
                 const existingDoc = duplicateSnapshot.docs[0];
-                const voteCategory = normalizedCategory;
-                await this.registerVote(existingDoc.id, voteCategory);
-                if (typeof window !== 'undefined' && window.localStorage) {
-                    localStorage.setItem(this.voteStorageKey(existingDoc.id, voteCategory), String(Date.now()));
+                try {
+                    const voteCategory = this.normalizeCategory(payload.category) || this.defaultVoteCategory();
+                    await this.registerVote(existingDoc.id, voteCategory);
+                    if (typeof window !== 'undefined' && window.localStorage) {
+                        localStorage.setItem(this.voteStorageKey(existingDoc.id, voteCategory), String(Date.now()));
+                    }
+                    return { status: 'duplicate', docId: existingDoc.id, category: voteCategory };
+                } catch (voteErr) {
+                    console.error('Duplicate submission vote failed:', voteErr);
+                    this.showStatus('That rhythm already exists, and we could not record your vote. Please try again shortly.', 'error');
+                    throw voteErr;
                 }
-                return;
             }
 
-            await collectionRef.add({
+            const normalizedCategory = this.normalizeCategory(payload.category) || this.defaultVoteCategory();
+            const initialVotes = this.initialVoteSchema();
+            initialVotes[normalizedCategory] = 1; // auto-award first vote
+            const newDocRef = await collectionRef.add({
                 ...payload,
-                category: normalizedCategory,
-                votes: this.initialVoteSchema({ [normalizedCategory]: 1 }),
-                flags: 0
+                votes: initialVotes,
+                flags: 0,
+                category: normalizedCategory
             });
+
+            return { status: 'created', docId: newDocRef.id, category: normalizedCategory };
         }
 
-        initialVoteSchema(initialVotes = {}) {
-            const schema = {};
-            this.allowedCategories().forEach((category) => {
-                schema[category] = initialVotes[category] || 0;
-            });
-            return schema;
+        initialVoteSchema() {
+            return {
+                playback: 0,
+                visuals: 0
+            };
         }
 
         // --- Voting Flow --------------------------------------------------------
@@ -242,53 +258,36 @@
 
         // --- Fetch & Render -----------------------------------------------------
 
-        refreshCollectionsLists() {
-            this.loadTopRhythms().catch((err) => console.error('Failed to load Collections:', err));
-            if (this.voteRhythmsList) {
-                this.loadTopRhythms(this.voteRhythmsList).catch((err) => console.error('Failed to load vote list:', err));
-            }
-        }
-
         async loadTopRhythms(listElement = null) {
             if (!this.db) return;
 
             const targetList = listElement ?? this.topRhythmsList;
             if (!targetList) return;
 
-            const sortCategory = this.getBrowseCategory();
-            const categoryLabel = this.formatCategoryLabel(sortCategory);
-            targetList.innerHTML = `<div class="loading">Loading ${categoryLabel} Collections...</div>`;
+            const activeCategoryLabel = this.formatCategoryLabel(this.getBrowseCategory());
+            targetList.innerHTML = `<div class="loading">Loading ${activeCategoryLabel} Collections...</div>`;
 
             try {
-                let query = this.db.collection('collections_rhythms');
+            const sortCategory = this.getBrowseCategory();
+            let query = this.db.collection('collections_rhythms')
+                .where('category', '==', sortCategory)
+                .orderBy(`votes.${sortCategory}`, 'desc')
+                .limit(25);
 
-                if (sortCategory) {
-                    query = query.where('category', '==', sortCategory);
-                }
-
-                let snapshot;
-                try {
-                    snapshot = await query
-                        .orderBy(`votes.${sortCategory}`, 'desc')
-                        .limit(25)
-                        .get();
-                } catch (queryError) {
-                    console.warn('Collections query falling back due to:', queryError);
-                    snapshot = await this.db.collection('collections_rhythms')
-                        .orderBy(`votes.${sortCategory}`, 'desc')
-                        .limit(25)
-                        .get();
-                }
-
-                if (snapshot.empty && sortCategory) {
-                    snapshot = await this.db.collection('collections_rhythms')
-                        .orderBy(`votes.${sortCategory}`, 'desc')
-                        .limit(25)
-                        .get();
-                }
+            let snapshot;
+            try {
+                snapshot = await query.get();
+            } catch (queryError) {
+                // If index missing, fall back to unfiltered orderBy
+                console.warn('Collections query falling back due to:', queryError);
+                snapshot = await this.db.collection('collections_rhythms')
+                    .orderBy(`votes.${sortCategory}`, 'desc')
+                    .limit(25)
+                    .get();
+            }
 
                 if (snapshot.empty) {
-                    targetList.innerHTML = `<div class="empty">No ${categoryLabel} rhythms submitted yet. Be the first!</div>`;
+                    targetList.innerHTML = `<div class="empty">No ${activeCategoryLabel} rhythms submitted yet. Be the first!</div>`;
                     return;
                 }
 
@@ -316,6 +315,7 @@
         renderCollectionCard(docId, data, options = {}) {
             const { layers = [], votes = {}, summary = {}, category } = data;
             const layerText = Array.isArray(layers) ? layers.join(':') : 'Unknown';
+            const categoryLabel = this.formatCategoryLabel(category);
             const voteCounts = this.allowedCategories().reduce((acc, cat) => {
                 acc[cat] = votes && typeof votes === 'object' ? votes[cat] || 0 : 0;
                 return acc;
@@ -323,24 +323,11 @@
             const totalVotes = Object.values(voteCounts).reduce((sum, value) => sum + value, 0);
             const showVoteButtons = options.showVoteButtons === true;
 
-            const voteBreakdown = this.allowedCategories().map((cat) => {
-                return `<span class="vote-count">${this.formatCategoryLabel(cat)}: <strong>${voteCounts[cat]}</strong></span>`;
-            }).join('');
-
             const voteButtonsHtml = showVoteButtons
-                ? `<div class="collection-vote-buttons">${
-                    this.allowedCategories().map((cat) => (
-                        `<button class="vote-btn" data-doc="${docId}" data-category="${cat}">Vote ${this.formatCategoryLabel(cat)}</button>`
-                    )).join('')
-                }</div>`
+                ? `<div class="collection-vote-buttons">${this.allowedCategories().map((cat) => {
+                        return `<button class="vote-btn" data-doc="${docId}" data-category="${cat}">Vote ${this.formatCategoryLabel(cat)}</button>`;
+                    }).join('')}</div>`
                 : '';
-
-            const summaryHtml = `
-                <div class="collection-meta">
-                    <span>Fundamental: ${summary?.fundamental ?? '—'}</span>
-                    <span>Range: ${summary?.range ?? '—'}</span>
-                </div>
-            `;
 
             return `
                 <div class="collection-card" data-doc-id="${docId}">
@@ -348,13 +335,9 @@
                         <span class="collection-layers">${layerText}</span>
                         <button class="apply-collection" data-layers="${layers.join(',')}">Apply</button>
                     </div>
-                    ${summaryHtml}
                     <div class="collection-votes">
                         <span class="total-votes">Votes: <strong>${totalVotes}</strong></span>
-                        <span class="collection-category">${this.formatCategoryLabel(category)}</span>
-                    </div>
-                    <div class="collection-vote-breakdown">
-                        ${voteBreakdown}
+                        <span class="category-label">${categoryLabel}</span>
                     </div>
                     ${voteButtonsHtml}
                 </div>
@@ -399,12 +382,18 @@
         }
 
         getSubmitCategory() {
-            const selected = this.categorySelect ? this.normalizeCategory(this.categorySelect.value) : null;
+            if (!this.categorySelect) {
+                return this.defaultVoteCategory();
+            }
+            const selected = this.normalizeCategory(this.categorySelect.value);
             return selected || this.defaultVoteCategory();
         }
 
         getBrowseCategory() {
-            const selected = this.browseCategorySelect ? this.normalizeCategory(this.browseCategorySelect.value) : null;
+            if (!this.browseCategorySelect) {
+                return this.defaultVoteCategory();
+            }
+            const selected = this.normalizeCategory(this.browseCategorySelect.value);
             return selected || this.defaultVoteCategory();
         }
 

@@ -225,6 +225,82 @@ body {
     overflow-y: auto;
 }
 
+.collection-item {
+    margin-bottom: 12px;
+}
+
+.collection-card {
+    background: rgba(40, 40, 40, 0.6);
+    border: 1px solid var(--hud-border);
+    border-radius: var(--border-radius);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.collection-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.collection-layers {
+    color: var(--hud-accent);
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.collection-card .apply-collection {
+    background: var(--hud-accent);
+    border: none;
+    color: #000;
+    padding: 6px 12px;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: bold;
+    transition: all var(--transition-speed);
+}
+
+.collection-card .apply-collection:hover {
+    background: #00dd77;
+}
+
+.collection-votes {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--hud-text-muted);
+}
+
+.collection-votes .total-votes {
+    color: var(--hud-text);
+}
+
+.collection-vote-breakdown {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 11px;
+    color: var(--hud-text-muted);
+}
+
+.collection-vote-breakdown .vote-count strong {
+    color: var(--hud-text);
+}
+
+.collection-vote-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.collection-vote-buttons .vote-btn {
+    padding: 6px 12px;
+    font-size: 11px;
+}
+
 .rhythm-item {
     background: rgba(40, 40, 40, 0.4);
     border: 1px solid var(--hud-border);
@@ -312,6 +388,46 @@ body {
     background: rgba(60, 60, 60, 0.6);
     color: var(--hud-text-muted);
     cursor: not-allowed;
+}
+
+/* Vote Tab Layout */
+.vote-tab-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 15px;
+}
+
+.vote-tab-layout .vote-submit,
+.vote-tab-layout .vote-results {
+    background: rgba(40, 40, 40, 0.6);
+    border: 1px solid var(--hud-border);
+    border-radius: var(--border-radius);
+    padding: 15px;
+}
+
+.vote-submit-current {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.vote-submit-current span {
+    color: var(--hud-accent);
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.vote-submit-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.vote-results h4 {
+    margin: 0 0 10px;
+    color: var(--hud-accent);
 }
 
 /* Vote Tab */

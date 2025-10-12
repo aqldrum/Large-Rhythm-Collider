@@ -213,7 +213,7 @@ The export section allows the user to export a PDF with the Expanded Info View d
 
 ### Audio & Export
 The LRC has a detailed playback system for its tone rows, as well as all necessary export functionality to generate the tuning systems and individual layer MIDI for use in a DAW.
-
+  
 #### Main Controls
 
 <table>

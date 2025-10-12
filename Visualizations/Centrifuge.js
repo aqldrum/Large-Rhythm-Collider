@@ -1320,12 +1320,18 @@ class LRCCentrifuge {
 
 // Integration with existing LRCVisuals system
 function integrateCentrifugeVisualization() {
-    if (!window.lrcVisuals || window.lrcVisuals.centrifuge) return;
+    if (!window.lrcVisuals || window.lrcVisuals.__centrifugeIntegrated) return;
     
     console.log('🌀 Starting Centrifuge integration...');
     
-    // Create centrifuge instance
-    window.lrcVisuals.centrifuge = new LRCCentrifuge(window.lrcVisuals);
+    window.lrcVisuals.centrifuge = null;
+
+    const getOrCreateCentrifuge = () => {
+        if (!window.lrcVisuals.centrifuge) {
+            window.lrcVisuals.centrifuge = new LRCCentrifuge(window.lrcVisuals);
+        }
+        return window.lrcVisuals.centrifuge;
+    };
     
     // Add centrifuge option to existing viz type selector  
     const vizTypeSelect = document.getElementById('viz-type-selector');
@@ -1361,8 +1367,8 @@ function integrateCentrifugeVisualization() {
     // Only override drawPlot when specifically needed
     window.lrcVisuals.drawPlot = function() {
         if (this.currentPlotType === 'centrifuge') {
+            const centrifuge = getOrCreateCentrifuge();
             // Only use centrifuge logic for centrifuge plots
-            if (!this.centrifuge) return;
             if (this.spacesPlot && this.spacesPlot.length > 0) {
                 this.drawCentrifugePlot();
             } else {
@@ -1376,7 +1382,7 @@ function integrateCentrifugeVisualization() {
     
     // Add centrifuge-specific draw method
     window.lrcVisuals.drawCentrifugePlot = function() {
-        if (!this.centrifuge) return;
+        const centrifuge = getOrCreateCentrifuge();
         
         // Get current ratios from LRCModule
         let currentRatios = [];
@@ -1393,15 +1399,16 @@ function integrateCentrifugeVisualization() {
             window.lrcModule ? window.lrcModule.currentGrid : 1,
             currentRatios
         );
-        this.centrifuge.draw();
+        centrifuge.draw();
     };
     
     // Extend animation methods - hook into existing playback events
     const originalStartAnimation = window.lrcVisuals.startAnimation || function() {};
     window.lrcVisuals.startAnimation = function() {
-        if (this.currentPlotType === 'centrifuge' && this.centrifuge) {
-            this.centrifuge.setCycleDuration(this.cycleDuration / 1000);
-            this.centrifuge.startAnimation();
+        if (this.currentPlotType === 'centrifuge') {
+            const centrifuge = getOrCreateCentrifuge();
+            centrifuge.setCycleDuration(this.cycleDuration / 1000);
+            centrifuge.startAnimation();
         } else {
             originalStartAnimation.call(this);
         }
@@ -1417,11 +1424,12 @@ function integrateCentrifugeVisualization() {
     
     // Listen for playback events from ToneRowPlayback
     window.addEventListener('playbackStarted', (e) => {
-        if (window.lrcVisuals && window.lrcVisuals.currentPlotType === 'centrifuge' && window.lrcVisuals.centrifuge) {
+        if (window.lrcVisuals && window.lrcVisuals.currentPlotType === 'centrifuge') {
+            const centrifuge = getOrCreateCentrifuge();
             console.log('🌀 Centrifuge responding to playbackStarted event');
             const cycleDuration = e.detail?.cycleDuration || 10.0;
-            window.lrcVisuals.centrifuge.setCycleDuration(cycleDuration);
-            window.lrcVisuals.centrifuge.startAnimation();
+            centrifuge.setCycleDuration(cycleDuration);
+            centrifuge.startAnimation();
             console.log('🌀 Centrifuge animation started with cycle duration:', cycleDuration);
         }
     });
@@ -1452,6 +1460,7 @@ function integrateCentrifugeVisualization() {
         }
     }; 
     
+    window.lrcVisuals.__centrifugeIntegrated = true;
     console.log('🌀 Centrifuge visualization integrated with LRC interface');
 }
 

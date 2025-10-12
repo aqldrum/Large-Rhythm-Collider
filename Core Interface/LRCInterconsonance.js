@@ -299,7 +299,7 @@ class LRCInterconsonance {
             return families;
         }
 
-        console.log(`🔍 Searching for families among ${consonantPitches.length} consonant pitches...`);
+        console.log(`🔍 Searching for families among ${consonantPitches.length} consonant pitches using maximal clique detection...`);
         
         // Check for multiple approximates of the same 12-TET interval
         const intervalsByET = new Map();
@@ -319,48 +319,39 @@ class LRCInterconsonance {
             console.log(`🎵 Multiple 12-TET approximates found: ${multipleApproximateCounts.join(', ')}`);
         }
         
-        // Start with groups of 3, then expand - but with early pruning
-        for (let size = 3; size <= Math.min(consonantPitches.length, 20); size++) {
-            const combinations = this.getCombinationsIterative(consonantPitches, size);
+        const maximalCliques = this.findMaximalConsonanceCliques(consonantPitches);
+        console.log(`🔎 Maximal consonance cliques found: ${maximalCliques.length}`);
+        
+        maximalCliques.forEach(pitchIndices => {
+            if (pitchIndices.length < 3) return;
             
-            for (const pitchIndices of combinations) {
-                if (this.areAllPitchPairsConsonant(pitchIndices)) {
-                    const ratioFractions = pitchIndices.map(i => this.pitchConsonanceMap.get(i).ratioFraction);
-                    const familyIntervals = this.getIntervalsForPitches(pitchIndices, consonantIntervals);
-                    const avgDeviation = familyIntervals.reduce((sum, interval) => sum + interval.deviationAbs, 0) / familyIntervals.length;
-                    
-                    // Check for multiple approximates of same 12-TET interval in this family
-                    const etCounts = new Map();
-                    familyIntervals.forEach(interval => {
-                        const et = interval.nearestET;
-                        etCounts.set(et, (etCounts.get(et) || 0) + 1);
-                    });
-                    
-                    const hasMultipleApproximates = Array.from(etCounts.values()).some(count => count > 1);
-                    
-                    families.push({
-                        ratios: ratioFractions,
-                        pitchIndices,
-                        intervals: familyIntervals,
-                        size: pitchIndices.length,
-                        avgDeviation,
-                        consonanceStrength: this.calculateConsonanceStrength(familyIntervals),
-                        hasMultipleApproximates // Add this flag for analysis
-                    });
-                }
-            }
+            const ratioFractions = pitchIndices.map(i => this.pitchConsonanceMap.get(i).ratioFraction);
+            const familyIntervals = this.getIntervalsForPitches(pitchIndices, consonantIntervals);
+            const avgDeviation = familyIntervals.reduce((sum, interval) => sum + interval.deviationAbs, 0) / familyIntervals.length;
             
-            // Early exit if we're finding too many families (performance safeguard)
-            if (families.length > 1000) {
-                console.log('⚠️ Family search limit reached - stopping at size', size);
-                break;
-            }
-        }
+            const etCounts = new Map();
+            familyIntervals.forEach(interval => {
+                const et = interval.nearestET;
+                etCounts.set(et, (etCounts.get(et) || 0) + 1);
+            });
+            
+            const hasMultipleApproximates = Array.from(etCounts.values()).some(count => count > 1);
+            
+            families.push({
+                ratios: ratioFractions,
+                pitchIndices,
+                intervals: familyIntervals,
+                size: pitchIndices.length,
+                avgDeviation,
+                consonanceStrength: this.calculateConsonanceStrength(familyIntervals),
+                hasMultipleApproximates
+            });
+        });
 
         // Add explicit families that contain multiple approximates of the same 12-TET interval
         this.addMultipleApproximateFamilies(families, consonantIntervals);
         
-        // Remove subset families (keep only maximal families)
+        // Remove subset families (keep only maximal families - safety if explicit additions create subsets)
         const beforeRemoval = families.length;
         const familiesWithMultipleApproximates = families.filter(f => f.hasMultipleApproximates).length;
         
@@ -376,13 +367,74 @@ class LRCInterconsonance {
         
         // Sort families, prioritizing those with multiple 12-TET approximates
         return maximalFamilies.sort((a, b) => {
-            // First, prioritize families with multiple approximates
             if (a.hasMultipleApproximates && !b.hasMultipleApproximates) return -1;
             if (!a.hasMultipleApproximates && b.hasMultipleApproximates) return 1;
-            
-            // Then sort by average deviation
             return a.avgDeviation - b.avgDeviation;
         });
+    }
+
+    findMaximalConsonanceCliques(consonantPitches) {
+        const adjacency = this.pitchConsonanceMap;
+        const results = [];
+
+        const neighbors = (pitchIndex) => {
+            const entry = adjacency.get(pitchIndex);
+            return entry ? entry.consonantWith : new Set();
+        };
+
+        const bronKerbosch = (r, p, x) => {
+            if (p.size === 0 && x.size === 0) {
+                results.push(Array.from(r).sort((a, b) => a - b));
+                return;
+            }
+
+            let pivot = null;
+            let pivotNeighborCount = -1;
+            const union = new Set([...p, ...x]);
+            for (const candidate of union) {
+                const candidateNeighbors = neighbors(candidate);
+                let count = 0;
+                candidateNeighbors.forEach(n => {
+                    if (p.has(n)) count++;
+                });
+                if (count > pivotNeighborCount) {
+                    pivotNeighborCount = count;
+                    pivot = candidate;
+                }
+            }
+
+            const pivotNeighbors = pivot !== null ? neighbors(pivot) : new Set();
+            const candidates = [];
+            p.forEach(v => {
+                if (pivot === null || !pivotNeighbors.has(v)) {
+                    candidates.push(v);
+                }
+            });
+
+            for (const v of candidates) {
+                const vNeighbors = neighbors(v);
+                const nextR = new Set(r);
+                nextR.add(v);
+                
+                const nextP = new Set();
+                p.forEach(n => {
+                    if (vNeighbors.has(n)) nextP.add(n);
+                });
+
+                const nextX = new Set();
+                x.forEach(n => {
+                    if (vNeighbors.has(n)) nextX.add(n);
+                });
+
+                bronKerbosch(nextR, nextP, nextX);
+
+                p.delete(v);
+                x.add(v);
+            }
+        };
+
+        bronKerbosch(new Set(), new Set(consonantPitches), new Set());
+        return results;
     }
 
     resetSection() {
@@ -421,36 +473,6 @@ class LRCInterconsonance {
         console.log('🔄 Interconsonance section reset for new rhythm');
     }
 
-    getCombinationsIterative(arr, size) {
-        if (size === 1) return arr.map(el => [el]);
-        if (size > arr.length) return [];
-        
-        const combinations = [];
-        const indices = Array.from({ length: size }, (_, i) => i);
-        
-        while (true) {
-            // Add current combination
-            combinations.push(indices.map(i => arr[i]));
-            
-            // Find the rightmost index that can be incremented
-            let i = size - 1;
-            while (i >= 0 && indices[i] === arr.length - size + i) {
-                i--;
-            }
-            
-            // If no such index exists, we're done
-            if (i < 0) break;
-            
-            // Increment the found index and reset all indices to its right
-            indices[i]++;
-            for (let j = i + 1; j < size; j++) {
-                indices[j] = indices[j - 1] + 1;
-            }
-        }
-        
-        return combinations;
-    }
-
     areAllPitchPairsConsonant(pitchIndices) {
         // O(1) lookup using pitch consonance map
         for (let i = 0; i < pitchIndices.length; i++) {
@@ -466,34 +488,9 @@ class LRCInterconsonance {
         return true;
     }
 
-    areAllPairsConsonant(ratios, consonantIntervals) {
-        for (let i = 0; i < ratios.length; i++) {
-            for (let j = i + 1; j < ratios.length; j++) {
-                const ratio1 = ratios[i];
-                const ratio2 = ratios[j];
-                
-                const hasConsonantInterval = consonantIntervals.some(interval => 
-                    (interval.ratio1 === ratio1 && interval.ratio2 === ratio2) ||
-                    (interval.ratio1 === ratio2 && interval.ratio2 === ratio1)
-                );
-                
-                if (!hasConsonantInterval) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
     getIntervalsForPitches(pitchIndices, consonantIntervals) {
         return consonantIntervals.filter(interval => 
             pitchIndices.includes(interval.pitchIndex1) && pitchIndices.includes(interval.pitchIndex2)
-        );
-    }
-
-    getIntervalsForRatios(ratios, consonantIntervals) {
-        return consonantIntervals.filter(interval => 
-            ratios.includes(interval.ratio1) && ratios.includes(interval.ratio2)
         );
     }
 
@@ -932,16 +929,16 @@ class LRCInterconsonance {
             html += `
                 <div class="pagination-controls">
                     <button class="page-btn" onclick="window.lrcInterconsonance.goToFamilyPage(0)" 
-                            ${this.familyDisplayState.currentPage === 0 ? 'disabled' : ''}>First</button>
+                            ${this.familyDisplayState.currentPage === 0 ? 'disabled' : ''}>&laquo;</button>
                     <button class="page-btn" onclick="window.lrcInterconsonance.goToFamilyPage(${this.familyDisplayState.currentPage - 1})" 
-                            ${this.familyDisplayState.currentPage === 0 ? 'disabled' : ''}>Previous</button>
+                            ${this.familyDisplayState.currentPage === 0 ? 'disabled' : ''}>&lsaquo;</button>
                     
                     <span class="page-info">Page ${this.familyDisplayState.currentPage + 1} of ${totalPages}</span>
                     
                     <button class="page-btn" onclick="window.lrcInterconsonance.goToFamilyPage(${this.familyDisplayState.currentPage + 1})" 
-                            ${this.familyDisplayState.currentPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+                            ${this.familyDisplayState.currentPage >= totalPages - 1 ? 'disabled' : ''}>&rsaquo;</button>
                     <button class="page-btn" onclick="window.lrcInterconsonance.goToFamilyPage(${totalPages - 1})" 
-                            ${this.familyDisplayState.currentPage >= totalPages - 1 ? 'disabled' : ''}>Last</button>
+                            ${this.familyDisplayState.currentPage >= totalPages - 1 ? 'disabled' : ''}>&raquo;</button>
                 </div>
             `;
         }

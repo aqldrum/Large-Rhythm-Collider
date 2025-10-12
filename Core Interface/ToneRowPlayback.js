@@ -1798,16 +1798,16 @@ class ToneRowPlayback {
             html += `
                 <div class="pagination-controls">
                     <button class="page-btn" onclick="window.toneRowPlayback.goToFamilyPage(0)" 
-                            ${this.familyDisplayState.currentPage === 0 ? 'disabled' : ''}>First</button>
+                            ${this.familyDisplayState.currentPage === 0 ? 'disabled' : ''}>&laquo;</button>
                     <button class="page-btn" onclick="window.toneRowPlayback.goToFamilyPage(${this.familyDisplayState.currentPage - 1})" 
-                            ${this.familyDisplayState.currentPage === 0 ? 'disabled' : ''}>Previous</button>
+                            ${this.familyDisplayState.currentPage === 0 ? 'disabled' : ''}>&lsaquo;</button>
                     
                     <span class="page-info">Page ${this.familyDisplayState.currentPage + 1} of ${totalPages}</span>
                     
                     <button class="page-btn" onclick="window.toneRowPlayback.goToFamilyPage(${this.familyDisplayState.currentPage + 1})" 
-                            ${this.familyDisplayState.currentPage >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+                            ${this.familyDisplayState.currentPage >= totalPages - 1 ? 'disabled' : ''}>&rsaquo;</button>
                     <button class="page-btn" onclick="window.toneRowPlayback.goToFamilyPage(${totalPages - 1})" 
-                            ${this.familyDisplayState.currentPage >= totalPages - 1 ? 'disabled' : ''}>Last</button>
+                            ${this.familyDisplayState.currentPage >= totalPages - 1 ? 'disabled' : ''}>&raquo;</button>
                 </div>
             `;
         }
