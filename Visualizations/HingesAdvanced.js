@@ -880,7 +880,8 @@
       window.removeEventListener('rhythmGenerated', onRhythmGenerated);
       try { container.remove(); } catch {}
       h.overlayTopOffset = 0;
-      h.useOverlayAmplitude = false;
+      // Keep overlay amplitude mode enabled so legacy in-canvas slider stays hidden
+      h.useOverlayAmplitude = true;
       adv.overlays = { container:null, cycleGroup:null, cycleInput:null, forcesPanel:null, forcesHeader:null, layerRows:{}, rightColumn:null, anchorsPanel:null };
     };
 

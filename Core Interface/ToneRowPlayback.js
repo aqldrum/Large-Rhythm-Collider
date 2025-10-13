@@ -60,6 +60,15 @@ class ToneRowPlayback {
         this.selectedNotes = new Set(); // Set of selected ratio fractions
         this.availableRatios = []; // Current scale ratios from LRCModule
         this.noteToSpacesMapping = new Map(); // Maps ratio fractions to spaces plot indices
+
+        // Consonance family playback state
+        this.familyDisplayState = {
+            currentPage: 0,
+            itemsPerPage: 10,
+            sortBy: 'size', // 'avgDeviation' or 'size'
+            sortOrder: 'desc' // 'asc' or 'desc'
+        };
+        this.activeFamilySelection = null; // Tracks currently highlighted family selection
         
         this.setupEventListeners();
         console.log('Tone Row Playback initialized');
@@ -80,14 +89,6 @@ class ToneRowPlayback {
                 highpass: 20,
                 lowpass: 20000
             }
-        };
-        
-        // Family display pagination and sorting state
-        this.familyDisplayState = {
-            currentPage: 0,
-            itemsPerPage: 10,
-            sortBy: 'size', // 'avgDeviation' or 'size'
-            sortOrder: 'desc' // 'asc' or 'desc'
         };
     }
 
@@ -1013,6 +1014,8 @@ class ToneRowPlayback {
         this.dispatchSelectedNotesEvent();
         
         console.log(`✅ Selected all ${this.selectedNotes.size} notes`);
+
+        this.checkActiveFamilyIntegrity();
     }
 
     selectNoNotes() {
@@ -1025,6 +1028,8 @@ class ToneRowPlayback {
         this.dispatchSelectedNotesEvent();
         
         console.log('✅ Deselected all notes');
+
+        this.checkActiveFamilyIntegrity();
     }
 
     toggleNoteSelection(ratioFraction) {
@@ -1047,6 +1052,8 @@ class ToneRowPlayback {
         this.dispatchSelectedNotesEvent();
         
         console.log(`🎵 Toggled note ${ratioFraction} (${this.selectedNotes.has(ratioFraction) ? 'selected' : 'deselected'})`);
+
+        this.checkActiveFamilyIntegrity();
     }
 
     updateSelectedNotesCount() {
@@ -1225,6 +1232,7 @@ class ToneRowPlayback {
             sortBy: 'size',
             sortOrder: 'desc'
         };
+        this.clearActiveFamilySelection();
         
         // Update scale data from LRCModule
         if (window.lrcModule && window.lrcModule.currentRatios) {
@@ -1273,15 +1281,18 @@ class ToneRowPlayback {
                 
                 // Update sort control selections
                 this.updateSortControls();
+                this.updateFamilyHighlight();
                 
                 console.log(`🎵 Updated consonance families display with ${families.length} families`);
             } else {
                 if (controls) controls.style.display = 'none';
                 container.innerHTML = '<p>No consonance families detected for this scale.</p>';
+                this.clearActiveFamilySelection();
             }
         } else {
             if (controls) controls.style.display = 'none';
             container.innerHTML = '<p>Run Interconsonance analysis first to see consonance families.</p>';
+            this.clearActiveFamilySelection();
         }
     }
 
@@ -1308,6 +1319,81 @@ class ToneRowPlayback {
         this.dispatchSelectedNotesEvent();
         
         console.log(`🎭 Selected consonance family ${familyIndex + 1} with ${family.ratios.length} ratios:`, family.ratios);
+
+        this.setActiveFamilySelection(family, familyIndex);
+    }
+
+    setActiveFamilySelection(family, index) {
+        if (!family) {
+            this.clearActiveFamilySelection();
+            return;
+        }
+
+        this.activeFamilySelection = {
+            key: this.getFamilyKey(family),
+            index: index,
+            ratios: new Set(family.ratios)
+        };
+
+        this.updateFamilyHighlight();
+    }
+
+    clearActiveFamilySelection() {
+        this.activeFamilySelection = null;
+        this.updateFamilyHighlight();
+    }
+
+    getFamilyKey(family) {
+        if (!family || !Array.isArray(family.ratios)) return null;
+        return family.ratios.slice().sort().join('|');
+    }
+
+    updateFamilyHighlight() {
+        const container = document.getElementById('consonance-families-container');
+        const buttons = container ? container.querySelectorAll('.consonance-family-btn') : [];
+        buttons.forEach(btn => btn.classList.remove('active'));
+
+        if (!this.activeFamilySelection || !window.lrcInterconsonance || !window.lrcInterconsonance.currentAnalysis) {
+            return;
+        }
+
+        const families = window.lrcInterconsonance.currentAnalysis.families;
+        if (!families || families.length === 0) {
+            this.activeFamilySelection = null;
+            return;
+        }
+
+        const sortedFamilies = this.getSortedPlaybackFamilies(families);
+        const key = this.activeFamilySelection.key;
+        const newIndex = sortedFamilies.findIndex(fam => this.getFamilyKey(fam) === key);
+
+        if (newIndex === -1) {
+            this.activeFamilySelection = null;
+            return;
+        }
+
+        this.activeFamilySelection.index = newIndex;
+        this.activeFamilySelection.ratios = new Set(sortedFamilies[newIndex].ratios);
+
+        buttons.forEach(btn => {
+            const btnIndex = parseInt(btn.getAttribute('data-family-index'), 10);
+            if (!Number.isNaN(btnIndex) && btnIndex === newIndex) {
+                btn.classList.add('active');
+            }
+        });
+    }
+
+    checkActiveFamilyIntegrity() {
+        if (!this.activeFamilySelection) return;
+
+        const requiredRatios = this.activeFamilySelection.ratios;
+        const allPresent = Array.from(requiredRatios).every(ratio => this.selectedNotes.has(ratio));
+
+        if (!allPresent) {
+            this.clearActiveFamilySelection();
+        } else {
+            this.updateFamilyHighlight();
+        }
     }
 
     generateToneRowData() {
@@ -1822,6 +1908,7 @@ class ToneRowPlayback {
                         this.selectConsonanceFamily(familyIndex);
                     });
                 });
+                this.updateFamilyHighlight();
             }
         }, 0);
         
@@ -1857,6 +1944,7 @@ class ToneRowPlayback {
         const container = document.getElementById('consonance-families-container');
         if (container) {
             container.innerHTML = this.generatePlaybackFamiliesPage(window.lrcInterconsonance.currentAnalysis.families);
+            this.updateFamilyHighlight();
         }
     }
 

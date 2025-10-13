@@ -62,6 +62,9 @@ class LRCHinges {
             dragging: false, hovered: false
         };
 
+        // Always rely on overlay controls for amplitude (hide legacy in-canvas slider)
+        this.useOverlayAmplitude = true;
+
         // Auto-bounding camera system
         this.camera = {
             x: 0,           // Translation X

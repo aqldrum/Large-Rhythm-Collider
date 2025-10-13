@@ -725,11 +725,11 @@ class ExpandedInfoView {
             <div class="expanded-metrics-section" style="
                 height: ${metricsHeight};
                 overflow-y: auto;
-                padding-bottom: 15px;
+                padding: 0 12px 15px 12px;
                 border-bottom: 1px solid #333;
                 margin-bottom: 15px;
             ">
-                <div class="subsection-header" style="color: #00ff88; font-size: 16px; margin-bottom: 15px; font-weight: bold;">
+                <div class="subsection-header" style="color: #00ff88; font-size: 16px; margin-bottom: 15px; font-weight: bold; padding: 8px 0 8px 12px;">
                     Metrics
                 </div>
                 
@@ -763,11 +763,11 @@ class ExpandedInfoView {
             <div class="expanded-nested-ratios-section" style="
                 height: ${nestedRatiosHeight};
                 overflow-y: auto;
-                padding-bottom: 15px;
+                padding: 0 12px 15px 12px;
                 border-bottom: 1px solid #333;
                 margin-bottom: 15px;
             ">
-                <div class="subsection-header" style="color: #00ff88; font-size: 16px; margin-bottom: 15px; font-weight: bold;">
+                <div class="subsection-header" style="color: #00ff88; font-size: 16px; margin-bottom: 15px; font-weight: bold; padding: 8px 0 8px 12px;">
                     Nested Ratios
                 </div>
                 <div style="color: #ffffff; font-size: 12px; line-height: 1.8;">
@@ -779,9 +779,9 @@ class ExpandedInfoView {
             <div class="expanded-export-section" style="
                 height: ${exportHeight};
                 overflow-y: auto;
-                padding-top: ${hasNestedRatios ? '0' : '15px'};
+                padding: ${hasNestedRatios ? '0' : '15px'} 12px 0 12px;
             ">
-                <div class="subsection-header" style="color: #00ff88; font-size: 16px; margin-bottom: 15px; font-weight: bold;">
+                <div class="subsection-header" style="color: #00ff88; font-size: 16px; margin-bottom: 15px; font-weight: bold; padding: 8px 0 8px 12px;">
                     Export
                 </div>
                 <div class="export-controls" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">

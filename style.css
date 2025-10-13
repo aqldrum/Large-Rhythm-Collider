@@ -205,6 +205,10 @@ body {
     margin-bottom: 15px;
 }
 
+.category-selector.submit-category {
+    margin-top: 10px;
+}
+
 .category-selector label {
     color: var(--hud-text);
     font-size: 12px;
@@ -217,6 +221,7 @@ body {
     padding: 6px 10px;
     border-radius: var(--border-radius);
     font-size: 12px;
+    cursor: pointer;
 }
 
 /* Rhythms List */
@@ -391,43 +396,74 @@ body {
 }
 
 /* Vote Tab Layout */
-.vote-tab-layout {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 15px;
+
+#vote-tab {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
 }
 
-.vote-tab-layout .vote-submit,
-.vote-tab-layout .vote-results {
+#vote-tab .vote-submit {
     background: rgba(40, 40, 40, 0.6);
     border: 1px solid var(--hud-border);
     border-radius: var(--border-radius);
     padding: 15px;
 }
 
+#vote-tab .vote-submit > p {
+    margin-bottom: 8px;
+}
+
 .vote-submit-current {
-    display: flex;
-    justify-content: space-between;
+    display: inline-flex;
     align-items: center;
     gap: 12px;
     margin-bottom: 12px;
+    flex-wrap: wrap;
+    width: auto;
 }
 
 .vote-submit-current span {
     color: var(--hud-accent);
     font-size: 18px;
     font-weight: bold;
+    letter-spacing: 1px;
+    display: inline-block;
 }
 
 .vote-submit-controls {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex-wrap: wrap;
 }
 
-.vote-results h4 {
-    margin: 0 0 10px;
+#collection-category {
+    background: rgba(40, 40, 40, 0.8);
+    border: 1px solid var(--hud-border);
+    color: var(--hud-text);
+    padding: 6px 10px;
+    border-radius: var(--border-radius);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    min-width: 120px;
+}
+
+#collection-category:focus {
+    outline: none;
+    border-color: var(--hud-accent);
+    box-shadow: 0 0 0 2px rgba(0, 255, 136, 0.25);
+}
+
+#vote-tab .vote-results h4 {
+    margin-bottom: 10px;
     color: var(--hud-accent);
+}
+
+#vote-tab .submit-btn {
+    padding: 8px 18px;
+    font-size: 12px;
 }
 
 /* Vote Tab */
@@ -535,6 +571,8 @@ body {
     border-radius: var(--border-radius);
     font-size: 11px;
     text-align: center;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .status-message.success {
@@ -1353,27 +1391,6 @@ body {
 .hinges-tension-btn.active {
     background: var(--hud-accent);
     color: #000;
-}
-
-.hinges-constant-btn {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid var(--hud-border);
-    color: var(--hud-text);
-    padding: 4px 8px;
-    cursor: pointer;
-    font-size: 11px;
-    border-radius: 3px;
-    margin-left: 6px;
-}
-
-.hinges-constant-btn:hover {
-    background: rgba(255, 255, 255, 0.2);
-}
-
-.hinges-constant-btn.active {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: #fff;
-    border-color: #764ba2;
 }
 
 /* Playback Controls */
@@ -2560,6 +2577,18 @@ body {
 .consonance-family-btn:active {
     background: var(--hud-accent);
     color: #000;
+}
+
+.consonance-family-btn.active {
+    background: var(--hud-accent);
+    color: #000;
+    border-color: var(--hud-accent);
+}
+
+.consonance-family-btn.active:hover {
+    background: var(--hud-accent);
+    color: #000;
+    transform: translateX(0);
 }
 
 /* Collapsible section button styling */

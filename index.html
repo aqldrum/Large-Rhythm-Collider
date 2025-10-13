@@ -43,27 +43,25 @@
 
                             <!-- Vote Tab -->
                             <div id="vote-tab" class="tab-content">
-                                <div class="vote-tab-layout">
-                                    <div class="vote-submit">
-                                        <p>Submit your current rhythm to Collections:</p>
-                                        <div class="vote-submit-current">
-                                            <span id="current-layers">—</span>
-                                            <div class="vote-submit-controls">
-                                                <label for="collection-category">Category:</label>
-                                                <select id="collection-category">
-                                                    <option value="playback">Playback</option>
-                                                    <option value="visuals">Visualizations</option>
-                                                </select>
-                                                <button id="submit-current-rhythm" class="submit-btn">Submit</button>
-                                            </div>
-                                        </div>
-                                        <div id="submit-status" class="status-message"></div>
+                                <div class="vote-submit">
+                                    <p>Submit your current rhythm to Collections:</p>
+                                    <div id="current-rhythm-display" class="current-rhythm">
+                                        <span id="current-layers">—</span>
                                     </div>
-                                    <div class="vote-results">
-                                        <h4>Vote on community rhythms</h4>
-                                        <div id="vote-rhythms-list" class="rhythms-list">
-                                            <p>Loading rhythms for voting...</p>
-                                        </div>
+                                    <div class="category-selector submit-category">
+                                        <label for="collection-category">Category:</label>
+                                        <select id="collection-category">
+                                            <option value="playback" selected>Playback</option>
+                                            <option value="visuals">Visualizations</option>
+                                        </select>
+                                    </div>
+                                    <button id="submit-current-rhythm" class="submit-btn">Submit Current Rhythm</button>
+                                    <div id="submit-status" class="status-message"></div>
+                                </div>
+                                <div class="vote-results">
+                                    <h4>Vote on community rhythms</h4>
+                                    <div id="vote-rhythms-list" class="rhythms-list">
+                                        <p>Loading rhythms for voting...</p>
                                     </div>
                                 </div>
                             </div>
@@ -230,7 +228,6 @@
                                         </select>
                                     </label>
                                     <button id="hinges-tension-btn" class="hinges-tension-btn">⚡ Tension</button>
-                                    <button id="hinges-constant-btn" class="hinges-constant-btn">🌊 Constant</button>
                                 </div>
                             </div>
                         </div>
@@ -272,7 +269,7 @@
                         </div>
                         <div class="input-group">
                             <label>Range Limit:</label>
-                            <input type="number" id="range-limit" min="1" value="1000">
+                            <input type="number" id="range-limit" min="1" value="100">
                         </div>
                     </div>
                     
@@ -292,7 +289,7 @@
                                 </div>
                                 <div class="input-group">
                                     <label>Value:</label>
-                                    <input type="number" id="search-layer-value" min="1" value="7">
+                                    <input type="number" id="search-layer-value" min="1" value="24">
                                 </div>
                                 <button type="submit" class="search-btn">Search</button>
                                 <button type="button" id="clear-rhythm-search" class="clear-btn">Clear</button>
@@ -324,7 +321,7 @@
                             <div class="search-inputs">
                                 <div class="input-group">
                                     <label>Fundamental:</label>
-                                    <input type="number" id="search-fundamental" min="1" value="12">
+                                    <input type="number" id="search-fundamental" min="1" value="23">
                                 </div>
                                 <div class="input-group">
                                     <label>Min Layer A:</label>
@@ -344,7 +341,7 @@
                             <div class="search-inputs">
                                 <div class="input-group">
                                     <label>Layer A:</label>
-                                    <input type="number" id="inverse-pg-a" min="1" value="7">
+                                    <input type="number" id="inverse-pg-a" min="1" value="24">
                                 </div>
                                 <button type="submit" class="search-btn">Search</button>
                                 <button type="button" id="clear-inverse-pg" class="clear-btn">Clear</button>
@@ -364,6 +361,7 @@
     
     <!-- Firebase SDK for Collections (optional - runs in demo mode without Firebase) -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
     <script src="Core Interface/firebase-config.js"></script>
     
@@ -409,7 +407,6 @@
     <script src="Visualizations/Hinges.js"></script>
     <script src="Visualizations/HingeExpand.js"></script>
     <script src="Visualizations/HingesAdvanced.js"></script>
-    <script src="Visualizations/HingesConstant.js"></script>
 
         <!-- Collider -->
         <script src="Collider/ColliderAudio.js"></script>

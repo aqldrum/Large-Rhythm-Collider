@@ -33,7 +33,7 @@ class LRCSearch {
         // Search configuration
         this.targetPitches = 12; // Default to 12, can be set to null for 'any'
         this.maxSearchTime = 5; // Now in seconds
-        this.rangeLimit = 1000;
+        this.rangeLimit = 100;
         
         // Sort state for each results table
         this.sortState = {
@@ -154,7 +154,7 @@ class LRCSearch {
         const rangeLimitInput = document.getElementById('range-limit');
         if (rangeLimitInput) {
             rangeLimitInput.addEventListener('input', (e) => {
-                this.rangeLimit = parseFloat(e.target.value) || 1000;
+                this.rangeLimit = parseFloat(e.target.value) || 100;
             });
         }
     }

@@ -63,10 +63,14 @@
             if (firebase.auth) {
                 this.auth = firebase.auth();
                 try {
-                    await this.auth.signInAnonymously();
+                    const userCredential = await this.auth.signInAnonymously();
+                    console.log('✅ Anonymous auth succeeded. User ID:', userCredential.user.uid);
                 } catch (authErr) {
-                    console.warn('Anonymous auth failed; continuing without auth.', authErr);
+                    console.error('❌ Anonymous auth failed:', authErr);
+                    throw new Error('Authentication required but failed: ' + authErr.message);
                 }
+            } else {
+                throw new Error('Firebase Auth SDK not loaded');
             }
 
             if (!firebase.firestore) {
@@ -130,7 +134,7 @@
                 return;
             }
 
-            await this.submitRhythm({
+            const result = await this.submitRhythm({
                 layers: layerArray,
                 submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 pitches: this.extractPitchCount(),
@@ -138,7 +142,11 @@
                 category: this.getSubmitCategory()
             });
 
-            this.showStatus('Rhythm submitted to Collections!', 'success');
+            // Only show new submission message if it wasn't a duplicate
+            if (result && result.isNew) {
+                this.showStatus('Rhythm submitted to Collections!', 'success');
+                this.refreshCollectionsLists();
+            }
         }
 
         containsBlacklistedDigits(text) {
@@ -182,15 +190,39 @@
                 if (typeof window !== 'undefined' && window.localStorage) {
                     localStorage.setItem(this.voteStorageKey(existingDoc.id, voteCategory), String(Date.now()));
                 }
-                return;
+                const categoryLabel = this.formatCategoryLabel(voteCategory);
+                this.showStatus(`Rhythm already submitted - vote recorded for ${categoryLabel}!`, 'info');
+                this.refreshCollectionsLists();
+                return { isNew: false, docId: existingDoc.id };
             }
 
-            await collectionRef.add({
-                ...payload,
+            // Verify authentication before attempting to create document
+            if (!this.auth || !this.auth.currentUser) {
+                throw new Error('User must be authenticated to submit rhythms');
+            }
+
+            console.log('Creating doc payload', JSON.stringify(payload));
+            const pitchesValue = Number.isFinite(payload.pitches) ? payload.pitches : (window.lrcModule?.currentRatios?.length || 0);
+            const summaryValue = payload.summary || { fundamental: null, range: null };
+
+            const docData = {
+                layers: payload.layers,
+                submittedAt: firebase.firestore.Timestamp.now(),
+                pitches: pitchesValue,
+                summary: {
+                    fundamental: summaryValue.fundamental ?? null,
+                    range: summaryValue.range ?? null
+                },
                 category: normalizedCategory,
                 votes: this.initialVoteSchema({ [normalizedCategory]: 1 }),
                 flags: 0
-            });
+            };
+
+            console.log('✅ Auth check passed. User ID:', this.auth.currentUser.uid);
+            console.log('📝 Actual docData being submitted:', JSON.stringify(docData, null, 2));
+
+            const docRef = await collectionRef.add(docData);
+            return { isNew: true, docId: docRef.id };
         }
 
         initialVoteSchema(initialVotes = {}) {

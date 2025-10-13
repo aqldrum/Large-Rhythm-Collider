@@ -1,15 +1,4 @@
-// firebase-config.template.js
-// Duplicate this file as firebase-config.js (which should be gitignored) and populate
-// the configuration object with your Firebase project credentials.
-//
-//   firebaseConfig.apiKey = '...';
-//   firebaseConfig.authDomain = '...';
-//   firebaseConfig.projectId = '...';
-//   firebaseConfig.storageBucket = '...';
-//   firebaseConfig.messagingSenderId = '...';
-//   firebaseConfig.appId = '...';
-//
-// Place the copy in the same directory so Collections.js can initialize Firebase.
+
 
 window.firebaseConfig = {
   apiKey: "AIzaSyDTiovjZrjaNdbhwR-SRTGpALVqi_XVYbU",
