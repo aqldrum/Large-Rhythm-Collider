@@ -375,7 +375,7 @@ class ColliderUI {
                 <div class="control-group">
                     <label class="control-label">Line Thickness</label>
                     <input type="range" class="control-slider" id="thickness-slider" 
-                           min="0.5" max="1000" step="0.5" value="3">
+                           min="0" max="1" step="0.001" value="0">
                     <div class="control-value" id="thickness-value">3.0px</div>
                 </div>
                 <div class="control-group">
@@ -383,19 +383,6 @@ class ColliderUI {
                     <input type="range" class="control-slider" id="audio-volume-slider" 
                            min="-60" max="0" step="1" value="-24">
                     <div class="control-value" id="audio-volume-value">-24 dB</div>
-                </div>
-                <div class="control-group">
-                    <label class="control-label">Collision Debug</label>
-                    <input type="checkbox" id="collision-debug-toggle" style="
-                        margin-right: 8px; 
-                        transform: scale(1.2);
-                        accent-color: var(--hud-accent);
-                    ">
-                    <label for="collision-debug-toggle" style="
-                        color: var(--hud-text-muted); 
-                        font-size: 11px;
-                        cursor: pointer;
-                    ">Enable debug logging</label>
                 </div>
             </div>
         `;
@@ -506,17 +493,39 @@ class ColliderUI {
         // Thickness slider
         const thicknessSlider = doc.getElementById('thickness-slider');
         const thicknessValue = doc.getElementById('thickness-value');
-        
+        const thicknessMin = 0.5;
+        const thicknessMax = 500;
+
+        const sliderToThickness = (val) => {
+            const sliderVal = Math.min(1, Math.max(0, parseFloat(val)));
+            const ratio = thicknessMax / thicknessMin;
+            return thicknessMin * Math.pow(ratio, sliderVal);
+        };
+
+        const thicknessToSlider = (thickness) => {
+            const clamped = Math.min(thicknessMax, Math.max(thicknessMin, thickness));
+            const ratio = thicknessMax / thicknessMin;
+            return Math.log(clamped / thicknessMin) / Math.log(ratio);
+        };
+
+        const applyThickness = (thickness) => {
+            const formatted = thickness >= 10 ? thickness.toFixed(1) : thickness.toFixed(2);
+            thicknessValue.textContent = `${formatted}px`;
+
+            if (window.lrcVisuals?.plotTypes?.collider) {
+                window.lrcVisuals.plotTypes['collider'].lineThickness = thickness;
+            }
+        };
+
         if (thicknessSlider && thicknessValue) {
+            // Sync slider to current collider value or default 3px
+            const initialThickness = window.lrcVisuals?.plotTypes?.collider?.lineThickness || 3;
+            thicknessSlider.value = thicknessToSlider(initialThickness).toFixed(3);
+            applyThickness(initialThickness);
+
             thicknessSlider.addEventListener('input', (e) => {
-                const thickness = parseFloat(e.target.value);
-                thicknessValue.textContent = `${thickness}px`;
-                
-                // Apply thickness to the collider visualization
-                if (window.lrcVisuals && window.lrcVisuals.plotTypes && window.lrcVisuals.plotTypes['collider']) {
-                    const collider = window.lrcVisuals.plotTypes['collider'];
-                    collider.lineThickness = thickness;
-                }
+                const thickness = sliderToThickness(e.target.value);
+                applyThickness(thickness);
             });
         }
         
@@ -536,19 +545,6 @@ class ColliderUI {
             });
         }
         
-        // Collision Debug toggle
-        const collisionDebugToggle = doc.getElementById('collision-debug-toggle');
-        
-        if (collisionDebugToggle) {
-            collisionDebugToggle.addEventListener('change', (e) => {
-                const debugEnabled = e.target.checked;
-                
-                // Update collision detector debug mode
-                if (this.battleController && this.battleController.collisionDetector) {
-                    this.battleController.collisionDetector.setDebugMode(debugEnabled);
-                }
-            });
-        }
     }
 
     createBattlePlayerDivs() {
@@ -729,12 +725,15 @@ class ColliderUI {
         const thicknessSlider = doc.getElementById('thickness-slider');
         const thicknessValue = doc.getElementById('thickness-value');
         if (thicknessSlider && thicknessValue) {
-            thicknessSlider.value = '3';
+            const defaultThickness = 3;
+            const thicknessMin = 0.5;
+            const thicknessMax = 500;
+            const ratio = thicknessMax / thicknessMin;
+            const sliderValue = Math.log(defaultThickness / thicknessMin) / Math.log(ratio);
+            thicknessSlider.value = sliderValue.toFixed(3);
             thicknessValue.textContent = '3.0px';
-            // Apply to collider visualization
-            if (window.lrcVisuals && window.lrcVisuals.plotTypes && window.lrcVisuals.plotTypes['collider']) {
-                const collider = window.lrcVisuals.plotTypes['collider'];
-                collider.lineThickness = 3;
+            if (window.lrcVisuals?.plotTypes?.collider) {
+                window.lrcVisuals.plotTypes['collider'].lineThickness = defaultThickness;
             }
         }
         
@@ -751,15 +750,6 @@ class ColliderUI {
         }
         
         // Reset Collision Debug to disabled
-        const collisionDebugToggle = doc.getElementById('collision-debug-toggle');
-        if (collisionDebugToggle) {
-            collisionDebugToggle.checked = false;
-            // Apply to collision detector
-            if (this.battleController && this.battleController.collisionDetector) {
-                this.battleController.collisionDetector.setDebugMode(false);
-            }
-        }
-        
         console.log('🎛️ UI control values reset to defaults');
     }
 

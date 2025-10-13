@@ -104,7 +104,7 @@ class ToneRowPlayback {
             
             // Create master gain (volume control)
             this.masterGain = this.audioContext.createGain();
-            this.masterGain.gain.value = this.dbToLinear(-24); // Default -24dB
+            this.masterGain.gain.value = this.dbToLinear(this.masterVolumeDb); // Respect current master slider
             
             // Create global filters
             this.globalHighpassFilter = this.audioContext.createBiquadFilter();
@@ -160,7 +160,10 @@ class ToneRowPlayback {
             this.globalHighpassFilter.connect(this.globalLowpassFilter);
             this.globalLowpassFilter.connect(this.limiter);
             this.limiter.connect(this.audioContext.destination);
-            
+
+            // Apply current master volume immediately
+            this.updateMasterVolume(this.masterVolumeDb);
+
             console.log('Audio context initialized');
             
         } catch (error) {
