@@ -1,7 +1,7 @@
 # Large Rhythm Collider
 
 ## Overview
-You've found the Large Rhythm Collider! This website houses a multifaceted apparatus designed for the analysis of Polyrhythms. 
+You've found the Large Rhythm Collider! This web app houses a multifaceted apparatus designed for the analysis of Polyrhythms. 
 
 <p align="center">
   <img src="assets/mainpage1.png">
