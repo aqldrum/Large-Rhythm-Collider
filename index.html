@@ -17,51 +17,75 @@
                 <div class="collections-dropdown">
                     <button id="collections-toggle" class="collections-toggle">▼</button>
                     <div id="collections-panel" class="collections-panel" style="display: none;">
-                        <div class="collections-header">
-                            <h3>Collections</h3>
-                            <p>Community rhythm voting & leaderboards</p>
+                        <div class="dropdown-section" data-section="about">
+                            <button class="dropdown-section-header" type="button" data-target="about-panel">
+                                <div class="dropdown-section-text">
+                                    <h3>About</h3>
+                                    <p>Large Rhythm Collider overview & mission</p>
+                                </div>
+                                <span class="dropdown-section-icon">+</span>
+                            </button>
+                            <div id="about-panel" class="dropdown-section-content" hidden>
+                                <div class="about-inline-header">
+                                    <p>Explore the Large Rhythm Collider overview without leaving the app.</p>
+                                    <a class="about-open-link" href="about.html" target="_blank" rel="noopener">Open full About page ↗</a>
+                                </div>
+                                <div id="about-panel-content" class="about-panel-content">
+                                    <p class="loading">Loading About content…</p>
+                                </div>
+                            </div>
                         </div>
-                        <div class="collections-content">
-                            <div class="collections-tabs">
-                                <button class="tab-button active" data-tab="browse">Browse</button>
-                                <button class="tab-button" data-tab="vote">Vote</button>
-                            </div>
-                            
-                            <!-- Browse Tab -->
-                            <div id="browse-tab" class="tab-content active">
-                                <div class="category-selector">
-                                    <label for="browse-category">Category:</label>
-                                    <select id="browse-category">
-                                        <option value="playback">Playback</option>
-                                        <option value="visuals">Visualizations</option>
-                                    </select>
-                                </div>
-                                <div id="top-rhythms-list" class="rhythms-list">
-                                    <p>Loading top rhythms...</p>
-                                </div>
-                            </div>
 
-                            <!-- Vote Tab -->
-                            <div id="vote-tab" class="tab-content">
-                                <div class="vote-submit">
-                                    <p>Submit your current rhythm to Collections:</p>
-                                    <div id="current-rhythm-display" class="current-rhythm">
-                                        <span id="current-layers">—</span>
-                                    </div>
-                                    <div class="category-selector submit-category">
-                                        <label for="collection-category">Category:</label>
-                                        <select id="collection-category">
-                                            <option value="playback" selected>Playback</option>
+                        <div class="dropdown-section" data-section="collections">
+                            <button class="dropdown-section-header" type="button" data-target="collections-panel-section">
+                                <div class="dropdown-section-text">
+                                    <h3>Collections</h3>
+                                    <p>Community rhythm voting & leaderboards</p>
+                                </div>
+                                <span class="dropdown-section-icon">+</span>
+                            </button>
+                            <div id="collections-panel-section" class="dropdown-section-content" hidden>
+                                <div class="collections-tabs">
+                                    <button class="tab-button active" data-tab="browse">Browse</button>
+                                    <button class="tab-button" data-tab="vote">Vote</button>
+                                </div>
+                                
+                                <!-- Browse Tab -->
+                                <div id="browse-tab" class="tab-content active">
+                                    <div class="category-selector">
+                                        <label for="browse-category">Category:</label>
+                                        <select id="browse-category">
+                                            <option value="playback">Playback</option>
                                             <option value="visuals">Visualizations</option>
                                         </select>
                                     </div>
-                                    <button id="submit-current-rhythm" class="submit-btn">Submit Current Rhythm</button>
-                                    <div id="submit-status" class="status-message"></div>
+                                    <div id="top-rhythms-list" class="rhythms-list">
+                                        <p>Loading top rhythms...</p>
+                                    </div>
                                 </div>
-                                <div class="vote-results">
-                                    <h4>Vote on community rhythms</h4>
-                                    <div id="vote-rhythms-list" class="rhythms-list">
-                                        <p>Loading rhythms for voting...</p>
+
+                                <!-- Vote Tab -->
+                                <div id="vote-tab" class="tab-content">
+                                    <div class="vote-submit">
+                                        <p>Submit your current rhythm to Collections:</p>
+                                        <div class="vote-submit-current">
+                                            <span id="current-layers">—</span>
+                                            <div class="vote-submit-controls">
+                                                <label for="collection-category">Category:</label>
+                                                <select id="collection-category">
+                                                    <option value="playback" selected>Playback</option>
+                                                    <option value="visuals">Visualizations</option>
+                                                </select>
+                                                <button id="submit-current-rhythm" class="submit-btn">Submit Current Rhythm</button>
+                                            </div>
+                                        </div>
+                                        <div id="submit-status" class="status-message"></div>
+                                    </div>
+                                    <div class="vote-results">
+                                        <h4>Vote on community rhythms</h4>
+                                        <div id="vote-rhythms-list" class="rhythms-list">
+                                            <p>Loading rhythms for voting...</p>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -395,6 +419,7 @@
     <script src="Core Interface/LRCSearch.js"></script>
     <script src="Core Interface/LRCInterconsonance.js"></script>
     <script src="Core Interface/LRCExport.js"></script>
+    <script src="Core Interface/AboutPanel.js"></script>
     <script src="Core Interface/Collections.js"></script>
     <script src="Core Interface/CollectionsUI.js"></script>
 

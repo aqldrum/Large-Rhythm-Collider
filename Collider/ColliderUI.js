@@ -749,7 +749,6 @@ class ColliderUI {
             }
         }
         
-        // Reset Collision Debug to disabled
         console.log('🎛️ UI control values reset to defaults');
     }
 

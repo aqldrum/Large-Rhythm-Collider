@@ -125,6 +125,8 @@ body {
     left: 0;
     min-width: 400px;
     max-width: 500px;
+    width: min(500px, calc(100vw - 32px));
+    max-height: calc(100vh - 80px);
     background: var(--hud-bg);
     border: 1px solid var(--hud-border);
     border-radius: var(--border-radius);
@@ -132,29 +134,83 @@ body {
     backdrop-filter: blur(10px);
     z-index: 3000;
     margin-top: 5px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
-.collections-header {
-    background: var(--hud-header);
-    padding: 15px;
+.collections-panel.collections-panel--wide {
+    max-width: 640px;
+    width: min(640px, calc(100vw - 32px));
+}
+
+.dropdown-section {
     border-bottom: 1px solid var(--hud-border);
+}
+
+.dropdown-section:last-child {
+    border-bottom: none;
+}
+
+.dropdown-section-header {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 16px;
+    background: var(--hud-header);
+    color: var(--hud-text);
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--transition-speed);
+    font: inherit;
+    border-radius: 0;
+}
+
+.dropdown-section-header:focus-visible {
+    outline: 2px solid var(--hud-accent);
+    outline-offset: -2px;
+}
+
+.dropdown-section-header:hover {
+    background: rgba(60, 60, 60, 0.85);
+}
+
+.dropdown-section:first-child .dropdown-section-header {
     border-radius: var(--border-radius) var(--border-radius) 0 0;
 }
 
-.collections-header h3 {
-    color: var(--hud-accent);
+.dropdown-section-text h3 {
     font-size: 16px;
-    margin-bottom: 5px;
+    color: var(--hud-accent);
+    margin: 0 0 4px 0;
 }
 
-.collections-header p {
+.dropdown-section-text p {
+    margin: 0;
     color: var(--hud-text-muted);
     font-size: 12px;
-    margin: 0;
 }
 
-.collections-content {
-    padding: 15px;
+.dropdown-section-icon {
+    font-size: 18px;
+    color: var(--hud-accent);
+    transition: color var(--transition-speed);
+}
+
+.dropdown-section.expanded .dropdown-section-icon {
+    color: var(--hud-text);
+}
+
+.dropdown-section-content {
+    padding: 16px;
+    background: rgba(20, 20, 20, 0.7);
+}
+
+.dropdown-section-content[hidden] {
+    display: none;
 }
 
 /* Collections Tabs */
@@ -461,9 +517,210 @@ body {
     color: var(--hud-accent);
 }
 
+
+.about-inline-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    background: rgba(40, 40, 40, 0.5);
+    border: 1px solid var(--hud-border);
+    border-radius: var(--border-radius);
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    color: var(--hud-text-muted);
+    font-size: 11px;
+}
+
+.about-open-link {
+    color: var(--hud-accent);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.about-open-link:hover {
+    text-decoration: underline;
+}
+
+.about-panel-content {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.about-panel-content p,
+.about-panel-content li {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--hud-text);
+}
+
+.about-detail {
+    background: rgba(40, 40, 40, 0.55);
+    border: 1px solid var(--hud-border);
+    border-radius: var(--border-radius);
+    padding: 0 12px 10px;
+}
+
+.about-detail summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--hud-text);
+    padding: 8px 0;
+    outline: none;
+    display: block;
+    border-bottom: 1px solid var(--hud-border);
+    font-size: 12px;
+}
+
+.about-detail summary::-webkit-details-marker {
+    display: none;
+}
+
+.about-detail summary::before {
+    content: '▸';
+    margin-right: 6px;
+    transition: transform var(--transition-speed);
+    display: inline-block;
+}
+
+.about-detail[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.about-detail[open] summary {
+    color: var(--hud-accent);
+}
+
+.about-detail p,
+.about-detail ul,
+.about-detail ol {
+    font-size: 13px;
+    color: var(--hud-text);
+}
+
+.about-detail > *:not(summary) {
+    margin-top: 6px;
+}
+
+.about-detail ul,
+.about-detail ol {
+    padding-left: 1.2rem;
+    margin: 0.5rem 0;
+}
+
+.about-table-block {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.about-detail table,
+.about-detail table p,
+.about-detail table li,
+.about-detail table td {
+    font-size: 13px;
+    color: var(--hud-text);
+}
+
+.about-detail table ul,
+.about-detail table ol {
+    padding-left: 1.2rem;
+    margin: 0.5rem 0;
+}
+
+.about-subdetail {
+    background: rgba(30, 30, 30, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: calc(var(--border-radius) - 2px);
+    margin-top: 8px;
+    margin-left: 8px;
+    padding: 0 10px 8px;
+}
+
+.about-subdetail.about-level-4 {
+    margin-left: 18px;
+}
+
+.about-subdetail.about-level-5 {
+    margin-left: 26px;
+}
+
+.about-subdetail.about-level-6 {
+    margin-left: 34px;
+}
+
+.about-subdetail summary {
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--hud-text);
+    padding: 6px 0;
+    display: block;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 12px;
+    outline: none;
+}
+
+.about-subdetail table,
+.about-subdetail table p,
+.about-subdetail table li,
+.about-subdetail table td {
+    font-size: 13px;
+    color: var(--hud-text);
+}
+
+.about-subdetail table ul,
+.about-subdetail table ol {
+    padding-left: 1.2rem;
+    margin: 0.5rem 0;
+}
+
+.about-subdetail summary::-webkit-details-marker {
+    display: none;
+}
+
+.about-subdetail summary::before {
+    content: '▹';
+    margin-right: 6px;
+    transition: transform var(--transition-speed);
+    display: inline-block;
+}
+
+.about-subdetail[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.about-subdetail[open] summary {
+    color: var(--hud-accent);
+}
+
+.about-subdetail > *:not(summary) {
+    margin-top: 6px;
+}
+
+.about-error {
+    background: rgba(60, 40, 40, 0.5);
+    border: 1px solid rgba(255, 0, 0, 0.3);
+    border-radius: var(--border-radius);
+    padding: 12px;
+    font-size: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.about-error a {
+    color: var(--hud-accent);
+    text-decoration: underline;
+}
+
 #vote-tab .submit-btn {
     padding: 8px 18px;
     font-size: 12px;
+    width: auto;
 }
 
 /* Vote Tab */

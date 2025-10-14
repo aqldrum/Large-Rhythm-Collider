@@ -13,6 +13,8 @@
 
             this.collectionsToggle = document.getElementById('collections-toggle');
             this.collectionsPanel = document.getElementById('collections-panel');
+            this.dropdownSections = Array.from(document.querySelectorAll('#collections-panel .dropdown-section'));
+            this.aboutDropdownSection = document.querySelector('#collections-panel .dropdown-section[data-section="about"]');
             this.topRhythmsList = document.getElementById('top-rhythms-list');
             this.voteRhythmsList = document.getElementById('vote-rhythms-list');
             this.submitButton = document.getElementById('submit-current-rhythm');
@@ -82,15 +84,22 @@
 
         bindUI() {
             if (this.collectionsToggle && this.collectionsPanel) {
+                this.collectionsToggle.setAttribute('aria-expanded', 'false');
+                this.collectionsToggle.setAttribute('aria-controls', 'collections-panel');
+
                 this.collectionsToggle.addEventListener('click', () => {
                     const isVisible = this.collectionsPanel.style.display === 'block';
                     this.collectionsPanel.style.display = isVisible ? 'none' : 'block';
+                    this.collectionsToggle.textContent = isVisible ? '▼' : '▲';
+                    this.collectionsToggle.setAttribute('aria-expanded', String(!isVisible));
 
                     if (!isVisible) {
                         this.refreshCollectionsLists();
                     }
                 });
             }
+
+            this.configureDropdownSections();
 
             if (this.submitButton) {
                 this.submitButton.addEventListener('click', () => {
@@ -106,6 +115,76 @@
                     this.refreshCollectionsLists();
                 });
             }
+        }
+
+        configureDropdownSections() {
+            if (!Array.isArray(this.dropdownSections)) {
+                return;
+            }
+
+            this.dropdownSections.forEach((section) => {
+                const header = section.querySelector('.dropdown-section-header');
+                if (!header) return;
+
+                const targetId = header.getAttribute('data-target');
+                const content = targetId ? document.getElementById(targetId) : null;
+                const icon = section.querySelector('.dropdown-section-icon');
+
+                header.setAttribute('aria-controls', targetId || '');
+                header.setAttribute('aria-expanded', 'false');
+
+                if (content) {
+                    content.hidden = true;
+                }
+                if (icon) {
+                    icon.textContent = '+';
+                }
+
+                header.addEventListener('click', () => {
+                    const willExpand = content ? content.hidden : false;
+                    this.setSectionExpanded(section, content, icon, header, willExpand);
+                });
+            });
+
+            this.updatePanelLayout();
+        }
+
+        setSectionExpanded(section, content, icon, header, expand) {
+            if (!section || !content) return;
+
+            if (expand) {
+                content.hidden = false;
+                section.classList.add('expanded');
+                if (icon) icon.textContent = '−';
+                if (header) header.setAttribute('aria-expanded', 'true');
+
+                content.dispatchEvent(new CustomEvent('dropdownsectiontoggle', {
+                    bubbles: false,
+                    detail: { expanded: true }
+                }));
+
+                if (section.dataset.section === 'collections') {
+                    this.refreshCollectionsLists();
+                }
+            } else {
+                content.hidden = true;
+                section.classList.remove('expanded');
+                if (icon) icon.textContent = '+';
+                if (header) header.setAttribute('aria-expanded', 'false');
+
+                content.dispatchEvent(new CustomEvent('dropdownsectiontoggle', {
+                    bubbles: false,
+                    detail: { expanded: false }
+                }));
+            }
+
+            this.updatePanelLayout();
+        }
+
+        updatePanelLayout() {
+            if (!this.collectionsPanel) return;
+            const aboutExpanded = this.aboutDropdownSection && this.aboutDropdownSection.classList.contains('expanded');
+            this.collectionsPanel.classList.toggle('collections-panel--wide', Boolean(aboutExpanded));
         }
 
         // --- Submission Flow ----------------------------------------------------
@@ -136,7 +215,6 @@
 
             const result = await this.submitRhythm({
                 layers: layerArray,
-                submittedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 pitches: this.extractPitchCount(),
                 summary: this.getRhythmSummary(),
                 category: this.getSubmitCategory()
@@ -201,7 +279,6 @@
                 throw new Error('User must be authenticated to submit rhythms');
             }
 
-            console.log('Creating doc payload', JSON.stringify(payload));
             const pitchesValue = Number.isFinite(payload.pitches) ? payload.pitches : (window.lrcModule?.currentRatios?.length || 0);
             const summaryValue = payload.summary || { fundamental: null, range: null };
 
@@ -218,8 +295,6 @@
                 flags: 0
             };
 
-            console.log('✅ Auth check passed. User ID:', this.auth.currentUser.uid);
-            console.log('📝 Actual docData being submitted:', JSON.stringify(docData, null, 2));
 
             const docRef = await collectionRef.add(docData);
             return { isNew: true, docId: docRef.id };
