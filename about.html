@@ -9,6 +9,7 @@
     html {
       overflow-y: auto;
       height: 100%;
+      scroll-behavior: smooth;
     }
     body {
       margin: 0;
@@ -19,10 +20,24 @@
       background: #fafafa;
       min-height: 100%;
       overflow-y: auto;
+      box-sizing: border-box;
+    }
+    body.has-toc {
+      padding-left: 1.5rem;
+    }
+    body.has-toc.toc-expanded {
+      padding-left: 1.5rem;
+    }
+    @media (min-width: 1100px) {
+      body.has-toc.toc-expanded {
+        padding-left: 18rem;
+      }
     }
     header {
       padding: 3rem 0 2rem;
       text-align: center;
+      max-width: 960px;
+      margin: 0 auto;
     }
     main {
       max-width: 960px;
@@ -74,7 +89,7 @@
       padding: 1rem 0;
       outline: none;
       display: block;
-      font-size: clamp(1.5rem, 2.4vw, 2.15rem);
+      font-size: clamp(1.85rem, 2.8vw, 2.6rem);
       border-bottom: 2px solid #ececec;
       color: #111;
       margin: 0;
@@ -87,6 +102,21 @@
     }
     details.about-section > *:not(summary) {
       margin-top: 0.85rem;
+    }
+    .about-section h3 {
+      font-size: clamp(1.35rem, 2.1vw, 1.8rem);
+      margin-top: 1.75rem;
+      margin-bottom: 0.9rem;
+    }
+    .about-section h4 {
+      font-size: clamp(1.15rem, 1.8vw, 1.45rem);
+      margin-top: 1.4rem;
+      margin-bottom: 0.75rem;
+    }
+    .about-section h5 {
+      font-size: clamp(1rem, 1.4vw, 1.25rem);
+      margin-top: 1.1rem;
+      margin-bottom: 0.6rem;
     }
     ul, ol {
       padding-left: 1.5rem;
@@ -137,15 +167,159 @@
     .checklist input[type="checkbox"] {
       accent-color: #0b5fff;
     }
+    .about-toc {
+      position: fixed;
+      top: 4rem;
+      left: 0;
+      width: 16rem;
+      padding: 1.25rem 1.75rem 1.5rem 1.5rem;
+      background: #fff;
+      border-right: 1px solid #e2e2e2;
+      border-radius: 0 14px 14px 0;
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.12);
+      height: calc(100vh - 6rem);
+      overflow-y: auto;
+      z-index: 1200;
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .about-toc:hover {
+      box-shadow: 0 18px 36px rgba(0, 0, 0, 0.18);
+    }
+    .about-toc.collapsed {
+      transform: translateX(calc(-100% + 2.75rem));
+      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.08);
+    }
+    .about-toc .toc-toggle {
+      position: absolute;
+      top: 0.75rem;
+      right: 0.75rem;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 0.75rem;
+      background: #f2f4f8;
+      color: #111;
+      border: 1px solid #d4d8df;
+      font-weight: 600;
+      font-size: 1.1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.1rem;
+      box-shadow: none;
+    }
+    .about-toc .toc-toggle:focus-visible {
+      outline: 2px solid #0b5fff;
+      outline-offset: 2px;
+    }
+    .about-toc .toggle-icon {
+      font-size: 1rem;
+      line-height: 1;
+      display: inline-block;
+    }
+    .about-toc .toc-title {
+      margin: 0 0 1rem;
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+    .about-toc .toc-content {
+      transition: opacity 0.3s ease, max-height 0.3s ease;
+      max-height: 100vh;
+    }
+    .about-toc.collapsed .toc-content {
+      opacity: 0;
+      pointer-events: none;
+      max-height: 0;
+      overflow: hidden;
+    }
+    .about-toc nav {
+      display: block;
+    }
+    .about-toc ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .about-toc li + li {
+      margin-top: 0.75rem;
+    }
+    .about-toc li ul {
+      margin-top: 0.5rem;
+      padding-left: 1rem;
+      border-left: 2px solid #ececec;
+    }
+    .about-toc a {
+      color: inherit;
+      text-decoration: none;
+      display: inline-block;
+      line-height: 1.4;
+      transition: color 0.2s ease;
+    }
+    .about-toc a:hover,
+    .about-toc a:focus {
+      color: #0b5fff;
+      text-decoration: underline;
+    }
+    .about-toc .toc-level-2 > a {
+      font-size: 1.15rem;
+      font-weight: 600;
+    }
+    .about-toc .toc-level-3 > a {
+      font-size: 1rem;
+      font-weight: 500;
+    }
+    .about-toc .toc-level-4 > a {
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+    .about-toc .toc-level-5 > a {
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
     @media (max-width: 720px) {
       main {
         padding: 2rem 1.5rem;
       }
     }
+    @media (max-width: 1023px) {
+      .about-toc {
+        position: static;
+        width: auto;
+        height: auto;
+        transform: none !important;
+        margin: 1rem auto 2rem;
+        border-radius: 12px;
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
+      }
+      .about-toc .toc-toggle {
+        position: relative;
+        top: 0;
+        right: 0;
+        width: 100%;
+        height: auto;
+        margin-bottom: 0.75rem;
+        border-radius: 10px;
+      }
+      body.has-toc {
+        padding-left: 1.5rem;
+      }
+    }
 
   </style>
 </head>
-<body>
+<body class="has-toc toc-expanded">
+  <aside id="about-toc" class="about-toc" aria-label="Table of contents">
+    <button type="button" class="toc-toggle" aria-expanded="true" aria-label="Collapse table of contents">
+      <span class="toggle-icon">&minus;</span>
+    </button>
+    <div class="toc-content">
+      <div class="toc-title">Table of Contents</div>
+      <nav aria-label="About sections">
+        <ul class="toc-list"></ul>
+      </nav>
+    </div>
+  </aside>
   <header>
     <h1>Large Rhythm Collider</h1>
     <p>Generative Applications of Polyrhythms</p>
@@ -186,7 +360,7 @@
       <figure>
         <img src="assets/metrics1.png" alt="Polyrhythm metrics diagram" style="width:50%;">
       </figure>
-      <p>Note that "polyrhythm" and "polymeter" are shown to be two sides of the same coin. Polyrhythms (frequency layers) are described by stacks of differently sized meters (grouping sizes). This fundamentally relativistic relationship of two interdependent dimensions is what truly defines the deterministic, yet mysterious behavior of polyrhythmic systems.</p>
+      <p>Note that "polyrhythm" and "polymeter" are shown to be two sides of the same coin. Polyrhythms (frequency layers) are described by stacks of differently sized meters (grouping sizes). This fundamentally relativistic relationship of two interdependent dimensions is what truly dictates the deterministic, yet mysterious behavior of polyrhythmic systems.</p>
       <p>When we construct a flattened list of all multiples of grouping sizes (pulse durations) up to the Grid value, we get the attack positions of every note in the Composite Rhythm.</p>
       <br>
       <figure>
@@ -273,7 +447,7 @@
       </ul>
       <h3>Collections</h3>
       <div class="image-row">
-        <img src="assets/collectionsbrowse.png" alt="Collections browse interface" style="max-width:300px;">
+        <img src="assets/collectionsbrowse.png" alt="Collections browse interface" style="max-width:320px;">
         <img src="assets/collectionsvote.png" alt="Collections vote interface" style="max-width:300px;">
       </div>
       <p>The Collections database stores polyrhythms which users can submit anonymously with a vote for Playback or Visualizations. If you generate a rhythm you like, add it to Collections and help grow the database!</p>
@@ -300,12 +474,12 @@
       <p>Range describes the literal frequency range of the polyrhythm layers - rhythms with smaller range values are more tightly packed.</p>
       <p>Density percentage tells us "how much of the grid is covered by the rhythm?" Layer Sum is used instead of Composite Length to give credence to the full weight of all frequency layers.</p>
       <p>High-frequency nested ratios can cause higher density by adding frequency values while constraining growth of the overall LCM.</p>
-      <p>P/G ratio is a subtler metric that weighs the overall sum of the frequency values against the sum of the grouping sizes which create them. The grouping sum will always be greater than the layer sum, and higher density rhythms tend to have a higher P/G ratio, but P/G generally declines as Grid values grow.</p>
+      <p>P/G ratio is a subtler metric that weighs the overall sum of the frequency values against the sum of the grouping sizes which create them. The grouping sum will always be greater than or equal to the layer sum, and higher density rhythms tend to have a higher P/G ratio, but P/G generally declines as Grid values grow.</p>
       <p>Rhythms may also have a P/G value of 1 - see the Inverse PG section in Search Algorithms.</p>
-      <p>One special metric, Average Deviation, only applies to 12-tone rhythm scales. This metric relates our microtonal just intonation scales to 12TET. Frequency relationships in 12TET are not rational, which means it cannot be replicated by the LRC's ratio scales.</p>
+      <p>One special metric, Average Deviation, only applies to 12-tone rhythm scales. This metric relates our microtonal just intonation scales to 12TET. Frequency relationships in 12TET are not rational, which means equal temperament cannot be replicated by the LRC's ratio scales.</p>
       <p>Average Deviation is calculated by determining the intervallic cents distance from 100 between each successive step in our scale. 100 cents is the size of each step in 12TET.</p>
       <p>For example, a 79-cent interval has a deviation of 21 cents, while a 105.6-cent interval has a deviation of 5.6 cents. We take the average of all 12 deviation values to yield the final metric. How low do you think this value can get for a 12-tone scale?</p>
-      <p>If you still need more numbers you can expand the Spaces Plot or Composite Rhythm sections to view the actual sequential source code of the given rhythm.</p>
+      <p>If you still need more numbers, you can expand the Spaces Plot or Composite Rhythm sections to view the actual sequential source code of the given rhythm.</p>
       <p>Double-clicking Rhythm Info opens Expanded Info View, which keeps your current visualization resized to the upper right quadrant of the screen. EIV shows the same metrics as Rhythm Info, but it also includes the grouping sizes for all layers and a section called Nested Ratios.</p>
       <h4>Nested Ratios</h4>
       <br>
@@ -320,8 +494,8 @@
         <img src="assets/intervalmatrix.png" alt="Interval matrix" style="max-width:320px;">
       </div>
       <p>The final analytical component of the Info panels is the Interconsonance Analyzer. Just like the Average Deviation concept, the ICA is a bridge to the familiar sounds of 12TET.</p>
-      <p>While the Average Deviation metric calculates the intervallic distance for all sequential steps, the ICA calculates the full interval matrix of all available interval pairs in the set. For a 12-tone scale, there are 66 pairs (12 choose 2).</p>
-      <p>All interval pairs are then assessed for consonance, which in our system is defined as a +/- 15 cent window from a multiple of 100 cents. Intervals meeting this criteria are relatively close to the familiar 12TET intervals most of us are used to.</p>
+      <p>While the Average Deviation metric calculates the intervallic distance between sequential steps, the ICA calculates the full interval matrix of all available interval pairs in the set. For a 12-tone scale, there are 66 pairs (12 choose 2).</p>
+      <p>All interval pairs are then assessed for "consonance", which in our system is defined as a +/- 15 cent window from a multiple of 100 cents. Intervals meeting this criteria are relatively close to the familiar 12TET intervals most of us are used to.</p>
       <p>The analyzer then finds subsets of ratios within the rhythm which all mutually share consonance and organizes them into Consonance Families.</p>
       <p>The number of available unique pairs can grow very large, so this feature may break down for very large scales, but it can still comfortably handle scales with 100 pitches per octave.</p>
       <br>
@@ -331,7 +505,7 @@
       <h4>Export</h4>
       <br>
       <figure>
-        <img src="assets/export.png" alt="Export options">
+        <img src="assets/export.png" alt="Export options" style="width:60%;">
       </figure>
       <p>The export section allows the user to export a PDF with the Expanded Info View details for the generated rhythm. The user can also export MIDI and tuning file information, described in the Audio section.</p>
       <h3>Playback</h3>
@@ -348,13 +522,16 @@
               <li>Set the interval in seconds for one full cycle.</li>
               <li>Set the tuning of the fundamental frequency (defaults to A 110 Hz).</li>
               <li>Master volume with limiter.</li>
+              <li>Global hi / lo-pass filter.</li>
             </ul>
+            <br>
             <p>The seconds value defines the length of the entire cycle - play ultrafast rhythms or stretch them out to long legato scales.</p>
             <p>Cycle Time accepts values between 0.1 and 6000 seconds.</p>
             <p>The Fundamental input accepts Hz values between 55 and 880 Hz.</p>
-            <p>The Master Volume slider has a final limiter.</p>
+            <p>The Master Volume slider has a final limiter. Despite the limiter, be cautious when playing unfiltered sine waves at high volumes.</p>
+            <p>Filter provides global frequency thresholds for hi / lo-pass.</p>
             <p>Harsh high frequencies are automatically culled from playback, which is why you may hear occasional gaps for very small spaces plot values.</p>
-            <p>Despite the built-in limiter, be cautious when playing unfiltered sine waves at high volumes.</p>
+            <p></p>
           </td>
         </tr>
       </table>
@@ -373,6 +550,7 @@
               <li>Individual ADSR envelopes.</li>
               <li>Global legato mode acts like a sustain pedal</li>
             </ul>
+            <br>
             <p>The LRC offers extensive DAW-like control over individual layer audio. Layers can be soloed, muted, or have their volumes set individually. Basic waveform synthesis offers sine, triangle, square, and sawtooth waves, along with an individual ADSR envelope and simple hi/lo-pass filter for each layer.</p>
             <p>The ADSR knobs can be double-clicked to manually edit their values.</p>
             <p>Legato mode is a global control which toggles retrigger behavior: when legato mode is off, each new note in the spaces plot silences the previous note. In legato mode, notes on each layer are held out until that layer sounds again. This allows you to hear the harmonic tuning relationships within each system sustained at slower tempos.</p>
@@ -391,8 +569,10 @@
               <li>Turn individual pitches on and off using the scale chart in the Playback panel.</li>
               <li>See corresponding lights toggle on or off in the Linear Plot.</li>
               <li>Select Interconsonance Families directly from the Playback panel.</li>
+              <li>Counts shows the number of times each ratio appears in the spaces plot.</li>
             </ul>
-            <p>With Scale Selection you can select and deselect pitches in real time to create smaller subsets of the larger tuning system. Alongside the scale chart, you&apos;ll see the count for each ratio, which is the number of times it actually appears in the spaces plot.</p>
+            <br>
+            <p>With Scale Selection you can select and deselect pitches in real time to create smaller subsets of the larger tuning system.</p>
             <p>Toggling pitches in Scale Selection also toggles them on and off in the Linear Plot, helping you visualize what you add and subtract as you hear it.</p>
             <p>If Interconsonance analysis has been run in the Rhythm Info panel, individual interconsonance families can also be automatically selected in Scale Selection.</p>
           </td>
@@ -404,7 +584,7 @@
         <li>Resize or repurpose the MIDI clips in your DAW.</li>
         <li>Pair with tuning files to preserve the true tuning information.</li>
       </ul>
-      <p>Because of the intense level of subdivision inherent in the growth of Grid values, exporting and using accurate MIDI is challenging. When you export MIDI from the web app, you'll get large clips for each individual layer with each note in sequence according to that layer's portion of the tone row. If you wish to hear the layers with their true polyrhythmic relationships, you'll need to resize the clips to the same interval of time (say one to eight bars). Otherwise, the MIDI is yours to experiment with - as are the tuning systems.</p>
+      <p>Because of the intense level of subdivision inherent in the growth of Grid values, dealing with MIDI can be tricky. When you export MIDI from the web app, you'll get large clips for each individual layer with each note in sequence according to that layer's portion of the tone row. If you wish to hear the layers with their true polyrhythmic relationships, you'll need to resize the clips to the same interval of time (say one to eight bars). Otherwise, the MIDI is yours to experiment with - as are the tuning systems.</p>
       <h4>.tun / .scl Tuning File Export</h4>
       <ul>
         <li>Microtonal tuning file export for .tun and .scl formats.</li>
@@ -414,6 +594,9 @@
       <h3>Visualizations</h3>
       <p>The LRC offers five visualization types. Some directly sync with playback, while others are purely visual. Reflections and Collider Battle open their own popups.</p>
       <h4>Linear Plot</h4>
+      <div class="image-row">
+        <img src="assets/linearplot1.png" alt="Linear Plot visualization" style="width:25%;">
+      </div>
       <ul>
         <li>Primary visualization graphs palindromic sequence of spaces plot values.</li>
         <li>Layers are denoted by toggleable colored lights.</li>
@@ -422,9 +605,16 @@
       </ul>
       <p>The Linear Plot is the original visualization concept that led to exploring various applications for the polyrhythmic source data. Playing with the initial layer inputs can create a wide range of patterns, all bearing a Rorschach-esque horizontal symmetry due to their palindromic construction.</p>
       <p>All layer lights may be toggled off with the lightbulb switch. You can view individual layer sequences by selecting any of the ABCD layer toggles. You can also press the Chain button to connect the notes for each layer in sequence.</p>
+      <br>
+      <figure>
+        <img src="assets/linearplot2.png" alt="Linear Plot with connectors">
+      </figure>
       <p>The Linear Plot and its layer lights sync to playback. It also responds to Scale Selection from the Playback panel, hiding notes which have been turned off. This allows you to hew more minimal audiovisual designs from the larger rhythm structure.</p>
       <p>You can use the green arrow toggle in the bottom right-hand corner of the plot to flip the vertical axis. This allows for more intuitive visual sync with audible pitch information during playback; since smaller values correspond to higher pitches, the default view places these values lower on the y-axis, which can feel counterintuitive.</p>
       <h4>Reflections (popup)</h4>
+      <figure>
+        <img src="assets/reflections.png" alt="Reflections mandala visualization">
+      </figure>
       <ul>
         <li>Duplication and manipulation of inherent palindromic structure creates detailed symmetric patterns.</li>
         <li>Various controls allow for different levels of reflection and tessellation.</li>
@@ -433,6 +623,9 @@
       </ul>
       <p>Reflections grew out of the observation that the inherent horizontal symmetry of the Linear Plots would create distinct mandala-like patterns if they were duplicated and reflected over one another with increasing axes of symmetry. The Reflections popup has five main sections: Reflections, Tessellation, Animation, Colors, and Export.</p>
       <h5>Reflections Controls</h5>
+      <figure>
+        <img src="assets/reflectionscontrols.png" alt="Reflections controls panel" style="width:30%;">
+      </figure>
       <ul>
         <li><strong>Type Selector</strong> offers Overlay and Reflecting Pool. Overlay draws each subsequent reflection directly over the layers below it. Reflecting Pool draws the first reflection (level 2) above a horizon line drawn at the top of the original graph, creating a mirror or reflecting pool visual. Subsequent levels are overlaid as in Overlay.</li>
         <li><strong>Blend Mode</strong> offers Difference, which creates interesting color shifts during animation, or Screen, a simpler and less computationally expensive overlay.</li>
@@ -440,8 +633,14 @@
         <li><strong>Dot Size</strong> resizes dots.</li>
       </ul>
       <h5>Tessellation</h5>
+      <figure>
+        <img src="assets/tessellation.png" alt="Tessellation controls" style="width:30%;">
+      </figure>
       <p><strong>Tessellation</strong> allows the user to create up to a 4x4 tessellated grid of the Reflections image.</p>
       <h5>Animation</h5>
+      <figure>
+        <img src="assets/animationcontrols.png" alt="Animation controls" style="width:30%;">
+      </figure>
       <ul>
         <li><strong>Master time control</strong> sets animation speed.</li>
         <li><strong>Rotate</strong> the image around the center to see the symmetric structure shifting and phasing.</li>
@@ -449,11 +648,17 @@
         <li><strong>Background</strong> plot toggleable to view rotation or translation with no blending.</li>
       </ul>
       <h5>Colors</h5>
+      <figure>
+        <img src="assets/colorcontrols.png" alt="Color controls" style="width:30%;">
+      </figure>
       <ul>
         <li>Set colors for main plot, background plot, and canvas background.</li>
         <li>Color picker includes HSB sliders, hex codes, or RGB values.</li>
       </ul>
       <h5>Export Visualization</h5>
+      <figure>
+        <img src="assets/exportreflections.png" alt="Export visualization settings" style="width:40%;">
+      </figure>
       <ul>
         <li><strong>Export</strong> square PNG images of Reflections plots to your chosen dimensions.</li>
         <li><strong>Video</strong> export available (web encoding capacities are somewhat limited).</li>
@@ -464,6 +669,12 @@
       </ul>
       <p>Web encoding works best with simpler visualizations; complex plots with Difference blending may show quality reduction.</p>
       <h4>Centrifuge</h4>
+      <figure>
+        <img src="assets/centrifuge1.png" alt="Centrifuge visualization with all layers" style="width:75%;">
+      </figure>
+      <figure>
+        <img src="assets/centrifuge2.png" alt="Centrifuge visualization detail" style="width:75%;">
+      </figure>
       <ul>
         <li>Layers visualized by spinning wheels.</li>
         <li>Scale ratios displayed around perimeter.</li>
@@ -477,6 +688,9 @@
       <p>Individual segments illuminate in sync with playback as their notes ring out. The perimeter also displays the ratios in the current scale, illuminating in sync with playback.</p>
       <p>You can select / deselect layers to show / hide their individual discs, and pitches chosen in Scale Selection will be reflected around the ratio ring.</p>
       <h4>Hinges</h4>
+      <figure>
+        <img src="assets/hinges1.png" alt="Hinges physical simulation">
+      </figure>
       <ul>
         <li>Physical simulation generating structure and vector information from the spaces plot.</li>
         <li>Spaces plot values form links in a chain.</li>
@@ -493,10 +707,16 @@
       <h5>Mirrors</h5>
       <p>Mirrors executes the layer forces in a mirrored pattern, moving in opposite directions from the central node. This aligns with the palindromic nature of the Hinges construction.</p>
       <h5>Anchors</h5>
+      <figure>
+        <img src="assets/anchorcontrols.png" alt="Anchors controls panel" style="width:25%;">
+      </figure>
       <p>Anchors offers more structural control. Lock certain nodes in the structure, either based on their generating layer or based on nested ratios calculated between the polyrhythm layers. Anchors also offers Expand functionality which inflates the hinge structure to its maximum extent.</p>
       <h5>Tension</h5>
       <p>While using any of the three modes, engage Tension to freeze layer progression and prompt each segment in the structure to seek a flat angle with its neighbors. This slows everything down and creates a twisting screensaver-like pattern.</p>
       <h4>Collider Battle (popup)</h4>
+      <figure>
+        <img src="assets/colliderbattle.png" alt="Collider Battle gameplay">
+      </figure>
       <ul>
         <li>Multiple hinge rhythm structures battle it out.</li>
         <li>User generates up to four starting polyrhythms.</li>
@@ -507,26 +727,51 @@
         <li>User can control cycle speed, force amplitude, line thickness, and audio volume.</li>
       </ul>
       <p>After developing Hinges the natural question was: what if these things could fight? The Collider battle lets multiple hinge structures dance around the scene, their nodes and segments colliding. Players can create their own rhythm with a Linear Plot preview on the Player Creation screen.</p>
+      <br>
+      <figure>
+        <img src="assets/createplayer.png" alt="Collider Battle player creation screen">
+      </figure>
       <p>Your HP is your Grid value, and your Nodes value corresponds to the number of unique positions in your composite rhythm. Press the Lock button to lock in your player.</p>
-      <p>In battle, if an attacking node strikes a player's segment, that segment is destroyed and its corresponding value is removed from the spaces plot and the layer force progression for that rhythm. Rebound force is applied in the opposite direction of the attacking node's vector, with amplitude defined by the layer force at that node and the global multiplier. After losing a segment, a player enters a brief period of invulnerability as their player rebuilds itself.</p>
+      <p>In battle, if an attacking node strikes a player's segment, that segment is destroyed and its corresponding value is removed from the spaces plot and the layer force progression for that rhythm. Rebound force is applied in the opposite direction of the attacking node's vector, with amplitude defined by the layer force at that node and the global multiplier. After losing a segment, a player enters a brief period of invulnerability as their structure rebuilds itself.</p>
       <p>The segments also sound out according to their actual note in their rhythm's tone row. A player is eliminated when all of their segments have been destroyed - last player standing wins. Gravity eventually kicks in and pulls players towards the center. Master controls influence cycle speed, force amplitude, line thickness (for visibility of large rhythms), and audio volume.</p>
       <p>Due to the computational expense of force progression, collision detection, and structural reconnection for multiple large rhythms, the Collider battle has a much lower ceiling on complexity than, say, Linear Plot, but you can still create dynamic battles with smaller rhythms.</p>
       <h3>Search &amp; Analysis</h3>
+      <figure>
+        <img src="assets/search1.png" alt="Search Algorithms global parameters" style="width:40%;">
+      </figure>
       <p>A large part of the impetus to develop an engine for the Large Rhythm Collider concept was to enable the discovery and classification of rhythms at a much faster rate than working by hand. The engine offers four types of search algorithms targeted at specific essential metrics, using global constraints of scale size, search time, and range to generate results. These searches also provide scaffolding for the organization of polyrhythms into larger interconnected sets, with their own properties and emergent hierarchies.</p>
       <p>Pitches introduces the concept of sorting the rhythms by scale size. Searching for 12-tone scales is a particularly interesting "goldilocks" zone given the connection to 12TET, but various scale sizes produce different results worth exploring. You can omit the Pitches parameter to get rhythm results with any number of pitches per octave.</p>
       <p>Recall that Range is the quotient between fastest and slowest layer. This qualifier allows you to weed out high-range results should you choose.</p>
       <p>Because these searches brute force large numbers of combinations, the system uses a Max Search Time interval. Some searches can continue to yield new results more or less indefinitely. Searches may need to be carried out over multiple intervals, so results are allowed to accumulate until the search parameters are changed or the results are cleared.</p>
       <p>The spinner animation lets you know when a search is being performed. When results subsections are populated, you can sort the tables by any of the columns, except Action. Clicking Apply for any result automatically sends that rhythm through the main generation pipeline.</p>
       <p>The search section minimizes result clutter by weeding out entries with duplicate grid + fundamental + ratio sets to an already-found result, but you can still view these results in the developer console logs.</p>
+      <figure>
+        <img src="assets/resultlogs.png" alt="Search result logs" style="width:50%;">
+      </figure>
       <h4>Rhythm Layer Search</h4>
       <p>Find results based on a given value for one of the four layers. Searches with a Layer A value are always completable; searches with no upper range limit and a value for any layer slower than A might be indefinite.</p>
+      <figure>
+        <img src="assets/layersearch.png" alt="Rhythm Layer Search interface" style="width:35%;">
+      </figure>
       <h4>Grid Search</h4>
       <p>Find rhythms with a specific grid value, according to global parameters. Always completable; some grids (like primes and numbers without many factors) may have no results.</p>
+      <figure>
+        <img src="assets/gridsearch.png" alt="Grid Search interface" style="width:35%;">
+      </figure>
       <h4>Fundamental Search</h4>
       <p>Find rhythms meeting global parameters with a specific fundamental value (grouping size of Layer A). These searches are generally indefinite, as fundamentals can continue to propagate, reaching higher multiples in grid space and relying on nested ratios to constrain scale size.</p>
+      <figure>
+        <img src="assets/fundamentalsearch.png" alt="Fundamental Search interface" style="width:35%;">
+      </figure>
       <h4>Inverse PG Search</h4>
       <p>A unique search which finds a special class of polyrhythm: those whose pulse (or layer frequency) values are a direct inverse of their grouping sizes. Any two-layer rhythm (meeting proper coprime requirements) will meet this qualification - say 3:2, three groups of 2, two groups of 3.</p>
+      <figure>
+        <img src="assets/inversepgsearch.png" alt="Inverse PG Search interface" style="width:35%;">
+      </figure>
       <p>Not all three and four-layer rhythms meet this criteria, but some do. Take 85:51:45:27 for example: its layer frequencies are 85, 51, 45, and 27 while the corresponding grouping sizes are 27, 45, 51, and 85 respectively. Remember the P/G Ratio metric? Inverse PG rhythms have equivalent layer and grouping sums, yielding a P/G ratio of exactly 1.</p>
+      <figure>
+        <img src="assets/metrics3.png" alt="Inverse PG metrics">
+      </figure>
     </section>
 
     <section id="example-workflows">
@@ -537,13 +782,13 @@
       <p>Mix waveforms with filter settings to experiment with timbre and hear the individuality of each layer more strongly in the composite.</p>
       <p>Slow playback down with a long cycle and use legato mode to hear sustained harmonies.</p>
       <p>Run Interconsonance Analysis on a large scale. Then, select various consonance families in Scale Selection during playback to hear more minimal subsets of the larger tone row.</p>
-      <p>Isolate clusters of pitches near certain cents values for large scales in Scale Selection. These tiny tuning differences create subtle color shifts during playback.</p>
+      <p>Isolate clusters of pitches near certain cents values for large scales in Scale Selection. These tiny tuning discrepancies create subtle color shifts during playback.</p>
       <p>Exporting midi and tuning files opens up all sorts of possibilities. You can improvise with the tuning systems and look for interesting melodies and harmonies unconnected to the actual tone row progression.</p>
       <p>Apply chance, combine different tone rows, sample and chop them up. You could also use the tone rows without the tuning files, getting an equally-tempered version of each tone row. No rules here!</p>
-      <p>Reflections can make some pretty dense and intricate patterns. The Difference blend mode creates neat phasing patterns when animated. Increasing Dot Size creates more overlap which leads to even more intricate blending.</p>
+      <p>Reflections can produce some pretty dense and intricate patterns. The Difference blend mode creates neat phasing patterns when animated. Increasing Dot Size creates more overlap which leads to even more intricate blending.</p>
       <p>Drive Hinges with fast cycle speeds and high force amplitude to coax wild, swimmy behavior out of the structure.</p>
       <p>The tug-of-war between the Hinges physical constraint system, layer force progressions, Tension, and Anchors' Expand feature and locking mechanisms have some interesting behavioral interplay.</p>
-      <p>Collider Battle is a lot of fun to watch as the rhythms perform their bizarre karate, accompanied by their bizarre internal soundtracks. You might quickly realize that small changes between layer values can create players of vastly different size and HP. When players are balanced, battles often go down to the wire.</p>
+      <p>Collider Battle is a lot of fun to watch as the rhythms perform their bizarre martial arts, accompanied by their internal soundtracks. You might quickly realize that small changes between layer values can create players of vastly different size and HP. When players are balanced, battles often go down to the wire.</p>
       <p>Search Algorithms can help you make sense of the numbers. You could generate multiple scales with the same Layer A value, for example, and compare those layer arpeggiators to find odd new harmonies.</p>
       <p>Inverse PG rhythms also tend to have nice audiovisual attributes as well, and they represent a rather interesting, rare class of results.</p>
     </section>
@@ -581,33 +826,201 @@
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       const main = document.querySelector('main');
-      if (!main) return;
+      const toc = document.getElementById('about-toc');
+      if (!main || !toc) {
+        return;
+      }
+
       const sections = Array.from(main.querySelectorAll('section'));
-      if (!sections.length) return;
+      const tocList = toc.querySelector('.toc-list');
+      const toggleButton = toc.querySelector('.toc-toggle');
+      const toggleIcon = toc.querySelector('.toggle-icon');
+      const body = document.body;
+
+      if (!sections.length || !tocList || !toggleButton || !toggleIcon) {
+        return;
+      }
+
+      const existingIds = new Set(
+        Array.from(document.querySelectorAll('[id]')).map((node) => node.id)
+      );
+
+      const slugify = (text) =>
+        text
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9\s-]/g, '')
+          .replace(/\s+/g, '-')
+          .replace(/-+/g, '-');
+
+      const assignUniqueId = (base) => {
+        const safeBase = base && base.length ? base : 'section';
+        if (!existingIds.has(safeBase)) {
+          existingIds.add(safeBase);
+          return safeBase;
+        }
+        let suffix = 2;
+        while (existingIds.has(`${safeBase}-${suffix}`)) {
+          suffix += 1;
+        }
+        const unique = `${safeBase}-${suffix}`;
+        existingIds.add(unique);
+        return unique;
+      };
+
+      const HEADING_LEVELS = {
+        H2: 2,
+        H3: 3,
+        H4: 4,
+        H5: 5
+      };
 
       const container = document.createElement('div');
+      const tocEntries = [];
 
       sections.forEach((section, index) => {
+        if (section.id) {
+          existingIds.delete(section.id);
+        }
         const detail = document.createElement('details');
         detail.className = 'about-section';
-        if (index === 0) detail.open = true;
+        if (index === 0) {
+          detail.open = true;
+        }
 
         const heading = section.querySelector('h2');
+        const title = heading ? heading.textContent.trim() : `Section ${index + 1}`;
+        const baseId = section.id
+          ? section.id
+          : slugify(title) || `section-${index + 1}`;
+        const detailId = assignUniqueId(baseId);
+        detail.id = detailId;
+
         const summary = document.createElement('summary');
-        summary.textContent = heading ? heading.textContent.trim() : `Section ${index + 1}`;
+        summary.textContent = title;
         detail.appendChild(summary);
 
+        const tocEntry = {
+          id: detailId,
+          title,
+          level: HEADING_LEVELS.H2,
+          children: []
+        };
+        const headingStack = [tocEntry];
+
         Array.from(section.children).forEach((child) => {
-          if (child.tagName !== 'H2') {
-            detail.appendChild(child.cloneNode(true));
+          if (child.tagName === 'H2') {
+            return;
           }
+
+          const clone = child.cloneNode(true);
+          const tagName = clone.tagName ? clone.tagName.toUpperCase() : null;
+          const level = tagName ? HEADING_LEVELS[tagName] : undefined;
+
+          if (level && level >= HEADING_LEVELS.H3) {
+            if (child.id) {
+              existingIds.delete(child.id);
+            }
+            const headingTitle = clone.textContent.trim() || `Subsection ${headingStack.length}`;
+            const baseHeadingId =
+              child.id || `${detailId}-${slugify(headingTitle) || 'subsection'}`;
+            const headingId = assignUniqueId(baseHeadingId);
+            clone.id = headingId;
+
+            while (headingStack.length && headingStack[headingStack.length - 1].level >= level) {
+              headingStack.pop();
+            }
+
+            const parentNode = headingStack.length ? headingStack[headingStack.length - 1] : tocEntry;
+            const tocNode = { id: headingId, title: headingTitle, level, children: [] };
+            parentNode.children.push(tocNode);
+            headingStack.push(tocNode);
+          }
+
+          detail.appendChild(clone);
         });
 
         container.appendChild(detail);
+        tocEntries.push(tocEntry);
       });
 
-      main.innerHTML = '';
-      main.appendChild(container);
+      if (container.childNodes.length) {
+        main.innerHTML = '';
+        main.appendChild(container);
+      }
+
+      const buildTocList = (nodes, parentList) => {
+        nodes.forEach((node) => {
+          const item = document.createElement('li');
+          item.className = `toc-level-${node.level}`;
+
+          const link = document.createElement('a');
+          link.href = `#${node.id}`;
+          link.textContent = node.title;
+          item.appendChild(link);
+
+          if (node.children && node.children.length) {
+            const subList = document.createElement('ul');
+            buildTocList(node.children, subList);
+            item.appendChild(subList);
+          }
+
+          parentList.appendChild(item);
+        });
+      };
+
+      tocList.innerHTML = '';
+      buildTocList(tocEntries, tocList);
+
+      const setToggleState = (collapsed) => {
+        if (collapsed) {
+          toc.classList.add('collapsed');
+          toggleButton.setAttribute('aria-expanded', 'false');
+          toggleButton.setAttribute('aria-label', 'Expand table of contents');
+          toggleIcon.textContent = '+';
+          body.classList.remove('toc-expanded');
+          body.classList.add('toc-collapsed');
+        } else {
+          toc.classList.remove('collapsed');
+          toggleButton.setAttribute('aria-expanded', 'true');
+          toggleButton.setAttribute('aria-label', 'Collapse table of contents');
+          toggleIcon.textContent = '−';
+          body.classList.remove('toc-collapsed');
+          body.classList.add('toc-expanded');
+        }
+      };
+
+      setToggleState(false);
+
+      toggleButton.addEventListener('click', () => {
+        const shouldCollapse = !toc.classList.contains('collapsed');
+        setToggleState(shouldCollapse);
+      });
+
+      tocList.addEventListener('click', (event) => {
+        if (!(event.target instanceof HTMLAnchorElement)) {
+          return;
+        }
+        const href = event.target.getAttribute('href');
+        if (!href || !href.startsWith('#')) {
+          return;
+        }
+        const targetId = href.slice(1);
+        const target = document.getElementById(targetId);
+        if (target) {
+          if (target.tagName === 'DETAILS') {
+            target.open = true;
+          } else {
+            const parentDetails = target.closest('details');
+            if (parentDetails) {
+              parentDetails.open = true;
+            }
+          }
+        }
+        if (window.matchMedia('(max-width: 1023px)').matches) {
+          setToggleState(true);
+        }
+      });
     });
   </script>
 </body>

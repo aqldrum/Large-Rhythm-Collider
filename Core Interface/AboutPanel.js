@@ -186,14 +186,47 @@ class AboutPanel {
 
         element.querySelectorAll('figure').forEach((figure) => {
             if (figure.querySelector('img, picture')) {
+                this.removeAdjacentBreaks(figure);
                 figure.remove();
             }
         });
 
         element.querySelectorAll('img, picture').forEach((node) => {
+            if (node.parentNode) {
+                this.removeAdjacentBreaks(node);
+            }
             node.remove();
         });
 
+    }
+
+    removeAdjacentBreaks(node) {
+        if (!node || !node.parentNode) {
+            return;
+        }
+
+        const isBreak = (sibling) =>
+            sibling &&
+            sibling.nodeType === Node.ELEMENT_NODE &&
+            sibling.tagName.toUpperCase() === 'BR';
+        const isWhitespace = (sibling) =>
+            sibling &&
+            sibling.nodeType === Node.TEXT_NODE &&
+            !sibling.textContent.trim();
+
+        let prev = node.previousSibling;
+        while (prev && (isWhitespace(prev) || isBreak(prev))) {
+            const nextPrev = prev.previousSibling;
+            prev.remove();
+            prev = nextPrev;
+        }
+
+        let next = node.nextSibling;
+        while (next && (isWhitespace(next) || isBreak(next))) {
+            const nextNext = next.nextSibling;
+            next.remove();
+            next = nextNext;
+        }
     }
 
     removeIds(node) {
