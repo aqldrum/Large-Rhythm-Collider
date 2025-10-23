@@ -21,21 +21,24 @@ class LRCHUDController {
         this.lightsEnabled = true; // Track lightswitch state
 
         this.mobileBreakpoint = window.matchMedia('(max-width: 900px)');
-        this.isMobileModeActive = this.mobileBreakpoint.matches;
-        document.body.classList.toggle('mobile-mode', this.isMobileModeActive);
-        this.handleMobileModeChange = (event) => {
-            const matches = typeof event === 'boolean' ? event : event.matches;
-            if (matches === this.isMobileModeActive) {
+        this.isMobileModeActive = false;
+        this.handleMobileModeChange = (matches) => {
+            const shouldEnable = typeof matches === 'boolean' ? matches : matches.matches;
+            if (shouldEnable === this.isMobileModeActive) {
                 return;
             }
-            this.isMobileModeActive = matches;
-            document.body.classList.toggle('mobile-mode', this.isMobileModeActive);
+            this.isMobileModeActive = shouldEnable;
+            if (document && document.body) {
+                document.body.classList.toggle('mobile-mode', this.isMobileModeActive);
+            }
+            console.log('📱 Mobile mode:', this.isMobileModeActive);
             this.resetAllPositions();
         };
+        this.handleMobileModeChange(this.mobileBreakpoint.matches);
         if (this.mobileBreakpoint.addEventListener) {
-            this.mobileBreakpoint.addEventListener('change', this.handleMobileModeChange);
+            this.mobileBreakpoint.addEventListener('change', (event) => this.handleMobileModeChange(event.matches));
         } else if (this.mobileBreakpoint.addListener) {
-            this.mobileBreakpoint.addListener(this.handleMobileModeChange);
+            this.mobileBreakpoint.addListener((event) => this.handleMobileModeChange(event.matches));
         }
         
         this.init();
