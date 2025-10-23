@@ -11,8 +11,6 @@ For an in-depth walkthrough of the concepts, features, and rich media gallery, r
 - Public build: **https://www.largerhythmcollider.com**
 - Local preview: open `index.html` in any modern browser (see Quickstart for details)
 
-![Main interface panels](assets/mainpage_divs.png)
-
 ## Quickstart
 
 ### Requirements
@@ -57,10 +55,6 @@ For an in-depth walkthrough of the concepts, features, and rich media gallery, r
 - **Standalone Docs (`about.html`)**  
   Narrative overview of concepts, history, and imagery. The main app lazy-loads and sanitizes this file for the inline About panel while stripping media for a lightweight in-app view.
 
-## Project Status
-
-LRC 1.0 is considered feature-complete and released for public exploration. Development is paused while future work shifts toward the 12‑Tone Polyrhythm Codex. Bug reports are welcome, but new features and pull requests are not currently being accepted.
-
 ## Contributing
 
 This repository is published for reference and learning. Please do not submit pull requests. If you discover a critical issue, feel free to open an issue so it can be reviewed when time allows.
@@ -69,5 +63,4 @@ This repository is published for reference and learning. Please do not submit pu
 
 © Avery Logan. All rights reserved. Source code is published for reference; no redistribution or derivative use is permitted without written permission.
 
-If you would like to discuss collaboration, licensing, or signal boosts, please reach out via the contact information on the About page.
-
+If you would like to discuss collaboration, or licensing, please reach out to aqldrum@gmail.com.

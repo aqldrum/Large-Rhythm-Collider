@@ -11,12 +11,12 @@
     <div id="canvas-background">
         
         <!-- Fixed Title Bar with Reset Button -->
-        <div id="title-bar" class="title-bar-fixed">
+        <header id="title-bar" class="title-bar-fixed" role="banner">
             <div class="title-content">
                 <h1>LARGE RHYTHM COLLIDER</h1>
-                <div class="collections-dropdown">
+                <nav class="collections-dropdown" aria-label="Information panels">
                     <button id="collections-toggle" class="collections-toggle">▼</button>
-                    <div id="collections-panel" class="collections-panel" style="display: none;">
+                    <nav id="collections-panel" class="collections-panel" aria-label="Collections and about menu" style="display: none;">
                         <div class="dropdown-section" data-section="about">
                             <button class="dropdown-section-header" type="button" data-target="about-panel">
                                 <div class="dropdown-section-text">
@@ -90,14 +90,13 @@
                                 </div>
                             </div>
                         </div>
-                    </div>
-                </div>
+                    </nav>
+                </nav>
             </div>
             <button id="reset-display-btn" class="reset-btn">Reset Display</button>
-        </div>
+        </header>
 
-        <!-- Black Canvas Background -->
-        <div id="canvas-background">
+        <main id="lrc-main" role="main">
             <!-- Visualization Canvas -->
             <canvas id="visualization-canvas" class="visualization-canvas"></canvas>
             
