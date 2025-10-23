@@ -55,6 +55,10 @@ For an in-depth walkthrough of the concepts, features, and rich media gallery, r
 - **Standalone Docs (`about.html`)**  
   Narrative overview of concepts, history, and imagery. The main app lazy-loads and sanitizes this file for the inline About panel while stripping media for a lightweight in-app view.
 
+## Accessibility
+
+The interface is built with semantic landmarks, keyboard-accessible controls, screen-reader labelling, and high-contrast defaults. Users can still generate dense visuals or rapid animations by pushing the engine with extreme values; if you run into accessibility barriers or need alternative representations, please reach out at [aqldrum@gmail.com](mailto:aqldrum@gmail.com) so improvements can be prioritised.
+
 ## Contributing
 
 This repository is published for reference and learning. Please do not submit pull requests. If you discover a critical issue, feel free to open an issue so it can be reviewed when time allows.

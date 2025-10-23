@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Large Rhythm Collider</title>
+    <meta name="description" content="Large Rhythm Collider is a browser-based engine for polyrhythm analysis, visualization, and tuning system exploration.">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -20,7 +21,7 @@
                         <div class="dropdown-section" data-section="about">
                             <button class="dropdown-section-header" type="button" data-target="about-panel">
                                 <div class="dropdown-section-text">
-                                    <h3>About</h3>
+                                    <h2 class="dropdown-section-title">About</h2>
                                     <p>Large Rhythm Collider overview & features</p>
                                 </div>
                                 <span class="dropdown-section-icon">+</span>
@@ -39,7 +40,7 @@
                         <div class="dropdown-section" data-section="collections">
                             <button class="dropdown-section-header" type="button" data-target="collections-panel-section">
                                 <div class="dropdown-section-text">
-                                    <h3>Collections</h3>
+                                    <h2 class="dropdown-section-title">Collections</h2>
                                     <p>Community rhythm voting & leaderboards</p>
                                 </div>
                                 <span class="dropdown-section-icon">+</span>
@@ -106,12 +107,12 @@
         <!-- Draggable HUD Divs -->
         
         <!-- Rhythm Submit Div (only one that starts open) -->
-        <div id="rhythm-submit-div" class="panel" data-default-pos="left-corner">
+        <section id="rhythm-submit-div" class="panel" data-default-pos="left-corner" aria-labelledby="rhythm-input-panel-title">
             <div class="info-header">
-                <h3>Rhythm Input</h3>
+                <h2 id="rhythm-input-panel-title" class="panel-title">Rhythm Input</h2>
                 <button class="minimize-btn">−</button>
             </div>
-            <div class="info-content">
+            <div class="info-content" id="rhythm-input-panel-content">
                 <form id="rhythm-form" class="rhythm-form">
                     <div class="layer-inputs">
                         <div class="layer-input">
@@ -134,15 +135,15 @@
                     <button type="submit" class="submit-btn">Generate</button>
                 </form>
             </div>
-        </div>
+        </section>
         
         <!-- Rhythm Info Div (starts minimized) -->
-        <div id="rhythm-info-div" class="panel minimized" data-default-pos="top-left">
+        <section id="rhythm-info-div" class="panel minimized" data-default-pos="top-left" aria-labelledby="rhythm-info-panel-title">
             <div class="info-header">
-                <h3>Rhythm Info</h3>
+                <h2 id="rhythm-info-panel-title" class="panel-title">Rhythm Info</h2>
                 <button class="minimize-btn">+</button>
             </div>
-            <div class="info-content">
+            <div class="info-content" id="rhythm-info-panel-content">
             <div class="info-section">
                 <div class="info-metrics-grid">
                     <div class="layers-display">Layers: <span id="layers-display">--</span></div>
@@ -175,15 +176,15 @@
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
         
         <!-- Visualizations Div (starts minimized) -->
-        <div id="visualizations-div" class="panel minimized" data-default-pos="top-right">
+        <section id="visualizations-div" class="panel minimized" data-default-pos="top-right" aria-labelledby="visualizations-panel-title">
             <div class="info-header">
-                <h3>Visualizations</h3>
+                <h2 id="visualizations-panel-title" class="panel-title">Visualizations</h2>
                 <button class="minimize-btn">+</button>
             </div>
-            <div class="info-content">
+            <div class="info-content" id="visualizations-panel-content">
                 <div class="viz-controls">
                     <label>Type:</label>
                     <select id="viz-type-selector">
@@ -257,27 +258,27 @@
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
         
         <!-- Playback Div (starts minimized) -->
-        <div id="playback-div" class="panel minimized" data-default-pos="bottom-left">
+        <section id="playback-div" class="panel minimized" data-default-pos="bottom-left" aria-labelledby="playback-panel-title">
             <div class="info-header">
-                <h3>Playback</h3>
+                <h2 id="playback-panel-title" class="panel-title">Playback</h2>
                 <button class="minimize-btn">+</button>
             </div>
-            <div class="info-content">
+            <div class="info-content" id="playback-panel-content">
                 <!-- All controls will be generated by ToneRowPlayback.js -->
                 <div id="playback-controls-container"></div>
             </div>
-        </div>
+        </section>
         
         <!-- Search Algorithms Div (starts minimized) -->
-        <div id="search-div" class="panel minimized" data-default-pos="bottom-right">
+        <section id="search-div" class="panel minimized" data-default-pos="bottom-right" aria-labelledby="search-panel-title">
             <div class="info-header">
-                <h3>Search Algorithms</h3>
+                <h2 id="search-panel-title" class="panel-title">Search Algorithms</h2>
                 <button class="minimize-btn">+</button>
             </div>
-            <div class="info-content">
+            <div class="info-content" id="search-panel-content">
                 <div class="search-algorithms">
                     
                     <!-- Global Search Configuration -->
@@ -375,7 +376,8 @@
                     
                 </div>
             </div>
-        </div>
+        </section>
+        </main>
     </div>
 
     <!-- Scripts -->

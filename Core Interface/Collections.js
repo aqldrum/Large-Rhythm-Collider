@@ -84,14 +84,21 @@
 
         bindUI() {
             if (this.collectionsToggle && this.collectionsPanel) {
-                this.collectionsToggle.setAttribute('aria-expanded', 'false');
-                this.collectionsToggle.setAttribute('aria-controls', 'collections-panel');
+                const updateToggleAccessibility = (expanded) => {
+                    this.collectionsToggle.setAttribute('aria-controls', 'collections-panel');
+                    this.collectionsToggle.setAttribute('aria-expanded', String(expanded));
+                    this.collectionsToggle.setAttribute(
+                        'aria-label',
+                        expanded ? 'Hide About and Collections menu' : 'Show About and Collections menu'
+                    );
+                    this.collectionsToggle.textContent = expanded ? '▲' : '▼';
+                };
 
+                updateToggleAccessibility(false);
                 this.collectionsToggle.addEventListener('click', () => {
                     const isVisible = this.collectionsPanel.style.display === 'block';
                     this.collectionsPanel.style.display = isVisible ? 'none' : 'block';
-                    this.collectionsToggle.textContent = isVisible ? '▼' : '▲';
-                    this.collectionsToggle.setAttribute('aria-expanded', String(!isVisible));
+                    updateToggleAccessibility(!isVisible);
 
                     if (!isVisible) {
                         this.refreshCollectionsLists();

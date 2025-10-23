@@ -511,16 +511,20 @@ class LRCVisuals {
 
     updateConnectorsButton() {
         const connectorsBtn = document.getElementById('layer-connectors-toggle');
-        if (connectorsBtn) {
-            connectorsBtn.classList.toggle('active', this.layerConnectorsEnabled);
-            if (this.layerConnectorsEnabled) {
-                connectorsBtn.style.backgroundColor = '#4CAF50';
-                connectorsBtn.style.color = '#ffffff';
-            } else {
-                connectorsBtn.style.backgroundColor = '';
-                connectorsBtn.style.color = '';
-            }
+        if (!connectorsBtn) {
+            return;
         }
+
+        connectorsBtn.classList.toggle('active', this.layerConnectorsEnabled);
+        connectorsBtn.style.backgroundColor = '';
+        connectorsBtn.style.color = '';
+        connectorsBtn.style.borderColor = '';
+
+        connectorsBtn.setAttribute('aria-pressed', String(this.layerConnectorsEnabled));
+        connectorsBtn.setAttribute(
+            'aria-label',
+            this.layerConnectorsEnabled ? 'Hide layer connectors' : 'Show layer connectors'
+        );
     }
 
     shouldShowDot(contributingLayers, spaceIndex = -1) {

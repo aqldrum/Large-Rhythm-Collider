@@ -182,7 +182,7 @@ body {
     border-radius: var(--border-radius) var(--border-radius) 0 0;
 }
 
-.dropdown-section-text h3 {
+.dropdown-section-title {
     font-size: 16px;
     color: var(--hud-accent);
     margin: 0 0 4px 0;
@@ -908,7 +908,7 @@ body {
     cursor: move;
 }
 
-.info-header h3 {
+.panel-title {
     margin: 0;
     font-size: 13px;
     font-weight: 500;
@@ -1404,8 +1404,8 @@ body {
 }
 
 .layer-connectors-btn.active {
-    background: #4CAF50;
-    border-color: #4CAF50;
+    background: #00893a;
+    border-color: #00893a;
     color: #ffffff;
 }
 

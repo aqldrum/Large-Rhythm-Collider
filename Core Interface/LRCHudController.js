@@ -70,6 +70,16 @@ class LRCHUDController {
             console.warn(`Minimize button not found in panel: ${panelId}`);
             return;
         }
+
+        const content = panel.querySelector('.info-content');
+        if (content && !content.id) {
+            content.id = `${panelId}-content`;
+        }
+        const heading = panel.querySelector('.info-header h2');
+        const panelLabel = heading ? heading.textContent.trim() : panelId.replace(/-/g, ' ');
+
+        btn.dataset.panelLabel = panelLabel;
+        this.setPanelAccessibilityState(panel, btn, !panel.classList.contains('minimized'));
         
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -98,6 +108,7 @@ class LRCHUDController {
         // Expand
         panel.classList.remove('minimized');
         btn.textContent = '−';
+        this.setPanelAccessibilityState(panel, btn, true);
         
         // Apply constraints after expansion
         requestAnimationFrame(() => {
@@ -109,6 +120,7 @@ class LRCHUDController {
         // Minimize first
         panel.classList.add('minimized');
         btn.textContent = '+';
+        this.setPanelAccessibilityState(panel, btn, false);
         
         // Restore position after minimize
         requestAnimationFrame(() => {
@@ -119,6 +131,24 @@ class LRCHUDController {
                 panel.style.bottom = panel.dataset.minimizedBottom;
             }
         });
+    }
+
+    setPanelAccessibilityState(panel, btn, expanded) {
+        const content = panel.querySelector('.info-content');
+        const label = btn.dataset.panelLabel || panel.id.replace(/-/g, ' ');
+
+        btn.setAttribute('aria-expanded', String(expanded));
+        btn.setAttribute('aria-label', `${expanded ? 'Collapse' : 'Expand'} ${label} panel`);
+
+        if (content) {
+            if (!content.id) {
+                content.id = `${panel.id}-content`;
+            }
+            btn.setAttribute('aria-controls', content.id);
+            content.setAttribute('aria-hidden', expanded ? 'false' : 'true');
+        }
+
+        panel.setAttribute('aria-expanded', String(expanded));
     }
 
     constrainPanelToBounds(panel) {
@@ -807,10 +837,20 @@ class LRCHUDController {
         // Lightswitch toggle - turns ALL lights off/on
         const lightswitchBtn = document.getElementById('lightswitch-toggle');
         if (lightswitchBtn) {
+            lightswitchBtn.setAttribute('aria-pressed', String(this.lightsEnabled));
+            lightswitchBtn.setAttribute('aria-label', this.lightsEnabled ? 'Turn layer lights off' : 'Turn layer lights on');
             lightswitchBtn.addEventListener('click', () => {
                 this.toggleLights();
             });
         }
+        
+        // Initialize layer toggle accessibility states
+        document.querySelectorAll('.layer-toggle').forEach((btn) => {
+            const layer = btn.dataset.layer || '';
+            const isActive = btn.classList.contains('active');
+            btn.setAttribute('aria-label', `${isActive ? 'Hide' : 'Show'} layer ${layer}`);
+            btn.setAttribute('aria-pressed', String(isActive));
+        });
         
         // Layer toggles - individual layer visibility
         document.addEventListener('click', (e) => {
@@ -1050,6 +1090,13 @@ class LRCHUDController {
         const sliceButtons = Array.from(document.querySelectorAll('.slice-toggle'));
         if (sliceButtons.length === 0) return;
 
+        sliceButtons.forEach((btn) => {
+            const layer = btn.dataset.slice || '';
+            const isActive = btn.classList.contains('active');
+            btn.setAttribute('aria-pressed', String(isActive));
+            btn.setAttribute('aria-label', `${isActive ? 'Hide' : 'Show'} layer ${layer} slice`);
+        });
+
         const getCentrifuge = () => window.lrcVisuals && window.lrcVisuals.centrifuge ? window.lrcVisuals.centrifuge : null;
 
         const applySliceVisibility = () => {
@@ -1074,6 +1121,10 @@ class LRCHUDController {
         sliceButtons.forEach(btn => {
             btn.addEventListener('click', () => {
                 btn.classList.toggle('active');
+                const isActive = btn.classList.contains('active');
+                const layer = btn.dataset.slice || '';
+                btn.setAttribute('aria-pressed', String(isActive));
+                btn.setAttribute('aria-label', `${isActive ? 'Hide' : 'Show'} layer ${layer} slice`);
                 applySliceVisibility();
             });
         });
@@ -1103,6 +1154,11 @@ class LRCHUDController {
             lightswitchBtn.classList.add('lights-off');
             lightswitchBtn.querySelector('.lightswitch-icon').textContent = '🔒';
         }
+
+        if (lightswitchBtn) {
+            lightswitchBtn.setAttribute('aria-pressed', String(this.lightsEnabled));
+            lightswitchBtn.setAttribute('aria-label', this.lightsEnabled ? 'Turn layer lights off' : 'Turn layer lights on');
+        }
         
         // Use the new dedicated method for lighting control
         if (window.lrcVisuals) {
@@ -1114,10 +1170,14 @@ class LRCHUDController {
 
     toggleLayer(layer, button) {
         button.classList.toggle('active');
+        const isVisible = button.classList.contains('active');
+        button.setAttribute('aria-pressed', String(isVisible));
+        if (layer) {
+            button.setAttribute('aria-label', `${isVisible ? 'Hide' : 'Show'} layer ${layer}`);
+        }
         
         // Communicate to visualization system
         if (window.lrcVisuals) {
-            const isVisible = button.classList.contains('active');
             window.lrcVisuals.toggleLayerVisibility(layer, isVisible);
         }
     }
