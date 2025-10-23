@@ -56,30 +56,6 @@ body.mobile-mode .visualization-canvas {
     opacity: 1;
 }
 
-body.mobile-mode .panel {
-    position: static;
-    width: min(100%, 560px);
-    max-width: none;
-    margin: 12px auto;
-    cursor: default;
-    user-select: auto;
-}
-
-body.mobile-mode .panel .info-content {
-    max-height: none;
-}
-
-body.mobile-mode .info-header {
-    cursor: default;
-}
-
-body.mobile-mode .panel[data-default-pos] {
-    bottom: auto !important;
-    top: auto !important;
-    left: auto !important;
-    right: auto !important;
-}
-
 /* Canvas Background - Account for Fixed Title */
 #canvas-background {
     position: fixed;
@@ -1007,6 +983,31 @@ body.mobile-mode .panel[data-default-pos] {
 .panel:hover {
     border-color: var(--hud-accent);
     box-shadow: 0 0 15px rgba(0, 255, 136, 0.2);
+}
+
+body.mobile-mode .panel {
+    position: static !important;
+    width: min(100%, 560px);
+    max-width: none;
+    margin: 12px auto;
+    cursor: default;
+    user-select: auto;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+
+body.mobile-mode .panel .info-content {
+    max-height: none;
+}
+
+body.mobile-mode .info-header {
+    cursor: default;
+}
+
+body.mobile-mode .panel[data-default-pos] {
+    bottom: auto !important;
+    top: auto !important;
+    left: auto !important;
+    right: auto !important;
 }
 
 /* Add this general button base */
