@@ -1081,11 +1081,22 @@ body.mobile-mode .panel[data-default-pos] {
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid var(--hud-border);
     border-radius: 4px;
-    padding: 6px 8px;
+    padding: 6px 0;
     color: var(--hud-text);
     font-size: 13px;
     text-align: center;
     width: 100%;
+    font-variant-numeric: tabular-nums;
+}
+
+.layer-input input[type="number"] {
+    -moz-appearance: textfield;
+}
+
+.layer-input input[type="number"]::-webkit-inner-spin-button,
+.layer-input input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
 }
 
 .layer-input input:focus {
