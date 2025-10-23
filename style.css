@@ -1955,6 +1955,10 @@ body.mobile-mode .panel[data-default-pos] {
     margin: 8px 0;
 }
 
+.adsr-controls .knob-container {
+    width: 100%;
+}
+
 .knob {
     width: 40px;
     height: 40px;
@@ -2022,8 +2026,9 @@ body.mobile-mode .panel[data-default-pos] {
 /* ADSR Grid Layout */
 .adsr-controls {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+    justify-items: center;
     margin-top: 12px;
     padding: 12px;
     background: rgba(0, 0, 0, 0.2);
@@ -2657,15 +2662,27 @@ body.mobile-mode .panel[data-default-pos] {
 
 .global-filters {
     display: flex;
-    gap: 16px;
+    flex-wrap: wrap;
+    gap: 10px 12px;
     padding: 8px;
     background: rgba(255, 255, 255, 0.05);
     border-radius: 4px;
     border: 1px solid var(--hud-border);
 }
 
+.global-filters .control-group {
+    flex: 1 1 140px;
+    max-width: 180px;
+}
+
+.global-filters .control-group input {
+    width: 100%;
+}
+
 .playback-layer-toggles {
     display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
     gap: 8px;
     margin-bottom: 12px;
     padding: 8px;
@@ -2677,7 +2694,7 @@ body.mobile-mode .panel[data-default-pos] {
     border: 2px solid;
     background: transparent;
     color: #fff;
-    padding: 6px 12px;
+    padding: 4px 10px;
     border-radius: 4px;
     font-weight: bold;
     cursor: pointer;
@@ -2705,7 +2722,7 @@ body.mobile-mode .panel[data-default-pos] {
     border: 2px solid #2ecc71;
     background: rgba(46, 204, 113, 0.1);
     color: #d5f5e3;
-    padding: 6px 14px;
+    padding: 4px 10px;
     border-radius: 4px;
     font-weight: bold;
     cursor: pointer;
@@ -2768,12 +2785,22 @@ body.mobile-mode .panel[data-default-pos] {
 
 .layer-filters {
     display: flex;
-    gap: 16px;
+    flex-wrap: wrap;
+    gap: 10px 12px;
     margin-bottom: 12px;
     padding: 8px;
     background: rgba(255, 255, 255, 0.05);
     border-radius: 4px;
     border: 1px solid var(--hud-border);
+}
+
+.layer-filters .control-group {
+    flex: 1 1 160px;
+    max-width: 180px;
+}
+
+.layer-filters .control-group input {
+    width: 100%;
 }
 
 .range-value {
