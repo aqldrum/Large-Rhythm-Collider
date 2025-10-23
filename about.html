@@ -474,8 +474,7 @@
       <p>Range describes the literal frequency range of the polyrhythm layers - rhythms with smaller range values are more tightly packed.</p>
       <p>Density percentage tells us "how much of the grid is covered by the rhythm?" Layer Sum is used instead of Composite Length to give credence to the full weight of all frequency layers.</p>
       <p>High-frequency nested ratios can cause higher density by adding frequency values while constraining growth of the overall LCM.</p>
-      <p>P/G ratio is a subtler metric that weighs the overall sum of the frequency values against the sum of the grouping sizes which create them. The grouping sum will always be greater than or equal to the layer sum, and higher density rhythms tend to have a higher P/G ratio, but P/G generally declines as Grid values grow.</p>
-      <p>Rhythms may also have a P/G value of 1 - see the Inverse PG section in Search Algorithms.</p>
+      <p>P/G ratio is a subtler metric that weighs the overall sum of the frequency values against the sum of the grouping sizes which create them. Higher density rhythms tend to have a higher P/G ratio. Rhythms may also have a P/G value of 1 - see the Inverse PG section in Search Algorithms.</p>
       <p>One special metric, Average Deviation, only applies to 12-tone rhythm scales. This metric relates our microtonal just intonation scales to 12TET. Frequency relationships in 12TET are not rational, which means equal temperament cannot be replicated by the LRC's ratio scales.</p>
       <p>Average Deviation is calculated by determining the intervallic cents distance from 100 between each successive step in our scale. 100 cents is the size of each step in 12TET.</p>
       <p>For example, a 79-cent interval has a deviation of 21 cents, while a 105.6-cent interval has a deviation of 5.6 cents. We take the average of all 12 deviation values to yield the final metric. How low do you think this value can get for a 12-tone scale?</p>
@@ -802,7 +801,7 @@
 
     <section id="summary">
       <h2>Summary and Future Development</h2>
-      <p>The Large Rhythm Collider engine begins with a rigorous generalized analytical framework for polyrhythms as we traditionally understand them, in their most essential ratio format. The five control modules then provide a host of audiovisual tools, simulations and data generated from the mathematical basis of the individual rhythms themselves. The methods used to turn each rhythm's internal logic back onto itself for the serialization of tuning systems and procedural generation of other visual and spatial dynamics opens a window into a strange world of delicately balanced, crystalline temporal structures, deterministic but complex, opaque and unpredictable even with sophisticated analysis.</p>
+      <p>The Large Rhythm Collider engine begins with a rigorous generalized analytical framework for polyrhythms as we traditionally understand them, in their most essential ratio format. The five control modules then provide a host of audiovisual tools, simulations and data to accurately display and interpret these rhythms. The further serialization of tuning systems and procedural generation of other visual and spatial dynamics generates a universe of delicately balanced, crystalline temporal structures. Results are deterministic but complex, opaque and unpredictable even with sophisticated analysis.</p>
       <p>This preliminary effort implies a wider view, a broadening of scope, the development of a taxonomical understanding of how rhythms connect across Grid values, Fundamental generators and pitch constraints. The engine lays the foundation for a coherent approach to the grander organization, compilation, and adaptation of polyrhythms in large groups, utilizing the emergent hierarchical properties of the system's inherent metrics to build interconnected databases. Stay tuned for all of that! If you read this far and the project resonates with you or gives you any ideas, don't hesitate to reach out at <a href="mailto:aqldrum@gmail.com">aqldrum@gmail.com</a>.</p>
     </section>
 
@@ -810,17 +809,7 @@
       <h2>Credits</h2>
       <p>Special thanks go to Matthew Duveneck, my professor who generously translated early LRC concepts into R code, allowing me to begin computer-assisted system research.</p>
       <p>I also thank my friend and musical colleague Jacob Shulman for great chats about mathematical context and development possibilities, along with audio experiments in SuperCollider.</p>
-      <p>I extend my heartfelt gratitude to all the friends and family over the years who have allowed me to yap away about the LRC. Thank you for your support and curiosity, and for the chance to practice effective communication of the core concepts.</p>
-    </section>
-
-    <section id="contributing">
-      <h2>Contributing</h2>
-      <p>I'm a musician and came into this process a novice programmer; as such, this project is primarily the result of AI-assisted vibecoding. There may be a number of blind spots or possibilities for improvement especially given the breadth of features and interconnected system architecture. Any feedback or new ideas are greatly appreciated!</p>
-    </section>
-
-    <section id="license">
-      <h2>License</h2>
-      <p>[Your chosen license]</p>
+      <p>I extend my heartfelt gratitude to all the friends and family over the years who have allowed me to yap about the LRC. Thank you for your support and curiosity, and for the chance to practice effective communication of the core concepts.</p>
     </section>
   </main>
   <script>
