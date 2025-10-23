@@ -19,6 +19,24 @@ class LRCHUDController {
         };
         
         this.lightsEnabled = true; // Track lightswitch state
+
+        this.mobileBreakpoint = window.matchMedia('(max-width: 900px)');
+        this.isMobileModeActive = this.mobileBreakpoint.matches;
+        document.body.classList.toggle('mobile-mode', this.isMobileModeActive);
+        this.handleMobileModeChange = (event) => {
+            const matches = typeof event === 'boolean' ? event : event.matches;
+            if (matches === this.isMobileModeActive) {
+                return;
+            }
+            this.isMobileModeActive = matches;
+            document.body.classList.toggle('mobile-mode', this.isMobileModeActive);
+            this.resetAllPositions();
+        };
+        if (this.mobileBreakpoint.addEventListener) {
+            this.mobileBreakpoint.addEventListener('change', this.handleMobileModeChange);
+        } else if (this.mobileBreakpoint.addListener) {
+            this.mobileBreakpoint.addListener(this.handleMobileModeChange);
+        }
         
         this.init();
     }
@@ -232,6 +250,9 @@ class LRCHUDController {
     }
 
     startDrag(e, element) {
+        if (this.isMobileModeActive) {
+            return;
+        }
         this.dragState.isDragging = true;
         this.dragState.currentElement = element;
         
@@ -252,6 +273,9 @@ class LRCHUDController {
     }
 
     handleDrag(e) {
+        if (this.isMobileModeActive) {
+            return;
+        }
         if (!this.dragState.isDragging || !this.dragState.currentElement) return;
         
         const element = this.dragState.currentElement;
@@ -279,6 +303,11 @@ class LRCHUDController {
     }
 
     endDrag() {
+        if (this.isMobileModeActive) {
+            this.dragState.isDragging = false;
+            this.dragState.currentElement = null;
+            return;
+        }
         if (this.dragState.currentElement) {
             this.dragState.currentElement.classList.remove('dragging');
             
@@ -440,6 +469,21 @@ class LRCHUDController {
     }
 
     resetAllPositions() {
+        if (this.isMobileModeActive) {
+            const panels = document.querySelectorAll('.panel');
+            panels.forEach((element) => {
+                element.style.left = '';
+                element.style.top = '';
+                element.style.right = '';
+                element.style.bottom = '';
+                delete element.dataset.minimizedLeft;
+                delete element.dataset.minimizedTop;
+                delete element.dataset.minimizedRight;
+                delete element.dataset.minimizedBottom;
+            });
+            return;
+        }
+
         console.log('🔄 === RESETTING PANEL POSITIONS ===');
         console.log('🔍 Default positions:', this.defaultPositions);
         
