@@ -1056,7 +1056,7 @@ body.mobile-mode .collections-panel {
     width: calc(100vw - 24px);
     max-width: none;
     left: 50%;
-    transform: translateX(-80%);
+    transform: translateX(-70%);
     right: auto;
 }
 
