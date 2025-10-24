@@ -1825,24 +1825,24 @@ body.mobile-mode .collections-panel {
 /* Layer Tabs for Playback Controls */
 .layer-tabs {
     display: flex;
-    gap: 6px;                      /* Reduced from 8px */
-    margin: 10px 0;                /* Reduced from 12px 0 */
+    gap: 8px;                      
+    margin: 12px 0;               
     border-bottom: 1px solid var(--hud-border);
-    padding-bottom: 6px;           /* Reduced from 8px */
+    padding-bottom: 8px;          
     justify-content: center;       /* Center the tabs */
 }
 
 .layer-tab {
-    padding: 4px 8px;              /* Reduced from 6px 12px */
+    padding: 6px 12px;              
     border: 1px solid var(--hud-border);
     color: #000;
     cursor: pointer;
     border-radius: 4px;
-    font-size: 10px;               /* Reduced from 11px */
+    font-size: 11px;              
     font-weight: 500;
     transition: all 0.2s;
     background: rgba(255, 255, 255, 0.9);
-    min-width: 24px;               /* Added minimum width */
+    min-width: 24px;               
     text-align: center;            /* Center the single letter */
 }
 

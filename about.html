@@ -33,40 +33,6 @@
         padding-left: 18rem;
       }
     }
-    body.force-landscape {
-      touch-action: pan-y;
-    }
-    @media screen and (orientation: portrait) {
-      body.force-landscape {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vh;
-        height: 100vw;
-        transform: rotate(90deg) translateY(-100vh);
-        transform-origin: left top;
-        overflow-x: hidden;
-        overflow-y: auto;
-        padding-left: 1.5rem;
-        padding-right: 1.5rem;
-      }
-      body.force-landscape header,
-      body.force-landscape main {
-        max-width: 100vh;
-      }
-      body.force-landscape .about-toc {
-        width: calc(100vh - 2rem);
-        max-width: none;
-      }
-    }
-    @media screen and (orientation: landscape) {
-      body.force-landscape {
-        position: static;
-        width: 100%;
-        height: auto;
-        transform: none;
-      }
-    }
     header {
       padding: 3rem 0 2rem;
       text-align: center;
@@ -339,10 +305,41 @@
         padding-left: 1.5rem;
       }
     }
+    @media (max-width: 768px) {
+      body.has-toc {
+        padding-left: 1rem;
+        padding-right: 1rem;
+      }
+      header {
+        padding: 2.5rem 0 1.5rem;
+      }
+      main {
+        padding: 1.75rem 1.25rem;
+      }
+      .about-toc {
+        width: 100%;
+      }
+      table {
+        display: block;
+        overflow-x: auto;
+        white-space: nowrap;
+      }
+      table tbody,
+      table thead {
+        width: 100%;
+      }
+      .image-row {
+        flex-direction: column;
+        align-items: center;
+      }
+      .image-row img {
+        max-width: min(100%, 480px);
+      }
+    }
 
   </style>
 </head>
-<body class="has-toc toc-expanded force-landscape">
+<body class="has-toc toc-expanded">
   <aside id="about-toc" class="about-toc" aria-label="Table of contents">
     <button type="button" class="toc-toggle" aria-expanded="true" aria-label="Collapse table of contents">
       <span class="toggle-icon">&minus;</span>
