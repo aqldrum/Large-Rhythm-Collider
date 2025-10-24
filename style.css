@@ -1019,10 +1019,13 @@ body.mobile-mode .panel-title {
 body.mobile-mode .title-bar-fixed {
     padding: 0 12px;
     height: 46px;
+    gap: 10px;
 }
 
 body.mobile-mode .title-bar-fixed h1 {
     font-size: 16px;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 body.mobile-mode .reset-btn {
@@ -1033,6 +1036,28 @@ body.mobile-mode .reset-btn {
 body.mobile-mode .collections-toggle {
     padding: 4px 8px;
     font-size: 11px;
+    flex-shrink: 0;
+}
+
+body.mobile-mode .title-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+body.mobile-mode .collections-dropdown {
+    position: relative;
+    width: auto;
+}
+
+body.mobile-mode .collections-panel {
+    min-width: 0;
+    width: calc(100vw - 24px);
+    max-width: none;
+    left: 50%;
+    transform: translateX(-50%);
+    right: auto;
 }
 
 /* Add this general button base */
