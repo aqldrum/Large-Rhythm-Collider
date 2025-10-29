@@ -67,4 +67,4 @@ This repository is published for reference and learning. Please do not submit pu
 
 © Avery Logan. All rights reserved. Source code is published for reference; no redistribution or derivative use is permitted without written permission.
 
-If you would like to discuss collaboration, or licensing, please reach out to aqldrum@gmail.com.
+If you would like to discuss collaboration or licensing, please reach out to aqldrum@gmail.com.
