@@ -1214,33 +1214,59 @@ function monitorHingesAnimation(hingesViz, statusSpan) {
     updateStatus();
 }
 
+function getPrimaryHingesSection() {
+    const mainPanel = document.getElementById('visualizations-div');
+    if (mainPanel) {
+        const section = mainPanel.querySelector('#hinges-controls-section');
+        if (section) {
+            return section;
+        }
+    }
+    return document.getElementById('hinges-controls-section');
+}
+
 function showHingesControls() {
-    const hingesControls = document.getElementById('hinges-controls');
+    const hingesControls = getPrimaryHingesSection();
     if (hingesControls) {
-        hingesControls.style.display = 'flex';
+        hingesControls.style.display = 'block';
     }
 }
 
 function hideHingesControls() {
-    const hingesControls = document.getElementById('hinges-controls');
+    const hingesControls = getPrimaryHingesSection();
     if (hingesControls) {
         hingesControls.style.display = 'none';
-        
-        // Reset button state when hiding
-        const animateBtn = document.getElementById('hinges-animate-btn');
-        const statusSpan = document.getElementById('hinges-status');
-        const showForcesCheck = document.getElementById('hinges-show-forces');
-        
-        if (animateBtn && statusSpan) {
-            animateBtn.textContent = '🔗 Animate Chain';
-            animateBtn.classList.remove('animating');
-            statusSpan.textContent = 'Ready';
-        }
-        
-        if (showForcesCheck) {
-            showForcesCheck.checked = false;
-        }
     }
+    
+    resetHingesControlsUI();
+}
+
+function resetHingesControlsUI() {
+    document.querySelectorAll('#hinges-animate-btn').forEach((animateBtn) => {
+        animateBtn.textContent = '🔗 Animate Chain';
+        animateBtn.classList.remove('animating');
+    });
+    
+    document.querySelectorAll('#hinges-status').forEach((statusSpan) => {
+        statusSpan.textContent = 'Ready';
+    });
+    
+    document.querySelectorAll('#hinges-show-forces').forEach((checkbox) => {
+        checkbox.checked = false;
+    });
+    
+    document.querySelectorAll('#hinges-mode').forEach((modeSelect) => {
+        modeSelect.value = 'progression';
+    });
+    
+    document.querySelectorAll('#hinges-tension-btn').forEach((tensionBtn) => {
+        tensionBtn.classList.remove('active');
+        tensionBtn.textContent = '⚡ Tension';
+    });
+}
+
+if (typeof window !== 'undefined') {
+    window.resetHingesControlsUI = resetHingesControlsUI;
 }
 
 // ====================================

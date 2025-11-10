@@ -20,7 +20,8 @@
         forcesHeader: null,
         layerRows: {},
         rightColumn: null,
-        anchorsPanel: null
+        anchorsPanel: null,
+        visibilityHandler: null
       };
       this.activeLayerForDirection = null; // which layer is awaiting arrow key direction
 
@@ -875,15 +876,30 @@
     }
 
     // Cleanup on deactivate or page teardown
-    const cleanup = () => {
+    const cleanup = (preserveListener = false) => {
       document.removeEventListener('keydown', handleKey);
       window.removeEventListener('rhythmGenerated', onRhythmGenerated);
+      if (!preserveListener && adv.overlays?.visibilityHandler) {
+        window.removeEventListener('vizTypeChanged', adv.overlays.visibilityHandler);
+      }
       try { container.remove(); } catch {}
       h.overlayTopOffset = 0;
       // Keep overlay amplitude mode enabled so legacy in-canvas slider stays hidden
       h.useOverlayAmplitude = true;
-      adv.overlays = { container:null, cycleGroup:null, cycleInput:null, forcesPanel:null, forcesHeader:null, layerRows:{}, rightColumn:null, anchorsPanel:null };
+      const handler = preserveListener ? adv.overlays.visibilityHandler : null;
+      adv.overlays = { 
+        container:null, 
+        cycleGroup:null, 
+        cycleInput:null, 
+        forcesPanel:null, 
+        forcesHeader:null, 
+        layerRows:{}, 
+        rightColumn:null, 
+        anchorsPanel:null,
+        visibilityHandler: handler
+      };
     };
+    adv.cleanupOverlays = cleanup;
 
     // Wrap hinges.deactivate once to clean overlays
     if (!h._advancedWrappedDeactivate) {
@@ -904,16 +920,26 @@
         try { buildOverlays(adv); } catch(e) { console.warn('Overlay rebuild on viz change failed:', e); }
         return; // buildOverlays will set up its own listeners/visibility
       }
+      if (!isHinges) {
+        if (typeof adv.cleanupOverlays === 'function') {
+          adv.cleanupOverlays(true);
+        } else if (adv.overlays.container) {
+          adv.overlays.container.style.display = 'none';
+        }
+        return;
+      }
       const c = adv.overlays.container;
-      if (c) c.style.display = isHinges ? 'block' : 'none';
+      if (c) c.style.display = 'block';
       // Also refresh Anchors panel visibility when returning to Hinges
-      if (isHinges && typeof adv.overlays.updateAnchorsVisibility === 'function') {
+      if (typeof adv.overlays.updateAnchorsVisibility === 'function') {
         adv.overlays.updateAnchorsVisibility();
       }
     };
     if (plotTypeSelect) {
       plotTypeSelect.addEventListener('change', updateOverlayVisibility);
     }
+    window.addEventListener('vizTypeChanged', updateOverlayVisibility);
+    adv.overlays.visibilityHandler = updateOverlayVisibility;
     updateOverlayVisibility();
   }
 })();

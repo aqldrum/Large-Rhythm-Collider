@@ -14,7 +14,6 @@ class ExpandedInfoView {
         // State management for proper cleanup
         this.stateBeforeExpansion = {
             rhythmInfoMinimized: false,
-            visualizationType: 'linear',
             panels: {}
         };
 
@@ -522,12 +521,6 @@ class ExpandedInfoView {
     // ====================================
 
     captureCurrentState() {
-        // Capture the current visualization type
-        const vizSelector = document.getElementById('viz-type-selector');
-        if (vizSelector) {
-            this.stateBeforeExpansion.visualizationType = vizSelector.value;
-        }
-
         // Capture rhythm info panel state
         const rhythmInfoDiv = document.getElementById('rhythm-info-div');
         if (rhythmInfoDiv) {
@@ -627,14 +620,6 @@ class ExpandedInfoView {
     }
 
     restoreSystemState() {
-        // Restore visualization type to what it was before expansion
-        const vizSelector = document.getElementById('viz-type-selector');
-        if (vizSelector && window.lrcVisuals && this.stateBeforeExpansion.visualizationType) {
-            vizSelector.value = this.stateBeforeExpansion.visualizationType;
-            window.lrcVisuals.setPlotType(this.stateBeforeExpansion.visualizationType);
-            console.log(`📊 Restored visualization to ${this.stateBeforeExpansion.visualizationType}`);
-        }
-
         // Reset rhythm info to minimized state
         this.resetRhythmInfoToMinimized();
     }
@@ -1395,10 +1380,20 @@ class ExpandedInfoView {
                 }
 
                 select.addEventListener('change', (e) => {
-                    if (window.lrcVisuals) {
-                        window.lrcVisuals.setPlotType(e.target.value);
+                    const nextType = e.target.value;
+                    if (window.lrcHUD && window.lrcHUD.setVisualizationType) {
+                        window.lrcHUD.setVisualizationType(nextType);
+                    } else if (window.lrcVisuals) {
+                        window.lrcVisuals.setPlotType(nextType);
                     }
                 });
+
+                const currentType = window.lrcVisuals?.currentPlotType || 'linear';
+                if (window.lrcHUD && window.lrcHUD.syncVizSelectors) {
+                    window.lrcHUD.syncVizSelectors(currentType);
+                } else {
+                    select.value = currentType;
+                }
             }
             
             const layerToggles = contentContainer.querySelectorAll('.layer-toggle');

@@ -7,6 +7,7 @@ class LRCVisuals {
         this.canvas = null;
         this.ctx = null;
         this.currentPlotType = 'linear';
+        this.lastNonPopupPlotType = 'linear';
         
         // Data
         this.spacesPlot = [];
@@ -311,11 +312,13 @@ class LRCVisuals {
 
     // Continue with the dropdown update
     updateDropdownSelection() {
-        // Update dropdown to reflect the current plot type, not forced linear
-        const vizSelector = document.getElementById('viz-type-selector');
-        if (vizSelector) {
-            vizSelector.value = this.currentPlotType || 'linear';
-        }
+        // Update every viz selector (main panel + any clones) to reflect current plot type
+        const selectors = document.querySelectorAll('select#viz-type-selector');
+        selectors.forEach((vizSelector) => {
+            if (vizSelector) {
+                vizSelector.value = this.currentPlotType || 'linear';
+            }
+        });
         console.log('📊 Viz selector synced to:', this.currentPlotType);
     }
 
@@ -1173,16 +1176,47 @@ class LRCVisuals {
     // ====================================
 
     setPlotType(type) {
+        const requestedType = type || 'linear';
+        const previousType = this.currentPlotType;
+        
         // Stop playback when switching visualization types to prevent lighting conflicts
         if (window.toneRowPlayback && window.toneRowPlayback.isPlaying) {
             window.toneRowPlayback.stopPlayback();
             console.log('🛑 Auto-stopped playback due to visualization type change');
         }
         
-        this.currentPlotType = type;
+        this.currentPlotType = requestedType;
+        if (!this.isPopupVisualization(requestedType)) {
+            this.lastNonPopupPlotType = requestedType;
+        }
+        
         const select = document.getElementById('plot-type');
-        if (select) select.value = type;
+        if (select) select.value = requestedType;
+        
+        this.updateDropdownSelection();
+        
+        if (previousType !== requestedType) {
+            console.log(`📊 Visualization changed from ${previousType} to ${requestedType}`);
+        }
+        
         this.drawPlot();
+
+        if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+            window.dispatchEvent(new CustomEvent('vizTypeChanged', {
+                detail: {
+                    currentType: this.currentPlotType,
+                    previousType
+                }
+            }));
+        }
+    }
+
+    isPopupVisualization(type) {
+        return type === 'reflections' || type === 'collider';
+    }
+
+    getLastNonPopupPlotType() {
+        return this.lastNonPopupPlotType || 'linear';
     }
 
     setCycleDuration(duration) {

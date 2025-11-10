@@ -93,16 +93,16 @@ class LRCReflections {
         this.stopAnimation(true); // Skip redraw during deactivation
         this.closePopup();
         
-        // Auto-switch back to Linear Plot and redraw
-        if (window.lrcVisuals) {
-            window.lrcVisuals.currentPlotType = 'linear';
-            const vizSelector = document.getElementById('viz-type-selector');
-            if (vizSelector) {
-                vizSelector.value = 'linear';
-            }
-            window.lrcVisuals.drawPlot();
-            console.log('📊 Auto-switched to Linear Plot after Reflections close');
+        // Auto-switch back to the most recent canvas visualization
+        const fallbackType = (window.lrcVisuals && window.lrcVisuals.getLastNonPopupPlotType)
+            ? window.lrcVisuals.getLastNonPopupPlotType()
+            : 'linear';
+        if (window.lrcHUD && window.lrcHUD.setVisualizationType) {
+            window.lrcHUD.setVisualizationType(fallbackType);
+        } else if (window.lrcVisuals) {
+            window.lrcVisuals.setPlotType(fallbackType);
         }
+        console.log(`📊 Restored ${fallbackType} after Reflections close`);
         
         console.log('🔮 Reflections deactivated');
     }

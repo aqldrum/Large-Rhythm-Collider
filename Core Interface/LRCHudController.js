@@ -379,6 +379,10 @@ class LRCHUDController {
         console.log('🔄 Step 1: Resetting panel positions...');
         this.resetAllPositions();
         
+        if (window.resetHingesControlsUI) {
+            window.resetHingesControlsUI();
+        }
+        
         // 2. RESET PANEL STATES
         console.log('🔄 Step 2: Resetting panel minimize states...');
         const panelsToMinimize = ['rhythm-info-div', 'visualizations-div', 'playback-div', 'search-div'];
@@ -868,17 +872,22 @@ class LRCHUDController {
 
     setupVisualizationControls() {
         // Visualization type selector
-        const vizTypeSelector = document.getElementById('viz-type-selector');
+        const vizTypeSelector = this.getPrimaryVizSelector();
         if (vizTypeSelector) {
             vizTypeSelector.addEventListener('change', (e) => {
+                const nextType = e.target.value;
                 if (window.lrcVisuals) {
-                    window.lrcVisuals.setPlotType(e.target.value);
+                    window.lrcVisuals.setPlotType(nextType);
                 }
-                this.updateVisualizationSections(e.target.value);
+                this.syncVizSelectors(nextType);
+                this.updateVisualizationSections(nextType);
             });
             
             // Set initial state
+            this.syncVizSelectors(vizTypeSelector.value);
             this.updateVisualizationSections(vizTypeSelector.value);
+        } else {
+            console.warn('Visualization type selector not found for HUD controls');
         }
         
         // Lightswitch toggle - turns ALL lights off/on
@@ -944,6 +953,48 @@ class LRCHUDController {
                 targetSection.style.display = 'block';
             }
         }
+    }
+
+    getPrimaryVizSelector() {
+        const vizPanel = document.getElementById('visualizations-div');
+        if (vizPanel) {
+            const primary = vizPanel.querySelector('#viz-type-selector');
+            if (primary) {
+                return primary;
+            }
+        }
+        return document.querySelector('#viz-type-selector');
+    }
+
+    syncVizSelectors(value) {
+        if (value === undefined || value === null) {
+            return;
+        }
+        document.querySelectorAll('select#viz-type-selector').forEach((select) => {
+            if (select) {
+                select.value = value;
+            }
+        });
+    }
+
+    setVisualizationType(type) {
+        if (type === undefined || type === null) {
+            return;
+        }
+        const primary = this.getPrimaryVizSelector();
+        if (!primary) {
+            console.warn('Primary visualization selector not available');
+            return;
+        }
+        
+        if (primary.value !== type) {
+            primary.value = type;
+        }
+        
+        this.syncVizSelectors(type);
+        
+        const changeEvent = new Event('change', { bubbles: true });
+        primary.dispatchEvent(changeEvent);
     }
     
     setupHingesControls() {

@@ -796,14 +796,23 @@ class ColliderUI {
             
             // DEFER Linear Plot switch and rhythm regeneration until after all cleanup is complete
             setTimeout(() => {
-                // Auto-switch to Linear Plot by triggering proper change event
-                const vizSelector = document.getElementById('viz-type-selector');
-                if (vizSelector) {
-                    vizSelector.value = 'linear';
-                    // Trigger the change event to properly activate Linear Plot
-                    vizSelector.dispatchEvent(new Event('change', { bubbles: true }));
-                    console.log('📊 Auto-switched to Linear Plot after Collider Battle close');
+                // Auto-switch back to the most recent canvas visualization
+                const fallbackType = (window.lrcVisuals && window.lrcVisuals.getLastNonPopupPlotType)
+                    ? window.lrcVisuals.getLastNonPopupPlotType()
+                    : 'linear';
+                if (window.lrcHUD && window.lrcHUD.setVisualizationType) {
+                    window.lrcHUD.setVisualizationType(fallbackType);
+                } else {
+                    const vizSelector = document.querySelector('#visualizations-div #viz-type-selector') ||
+                        document.getElementById('viz-type-selector');
+                    if (vizSelector) {
+                        vizSelector.value = fallbackType;
+                        vizSelector.dispatchEvent(new Event('change', { bubbles: true }));
+                    } else if (window.lrcVisuals) {
+                        window.lrcVisuals.setPlotType(fallbackType);
+                    }
                 }
+                console.log(`📊 Restored ${fallbackType} after Collider Battle close`);
                 
                 // Re-trigger main rhythm generation with current input values
                 if (window.lrcHudController && window.lrcHudController.handleRhythmSubmission) {
