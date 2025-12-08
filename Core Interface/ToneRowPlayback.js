@@ -18,6 +18,7 @@ class ToneRowPlayback {
         this.maxFrequencyHz = 3520; // Five octaves above A110
         this.masterVolumeDb = -24;
         this.lastUpdateTime = 0;
+        this.tempo = 1.0;
         
         // Data
         this.spacesPlot = [];
@@ -25,6 +26,18 @@ class ToneRowPlayback {
         this.currentRhythms = [1, 1, 1, 1];
         this.toneRowData = [];
         this.toneRowDataByLayer = [];
+        this.layerEvents = [[], [], [], []];
+
+        // Tick-based scheduler
+        this.ticksPerSecond = 960; // PPQ-equivalent; 960 ticks/sec with cycleDuration control
+        this.scheduleIntervalMs = 30;
+        this.scheduleLookaheadMs = 150;
+        this.transportStartTime = 0;
+        this.transportStartTick = 0;
+        this.lastScheduledTickAbs = 0;
+        this.cycleTicks = 0;
+        this.secondsPerTick = 0;
+        this.schedulerTimer = null;
         
         // Audio routing
         this.layerNodes = [];
@@ -742,8 +755,6 @@ class ToneRowPlayback {
         const { min, max } = this.cycleDurationLimits || { min: 0.1, max: 6000 };
         const clampedTempo = Math.min(max, Math.max(min, numericValue));
 
-        this.cycleDuration = clampedTempo;
-
         if (syncInput) {
             const cycleDurationInput = document.getElementById('cycle-duration');
             if (cycleDurationInput) {
@@ -755,12 +766,9 @@ class ToneRowPlayback {
         }
 
         if (clampedTempo !== previousTempo) {
-            console.log(`⏰ Tempo updated: ${this.cycleDuration}s cycle duration`);
-
-            if (this.isPlaying) {
-                this.stopPlayback();
-                setTimeout(() => this.startPlayback(), 100);
-            }
+            console.log(`⏰ Tempo updated: ${clampedTempo}s cycle duration (realtime)`);
+            this.cycleDuration = clampedTempo;
+            this.handleCycleDurationChange(clampedTempo);
 
             // Notify visuals
             if (window.lrcVisuals) {
@@ -1477,28 +1485,32 @@ class ToneRowPlayback {
         }
     }
 
-    async startPlayback() {
+    async startPlayback(startPhaseMs = 0) {
         try {
             await this.initAudioContext();
-            
+
             if (this.spacesPlotByLayer.every(layer => layer.length === 0)) {
                 alert('No rhythm data available. Please generate a rhythm first.');
                 return;
             }
-            
-            console.log('Starting playback...');
-            
+
+            // Prepare timing + events
+            this.prepareLayerEvents();
+            this.configureTiming(startPhaseMs);
+
+            console.log('Starting playback (tick scheduler)...');
+
             this.isPlaying = true;
             this.updatePlayButton();
-            
-            // Schedule all layers
-            this.scheduleAllLayers();
-            
+
+            // Kick off scheduler loop
+            this.runScheduler();
+
             // Notify other modules
             window.dispatchEvent(new CustomEvent('playbackStarted', {
                 detail: { cycleDuration: this.cycleDuration }
             }));
-            
+
         } catch (error) {
             console.error('Failed to start playback:', error);
             this.isPlaying = false;
@@ -1508,15 +1520,21 @@ class ToneRowPlayback {
 
     stopPlayback() {
         console.log('Stopping playback...');
-        
+
         this.isPlaying = false;
         this.updatePlayButton();
+
+        // Stop scheduler
+        if (this.schedulerTimer) {
+            clearTimeout(this.schedulerTimer);
+            this.schedulerTimer = null;
+        }
 
         if (this.legatoEnabled) {
             this.releaseAllLayerVoices({ immediate: true });
         }
         this.activeLayerVoices = [null, null, null, null];
-        
+
         // Stop all oscillators
         this.activeOscillators.forEach(osc => {
             try {
@@ -1526,67 +1544,189 @@ class ToneRowPlayback {
             }
         });
         this.activeOscillators = [];
-        
-        // Clear scheduled events
+
+        // Clear scheduled events (legacy compatibility)
         this.scheduledEvents.forEach(id => clearTimeout(id));
         this.scheduledEvents = [];
-        
+
         // Notify other modules
         window.dispatchEvent(new CustomEvent('playbackStopped'));
     }
 
-    scheduleAllLayers() {
+    /**
+     * Build repeating event lists for each layer (tick-based).
+     */
+    prepareLayerEvents() {
+        this.layerEvents = [[], [], [], []];
+        const tps = Math.max(1, this.ticksPerSecond);
+        const cycleTicks = Math.max(1, Math.round(this.cycleDuration * tps));
+        this.cycleTicks = cycleTicks;
+
         ['a', 'b', 'c', 'd'].forEach((layer, layerIndex) => {
             const rhythmValue = this.currentRhythms[layerIndex];
             const layerData = this.toneRowDataByLayer[layerIndex];
-            
-            if (rhythmValue <= 1 || !layerData || layerData.length === 0) {
-                return; // Skip inactive layers
-            }
-            
-            this.scheduleLayer(layer, layerIndex, layerData, rhythmValue);
+            if (rhythmValue <= 1 || !layerData || !layerData.length) return;
+
+            const ticksPerNote = cycleTicks / rhythmValue;
+            this.layerEvents[layerIndex] = layerData.map((noteData, noteIndex) => {
+                const startTick = Math.round(noteIndex * ticksPerNote) % cycleTicks;
+                const durationTicks = Math.max(1, Math.round(ticksPerNote));
+                return {
+                    layerIndex,
+                    startTick,
+                    durationTicks,
+                    noteData
+                };
+            });
         });
     }
 
-    scheduleLayer(layer, layerIndex, layerData, rhythmValue) {
-        const noteDuration = this.cycleDuration / rhythmValue;
-        const state = this.layerStates[layer];
-        const cycleDurationMs = this.cycleDuration * 1000;
-        
-        // Schedule initial notes with precise timing to avoid accumulation errors
-        layerData.forEach((noteData, noteIndex) => {
-            // Calculate precise start time as fraction of total cycle
-            const startTime = Math.round((noteIndex / rhythmValue) * cycleDurationMs);
-            
-            const timeoutId = setTimeout(() => {
-                if (this.isPlaying) {
-                    // Check current mute state dynamically (not captured at timeout creation time)
-                    const currentlyMuted = noteData.isMutedByFrequency || this.isNoteMutedBySelection(noteData.globalSpacesIndex);
-                    
-                    // Only play the note if it's not muted (preserve timing for all notes)
-                    if (!currentlyMuted) {
-                        this.playNote(noteData, noteDuration, layerIndex, state);
-                    } else {
-                     //   console.log(`🔇 Muted note: ${noteData.frequency.toFixed(1)}Hz (${noteData.ratio.toFixed(2)}) in layer ${layer.toUpperCase()}`);
-                    }
-                    // Note: Muted notes still occupy their time slot, maintaining sequence integrity
+    /**
+     * Configure timing params for the scheduler.
+     */
+    configureTiming(startPhaseMs = 0) {
+        const tempo = Math.max(0.0001, this.tempo || 1);
+        this.secondsPerTick = 1 / (this.ticksPerSecond * tempo);
+        this.cycleTicks = Math.max(1, Math.round(this.cycleDuration * this.ticksPerSecond));
+
+        // Convert start phase (ms into cycle) to ticks
+        const startTick = Math.floor((Math.max(0, startPhaseMs) / 1000) / this.secondsPerTick) % this.cycleTicks;
+        this.transportStartTick = startTick;
+        this.lastScheduledTickAbs = startTick;
+        const now = this.audioContext.currentTime;
+        this.transportStartTime = now;
+    }
+
+    /**
+     * Scheduler loop: schedules events in the upcoming lookahead window.
+     */
+    runScheduler() {
+        if (!this.isPlaying || !this.audioContext) return;
+
+        const now = this.audioContext.currentTime;
+        const lookaheadSec = this.scheduleLookaheadMs / 1000;
+        const windowEndTime = now + lookaheadSec;
+
+        const windowStartTickAbs = this.lastScheduledTickAbs;
+        const windowEndTickAbs = this.timeToAbsTick(windowEndTime);
+
+        this.scheduleWindow(windowStartTickAbs, windowEndTickAbs);
+        this.lastScheduledTickAbs = windowEndTickAbs;
+
+        this.schedulerTimer = setTimeout(() => this.runScheduler(), this.scheduleIntervalMs);
+    }
+
+    /**
+     * Convert AudioContext time to absolute tick (monotonic from transport start).
+     */
+    timeToAbsTick(targetTime) {
+        const elapsedSec = Math.max(0, targetTime - this.transportStartTime);
+        const deltaTicks = Math.floor(elapsedSec / this.secondsPerTick);
+        return this.transportStartTick + deltaTicks;
+    }
+
+    /**
+     * Convert absolute tick back to AudioContext time.
+     */
+    absTickToTime(absTick) {
+        const deltaTicks = absTick - this.transportStartTick;
+        return this.transportStartTime + (deltaTicks * this.secondsPerTick);
+    }
+
+    /**
+     * Adjust cycle duration in real time while maintaining phase.
+     */
+    handleCycleDurationChange(newDuration) {
+        const tps = Math.max(1, this.ticksPerSecond);
+        const prevCycleTicks = this.cycleTicks || Math.max(1, Math.round(this.cycleDuration * tps));
+        const tempo = Math.max(0.0001, this.tempo || 1);
+
+        let phaseRatio = 0;
+        if (this.isPlaying && this.audioContext) {
+            const now = this.audioContext.currentTime;
+            const currentAbsTick = this.timeToAbsTick(now);
+            phaseRatio = ((currentAbsTick % prevCycleTicks) + prevCycleTicks) % prevCycleTicks;
+            phaseRatio = phaseRatio / prevCycleTicks;
+        }
+
+        this.cycleDuration = newDuration;
+        this.cycleTicks = Math.max(1, Math.round(this.cycleDuration * tps));
+        this.secondsPerTick = 1 / (tps * tempo);
+        this.prepareLayerEvents();
+
+        if (this.isPlaying && this.audioContext) {
+            const now = this.audioContext.currentTime;
+            const startTick = Math.floor(phaseRatio * this.cycleTicks) % this.cycleTicks;
+            this.transportStartTick = startTick;
+            this.lastScheduledTickAbs = startTick;
+            this.transportStartTime = now;
+            if (this.schedulerTimer) {
+                clearTimeout(this.schedulerTimer);
+                this.schedulerTimer = null;
+            }
+            this.runScheduler();
+        }
+    }
+
+    /**
+     * Adjust tempo multiplier in real time while maintaining phase (optional phase override).
+     */
+    setTempoMultiplier(newTempo, { phaseMs = null } = {}) {
+        const tempo = Math.max(0.0001, Number(newTempo) || 1);
+        const tps = Math.max(1, this.ticksPerSecond);
+        const prevCycleTicks = this.cycleTicks || Math.max(1, Math.round(this.cycleDuration * tps));
+
+        let targetPhaseTick = 0;
+        if (phaseMs != null && Number.isFinite(phaseMs) && this.cycleDuration > 0) {
+            const phaseRatio = Math.max(0, phaseMs) / (this.cycleDuration * 1000);
+            targetPhaseTick = Math.floor(phaseRatio * prevCycleTicks) % prevCycleTicks;
+        } else if (this.isPlaying && this.audioContext) {
+            const now = this.audioContext.currentTime;
+            const currentAbsTick = this.timeToAbsTick(now);
+            targetPhaseTick = ((currentAbsTick % prevCycleTicks) + prevCycleTicks) % prevCycleTicks;
+        }
+
+        this.tempo = tempo;
+        this.secondsPerTick = 1 / (tps * tempo);
+
+        if (this.isPlaying && this.audioContext) {
+            const now = this.audioContext.currentTime;
+            this.transportStartTick = targetPhaseTick;
+            this.lastScheduledTickAbs = targetPhaseTick;
+            this.transportStartTime = now;
+            if (this.schedulerTimer) {
+                clearTimeout(this.schedulerTimer);
+                this.schedulerTimer = null;
+            }
+            this.runScheduler();
+        }
+    }
+
+    /**
+     * Schedule all layer events whose startTick falls within [startAbs, endAbs).
+     */
+    scheduleWindow(startAbs, endAbs) {
+        const cycle = this.cycleTicks;
+        ['a', 'b', 'c', 'd'].forEach((layer, layerIndex) => {
+            const events = this.layerEvents[layerIndex] || [];
+            if (!events.length) return;
+
+            events.forEach((evt) => {
+                const base = evt.startTick;
+                // Find first occurrence >= startAbs
+                const firstCycle = Math.ceil((startAbs - base) / cycle);
+                let occTick = base + Math.max(0, firstCycle) * cycle;
+                while (occTick < endAbs) {
+                    const startTime = this.absTickToTime(occTick);
+                    const durationSec = evt.durationTicks * this.secondsPerTick;
+                    this.playNoteAtTime(evt.noteData, durationSec, layerIndex, this.layerStates[layer], startTime);
+                    occTick += cycle;
                 }
-            }, startTime);
-            
-            this.scheduledEvents.push(timeoutId);
+            });
         });
-        
-        // Schedule looping with precise cycle duration
-        const loopTimeoutId = setTimeout(() => {
-            if (this.isPlaying) {
-                this.scheduleLayer(layer, layerIndex, layerData, rhythmValue);
-            }
-        }, cycleDurationMs);
-        
-        this.scheduledEvents.push(loopTimeoutId);
     }
 
-    playNote(noteData, duration, layerIndex, layerState) {
+    playNoteAtTime(noteData, duration, layerIndex, layerState, startTime) {
         if (!this.audioContext || !this.layerNodes[layerIndex]) return;
 
         const frequency = noteData.frequency;
@@ -1598,6 +1738,12 @@ class ToneRowPlayback {
             return;
         }
 
+        // Dynamic muting checks at schedule time
+        const currentlyMuted = noteData.isMutedByFrequency || this.isNoteMutedBySelection(noteData.globalSpacesIndex);
+        if (currentlyMuted || this.isLayerMuted(layerIndex)) {
+            return;
+        }
+
         const noteEventDetail = this.createNoteEventDetail(noteData, duration, layerIndex);
         if (noteEventDetail) {
             window.dispatchEvent(new CustomEvent('layerNoteTriggered', {
@@ -1606,62 +1752,77 @@ class ToneRowPlayback {
         }
 
         if (this.legatoEnabled) {
-            this.startLegatoNote(noteData, layerIndex, layerState);
+            this.startLegatoNote(noteData, layerIndex, layerState, startTime);
         } else {
-            this.startStandardNote(noteData, duration, layerIndex, layerState);
+            this.startStandardNote(noteData, duration, layerIndex, layerState, startTime);
         }
     }
 
-    startStandardNote(noteData, duration, layerIndex, layerState) {
-        const now = this.audioContext.currentTime;
+    /**
+     * Check mute/solo for a layer.
+     */
+    isLayerMuted(layerIndex) {
+        const layerKey = ['a', 'b', 'c', 'd'][layerIndex];
+        if (!layerKey) return false;
+        if (this.soloLayer && this.soloLayer !== layerKey) return true;
+        return this.mutedLayers.has(layerKey);
+    }
+
+    startStandardNote(noteData, duration, layerIndex, layerState, startTime = null) {
+        const start = Math.max(
+            startTime != null ? startTime : this.audioContext.currentTime,
+            this.audioContext.currentTime
+        );
         const oscillator = this.audioContext.createOscillator();
         oscillator.type = layerState.waveform;
-        oscillator.frequency.setValueAtTime(noteData.frequency, now);
+        oscillator.frequency.setValueAtTime(noteData.frequency, start);
 
         const envelope = this.audioContext.createGain();
-        envelope.gain.setValueAtTime(0, now);
+        envelope.gain.setValueAtTime(0, start);
 
         oscillator.connect(envelope);
         envelope.connect(this.layerNodes[layerIndex].gain);
 
         const { attack, decay, sustain, release } = layerState.adsr;
         const sustainTime = Math.max(0, duration - attack - decay - release);
+        const endTime = start + Math.max(0.01, duration);
 
-        envelope.gain.linearRampToValueAtTime(1, now + attack);
-        envelope.gain.linearRampToValueAtTime(sustain, now + attack + decay);
-        envelope.gain.setValueAtTime(sustain, now + attack + decay + sustainTime);
-        envelope.gain.linearRampToValueAtTime(0, now + duration);
+        envelope.gain.linearRampToValueAtTime(1, start + attack);
+        envelope.gain.linearRampToValueAtTime(sustain, start + attack + decay);
+        envelope.gain.setValueAtTime(sustain, start + attack + decay + sustainTime);
+        envelope.gain.linearRampToValueAtTime(0, start + duration);
 
-        oscillator.start(now);
-        oscillator.stop(now + duration);
+        oscillator.start(start);
+        oscillator.stop(endTime);
 
         this.trackOscillatorLifecycle(oscillator);
     }
 
-    startLegatoNote(noteData, layerIndex, layerState) {
+    startLegatoNote(noteData, layerIndex, layerState, startTime = null) {
         if (!this.audioContext) return;
 
         // Release any currently sustained voice for this layer before starting the next one
         this.releaseLayerVoice(layerIndex);
 
         const now = this.audioContext.currentTime;
+        const start = Math.max(startTime != null ? startTime : now, now);
         const oscillator = this.audioContext.createOscillator();
         oscillator.type = layerState.waveform;
-        oscillator.frequency.setValueAtTime(noteData.frequency, now);
+        oscillator.frequency.setValueAtTime(noteData.frequency, start);
 
         const envelope = this.audioContext.createGain();
-        envelope.gain.setValueAtTime(0, now);
+        envelope.gain.setValueAtTime(0, start);
 
         oscillator.connect(envelope);
         envelope.connect(this.layerNodes[layerIndex].gain);
 
         const { attack, decay, sustain, release } = layerState.adsr;
 
-        envelope.gain.linearRampToValueAtTime(1, now + attack);
-        envelope.gain.linearRampToValueAtTime(sustain, now + attack + decay);
-        envelope.gain.setValueAtTime(sustain, now + attack + decay + 0.01);
+        envelope.gain.linearRampToValueAtTime(1, start + attack);
+        envelope.gain.linearRampToValueAtTime(sustain, start + attack + decay);
+        envelope.gain.setValueAtTime(sustain, start + attack + decay + 0.01);
 
-        oscillator.start(now);
+        oscillator.start(start);
 
         this.activeLayerVoices[layerIndex] = {
             oscillator,
