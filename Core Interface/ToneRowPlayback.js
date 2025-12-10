@@ -1666,6 +1666,9 @@ class ToneRowPlayback {
             }
             this.runScheduler();
         }
+
+        const currentPhaseMs = this.computeCurrentPhaseMs();
+        this.emitTempoChange({ phaseMs: currentPhaseMs });
     }
 
     /**
@@ -1700,6 +1703,33 @@ class ToneRowPlayback {
             }
             this.runScheduler();
         }
+
+        const currentPhaseMs = this.computeCurrentPhaseMs();
+        this.emitTempoChange({ phaseMs: currentPhaseMs });
+    }
+
+    /**
+     * Current phase within the cycle in milliseconds.
+     */
+    computeCurrentPhaseMs() {
+        if (!this.audioContext) return 0;
+        const now = this.audioContext.currentTime;
+        const absTick = this.timeToAbsTick(now);
+        const phaseTick = ((absTick % this.cycleTicks) + this.cycleTicks) % this.cycleTicks;
+        return phaseTick * this.secondsPerTick * 1000;
+    }
+
+    /**
+     * Notify listeners (e.g., visuals) of tempo/cycle changes.
+     */
+    emitTempoChange({ phaseMs = 0 } = {}) {
+        window.dispatchEvent(new CustomEvent('playbackTempoChanged', {
+            detail: {
+                cycleDurationMs: this.cycleDuration * 1000,
+                tempo: this.tempo,
+                phaseMs
+            }
+        }));
     }
 
     /**

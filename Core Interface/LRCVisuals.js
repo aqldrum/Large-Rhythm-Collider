@@ -184,6 +184,7 @@ class LRCVisuals {
             // Only respond if Linear or Circular plot is active (core LRCVisuals plots)
             if (this.currentPlotType === 'linear' || this.currentPlotType === 'circular') {
                 this.cycleDuration = (e.detail.cycleDuration || 10) * 1000; // Convert to ms
+                this.lastLightTime = performance.now(); // align phase to start
                 this.startLightingAnimation();
                 console.log(`📊 LRCVisuals (${this.currentPlotType}) responding to playback started`);
             }
@@ -194,6 +195,19 @@ class LRCVisuals {
             if (this.currentPlotType === 'linear' || this.currentPlotType === 'circular') {
                 this.stopLightingAnimation();
                 console.log(`📊 LRCVisuals (${this.currentPlotType}) responding to playback stopped`);
+            }
+        });
+
+        // Tempo / cycle updates (live)
+        window.addEventListener('playbackTempoChanged', (e) => {
+            if (this.currentPlotType !== 'linear' && this.currentPlotType !== 'circular') return;
+            const detail = e.detail || {};
+            if (Number.isFinite(detail.cycleDurationMs)) {
+                this.cycleDuration = detail.cycleDurationMs;
+            }
+            if (Number.isFinite(detail.phaseMs)) {
+                // Align lighting phase to playback phase
+                this.lastLightTime = performance.now() - detail.phaseMs;
             }
         });
 

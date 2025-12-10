@@ -1309,6 +1309,23 @@ class LRCCentrifuge {
         console.log(`🌀 Centrifuge cycle duration set to ${duration}s`);
     }
 
+    /**
+     * Update cycle duration and align phase (in ms) without restarting.
+     * @param {number} cycleDurationMs
+     * @param {number} phaseMs
+     */
+    setPhase(cycleDurationMs, phaseMs = 0) {
+        if (Number.isFinite(cycleDurationMs) && cycleDurationMs > 0) {
+            this.cycleDuration = cycleDurationMs;
+        }
+        if (Number.isFinite(phaseMs)) {
+            // Align startTime so that elapsed % cycleDuration = phaseMs
+            const now = performance.now();
+            const offset = ((phaseMs % this.cycleDuration) + this.cycleDuration) % this.cycleDuration;
+            this.startTime = now - offset;
+        }
+    }
+
     setVisible(visible) {
         if (visible) {
             this.draw();
@@ -1442,12 +1459,15 @@ function integrateCentrifugeVisualization() {
         }
     });
     
-    // Also listen for cycle duration changes
-    window.addEventListener('tempoChanged', (e) => {
+    // Also listen for live tempo/cycle updates
+    window.addEventListener('playbackTempoChanged', (e) => {
         if (window.lrcVisuals && window.lrcVisuals.centrifuge) {
-            const cycleDuration = e.detail?.cycleDuration || 10.0;
-            window.lrcVisuals.centrifuge.setCycleDuration(cycleDuration);
-            console.log('🌀 Centrifuge cycle duration updated to:', cycleDuration);
+            const cycleMs = Number.isFinite(e.detail?.cycleDurationMs) ? e.detail.cycleDurationMs : null;
+            const phaseMs = Number.isFinite(e.detail?.phaseMs) ? e.detail.phaseMs : 0;
+            if (cycleMs != null) {
+                window.lrcVisuals.centrifuge.setPhase(cycleMs, phaseMs);
+                console.log('🌀 Centrifuge phase/cycle updated:', { cycleMs, phaseMs });
+            }
         }
     });
     
