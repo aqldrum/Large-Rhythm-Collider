@@ -38,6 +38,14 @@ class ToneRowPlayback {
         this.cycleTicks = 0;
         this.secondsPerTick = 0;
         this.schedulerTimer = null;
+        this.pendingTempoCleanup = false;
+        this.pendingBridgeHold = false;
+        this.pendingBridgeReleaseTicks = [null, null, null, null];
+        this.bridgeVoices = [null, null, null, null];
+        this.lastNoteByLayer = [null, null, null, null];
+        this.lastNoteTickAbs = [null, null, null, null];
+        this.lastNotePulseTicks = [null, null, null, null];
+        this.pendingBridgeSustain = false;
         
         // Audio routing
         this.layerNodes = [];
@@ -45,7 +53,7 @@ class ToneRowPlayback {
         this.scheduledEvents = [];
         this.activeLayerVoices = [null, null, null, null];
         this.legatoEnabled = false;
-        
+
         // Global filters
         this.globalHighpassFilter = null;
         this.globalLowpassFilter = null;
@@ -1545,6 +1553,11 @@ class ToneRowPlayback {
         });
         this.activeOscillators = [];
 
+        // Release bridge voices
+        this.bridgeVoices.forEach((_, idx) => this.releaseBridgeVoice(idx));
+        this.pendingBridgeHold = false;
+        this.pendingBridgeReleaseTicks = [null, null, null, null];
+
         // Clear scheduled events (legacy compatibility)
         this.scheduledEvents.forEach(id => clearTimeout(id));
         this.scheduledEvents = [];
@@ -1669,6 +1682,8 @@ class ToneRowPlayback {
 
         const currentPhaseMs = this.computeCurrentPhaseMs();
         this.emitTempoChange({ phaseMs: currentPhaseMs });
+        // Transport-based bridge/cleanup on cycle change (legato off only)
+        this.armTransportBridge();
     }
 
     /**
@@ -1678,6 +1693,9 @@ class ToneRowPlayback {
         const tempo = Math.max(0.0001, Number(newTempo) || 1);
         const tps = Math.max(1, this.ticksPerSecond);
         const prevCycleTicks = this.cycleTicks || Math.max(1, Math.round(this.cycleDuration * tps));
+
+        const prevTempoValue = this.tempo || 1;
+        const prevSecondsPerTick = this.secondsPerTick || (1 / (tps * prevTempoValue));
 
         let targetPhaseTick = 0;
         if (phaseMs != null && Number.isFinite(phaseMs) && this.cycleDuration > 0) {
@@ -1706,6 +1724,19 @@ class ToneRowPlayback {
 
         const currentPhaseMs = this.computeCurrentPhaseMs();
         this.emitTempoChange({ phaseMs: currentPhaseMs });
+
+        const newSecondsPerTick = this.secondsPerTick;
+
+        console.log('[ToneRowPlayback] Tempo change', {
+            prevTempo: prevTempoValue,
+            newTempo: tempo,
+            prevSecondsPerTick,
+            newSecondsPerTick,
+            legatoEnabled: this.legatoEnabled
+        });
+
+        // Transport-based bridge/cleanup (legato off only)
+        this.armTransportBridge();
     }
 
     /**
@@ -1733,6 +1764,93 @@ class ToneRowPlayback {
     }
 
     /**
+     * Arm bridge/cleanup based on transport: choose the nearest upcoming event across all layers (legato off).
+     */
+    armTransportBridge() {
+        // Require: audio context, playing, legato off, and full scale selection (no deselected notes)
+        const fullSelection = (this.selectedNotes.size === 0) ||
+            (this.availableRatios && this.selectedNotes.size === this.availableRatios.length);
+
+        if (!this.audioContext || !this.isPlaying || this.legatoEnabled || !fullSelection) {
+            this.pendingBridgeHold = false;
+            this.pendingTempoCleanup = false;
+            this.pendingBridgeReleaseTicks = [null, null, null, null];
+            if (this.legatoEnabled) {
+                console.log('[ToneRowPlayback] Bridge not armed (legato on)');
+            } else if (!this.isPlaying) {
+                console.log('[ToneRowPlayback] Bridge not armed (not playing)');
+            } else if (!fullSelection) {
+                console.log('[ToneRowPlayback] Bridge not armed (scale has deselections)');
+            } else {
+                console.log('[ToneRowPlayback] Bridge not armed (no audio context)');
+            }
+            return;
+        }
+
+        const now = this.audioContext.currentTime;
+        const currentAbsTick = this.timeToAbsTick(now);
+        const cycleTicks = this.cycleTicks || 1;
+
+        // Pick the most recently played layer (last note tick)
+        let latest = { tick: -Infinity, layerIndex: null, layerKey: null };
+        ['a', 'b', 'c', 'd'].forEach((layerKey, layerIndex) => {
+            const lastTick = this.lastNoteTickAbs[layerIndex];
+            if (Number.isFinite(lastTick) && lastTick > latest.tick) {
+                latest = { tick: lastTick, layerIndex, layerKey };
+            }
+        });
+
+        if (latest.layerIndex == null) {
+            this.pendingBridgeHold = false;
+            this.pendingTempoCleanup = false;
+            this.pendingBridgeReleaseTicks = [null, null, null, null];
+            console.log('[ToneRowPlayback] Bridge not armed: no recent notes found');
+            return;
+        }
+
+        // Compute next event tick for the chosen layer
+        const events = this.layerEvents[latest.layerIndex] || [];
+        let nextAbsTick = null;
+        const ticksPerNote = this.lastNotePulseTicks[latest.layerIndex] || (this.cycleTicks / Math.max(1, this.currentRhythms[latest.layerIndex] || 1));
+        const phaseCurrent = ((currentAbsTick % cycleTicks) + cycleTicks) % cycleTicks;
+        const phaseLast = ((latest.tick % cycleTicks) + cycleTicks) % cycleTicks;
+        if (events.length) {
+            const phaseTick = ((currentAbsTick % cycleTicks) + cycleTicks) % cycleTicks;
+            let nextStartTickInCycle = null;
+            for (const evt of events) {
+                if (evt.startTick >= phaseTick) {
+                    nextStartTickInCycle = evt.startTick;
+                    break;
+                }
+            }
+            if (nextStartTickInCycle == null) {
+                nextStartTickInCycle = events[0].startTick + cycleTicks;
+            }
+            const base = currentAbsTick - phaseTick;
+            nextAbsTick = base + nextStartTickInCycle;
+        }
+
+        // Arm only the last-played layer
+        this.pendingBridgeHold = true;
+        this.pendingTempoCleanup = true; // ensure cleanup runs before next note (legato off)
+        this.pendingBridgeReleaseTicks = [null, null, null, null];
+        this.pendingBridgeReleaseTicks[latest.layerIndex] = nextAbsTick;
+
+        if (!this.bridgeVoices[latest.layerIndex]) {
+            const voice = this.activeLayerVoices[latest.layerIndex];
+            const noteData = voice?.noteData || this.lastNoteByLayer[latest.layerIndex];
+            if (noteData) {
+                this.startBridgeVoice(latest.layerIndex, noteData, this.layerStates[latest.layerKey]);
+                console.log(`[ToneRowPlayback] Bridge voice armed for layer ${latest.layerKey} release at abs tick ${nextAbsTick}`);
+            } else {
+                console.log(`[ToneRowPlayback] Bridge skipped: no last note for layer ${latest.layerKey}`);
+            }
+        } else {
+            console.log(`[ToneRowPlayback] Bridge voice already active for layer ${latest.layerKey}`);
+        }
+    }
+
+    /**
      * Schedule all layer events whose startTick falls within [startAbs, endAbs).
      */
     scheduleWindow(startAbs, endAbs) {
@@ -1749,15 +1867,41 @@ class ToneRowPlayback {
                 while (occTick < endAbs) {
                     const startTime = this.absTickToTime(occTick);
                     const durationSec = evt.durationTicks * this.secondsPerTick;
-                    this.playNoteAtTime(evt.noteData, durationSec, layerIndex, this.layerStates[layer], startTime);
+                    this.playNoteAtTime(evt.noteData, durationSec, layerIndex, this.layerStates[layer], startTime, occTick);
                     occTick += cycle;
                 }
             });
         });
     }
 
-    playNoteAtTime(noteData, duration, layerIndex, layerState, startTime) {
+    playNoteAtTime(noteData, duration, layerIndex, layerState, startTime, absTick = null) {
         if (!this.audioContext || !this.layerNodes[layerIndex]) return;
+
+        // If we're bridging a tempo change (legato off), release bridge voice just before the next note
+        if (this.pendingBridgeHold || this.pendingBridgeReleaseTicks[layerIndex] != null) {
+            const releaseTick = this.pendingBridgeReleaseTicks[layerIndex];
+            if (releaseTick == null || (absTick != null && absTick >= releaseTick)) {
+                this.pendingBridgeHold = false;
+                this.pendingBridgeReleaseTicks[layerIndex] = null;
+                console.log('[ToneRowPlayback] Tempo bridge: releasing held bridge voice before next note');
+                this.releaseBridgeVoice(layerIndex);
+                // Clear any legato-forced state for this layer after handoff
+                // (only applies to the bridge layer; legato setting itself is untouched)
+                this.lastNoteTickAbs[layerIndex] = absTick ?? this.lastNoteTickAbs[layerIndex];
+            }
+        }
+
+        // After a tempo change, clear any hanging voices before the next note starts
+        if (this.pendingTempoCleanup) {
+            this.pendingTempoCleanup = false;
+            console.log('[ToneRowPlayback] Tempo cleanup: releasing all voices before next note after tempo change');
+            this.releaseAllLayerVoices({ immediate: true });
+            this.stopAllOscillators();
+            // Also clear any bridge voices/flags
+            this.pendingBridgeHold = false;
+            this.pendingBridgeReleaseTicks = [null, null, null, null];
+            this.bridgeVoices.forEach((_, idx) => this.releaseBridgeVoice(idx));
+        }
 
         const frequency = noteData.frequency;
 
@@ -1781,10 +1925,22 @@ class ToneRowPlayback {
             }));
         }
 
-        if (this.legatoEnabled) {
-            this.startLegatoNote(noteData, layerIndex, layerState, startTime);
+        const useLegato = this.legatoEnabled;
+
+        if (useLegato) {
+            this.startLegatoNote(noteData, layerIndex, layerState, startTime, { softAttack: true });
         } else {
             this.startStandardNote(noteData, duration, layerIndex, layerState, startTime);
+        }
+
+        // Track last note per layer for potential bridging
+        this.lastNoteByLayer[layerIndex] = noteData;
+        if (absTick != null) {
+            this.lastNoteTickAbs[layerIndex] = absTick;
+            // store pulse length (ticks) at play time for window checks
+            const rhythmValue = this.currentRhythms[layerIndex];
+            const pulseTicks = this.cycleTicks / Math.max(1, rhythmValue || 1);
+            this.lastNotePulseTicks[layerIndex] = pulseTicks;
         }
     }
 
@@ -1825,10 +1981,25 @@ class ToneRowPlayback {
         oscillator.start(start);
         oscillator.stop(endTime);
 
-        this.trackOscillatorLifecycle(oscillator);
+        // Track cleanup gain for smooth stopping if needed
+        oscillator.__cleanupGain = envelope;
+        this.activeLayerVoices[layerIndex] = {
+            oscillator,
+            envelope,
+            release: Math.max(release, 0.01),
+            sustain,
+            endTime,
+            noteData: {
+                globalSpacesIndex: noteData.globalSpacesIndex,
+                ratio: noteData.ratio,
+                frequency: noteData.frequency,
+                isMutedByFrequency: noteData.isMutedByFrequency
+            }
+        };
+        this.trackOscillatorLifecycle(oscillator, layerIndex);
     }
 
-    startLegatoNote(noteData, layerIndex, layerState, startTime = null) {
+    startLegatoNote(noteData, layerIndex, layerState, startTime = null, { softAttack = false } = {}) {
         if (!this.audioContext) return;
 
         // Release any currently sustained voice for this layer before starting the next one
@@ -1846,7 +2017,10 @@ class ToneRowPlayback {
         oscillator.connect(envelope);
         envelope.connect(this.layerNodes[layerIndex].gain);
 
-        const { attack, decay, sustain, release } = layerState.adsr;
+        let { attack, decay, sustain, release } = layerState.adsr;
+        if (softAttack) {
+            attack = Math.min(attack, 0.01);
+        }
 
         envelope.gain.linearRampToValueAtTime(1, start + attack);
         envelope.gain.linearRampToValueAtTime(sustain, start + attack + decay);
@@ -1854,10 +2028,15 @@ class ToneRowPlayback {
 
         oscillator.start(start);
 
+        // Track cleanup gain for smooth stopping if needed
+        oscillator.__cleanupGain = envelope;
+        const endTime = null; // legato holds until explicitly released
         this.activeLayerVoices[layerIndex] = {
             oscillator,
             envelope,
             release: Math.max(release, 0.01),
+            sustain,
+            endTime,
             noteData: {
                 globalSpacesIndex: noteData.globalSpacesIndex,
                 ratio: noteData.ratio,
@@ -1919,6 +2098,81 @@ class ToneRowPlayback {
                 this.releaseLayerVoice(layerIndex, options);
             }
         });
+    }
+
+    /**
+     * Stop all active oscillators immediately (used for hard cleanup).
+     */
+    stopAllOscillators() {
+        const oscillators = [...this.activeOscillators];
+        this.activeOscillators = [];
+        oscillators.forEach((osc) => {
+            try {
+                const ctx = this.audioContext;
+                const now = ctx ? ctx.currentTime : 0;
+                const tail = 0.02; // 20ms fade to avoid clicks
+                osc.onended = null;
+                if (osc.frequency && osc.frequency.cancelScheduledValues) {
+                    osc.frequency.cancelScheduledValues(now);
+                }
+                const gainNode = osc.__cleanupGain;
+                if (gainNode && gainNode.gain?.setValueAtTime) {
+                    const current = gainNode.gain.value;
+                    gainNode.gain.setValueAtTime(current, now);
+                    gainNode.gain.linearRampToValueAtTime(0, now + tail);
+                    osc.stop(now + tail + 0.01);
+                } else {
+                    osc.stop(now + tail);
+                }
+            } catch (err) {
+                // Already stopped
+            }
+        });
+    }
+
+    /**
+     * Start a temporary bridge voice to sustain until next note (legato off).
+     */
+    startBridgeVoice(layerIndex, noteData, layerState) {
+        if (!this.audioContext || !this.layerNodes[layerIndex]) return;
+        const freq = Number(noteData?.frequency) || Number(noteData?.freq) || null;
+        if (!Number.isFinite(freq)) return;
+
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+        gain.gain.setValueAtTime(0, this.audioContext.currentTime);
+
+        osc.type = layerState.waveform;
+        osc.frequency.setValueAtTime(freq, this.audioContext.currentTime);
+        osc.connect(gain);
+        gain.connect(this.layerNodes[layerIndex].gain);
+
+        const attack = 0.01;
+        const target = Number(layerState.adsr?.sustain) || 1;
+        gain.gain.linearRampToValueAtTime(target, this.audioContext.currentTime + attack);
+
+        osc.start(this.audioContext.currentTime);
+
+        this.bridgeVoices[layerIndex] = { osc, gain };
+    }
+
+    /**
+     * Release a bridge voice softly.
+     */
+    releaseBridgeVoice(layerIndex) {
+        const bridge = this.bridgeVoices[layerIndex];
+        if (!bridge || !this.audioContext) return;
+        const now = this.audioContext.currentTime;
+        const tail = 0.02;
+        try {
+            bridge.gain.gain.cancelScheduledValues(now);
+            bridge.gain.gain.setValueAtTime(bridge.gain.gain.value, now);
+            bridge.gain.gain.linearRampToValueAtTime(0, now + tail);
+            bridge.osc.stop(now + tail + 0.01);
+        } catch (err) {
+            try { bridge.osc.stop(); } catch (_) {}
+        }
+        this.bridgeVoices[layerIndex] = null;
     }
 
     toggleLegatoMode() {
