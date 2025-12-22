@@ -277,6 +277,15 @@
       font-size: 0.9rem;
       font-weight: 500;
     }
+    .about-footer {
+      max-width: 960px;
+      margin: 2rem auto 0;
+      padding: 1.25rem 0 1rem;
+      text-align: center;
+      font-size: 0.95rem;
+      color: #666;
+      border-top: 1px solid #e2e2e2;
+    }
     @media (max-width: 720px) {
       main {
         padding: 2rem 1.5rem;
@@ -642,6 +651,7 @@
         <img src="assets/linearplot2.png" alt="Linear Plot with connectors">
       </figure>
       <p>The Linear Plot and its layer lights sync to playback. It also responds to Scale Selection from the Playback panel, hiding notes which have been turned off. This allows you to hew more minimal audiovisual designs from the larger rhythm structure.</p>
+      <p>Mousing over any individual Node in the plot will reveal a popup with key details for that node. The popups show the ratio associated with this node, its length in the Spaces Plot, and its source layer or layers and its position in their individual progressions. You'll also see the node's overall position in the rhythm progression: its position in the overall node sequence, its Composite Rhythm position value, and the position's percentage relative to the overall Grid cycle.</p>
       <p>You can use the green arrow toggle in the bottom right-hand corner of the plot to flip the vertical axis. This allows for more intuitive visual sync with audible pitch information during playback; since smaller values correspond to higher pitches, the default view places these values lower on the y-axis, which can feel counterintuitive.</p>
       <h4>Reflections (popup)</h4>
       <figure>
@@ -851,6 +861,9 @@
       <p>I extend my heartfelt gratitude to all the friends and family over the years who have allowed me to yap about the LRC. Thank you for your support and curiosity, and for the chance to practice effective communication of the core concepts.</p>
     </section>
   </main>
+  <footer class="about-footer">
+    Avery Logan © 2025
+  </footer>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       const main = document.querySelector('main');
