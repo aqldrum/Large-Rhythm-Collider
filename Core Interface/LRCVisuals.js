@@ -15,6 +15,9 @@ class LRCVisuals {
         this.layerMap = [];
         this.rhythms = [1, 1, 1, 1];
         this.dotPositions = [];
+        this.compositeRhythm = []; // Full composite rhythm positions
+        this.ratios = []; // Musical ratios
+        this.grid = 0; // LCM grid size
         
         // Flag to temporarily disable auto-close during CreatePlayer operations
         this.suppressAutoClose = false;
@@ -48,11 +51,17 @@ class LRCVisuals {
         
         // Scale chart integration - track hidden spaces plot indices
         this.hiddenSpacesIndices = new Set(); // Set of spaces plot indices to hide
-        
+
+        // Node popup system
+        this.nodeUI = null;
+        this.nodePopups = null;
+        this.hoveredNode = null; // Track currently hovered node
+
         // Initialize
         this.setupCanvas();
         this.setupEventListeners();
         this.updateConnectorsButton(); // Set initial button state
+        this.initializeNodePopupSystem(); // Initialize node popups
         console.log('LRC Visuals initialized');
     }
 
@@ -175,7 +184,10 @@ class LRCVisuals {
                 e.detail.spacesPlot,
                 e.detail.layerMap,
                 e.detail.rhythms,
-                e.detail.spacesPlotByLayer
+                e.detail.spacesPlotByLayer,
+                e.detail.compositeRhythm,
+                e.detail.ratios,
+                e.detail.grid
             );
         });
 
@@ -222,21 +234,38 @@ class LRCVisuals {
         });
     }
 
+    initializeNodePopupSystem() {
+        // Initialize node popup system if classes are available
+        if (typeof NodeUI !== 'undefined' && typeof NodePopups !== 'undefined') {
+            this.nodeUI = new NodeUI();
+            this.nodePopups = new NodePopups();
+            console.log('Node popup system initialized');
+        } else {
+            console.warn('NodeUI or NodePopups classes not available');
+        }
+    }
+
     // ====================================
     // DATA UPDATE AND PROCESSING
     // ====================================
 
-    updateVisualization(spacesPlot, layerMap, rhythms, spacesPlotByLayer) {
+    updateVisualization(spacesPlot, layerMap, rhythms, spacesPlotByLayer, compositeRhythm, ratios, grid) {
         this.spacesPlot = spacesPlot || [];
         this.spacesPlotByLayer = spacesPlotByLayer || [[], [], [], []];
         this.layerMap = layerMap || [];
         this.rhythms = rhythms || [1, 1, 1, 1];
-        
+        this.compositeRhythm = compositeRhythm || [];
+        this.ratios = ratios || [];
+        this.grid = grid || 0;
+
         console.log('Updating visualization with:', {
             spacesLength: this.spacesPlot.length,
             layerLengths: this.spacesPlotByLayer.map(layer => layer.length),
             layerMapLength: this.layerMap.length,
-            rhythms: this.rhythms
+            rhythms: this.rhythms,
+            compositeRhythmLength: this.compositeRhythm.length,
+            ratiosLength: this.ratios.length,
+            grid: this.grid
         });
         
         // AUTO-CLOSE popups but preserve current visualization type
@@ -953,20 +982,80 @@ class LRCVisuals {
     }
 
     handleCanvasMouseMove(event) {
-        if (!this.toggleButtonBounds || this.currentPlotType !== 'linear') return;
-        
+        if (this.currentPlotType !== 'linear') return;
+
         const rect = this.canvas.getBoundingClientRect();
         const x = event.clientX - rect.left;
         const y = event.clientY - rect.top;
-        
-        // Check if mouse is over button
-        const isOverButton = x >= this.toggleButtonBounds.x && 
-                            x <= this.toggleButtonBounds.x + this.toggleButtonBounds.width &&
-                            y >= this.toggleButtonBounds.y && 
-                            y <= this.toggleButtonBounds.y + this.toggleButtonBounds.height;
-        
-        // Change cursor style
-        this.canvas.style.cursor = isOverButton ? 'pointer' : 'default';
+
+        // Check if mouse is over toggle button
+        let isOverButton = false;
+        if (this.toggleButtonBounds) {
+            isOverButton = x >= this.toggleButtonBounds.x &&
+                          x <= this.toggleButtonBounds.x + this.toggleButtonBounds.width &&
+                          y >= this.toggleButtonBounds.y &&
+                          y <= this.toggleButtonBounds.y + this.toggleButtonBounds.height;
+        }
+
+        // Check if mouse is over any node (only if not over button)
+        let hoveredNode = null;
+        if (!isOverButton && this.dotPositions && this.dotPositions.length > 0) {
+            hoveredNode = this.findNodeAtPosition(x, y);
+        }
+
+        // Handle node popup
+        if (hoveredNode && this.nodeUI && this.nodePopups) {
+            // Mouse is over a node - show popup
+            if (this.hoveredNode !== hoveredNode) {
+                // New node or first time hovering
+                this.hoveredNode = hoveredNode;
+                const screenX = event.clientX;
+                const screenY = event.clientY;
+
+                // Prepare complete rhythm data for popup
+                const rhythmData = {
+                    spacesPlot: this.spacesPlot,
+                    layerMap: this.layerMap,
+                    rhythms: this.rhythms,
+                    compositeRhythm: this.compositeRhythm,
+                    ratios: this.ratios,
+                    grid: this.grid
+                };
+
+                // Get node data from NodePopups
+                const nodeData = this.nodePopups.getNodeData(hoveredNode.index, rhythmData);
+
+                this.nodeUI.showPopup(screenX, screenY, nodeData);
+            }
+            this.canvas.style.cursor = 'pointer';
+        } else {
+            // Mouse is not over any node - hide popup
+            if (this.hoveredNode && this.nodeUI) {
+                this.nodeUI.hidePopup();
+                this.hoveredNode = null;
+            }
+            this.canvas.style.cursor = isOverButton ? 'pointer' : 'default';
+        }
+    }
+
+    findNodeAtPosition(x, y) {
+        // Find if mouse is over any node
+        const hoverRadius = 8; // Slightly larger than dot size for easier hovering
+
+        for (let i = 0; i < this.dotPositions.length; i++) {
+            const dot = this.dotPositions[i];
+            const distance = Math.sqrt(
+                Math.pow(x - dot.x, 2) +
+                Math.pow(y - dot.y, 2)
+            );
+
+            if (distance <= hoverRadius) {
+                // Found a node under the mouse
+                return dot;
+            }
+        }
+
+        return null; // No node found
     }
 
     calculateDotSize() {
