@@ -15,9 +15,13 @@ class NodePopups {
     getNodeData(nodeIndex, rhythmData) {
         const { spacesPlot, layerMap, rhythms, compositeRhythm, ratios, grid } = rhythmData;
 
+        // Get the space value and calculate fundamental
+        const spaceValue = this.getLength(nodeIndex, spacesPlot);
+        const fundamental = spacesPlot && spacesPlot.length > 0 ? Math.max(...spacesPlot) : 0;
+
         const data = {
-            ratio: this.getRatio(nodeIndex, ratios),
-            length: this.getLength(nodeIndex, spacesPlot),
+            ratio: this.getRatio(nodeIndex, spaceValue, fundamental),
+            length: spaceValue,
             sourceLayers: this.getSourceLayers(nodeIndex, layerMap),
             layerProgressions: this.getLayerProgressions(nodeIndex, layerMap, rhythms),
             nodePosition: {
@@ -83,16 +87,91 @@ class NodePopups {
     }
 
     /**
-     * Get the ratio corresponding to this node
+     * Get the ratio corresponding to this node with octave information
      * @param {number} nodeIndex - Index in spaces plot
-     * @param {array} ratios - Ratios array from rhythm data
-     * @returns {string} - Ratio string like "9/8"
+     * @param {number} spaceValue - The spaces plot value at this index
+     * @param {number} fundamental - The fundamental (largest space value)
+     * @returns {string} - Ratio string like "9/8" or "23/20 (octave 2)"
      */
-    getRatio(nodeIndex, ratios) {
-        if (!ratios || nodeIndex >= ratios.length) {
+    getRatio(nodeIndex, spaceValue, fundamental) {
+        if (!spaceValue || !fundamental || spaceValue === 0) {
             return '1/1';
         }
-        return ratios[nodeIndex] || '1/1';
+
+        // Calculate the raw ratio (fundamental / space)
+        let ratio = fundamental / spaceValue;
+
+        // Count octaves while compressing to single octave
+        let octave = 1;
+        while (ratio >= 2) {
+            ratio /= 2;
+            octave++;
+        }
+        while (ratio < 1) {
+            ratio *= 2;
+            octave--;
+        }
+
+        // Convert to fraction
+        const fraction = this.decimalToFraction(ratio);
+
+        // Return with octave info if not octave 1
+        if (octave === 1) {
+            return fraction;
+        } else {
+            return `${fraction} (octave ${octave})`;
+        }
+    }
+
+    /**
+     * Convert decimal ratio to fraction string
+     * @param {number} ratio - Decimal ratio value
+     * @returns {string} - Fraction string
+     */
+    decimalToFraction(ratio) {
+        const tolerance = 1e-6;
+        let numerator = 1;
+        let denominator = 1;
+        let bestError = Math.abs(ratio - 1);
+
+        // Search for best fraction approximation
+        for (let d = 1; d <= 10000; d++) {
+            const n = Math.round(ratio * d);
+            const currentRatio = n / d;
+            const error = Math.abs(ratio - currentRatio);
+
+            if (error < bestError) {
+                bestError = error;
+                numerator = n;
+                denominator = d;
+
+                if (error < tolerance) break;
+            }
+        }
+
+        // Simplify the fraction
+        const gcd = this.gcd(numerator, denominator);
+        numerator /= gcd;
+        denominator /= gcd;
+
+        return `${numerator}/${denominator}`;
+    }
+
+    /**
+     * Calculate greatest common divisor
+     * @param {number} a - First number
+     * @param {number} b - Second number
+     * @returns {number} - GCD
+     */
+    gcd(a, b) {
+        a = Math.abs(Math.round(a));
+        b = Math.abs(Math.round(b));
+        while (b !== 0) {
+            const temp = b;
+            b = a % b;
+            a = temp;
+        }
+        return a;
     }
 
     /**
