@@ -224,13 +224,15 @@ class LRCHinges {
     }
 
     calculateLayerForces() {
-        // Define directional vectors for each layer (in radians)
-        this.layerDirections = {
-            'A': 0,           // Right (0°)
-            'B': Math.PI / 2, // Up (90°)  
-            'C': Math.PI,     // Left (180°)
-            'D': 3 * Math.PI / 2 // Down (270°)
-        };
+        // Define directional vectors for each layer (in radians) - only initialize if not yet set
+        if (!this.layerDirections) {
+            this.layerDirections = {
+                'A': 0,                  // Right (0°)
+                'B': 3 * Math.PI / 2,    // Up (270°) - negative Y in canvas coords
+                'C': Math.PI,            // Left (180°)
+                'D': Math.PI / 2         // Down (90°) - positive Y in canvas coords
+            };
+        }
         
         // Safety checks for initialization
         if (!this.spacesPlot || this.spacesPlot.length === 0) {

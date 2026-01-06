@@ -607,7 +607,7 @@
 
     function dirArrowFor(rad) {
       const dirs = [0, Math.PI/2, Math.PI, 3*Math.PI/2];
-      const syms = ['→','↑','←','↓'];
+      const syms = ['→','↓','←','↑']; // Canvas coords: PI/2=down, 3*PI/2=up
       let best = 0, bestDiff = Infinity;
       for (let i=0;i<dirs.length;i++) {
         const d = Math.abs(Math.atan2(Math.sin(rad - dirs[i]), Math.cos(rad - dirs[i])));
@@ -644,7 +644,7 @@
         arrowBtn.title = 'Click, then press arrow key to set direction';
 
         // Default directions if not yet set
-        const defaults = { A: 0, B: Math.PI/2, C: Math.PI, D: 3*Math.PI/2 };
+        const defaults = { A: 0, B: 3*Math.PI/2, C: Math.PI, D: Math.PI/2 };
         const rad = (h.layerDirections && typeof h.layerDirections[L] === 'number') ? h.layerDirections[L] : defaults[L];
         arrowBtn.textContent = dirArrowFor(rad);
 
@@ -666,9 +666,9 @@
       const L = adv.activeLayerForDirection;
       let set = null;
       if (e.key === 'ArrowRight') set = 0;
-      else if (e.key === 'ArrowUp') set = Math.PI/2;
+      else if (e.key === 'ArrowUp') set = 3*Math.PI/2; // Up = negative Y in canvas coords
       else if (e.key === 'ArrowLeft') set = Math.PI;
-      else if (e.key === 'ArrowDown') set = 3*Math.PI/2;
+      else if (e.key === 'ArrowDown') set = Math.PI/2; // Down = positive Y in canvas coords
       if (set === null) return;
       e.preventDefault();
       if (!h.layerDirections) h.layerDirections = {};
