@@ -567,7 +567,7 @@
             </ul>
             <br>
             <p>The seconds value defines the length of the entire cycle - play ultrafast rhythms or stretch them out to long legato scales.</p>
-            <p>Cycle Time accepts values between 0.1 and 6000 seconds.</p>
+            <p>Cycle Time accepts values up to 6000 seconds, with a dynamic minimum to ensure audio safety. If Scale Selector is in use, cycle time can be pushed as low as 0.1 seconds.</p>
             <p>The Fundamental input accepts Hz values between 55 and 880 Hz.</p>
             <p>The Master Volume slider has a final limiter. Despite the limiter, be cautious when playing unfiltered sine waves at high volumes.</p>
             <p>Filter provides global frequency thresholds for hi / lo-pass.</p>
@@ -651,8 +651,11 @@
         <img src="assets/linearplot2.png" alt="Linear Plot with connectors">
       </figure>
       <p>The Linear Plot and its layer lights sync to playback. It also responds to Scale Selection from the Playback panel, hiding notes which have been turned off. This allows you to hew more minimal audiovisual designs from the larger rhythm structure.</p>
+      <p>You can use the green arrow toggle in the bottom right-hand corner of the plot to flip the vertical axis. This allows for more intuitive visual sync with audible pitch information during playback; since smaller values correspond to higher pitches, the default view places these values lower on the y-axis, which can feel counterintuitive.</p>      
       <p>Mousing over any individual Node in the plot will reveal a popup with key details for that node. The popups show the ratio associated with this node, its length in the Spaces Plot, and its source layer or layers and its position in their individual progressions. You'll also see the node's overall position in the rhythm progression: its position in the overall node sequence, its Composite Rhythm position value, and the position's percentage relative to the overall Grid cycle.</p>
-      <p>You can use the green arrow toggle in the bottom right-hand corner of the plot to flip the vertical axis. This allows for more intuitive visual sync with audible pitch information during playback; since smaller values correspond to higher pitches, the default view places these values lower on the y-axis, which can feel counterintuitive.</p>
+      <div class="image-row">
+        <img src="assets/nodepopup.png" alt="Node popup" style="width:20%;">
+      </div>
       <h4>Reflections (popup)</h4>
       <figure>
         <img src="assets/reflections.png" alt="Reflections mandala visualization">

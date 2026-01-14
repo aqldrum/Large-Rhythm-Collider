@@ -761,7 +761,8 @@ class ToneRowPlayback {
         const previousTempo = this.cycleDuration;
         const numericValue = Number.isFinite(rawValue) ? rawValue : previousTempo;
         const { min, max } = this.cycleDurationLimits || { min: 0.1, max: 6000 };
-        const clampedTempo = Math.min(max, Math.max(min, numericValue));
+        const safeMin = this.getSafeMinCycleDuration(min);
+        const clampedTempo = Math.min(max, Math.max(safeMin, numericValue));
 
         if (syncInput) {
             const cycleDurationInput = document.getElementById('cycle-duration');
@@ -782,6 +783,42 @@ class ToneRowPlayback {
             if (window.lrcVisuals) {
                 window.lrcVisuals.setCycleDuration(this.cycleDuration);
             }
+        }
+    }
+
+    /**
+     * Calculate the safe minimum cycle duration based on current rhythm complexity.
+     * Ensures notes don't fire faster than ~10ms apart to prevent dangerous audio artifacts.
+     * When Scale Selection is active (some notes deselected), falls back to absolute minimum
+     * to allow faster playback of smaller subsets.
+     * @param {number} absoluteMin - The absolute minimum from cycleDurationLimits
+     * @returns {number} - The safe minimum cycle duration in seconds
+     */
+    getSafeMinCycleDuration(absoluteMin = 0.1) {
+        // If user has deselected any notes, allow the absolute minimum (loophole for subsets)
+        const allNotesSelected = this.selectedNotes.size === 0 ||
+            this.selectedNotes.size === this.availableRatios.length;
+        if (!allNotesSelected) {
+            return absoluteMin;
+        }
+
+        // Full scale: enforce dynamic minimum based on fastest layer
+        const minNoteInterval = 0.01; // 10ms minimum between notes
+        const fastestLayer = Math.max(1, this.currentRhythms[0] || 1);
+        const safeMin = fastestLayer * minNoteInterval;
+        return Math.max(absoluteMin, safeMin);
+    }
+
+    /**
+     * Enforce the safe minimum cycle duration when rhythm data changes.
+     * Updates the input field and internal value if current duration is too low.
+     */
+    enforceMinCycleDuration() {
+        const { min } = this.cycleDurationLimits || { min: 0.1 };
+        const safeMin = this.getSafeMinCycleDuration(min);
+        if (this.cycleDuration < safeMin) {
+            console.log(`⚠️ Cycle duration ${this.cycleDuration}s below safe minimum ${safeMin}s for this rhythm, adjusting...`);
+            this.updateTempo(safeMin);
         }
     }
 
@@ -1025,13 +1062,16 @@ class ToneRowPlayback {
         this.availableRatios.forEach(ratioObj => {
             this.selectedNotes.add(ratioObj.fraction);
         });
-        
+
         this.updateScaleDisplay();
         this.updateLinearPlotVisibility();
         this.updateSelectedNotesCount();
         this.generateToneRowData(); // Regenerate audio data with new selection
         this.dispatchSelectedNotesEvent();
-        
+
+        // Re-enforce safe minimum now that all notes are selected again
+        this.enforceMinCycleDuration();
+
         console.log(`✅ Selected all ${this.selectedNotes.size} notes`);
 
         this.checkActiveFamilyIntegrity();
@@ -1057,19 +1097,24 @@ class ToneRowPlayback {
         } else {
             this.selectedNotes.add(ratioFraction);
         }
-        
+
         this.updateScaleDisplay();
         this.updateLinearPlotVisibility();
         this.updateSelectedNotesCount();
         this.generateToneRowData(); // Regenerate audio data with new selection
-        
+
         // If playback is currently running, apply the changes in real-time
         if (this.isPlaying) {
             this.applyRealtimeNoteChanges();
         }
 
         this.dispatchSelectedNotesEvent();
-        
+
+        // If all notes are now selected, re-enforce safe minimum cycle duration
+        if (this.selectedNotes.size === this.availableRatios.length) {
+            this.enforceMinCycleDuration();
+        }
+
         console.log(`🎵 Toggled note ${ratioFraction} (${this.selectedNotes.has(ratioFraction) ? 'selected' : 'deselected'})`);
 
         this.checkActiveFamilyIntegrity();
@@ -1243,7 +1288,10 @@ class ToneRowPlayback {
         this.spacesPlot = data.spacesPlot || [];
         this.spacesPlotByLayer = data.spacesPlotByLayer || [[], [], [], []];
         this.currentRhythms = data.rhythms || [1, 1, 1, 1];
-        
+
+        // Re-validate cycle duration against new rhythm's safe minimum
+        this.enforceMinCycleDuration();
+
         // Reset family display state for new rhythm
         this.familyDisplayState = {
             currentPage: 0,

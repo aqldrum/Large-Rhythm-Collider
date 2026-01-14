@@ -97,7 +97,11 @@ class LRCVisuals {
         this.canvas.addEventListener('mousemove', (e) => {
             this.handleCanvasMouseMove(e);
         });
-        
+
+        this.canvas.addEventListener('mouseleave', () => {
+            this.hideNodePopup();
+        });
+
         // CRITICAL AMENDMENT: Draw blank canvas immediately
         this.clearCanvas();
     }
@@ -1036,6 +1040,17 @@ class LRCVisuals {
             }
             this.canvas.style.cursor = isOverButton ? 'pointer' : 'default';
         }
+    }
+
+    /**
+     * Hide the node popup and clear hover state.
+     * Called when mouse leaves the canvas.
+     */
+    hideNodePopup() {
+        if (this.nodeUI) {
+            this.nodeUI.hidePopup();
+        }
+        this.hoveredNode = null;
     }
 
     findNodeAtPosition(x, y) {
