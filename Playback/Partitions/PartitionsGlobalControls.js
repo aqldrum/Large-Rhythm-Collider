@@ -86,9 +86,9 @@ class PartitionsGlobalControls {
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                gap: 15px;
+                gap: 12px 15px;
                 padding: 8px 12px;
-                flex-wrap: nowrap;
+                flex-wrap: wrap;
             ">
                 <!-- Play Button (matches playback-div .play-btn styling) -->
                 <button id="partitions-play-btn" class="play-btn ${isPlaying ? 'playing' : ''}" style="
