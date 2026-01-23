@@ -26,6 +26,8 @@ class PartitionsUI {
 
         // Partition layer configurations (will be populated by PartitionsPlayback.js)
         this.partitionLayers = [];
+        this.samplesStore = null;
+        this.userSampleUrls = new Map();
 
         console.log('🥁 PartitionsUI initialized');
     }
@@ -627,8 +629,25 @@ class PartitionsUI {
 
         this.leftSection.innerHTML = `
             <div class="partitions-info" style="color: #ccc; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid #333;">
-                <p style="margin: 0 0 5px 0;"><strong style="color: #00ff88;">Current Rhythm:</strong> ${activeLayers.join(':')}</p>
-                <p style="margin: 0; font-size: 12px; color: #888;">Grid: ${rhythmInfo.grid} | Fundamental: ${rhythmInfo.fundamental}</p>
+                <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;">
+                    <div>
+                        <p style="margin: 0 0 5px 0;"><strong style="color: #00ff88;">Current Rhythm:</strong> ${activeLayers.join(':')}</p>
+                        <p style="margin: 0; font-size: 12px; color: #888;">Grid: ${rhythmInfo.grid} | Fundamental: ${rhythmInfo.fundamental}</p>
+                    </div>
+                    <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+                        <button class="partitions-upload-samples-btn" style="
+                            background: #222;
+                            color: #00ff88;
+                            border: 1px solid #444;
+                            border-radius: 4px;
+                            padding: 4px 8px;
+                            font-size: 11px;
+                            cursor: pointer;
+                            white-space: nowrap;
+                        ">Upload Samples</button>
+                        <span class="partitions-upload-status" style="font-size: 11px; color: #777;">No user samples</span>
+                    </div>
+                </div>
             </div>
 
             <div class="partition-layers-container" style="display: flex; flex-direction: column; gap: 15px;">
@@ -645,6 +664,95 @@ class PartitionsUI {
             </div>
         `;
 
+        const uploadBtn = this.leftSection.querySelector('.partitions-upload-samples-btn');
+        const uploadStatus = this.leftSection.querySelector('.partitions-upload-status');
+        const sampleSelects = Array.from(this.leftSection.querySelectorAll('.partition-sample-select'));
+
+        const refreshUserSamples = async () => {
+            if (typeof PartitionsSamples !== 'function') return;
+            if (!this.samplesStore) {
+                this.samplesStore = new PartitionsSamples();
+            }
+            let samples = [];
+            try {
+                samples = await this.samplesStore.getAllSamples();
+            } catch (error) {
+                console.warn('[PartitionsUI] Failed to load user samples', error);
+            }
+            const ids = new Set(samples.map((sample) => sample.id));
+            this.userSampleUrls.forEach((url, id) => {
+                if (!ids.has(id)) {
+                    URL.revokeObjectURL(url);
+                    this.userSampleUrls.delete(id);
+                }
+            });
+            const userSamples = samples.map((sample) => {
+                let url = this.userSampleUrls.get(sample.id);
+                if (!url) {
+                    url = URL.createObjectURL(sample.blob);
+                    this.userSampleUrls.set(sample.id, url);
+                }
+                return { id: sample.id, name: sample.name, url };
+            });
+
+            sampleSelects.forEach((select) => {
+                const currentValue = select.value;
+                const existingGroup = select.querySelector('optgroup[data-user-samples]');
+                if (existingGroup) existingGroup.remove();
+                if (userSamples.length) {
+                    const group = document.createElement('optgroup');
+                    group.label = 'User Samples';
+                    group.dataset.userSamples = 'true';
+                    userSamples.forEach((sample) => {
+                        const option = document.createElement('option');
+                        option.value = sample.url;
+                        option.textContent = sample.name;
+                        option.dataset.userSample = 'true';
+                        group.appendChild(option);
+                    });
+                    select.appendChild(group);
+                }
+                if (currentValue && Array.from(select.options).some((opt) => opt.value === currentValue)) {
+                    select.value = currentValue;
+                }
+            });
+
+            if (uploadStatus) {
+                uploadStatus.textContent = userSamples.length
+                    ? `${userSamples.length} user sample${userSamples.length === 1 ? '' : 's'}`
+                    : 'No user samples';
+            }
+        };
+
+        if (uploadBtn) {
+            uploadBtn.addEventListener('click', () => {
+                if (typeof PartitionsSamples !== 'function') return;
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'audio/*';
+                input.multiple = true;
+                input.addEventListener('change', async () => {
+                    const files = Array.from(input.files || []).filter((file) => {
+                        if (file.type && file.type.startsWith('audio/')) return true;
+                        return /\.(wav|mp3|ogg|flac|aiff?)$/i.test(file.name || '');
+                    });
+                    if (!files.length) return;
+                    if (!this.samplesStore) {
+                        this.samplesStore = new PartitionsSamples();
+                    }
+                    try {
+                        await this.samplesStore.addFiles(files);
+                        await refreshUserSamples();
+                    } catch (error) {
+                        console.warn('[PartitionsUI] Failed to store user samples', error);
+                    }
+                });
+                input.click();
+            });
+        }
+
+        refreshUserSamples();
+
         this.leftSection.querySelectorAll('.partition-layer').forEach(layer => {
             const slider = layer.querySelector('.partition-count-slider');
             const label = layer.querySelector('.partition-count-label');
@@ -652,10 +760,11 @@ class PartitionsUI {
             const preview = layer.querySelector('.partition-preview');
             const layerIndex = Number(layer.getAttribute('data-layer-index'));
             if (!slider || !label || !modeSelect || !preview || Number.isNaN(layerIndex)) return;
-            const layerColor = this.getLayerColor(layerIndex);
+            const getLinkedColor = () => this.getLayerColor(Number(layer.dataset.linkedLayer ?? layerIndex));
 
             const updateMax = (forceValue = null) => {
-                const max = this.getPartitionMax(layerIndex, modeSelect.value, rhythmInfo);
+                const linkedLayerIndex = Number(layer.dataset.linkedLayer ?? layerIndex);
+                const max = this.getPartitionMax(linkedLayerIndex, modeSelect.value, rhythmInfo);
                 slider.max = max;
                 if (forceValue != null) {
                     slider.value = forceValue;
@@ -665,12 +774,13 @@ class PartitionsUI {
                     slider.value = max;
                 }
                 label.textContent = `Partitions: ${slider.value}`;
-                this.updatePartitionBlocks(preview, layerColor, slider.value, modeSelect.value, rhythmInfo, layerIndex);
+                this.updatePartitionBlocks(preview, getLinkedColor(), slider.value, modeSelect.value, rhythmInfo, layerIndex, linkedLayerIndex);
             };
 
             const updateValue = () => {
                 label.textContent = `Partitions: ${slider.value}`;
-                this.updatePartitionBlocks(preview, layerColor, slider.value, modeSelect.value, rhythmInfo, layerIndex);
+                const linkedLayerIndex = Number(layer.dataset.linkedLayer ?? layerIndex);
+                this.updatePartitionBlocks(preview, getLinkedColor(), slider.value, modeSelect.value, rhythmInfo, layerIndex, linkedLayerIndex);
             };
 
             slider.addEventListener('input', updateValue);
@@ -760,10 +870,15 @@ class PartitionsUI {
             const label = layer.querySelector('.partition-count-label');
             if (!title || !select) return;
             const updateTitle = () => {
-                title.textContent = select.value.replace(/(^|[-_])(\w)/g, (_, p1, p2) => (p1 ? ' ' : '') + p2.toUpperCase());
+                const selected = select.selectedOptions?.[0]?.textContent?.trim();
+                const labelText = selected || select.value;
+                title.textContent = labelText.replace(/(^|[-_])(\w)/g, (_, p1, p2) => (p1 ? ' ' : '') + p2.toUpperCase());
             };
             select.addEventListener('change', updateTitle);
             select.addEventListener('change', () => {
+                if (window.partitionsPlayback && typeof window.partitionsPlayback.invalidateSampleCache === 'function') {
+                    window.partitionsPlayback.invalidateSampleCache(select.value);
+                }
                 window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
             });
             updateTitle();
@@ -771,8 +886,9 @@ class PartitionsUI {
             if (resetBtn && slider && label) {
                 resetBtn.addEventListener('click', () => {
                     const modeSelect = layer.querySelector('.partition-mode-select');
+                    const linkedLayerIndex = Number(layer.dataset.linkedLayer ?? layer.dataset.layerIndex ?? layerIndex);
                     if (modeSelect && modeSelect.value === 'sequence') {
-                        const max = this.getPartitionMax(Number(layer.dataset.layerIndex), modeSelect.value, rhythmInfo);
+                        const max = this.getPartitionMax(linkedLayerIndex, modeSelect.value, rhythmInfo);
                         slider.value = max;
                     } else {
                         slider.value = '1';
@@ -782,7 +898,7 @@ class PartitionsUI {
                     if (preview) {
                         preview.dataset.mutedIndices = '';
                         preview.dataset.orderIndices = '';
-                        this.updatePartitionBlocks(preview, this.getLayerColor(Number(layer.dataset.layerIndex)), slider.value, modeSelect?.value || 'grid', rhythmInfo, Number(layer.dataset.layerIndex));
+                        this.updatePartitionBlocks(preview, this.getLayerColor(linkedLayerIndex), slider.value, modeSelect?.value || 'grid', rhythmInfo, Number(layer.dataset.layerIndex), linkedLayerIndex);
                     }
                     window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
                 });
@@ -866,9 +982,47 @@ class PartitionsUI {
             }
         });
 
+        const layerLetters = ['A', 'B', 'C', 'D'];
+        const applyLinkedLayer = (layer, linkedLayerIndex, rhythmInfo) => {
+            const color = this.getLayerColor(linkedLayerIndex);
+            layer.dataset.linkedLayer = String(linkedLayerIndex);
+            const toggleBtn = layer.querySelector('.partition-layer-toggle');
+            const title = layer.querySelector('.partition-layer-title');
+            if (toggleBtn) {
+                toggleBtn.textContent = layerLetters[linkedLayerIndex] || 'A';
+                toggleBtn.style.background = color;
+            }
+            if (title) {
+                title.style.color = color;
+            }
+            layer.style.borderColor = `${color}40`;
+            layer.style.borderLeftColor = color;
+
+            const preview = layer.querySelector('.partition-preview');
+            const modeSelect = layer.querySelector('.partition-mode-select');
+            const slider = layer.querySelector('.partition-count-slider');
+            const label = layer.querySelector('.partition-count-label');
+            if (preview && modeSelect && slider && label) {
+                const max = this.getPartitionMax(linkedLayerIndex, modeSelect.value, rhythmInfo);
+                slider.max = max;
+                if (modeSelect.value === 'sequence') {
+                    slider.value = max;
+                } else if (Number(slider.value) > max) {
+                    slider.value = max;
+                }
+                label.textContent = `Partitions: ${slider.value}`;
+                this.updatePartitionBlocks(preview, color, slider.value, modeSelect.value, rhythmInfo, Number(layer.dataset.layerIndex), linkedLayerIndex);
+            }
+        };
+
         this.leftSection.querySelectorAll('.partition-layer').forEach(layer => {
             const toggleBtn = layer.querySelector('.partition-layer-toggle');
             if (!toggleBtn) return;
+            const layerIndex = Number(layer.dataset.layerIndex) || 0;
+            if (!layer.dataset.linkedLayer) {
+                layer.dataset.linkedLayer = String(layerIndex);
+            }
+            applyLinkedLayer(layer, Number(layer.dataset.linkedLayer), rhythmInfo);
             const setEnabled = (enabled) => {
                 layer.dataset.enabled = enabled ? 'true' : 'false';
                 toggleBtn.style.opacity = enabled ? '1' : '0.35';
@@ -877,7 +1031,15 @@ class PartitionsUI {
             };
             const isEnabled = layer.dataset.enabled === 'true';
             setEnabled(isEnabled);
-            toggleBtn.addEventListener('click', () => {
+            toggleBtn.addEventListener('click', (event) => {
+                if (event.shiftKey) {
+                    event.preventDefault();
+                    const current = Number(layer.dataset.linkedLayer ?? layerIndex);
+                    const next = (current + 1) % 4;
+                    applyLinkedLayer(layer, next, rhythmInfo);
+                    window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+                    return;
+                }
                 setEnabled(layer.dataset.enabled !== 'true');
                 window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
             });
@@ -891,7 +1053,7 @@ class PartitionsUI {
         const layerName = layerNames[index] || name || 'A';
 
         return `
-            <div class="partition-layer" data-layer-index="${index}" data-enabled="false" style="
+            <div class="partition-layer" data-layer-index="${index}" data-linked-layer="${index}" data-enabled="false" style="
                 background: rgba(255, 255, 255, 0.03);
                 border: 1px solid ${color}40;
                 border-left: 3px solid ${color};
@@ -967,6 +1129,10 @@ class PartitionsUI {
                                 <option value="assets/audio/perc2.wav">Perc 2</option>
                                 <option value="assets/audio/perc3.wav">Perc 3</option>
                                 <option value="assets/audio/perc4.wav">Perc 4</option>
+                                <option value="assets/audio/cym1.wav">Cym 1</option>
+                                <option value="assets/audio/cym2.wav">Cym 2</option>
+                                <option value="assets/audio/cym3.wav">Cym 3</option>
+                                <option value="assets/audio/cym4.wav">Cym 4</option>
                             </select>
                         </div>
                         <div style="color: #aaa; font-size: 11px;">
@@ -981,7 +1147,7 @@ class PartitionsUI {
                 <div class="partition-settings-panel" style="display: none; margin-top: 6px;">
                     <div style="display: grid; grid-template-columns: 1fr 0.45fr 1fr; gap: 10px; align-items: start;">
                         <div>
-                            <div style="color: #aaa; font-size: 11px; margin-bottom: 6px;">ADSR</div>
+                            <div style="color: #aaa; font-size: 11px; margin-bottom: 6px;">Amplitude Envelope</div>
                             <div class="partition-adsr-controls" style="display: flex; gap: 24px; flex-wrap: wrap; justify-content: center;"></div>
                         </div>
                         <div>
@@ -1012,9 +1178,9 @@ class PartitionsUI {
         this.populatePartitionsContent();
     }
 
-    updatePartitionBlocks(preview, color, partitions, mode, rhythmInfo, layerIndex) {
+    updatePartitionBlocks(preview, color, partitions, mode, rhythmInfo, layerIndex, linkedLayerIndex = layerIndex) {
         if (!preview || !window.PartitionsBlocks) return;
-        const total = this.getPartitionMax(layerIndex, mode, rhythmInfo);
+        const total = this.getPartitionMax(linkedLayerIndex, mode, rhythmInfo);
         const { sizes, baseSize } = window.PartitionsBlocks.calculatePartitionSizes(total, partitions);
         let mutedSet = new Set();
         if (preview.dataset.mutedIndices) {

@@ -125,6 +125,9 @@ class PartitionsPlayback {
             this.baseStartTime = this.audioContext.currentTime - phaseSec;
             this.lastScheduledCycle = null;
         }
+        if (this.isRunning) {
+            this.rescheduleFromNow();
+        }
     }
 
     rescheduleFromNow() {
@@ -194,6 +197,7 @@ class PartitionsPlayback {
         const layers = document.querySelectorAll('.partition-layer');
         layers.forEach((layer, index) => {
             const enabled = layer.dataset.enabled === 'true';
+            const linkedLayerIndex = Number(layer.dataset.linkedLayer ?? index);
             const mode = layer.querySelector('.partition-mode-select')?.value || 'grid';
             const partitions = Number(layer.querySelector('.partition-count-slider')?.value || 1);
             const sampleUrl = layer.querySelector('.partition-sample-select')?.value || '';
@@ -217,7 +221,7 @@ class PartitionsPlayback {
                     // ignore
                 }
             }
-            configs.push({ enabled, mode, partitions, sampleUrl, volumeDb, layerIndex: index, mutedIndices: muted, order });
+            configs.push({ enabled, mode, partitions, sampleUrl, volumeDb, layerIndex: index, linkedLayerIndex, mutedIndices: muted, order });
         });
         return configs;
     }
@@ -229,20 +233,23 @@ class PartitionsPlayback {
             ? rhythmInfo.displayLayers
             : rhythmInfo.layers || [];
         const layerIndex = config.layerIndex ?? 0;
-        const layerValue = layers[layerIndex] || 0;
+        const linkedLayerIndex = Number.isFinite(config.linkedLayerIndex) ? config.linkedLayerIndex : layerIndex;
+        const layerValue = layers[linkedLayerIndex] || 0;
 
         if (mode === 'sequence' && layerValue > 0) {
             const sequenceLength = layerValue;
             const grouping = rhythmInfo.grid / layerValue;
             const { sizes } = PartitionsBlocks.calculatePartitionSizes(sequenceLength, partitions);
-            const hitIndices = this.getHitPositions(sequenceLength, this.applyOrder(sizes, order), mutedSet);
+            const { orderedSizes, orderedIndices } = this.getOrderedSizes(sizes, order);
+            const hitIndices = this.getHitPositions(sequenceLength, orderedSizes, mutedSet, orderedIndices);
             return hitIndices.map((seqIndex) => Math.round(seqIndex * grouping));
         }
 
         if (mode === 'grouping' && layerValue > 0) {
             const grouping = Math.round(rhythmInfo.grid / layerValue);
             const { sizes } = PartitionsBlocks.calculatePartitionSizes(grouping, partitions);
-            const groupHits = this.getHitPositions(grouping, this.applyOrder(sizes, order), mutedSet);
+            const { orderedSizes, orderedIndices } = this.getOrderedSizes(sizes, order);
+            const groupHits = this.getHitPositions(grouping, orderedSizes, mutedSet, orderedIndices);
             const ticks = [];
             for (let i = 0; i < layerValue; i += 1) {
                 const base = i * grouping;
@@ -252,15 +259,17 @@ class PartitionsPlayback {
         }
 
         const { sizes } = PartitionsBlocks.calculatePartitionSizes(rhythmInfo.grid, partitions);
-        return this.getHitPositions(rhythmInfo.grid, this.applyOrder(sizes, order), mutedSet);
+        const { orderedSizes, orderedIndices } = this.getOrderedSizes(sizes, order);
+        return this.getHitPositions(rhythmInfo.grid, orderedSizes, mutedSet, orderedIndices);
     }
 
-    getHitPositions(total, sizes, mutedSet = new Set()) {
+    getHitPositions(total, sizes, mutedSet = new Set(), orderedIndices = null) {
         const positions = [];
         let cursor = 0;
         sizes.forEach((size, index) => {
             if (cursor < total) {
-                if (!mutedSet.has(index)) {
+                const mutedIndex = orderedIndices ? orderedIndices[index] : index;
+                if (!mutedSet.has(mutedIndex)) {
                     positions.push(cursor);
                 }
             }
@@ -269,9 +278,12 @@ class PartitionsPlayback {
         return positions;
     }
 
-    applyOrder(sizes, order) {
-        if (!Array.isArray(order) || order.length !== sizes.length) return sizes;
-        return order.map((index) => sizes[index]).filter((size) => typeof size === 'number');
+    getOrderedSizes(sizes, order) {
+        const orderedIndices = Array.isArray(order) && order.length === sizes.length
+            ? order.slice()
+            : sizes.map((_, index) => index);
+        const orderedSizes = orderedIndices.map((index) => (typeof sizes[index] === 'number' ? sizes[index] : 0));
+        return { orderedSizes, orderedIndices };
     }
 
     async triggerSample(url, layerIndex, volumeDb, time) {
@@ -331,7 +343,7 @@ class PartitionsPlayback {
     async loadSample(url) {
         if (this.sampleCache.has(url)) return this.sampleCache.get(url);
         try {
-            const response = await fetch(url);
+            const response = await fetch(url, { cache: 'no-store' });
             const data = await response.arrayBuffer();
             const buffer = await this.audioContext.decodeAudioData(data);
             this.sampleCache.set(url, buffer);
@@ -344,6 +356,11 @@ class PartitionsPlayback {
 
     dbToLinear(db) {
         return Math.pow(10, db / 20);
+    }
+
+    invalidateSampleCache(url) {
+        if (!url) return;
+        this.sampleCache.delete(url);
     }
 
     stopAllActiveSources() {
