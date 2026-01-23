@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Large Rhythm Collider</title>
+    <meta name="description" content="Large Rhythm Collider is a browser-based engine for polyrhythm analysis, visualization, and tuning system exploration.">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Black Canvas Background -->
+    <div id="canvas-background">
+        
+        <!-- Fixed Title Bar with Reset Button -->
+        <header id="title-bar" class="title-bar-fixed" role="banner">
+            <div class="title-content">
+                <h1>LARGE RHYTHM COLLIDER</h1>
+                <nav class="collections-dropdown" aria-label="Information panels">
+                    <button id="collections-toggle" class="collections-toggle">▼</button>
+                    <nav id="collections-panel" class="collections-panel" aria-label="Collections and about menu" style="display: none;">
+                        <div class="dropdown-section" data-section="about">
+                            <button class="dropdown-section-header" type="button" data-target="about-panel">
+                                <div class="dropdown-section-text">
+                                    <h2 class="dropdown-section-title">About</h2>
+                                    <p>Large Rhythm Collider overview & features</p>
+                                </div>
+                                <span class="dropdown-section-icon">+</span>
+                            </button>
+                            <div id="about-panel" class="dropdown-section-content" hidden>
+                                <div class="about-inline-header">
+                                    <p>Explore the Large Rhythm Collider overview without leaving the app.</p>
+                                    <a class="about-open-link" href="about.html" target="_blank" rel="noopener">Open full About page ↗</a>
+                                </div>
+                                <div id="about-panel-content" class="about-panel-content">
+                                    <p class="loading">Loading About content…</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="dropdown-section" data-section="collections">
+                            <button class="dropdown-section-header" type="button" data-target="collections-panel-section">
+                                <div class="dropdown-section-text">
+                                    <h2 class="dropdown-section-title">Collections</h2>
+                                    <p>Community rhythm voting & leaderboards</p>
+                                </div>
+                                <span class="dropdown-section-icon">+</span>
+                            </button>
+                            <div id="collections-panel-section" class="dropdown-section-content" hidden>
+                                <div class="collections-tabs">
+                                    <button class="tab-button active" data-tab="browse">Browse</button>
+                                    <button class="tab-button" data-tab="vote">Vote</button>
+                                </div>
+                                
+                                <!-- Browse Tab -->
+                                <div id="browse-tab" class="tab-content active">
+                                    <div class="category-selector">
+                                        <label for="browse-category">Category:</label>
+                                        <select id="browse-category">
+                                            <option value="playback">Playback</option>
+                                            <option value="visuals">Visualizations</option>
+                                        </select>
+                                    </div>
+                                    <div id="top-rhythms-list" class="rhythms-list">
+                                        <p>Loading top rhythms...</p>
+                                    </div>
+                                </div>
+
+                                <!-- Vote Tab -->
+                                <div id="vote-tab" class="tab-content">
+                                    <div class="vote-submit">
+                                        <p>Submit your current rhythm to Collections:</p>
+                                        <div class="vote-submit-current">
+                                            <span id="current-layers">—</span>
+                                            <div class="vote-submit-controls">
+                                                <label for="collection-category">Category:</label>
+                                                <select id="collection-category">
+                                                    <option value="playback" selected>Playback</option>
+                                                    <option value="visuals">Visualizations</option>
+                                                </select>
+                                                <button id="submit-current-rhythm" class="submit-btn">Submit Current Rhythm</button>
+                                            </div>
+                                        </div>
+                                        <div id="submit-status" class="status-message"></div>
+                                    </div>
+                                    <div class="vote-results">
+                                        <h4>Vote on community rhythms</h4>
+                                        <div id="vote-rhythms-list" class="rhythms-list">
+                                            <p>Loading rhythms for voting...</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="dropdown-section" data-section="tutorial">
+                            <button class="dropdown-section-header" type="button" data-target="tutorial-panel">
+                                <div class="dropdown-section-text">
+                                    <h2 class="dropdown-section-title">Tutorial</h2>
+                                    <p>Quick-start walkthrough</p>
+                                </div>
+                                <span class="dropdown-section-icon">+</span>
+                            </button>
+                            <div id="tutorial-panel" class="dropdown-section-content" hidden>
+                                <p>Launch the introductory walkthrough overlay.</p>
+                                <button id="tutorial-show-btn" class="tutorial-show-btn" type="button">Show Tutorial</button>
+                            </div>
+                        </div>
+                    </nav>
+                </nav>
+            </div>
+            <div class="title-bar-controls">
+                <button id="reset-display-btn" class="reset-btn">Reset Display</button>
+            </div>
+        </header>
+
+        <main id="lrc-main" role="main">
+            <!-- Visualization Canvas -->
+            <canvas id="visualization-canvas" class="visualization-canvas"></canvas>
+            
+            <!-- Expanded Info View Container (hidden by default) -->
+            <div id="expanded-info-view" style="display: none; position: absolute; z-index: 500;"></div>
+
+            <!-- Expanded Playback View / Partitions Container (hidden by default) -->
+            <div id="expanded-playback-view" style="display: none; position: absolute; z-index: 500;"></div>
+        
+        <!-- Draggable HUD Divs -->
+        
+        <!-- Rhythm Submit Div (only one that starts open) -->
+        <section id="rhythm-submit-div" class="panel" data-default-pos="left-corner" aria-labelledby="rhythm-input-panel-title">
+            <div class="info-header">
+                <h2 id="rhythm-input-panel-title" class="panel-title">Rhythm Input</h2>
+                <button class="minimize-btn">−</button>
+            </div>
+            <div class="info-content" id="rhythm-input-panel-content">
+                <form id="rhythm-form" class="rhythm-form">
+                    <div class="layer-inputs">
+                        <div class="layer-input">
+                            <label for="layer-a">A</label>
+                            <input type="number" id="layer-a" name="layer-a" min="1" value="8">
+                        </div>
+                        <div class="layer-input">
+                            <label for="layer-b">B</label>
+                            <input type="number" id="layer-b" name="layer-b" min="1" value="7">
+                        </div>
+                        <div class="layer-input">
+                            <label for="layer-c">C</label>
+                            <input type="number" id="layer-c" name="layer-c" min="1" value="6">
+                        </div>
+                        <div class="layer-input">
+                            <label for="layer-d">D</label>
+                            <input type="number" id="layer-d" name="layer-d" min="1" value="5">
+                        </div>
+                    </div>
+                    <button type="submit" class="submit-btn">Generate</button>
+                </form>
+            </div>
+        </section>
+        
+        <!-- Rhythm Info Div (starts minimized) -->
+        <section id="rhythm-info-div" class="panel minimized" data-default-pos="top-left" aria-labelledby="rhythm-info-panel-title">
+            <div class="info-header">
+                <h2 id="rhythm-info-panel-title" class="panel-title">Rhythm Info</h2>
+                <button class="minimize-btn">+</button>
+            </div>
+            <div class="info-content" id="rhythm-info-panel-content">
+            <div class="info-section">
+                <div class="info-metrics-grid">
+                    <div class="layers-display">Layers: <span id="layers-display">--</span></div>
+                    <div class="grid-display">Grid: <span id="grid-display">--</span></div>
+                    <div class="fundamental-display">Fundamental: <span id="fundamental-display">--</span></div>
+                    <div class="range-display">Range: <span id="range-display">--</span></div>
+                    <div class="avg-dev-display">Avg Dev: <span id="avg-dev-display">--</span></div>
+                    <div class="rhythm-density">Density: <span id="rhythm-density">--</span>%</div>
+                    <div class="pg-ratio">P/G Ratio: <span id="pg-ratio">--</span></div>
+                    <div class="composite-length">Composite Length: <span id="composite-length">--</span></div>
+                    <div class="layer-sum">Layer Sum: <span id="layer-sum">--</span></div>
+                </div>
+            </div>
+
+            <div class="scale-chart" id="scale-chart">
+                <!-- Scale chart will be populated by JS -->
+            </div>
+                
+                <div class="info-subsection">
+                    <div class="subsection-header" data-target="spaces-plot-content">Spaces Plot</div>
+                    <div id="spaces-plot-content" class="subsection-content" style="display: none;">
+                        <div id="spaces-plot-display"></div>
+                    </div>
+                </div>
+                
+                <div class="info-subsection">
+                    <div class="subsection-header" data-target="composite-rhythm-content">Composite Rhythm</div>
+                    <div id="composite-rhythm-content" class="subsection-content" style="display: none;">
+                        <div id="composite-rhythm-display"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Visualizations Div (starts minimized) -->
+        <section id="visualizations-div" class="panel minimized" data-default-pos="top-right" aria-labelledby="visualizations-panel-title">
+            <div class="info-header">
+                <h2 id="visualizations-panel-title" class="panel-title">Visualizations</h2>
+                <button class="minimize-btn">+</button>
+            </div>
+            <div class="info-content" id="visualizations-panel-content">
+                <div class="viz-controls">
+                    <label>Type:</label>
+                    <select id="viz-type-selector">
+                        <option value="linear">Linear Plot</option>
+                        <option value="centrifuge">Centrifuge</option>
+                        <option value="hinges">Hinges</option>
+                    </select>
+                </div>
+
+                <!-- Linear Plot Controls -->
+                <div class="viz-section" id="linear-controls" style="display: none;">
+                    <div class="viz-section-header">Linear Plot</div>
+                    <div class="viz-section-content">
+                        <div class="linear-controls">
+                            <div class="linear-utility-buttons">
+                                <button id="lightswitch-toggle" class="lightswitch-btn" title="Toggle Layer Lights">
+                                    <span class="lightswitch-icon">💡</span>
+                                </button>
+                                <button id="layer-connectors-toggle" class="layer-connectors-btn" title="Toggle Layer Connectors">
+                                    <span class="connectors-icon">🔗</span>
+                                </button>
+                            </div>
+                            <div class="layer-toggles">
+                                <button class="layer-toggle" data-layer="A">A</button>
+                                <button class="layer-toggle" data-layer="B">B</button>
+                                <button class="layer-toggle" data-layer="C">C</button>
+                                <button class="layer-toggle" data-layer="D">D</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Centrifuge Controls -->
+                <div class="viz-section" id="centrifuge-controls" style="display: none;">
+                    <div class="viz-section-header">Centrifuge</div>
+                    <div class="viz-section-content">
+                        <div class="centrifuge-controls">
+                            <div class="slice-toggles">
+                                <label>Layers:</label>
+                                <div class="slice-buttons">
+                                    <button class="slice-toggle active" data-slice="A">A</button>
+                                    <button class="slice-toggle active" data-slice="B">B</button>
+                                    <button class="slice-toggle active" data-slice="C">C</button>
+                                    <button class="slice-toggle active" data-slice="D">D</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Hinges Controls -->
+                <div class="viz-section" id="hinges-controls-section" style="display: none;">
+                    <div class="viz-section-header">Hinges</div>
+                    <div class="viz-section-content">
+                        <div class="hinges-controls">
+                            <button id="hinges-animate-btn" class="hinges-animate-btn">🔗 Animate Chain</button>
+                            <div class="hinges-options">
+                                <label class="hinges-show-forces"><input type="checkbox" id="hinges-show-forces"> Show Forces</label>
+                                <div class="hinges-mode-row">
+                                    <label>Mode:
+                                        <select id="hinges-mode">
+                                            <option value="progression" selected>Layer Progression</option>
+                                            <option value="mirror">Mirrors</option>
+                                            <option value="anchors">Anchors</option>
+                                        </select>
+                                    </label>
+                                    <button id="hinges-tension-btn" class="hinges-tension-btn">⚡ Tension</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Playback Div (starts minimized) -->
+        <section id="playback-div" class="panel minimized" data-default-pos="bottom-left" aria-labelledby="playback-panel-title">
+            <div class="info-header">
+                <h2 id="playback-panel-title" class="panel-title">Playback</h2>
+                <button class="minimize-btn">+</button>
+            </div>
+            <div class="info-content" id="playback-panel-content">
+                <!-- All controls will be generated by ToneRowPlayback.js -->
+                <div id="playback-controls-container"></div>
+            </div>
+        </section>
+        
+        <!-- Search Algorithms Div (starts minimized) -->
+        <section id="search-div" class="panel minimized" data-default-pos="bottom-right" aria-labelledby="search-panel-title">
+            <div class="info-header">
+                <h2 id="search-panel-title" class="panel-title">Search Algorithms</h2>
+                <button class="minimize-btn">+</button>
+            </div>
+            <div class="info-content" id="search-panel-content">
+                <div class="search-algorithms">
+                    
+                    <!-- Global Search Configuration -->
+                    <div class="search-config">
+                        <div class="input-group">
+                            <label>Pitches:</label>
+                            <input type="number" id="target-pitches" min="1" max="50" value="12">
+                        </div>
+                        <div class="input-group">
+                            <label>Max Search Time (seconds):</label>
+                            <input type="number" id="max-search-time" min="1" max="60" value="5">
+                        </div>
+                        <div class="input-group">
+                            <label>Range Limit:</label>
+                            <input type="number" id="range-limit" min="1" value="100">
+                        </div>
+                    </div>
+                    
+                    <!-- Rhythm Layer Search -->
+                    <div class="search-algorithm">
+                        <h4>Rhythm Layer Search</h4>
+                        <form id="rhythm-search-form" class="search-form">
+                            <div class="search-inputs">
+                                <div class="input-group">
+                                    <label>Layer:</label>
+                                    <select id="search-layer">
+                                        <option value="A">A</option>
+                                        <option value="B">B</option>
+                                        <option value="C">C</option>
+                                        <option value="D">D</option>
+                                    </select>
+                                </div>
+                                <div class="input-group">
+                                    <label>Value:</label>
+                                    <input type="number" id="search-layer-value" min="1" value="24">
+                                </div>
+                                <button type="submit" class="search-btn">Search</button>
+                                <button type="button" id="clear-rhythm-search" class="clear-btn">Clear</button>
+                            </div>
+                        </form>
+                        <div id="rhythm-search-results" class="search-results"></div>
+                    </div>
+                    
+                    <!-- Grid Search -->
+                    <div class="search-algorithm">
+                        <h4>Grid Search</h4>
+                        <form id="grid-search-form" class="search-form">
+                            <div class="search-inputs">
+                                <div class="input-group">
+                                    <label>Grid Value:</label>
+                                    <input type="number" id="search-grid-value" min="1" value="840">
+                                </div>
+                                <button type="submit" class="search-btn">Search</button>
+                                <button type="button" id="clear-grid-search" class="clear-btn">Clear</button>
+                            </div>
+                        </form>
+                        <div id="grid-search-results" class="search-results"></div>
+                    </div>
+                    
+                    <!-- Fundamental Search -->
+                    <div class="search-algorithm">
+                        <h4>Fundamental Search</h4>
+                        <form id="fundamental-search-form" class="search-form">
+                            <div class="search-inputs">
+                                <div class="input-group">
+                                    <label>Fundamental:</label>
+                                    <input type="number" id="search-fundamental" min="1" value="23">
+                                </div>
+                                <div class="input-group">
+                                    <label>Min Layer A:</label>
+                                    <input type="number" id="min-layer-a" min="1" value="1">
+                                </div>
+                                <button type="submit" class="search-btn">Search</button>
+                                <button type="button" id="clear-fundamental-search" class="clear-btn">Clear</button>
+                            </div>
+                        </form>
+                        <div id="fundamental-search-results" class="search-results"></div>
+                    </div>
+                    
+                    <!-- Inverse PG Search -->
+                    <div class="search-algorithm">
+                        <h4>Inverse PG Search</h4>
+                        <form id="inverse-pg-form" class="search-form">
+                            <div class="search-inputs">
+                                <div class="input-group">
+                                    <label>Layer A:</label>
+                                    <input type="number" id="inverse-pg-a" min="1" value="24">
+                                </div>
+                                <button type="submit" class="search-btn">Search</button>
+                                <button type="button" id="clear-inverse-pg" class="clear-btn">Clear</button>
+                            </div>
+                        </form>
+                        <div id="inverse-pg-results" class="search-results"></div>
+                    </div>
+                    
+                </div>
+            </div>
+        </section>
+        </main>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <!-- Firebase SDK for Collections (optional - runs in demo mode without Firebase) -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="Core Interface/firebase-config.js"></script>
+    
+    <!-- Firebase Configuration (Replace with your own for production) -->
+    <script>
+        // Demo configuration - replace with your Firebase config for production
+        // The Collections system will run in demo mode (localStorage) if Firebase is not configured
+        /*
+        const firebaseConfig = {
+            apiKey: "your-api-key",
+            authDomain: "your-project.firebaseapp.com", 
+            projectId: "your-project-id",
+            storageBucket: "your-project.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "your-app-id"
+        };
+        
+        // Uncomment to enable Firebase
+        // firebase.initializeApp(firebaseConfig);
+        */
+       
+        if (!window.firebaseConfig) {
+            console.log('📊 Collections: Firebase not configured - running in demo mode');
+        }
+    </script>
+
+    <!-- Interface Core Modules -->
+    <script src="Core Interface/LRCModule.js"></script>
+    <script src="Core Interface/LRCHudController.js"></script>
+    <script src="Core Interface/ExpandedInfoView.js"></script>
+    <script src="Core Interface/PartitionsGlobalControls.js"></script>
+    <script src="Core Interface/PartitionsUI.js"></script>
+    <script src="Core Interface/LRCSearch.js?"></script>
+    <script src="Core Interface/LRCInterconsonance.js"></script>
+    <script src="Core Interface/LRCExport.js"></script>
+    <script src="Core Interface/AboutPanel.js"></script>
+    <script src="Core Interface/Collections.js"></script>
+    <script src="Core Interface/CollectionsUI.js"></script>
+
+    <!-- Visualizations -->
+    <script src="Core Interface/LRCVisuals.js"></script>
+    <script src="Visualizations/NodePopups.js"></script>
+    <script src="Visualizations/NodeUI.js"></script>
+    <script src="Visualizations/ReflectionsExport.js"></script>
+    <script src="Visualizations/ReflectionsColor.js"></script>
+    <script src="Visualizations/Reflections.js"></script>
+    <script src="Visualizations/Centrifuge.js"></script>
+    <script src="Visualizations/Hinges.js"></script>
+    <script src="Visualizations/HingeExpand.js"></script>
+    <script src="Visualizations/HingesAdvanced.js"></script>
+
+        <!-- Collider -->
+        <script src="Collider/ColliderAudio.js"></script>
+        <script src="Collider/CreatePlayer.js"></script>
+        <script src="Collider/CollisionDetector.js"></script>
+        <script src="Collider/ColliderPlayer.js"></script>
+        <script src="Collider/BattleController.js"></script>
+        <script src="Collider/ColliderUI.js"></script>
+        <script src="Collider/Collider.js"></script>
+
+        <script>
+        // Master Clock for Collider System
+        window.colliderMasterClock = {
+            speed: 1.0,
+            startTime: Date.now(),
+            paused: false,
+            
+            setSpeed: function(speed) {
+                this.speed = speed;
+                console.log(`⚡ Master clock speed: ${speed}x`);
+                
+                // Update all collider players
+                if (window.battleController) {
+                    window.battleController.setMasterSpeed(speed);
+                }
+            },
+            
+            getTime: function() {
+                if (this.paused) return this.pausedTime || 0;
+                const elapsed = Date.now() - this.startTime;
+                return elapsed * this.speed;
+            },
+            
+            reset: function() {
+                this.startTime = Date.now();
+                console.log('⏰ Master clock reset');
+            }
+        };
+
+        // Speed control now handled by popup window
+        </script>
+
+    <!-- MIDI Root Note Selection Popup -->
+    <div id="midi-root-popup" class="popup-overlay" style="display: none;">
+        <div class="popup-content">
+            <h3>MIDI Root Note</h3>
+            <p>Use C when working with .scl tuning files. Use A for .tun files.</p>
+            <div class="popup-buttons">
+                <button id="midi-root-c" class="popup-btn">Root C</button>
+                <button id="midi-root-a" class="popup-btn">Root A</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tutorial Popup -->
+    <div id="tutorial-overlay" class="tutorial-overlay" aria-hidden="true" style="display: none;">
+        <div class="tutorial-modal" role="dialog" aria-modal="true" aria-labelledby="tutorial-title">
+            <button type="button" class="tutorial-close" aria-label="Close tutorial">X</button>
+            <div class="tutorial-frame">
+                <div class="tutorial-frame-header">
+                    <span class="tutorial-frame-title">Tutorial</span>
+                </div>
+                <div class="tutorial-frame-body">
+                    <div class="tutorial-slide" id="tutorial-slide-content"></div>
+                </div>
+                <div class="tutorial-nav">
+                    <button type="button" class="tutorial-nav-btn" id="tutorial-prev" aria-label="Previous slide">◀</button>
+                    <span class="tutorial-nav-status" id="tutorial-nav-status">1 / 1</span>
+                    <button type="button" class="tutorial-nav-btn" id="tutorial-next" aria-label="Next slide">▶</button>
+                </div>
+            </div>
+            <div class="tutorial-footer">
+                <button type="button" class="tutorial-close-btn">Close</button>
+                <label class="tutorial-dismiss">
+                    <input type="checkbox" id="tutorial-dismiss-checkbox">
+                    <span>Do not show again</span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio -->
+        <script src="Tutorial/TutorialContent.js"></script>
+        <script src="Tutorial/TutorialUI.js"></script>
+        <script src="Core Interface/ToneRowPlayback.js?v=20241022"></script>
+        <script src="Core Interface/AudioEffects.js?v=20241022"></script>
+
+</body>
+</html>
