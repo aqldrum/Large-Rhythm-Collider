@@ -1,7 +1,6 @@
 (() => {
     const STORAGE_KEY = 'lrcTutorialDismissed';
     const overlay = document.getElementById('tutorial-overlay');
-    const closeButton = document.querySelector('.tutorial-close');
     const closeFooterButton = document.querySelector('.tutorial-close-btn');
     const dismissCheckbox = document.getElementById('tutorial-dismiss-checkbox');
     const showButton = document.getElementById('tutorial-show-btn');
@@ -10,7 +9,7 @@
     const nextButton = document.getElementById('tutorial-next');
     const navStatus = document.getElementById('tutorial-nav-status');
 
-    if (!overlay || !closeButton || !closeFooterButton || !dismissCheckbox || !showButton || !slideContainer || !prevButton || !nextButton || !navStatus) {
+    if (!overlay || !closeFooterButton || !dismissCheckbox || !showButton || !slideContainer || !prevButton || !nextButton || !navStatus) {
         return;
     }
 
@@ -23,19 +22,51 @@
         if (!slide) {
             return;
         }
+        const table = document.createElement('table');
+        table.className = 'tutorial-slide-table';
+
+        const row = document.createElement('tr');
+        const textCell = document.createElement('td');
+        textCell.className = 'tutorial-slide-text';
 
         const title = document.createElement('h3');
         title.id = 'tutorial-title';
         title.textContent = slide.title || 'Tutorial';
-        slideContainer.appendChild(title);
+        textCell.appendChild(title);
 
         if (Array.isArray(slide.body)) {
             slide.body.forEach((paragraph) => {
                 const p = document.createElement('p');
                 p.textContent = paragraph;
-                slideContainer.appendChild(p);
+                textCell.appendChild(p);
             });
         }
+
+        row.appendChild(textCell);
+
+        const imageData = typeof slide.image === 'string' ? { src: slide.image } : slide.image;
+        if (imageData && imageData.src) {
+            const mediaCell = document.createElement('td');
+            mediaCell.className = 'tutorial-slide-media';
+
+            const img = document.createElement('img');
+            img.src = imageData.src;
+            img.alt = imageData.alt || slide.imageAlt || '';
+            mediaCell.appendChild(img);
+
+            const caption = imageData.caption || slide.imageCaption;
+            if (caption) {
+                const captionEl = document.createElement('div');
+                captionEl.className = 'tutorial-slide-caption';
+                captionEl.textContent = caption;
+                mediaCell.appendChild(captionEl);
+            }
+
+            row.appendChild(mediaCell);
+        }
+
+        table.appendChild(row);
+        slideContainer.appendChild(table);
     };
 
     const updateNav = () => {
@@ -80,7 +111,6 @@
         hideTutorial();
     };
 
-    closeButton.addEventListener('click', handleDismiss);
     closeFooterButton.addEventListener('click', handleDismiss);
 
     overlay.addEventListener('click', (event) => {

@@ -3185,33 +3185,15 @@ body.mobile-mode .collections-panel {
 
 .tutorial-modal {
     position: relative;
-    width: min(760px, calc(100vw - 40px));
+    width: 88vw;
+    max-width: 1000px;
+    max-height: 88vh;
     background: rgba(10, 10, 10, 0.92);
     border: 1px solid var(--hud-border);
     border-radius: 14px;
     padding: 18px;
     box-shadow: 0 18px 40px rgba(0, 0, 0, 0.6);
     color: var(--hud-text);
-}
-
-.tutorial-close {
-    position: absolute;
-    top: 12px;
-    right: 12px;
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    border: 1px solid var(--hud-border);
-    background: rgba(40, 40, 40, 0.8);
-    color: var(--hud-text);
-    cursor: pointer;
-    font-size: 14px;
-    line-height: 1;
-}
-
-.tutorial-close:hover {
-    background: var(--hud-accent);
-    color: #000;
 }
 
 .tutorial-frame {
@@ -3229,15 +3211,17 @@ body.mobile-mode .collections-panel {
 
 .tutorial-frame-title {
     color: var(--hud-accent);
-    font-size: 14px;
+    font-size: 18px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
 }
 
 .tutorial-frame-body {
     padding: 18px;
-    min-height: 220px;
+    min-height: 300px;
     display: flex;
+    max-height: 60vh;
+    overflow: auto;
 }
 
 .tutorial-nav {
@@ -3258,7 +3242,7 @@ body.mobile-mode .collections-panel {
     background: rgba(40, 40, 40, 0.8);
     color: var(--hud-text);
     cursor: pointer;
-    font-size: 12px;
+    font-size: 16px;
 }
 
 .tutorial-nav-btn:hover {
@@ -3282,13 +3266,67 @@ body.mobile-mode .collections-panel {
 .tutorial-slide h3 {
     margin: 0;
     color: var(--hud-text);
-    font-size: 20px;
+    font-size: 24px;
+    margin-bottom: 8px;
 }
 
 .tutorial-slide p {
     margin: 0;
     color: var(--hud-text-muted);
-    line-height: 1.5;
+    font-size: 14px;
+    line-height: 2;
+}
+
+.tutorial-slide-table {
+    width: 100%;
+    max-width: 100%;
+    border-collapse: collapse;
+    table-layout: auto;
+    margin: 0;
+    height: 100%;
+}
+
+.tutorial-slide-text {
+    width: auto;
+    text-align: left;
+    padding: 4px 16px 4px 0;
+    vertical-align: top;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 100%;
+}
+
+.tutorial-slide-text p + p {
+    margin-top: 0;
+}
+
+.tutorial-slide-media {
+    width: 1%;
+    white-space: nowrap;
+    padding: 4px 0 4px 16px;
+    vertical-align: middle;
+}
+
+.tutorial-slide-media img {
+    width: auto;
+    max-width: min(360px, 32vw);
+    height: auto;
+    max-height: 52vh;
+    object-fit: contain;
+    padding: 6px;
+    box-sizing: border-box;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 0, 0, 0.2);
+    display: block;
+}
+
+.tutorial-slide-caption {
+    margin-top: 8px;
+    font-size: 15px;
+    color: var(--hud-text-muted);
+    letter-spacing: 0.04em;
 }
 
 .tutorial-slide {
@@ -3296,6 +3334,24 @@ body.mobile-mode .collections-panel {
     display: flex;
     flex-direction: column;
     justify-content: space-between;
+}
+
+@media (max-width: 720px) {
+    .tutorial-slide-table,
+    .tutorial-slide-table tr,
+    .tutorial-slide-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .tutorial-slide-text {
+        padding-right: 0;
+    }
+
+    .tutorial-slide-media {
+        padding-left: 0;
+        margin-top: 14px;
+    }
 }
 
 .tutorial-footer {

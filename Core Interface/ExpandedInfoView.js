@@ -919,7 +919,7 @@ class ExpandedInfoView {
                         <strong>${rhythmInfo.pitchCount} ${rhythmInfo.pitchCount === 1 ? 'Pitch' : 'Pitches'}</strong>
                     </div>
                     <div class="scale-header">
-                        <span class="scale-type">${rhythmInfo.pitchCount === 12 ? '12-Tone Scale' : 'Custom Scale'}</span>
+                        <span class="scale-type">FUNDAMENTAL ${Number.isFinite(rhythmInfo.fundamental) ? Math.round(rhythmInfo.fundamental).toLocaleString('en-US') : '—'}</span>
                     </div>
                     <div class="scale-table-container">
                         <table class="scale-table">

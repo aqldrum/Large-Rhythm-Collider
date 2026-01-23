@@ -777,10 +777,10 @@ class LRCHUDController {
         }
         
         // Update scale chart with improved styling
-        this.updateScaleChart(rhythmInfo.pitchCount);
+        this.updateScaleChart(rhythmInfo.pitchCount, rhythmInfo.fundamental);
     }
 
-    updateScaleChart(pitchCount) {
+    updateScaleChart(pitchCount, fundamental) {
         const scaleChart = document.getElementById('scale-chart');
         if (!scaleChart || !window.lrcModule.currentRatios) {
             console.warn('Scale chart element or ratios not found');
@@ -795,12 +795,15 @@ class LRCHUDController {
         }
         
         // Add pitch count display above the scale chart
+        const fundamentalDisplay = Number.isFinite(fundamental)
+            ? Math.round(fundamental).toLocaleString('en-US')
+            : '—';
         let html = `
             <div class="pitch-count-display">
                 <strong>${pitchCount} ${pitchCount === 1 ? 'Pitch' : 'Pitches'}</strong>
             </div>
             <div class="scale-header">
-                <span class="scale-type">${pitchCount === 12 ? '12-Tone Scale' : 'Custom Scale'}</span>
+                <span class="scale-type">FUNDAMENTAL ${fundamentalDisplay}</span>
             </div>
             <div class="scale-table-container">
                 <table class="scale-table">
