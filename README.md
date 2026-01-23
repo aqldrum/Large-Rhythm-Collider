@@ -1,6 +1,6 @@
 # Large Rhythm Collider
 
-![Large Rhythm Collider interface](assets/mainpage1.png)
+![Large Rhythm Collider interface](assets/images/mainpage1.png)
 
 The Large Rhythm Collider (LRC) is a browser-based engine for exploring polyrhythms as audiovisual systems. It analyzes up to four rhythmic layers, derives composite patterns, and serializes the resulting interference into playable just-intonation tuning systems. Every panel on the interface is draggable, expandable, and designed for live experimentation.
 
@@ -38,13 +38,13 @@ For an in-depth walkthrough of the concepts, features, and rich media gallery, r
 ## Technical Architecture
 
 - **Core Interface (`Core Interface/`)**  
-  DOM controllers and panel logic for Rhythm Input, Info, Visualizations, Playback, Search, and inline About content. Handles drag/drop layout, panel state, and data binding.
+  DOM controllers and panel logic for Rhythm Input, Info, Visualizations, Search, Partitions UI, and inline About content. Handles drag/drop layout, panel state, and data binding.
 
 - **Analysis Engine (`Core Interface` & shared modules)**  
   Computes least common multiples, composite rhythm sequences, palindromic spaces plots, nested ratio detection, and tuning serialization (ratios → frequencies → cents).
 
-- **Playback System (`Core Interface/Playback.js`, Web Audio)**  
-  Builds wavetable voices per layer, manages envelopes, filtering, scale selection, and synchronizes note scheduling to the generated timelines.
+- **Playback System (`Playback/`, Web Audio)**  
+  Orchestrated by `Playback/ToneRowPlayback.js` with focused modules for UI (`PlaybackMainUI`, `LayerControlsUI`, `ScaleSelectionUI`, `ConsonanceFamiliesUI`) and engine logic (`AudioEngine`, `Scheduler`). Handles envelopes, filters, scale selection, and tick-based scheduling.
 
 - **Visualization Layer (`Visualizations/`)**  
   Individual renderers (Linear Plot, Centrifuge, Hinges, Collider, etc.) subscribe to rhythm state updates and translate structural data into canvases/SVG animations.

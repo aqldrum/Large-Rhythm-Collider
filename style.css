@@ -2003,6 +2003,7 @@ body.mobile-mode .collections-panel {
     align-items: center;
     gap: 4px;
     margin: 8px 0;
+    position: relative;
 }
 
 .adsr-controls .knob-container {
@@ -3049,6 +3050,29 @@ body.mobile-mode .collections-panel {
     background: #00cc66;
 }
 
+/* Partitions blocks: keep the minimal horizontal scrollbar */
+.partition-blocks-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: #111 #0b0b0b;
+}
+
+.partition-blocks-scroll::-webkit-scrollbar {
+    height: 6px;
+}
+
+.partition-blocks-scroll::-webkit-scrollbar-track {
+    background: #0b0b0b;
+}
+
+.partition-blocks-scroll::-webkit-scrollbar-thumb {
+    background: #111;
+    border-radius: 6px;
+}
+
+.partition-blocks-scroll::-webkit-scrollbar-thumb:hover {
+    background: #1a1a1a;
+}
+
 /* ====================================
    INFO SUBSECTIONS (Rhythm Info div)
    ==================================== */
@@ -3360,6 +3384,12 @@ body.mobile-mode .collections-panel {
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+}
+
+.tutorial-copyright {
+    font-size: 11px;
+    color: var(--hud-text-muted);
+    letter-spacing: 0.04em;
 }
 
 .tutorial-close-btn {

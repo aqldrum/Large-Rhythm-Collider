@@ -609,7 +609,8 @@ class PartitionsUI {
         if (!this.leftSection) return;
 
         // Check if we have rhythm data
-        const hasRhythm = window.lrcModule && window.lrcModule.grid > 0;
+        const rhythmInfo = window.lrcModule?.getRhythmInfoData?.();
+        const hasRhythm = rhythmInfo && rhythmInfo.grid > 0;
 
         if (!hasRhythm) {
             this.leftSection.innerHTML = `
@@ -620,8 +621,6 @@ class PartitionsUI {
             return;
         }
 
-        // Get rhythm info for display
-        const rhythmInfo = window.lrcModule.getRhythmInfoData();
         const activeLayers = (rhythmInfo.displayLayers && rhythmInfo.displayLayers.length > 0)
             ? rhythmInfo.displayLayers
             : rhythmInfo.layers;
@@ -635,8 +634,8 @@ class PartitionsUI {
             <div class="partition-layers-container" style="display: flex; flex-direction: column; gap: 15px;">
                 ${this.createPartitionLayerHTML(0, 'Kick', '#ff6b6b')}
                 ${this.createPartitionLayerHTML(1, 'Snare', '#4ecdc4')}
-                ${this.createPartitionLayerHTML(2, 'Hi-Hat', '#ffe66d')}
-                ${this.createPartitionLayerHTML(3, 'Perc', '#95e1d3')}
+                ${this.createPartitionLayerHTML(2, 'Hi-Hat', '#00a638ff')}
+                ${this.createPartitionLayerHTML(3, 'Perc', '#f9ca24')}
             </div>
 
             <div class="partitions-footer" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #333;">
@@ -646,28 +645,253 @@ class PartitionsUI {
             </div>
         `;
 
+        this.leftSection.querySelectorAll('.partition-layer').forEach(layer => {
+            const slider = layer.querySelector('.partition-count-slider');
+            const label = layer.querySelector('.partition-count-label');
+            const modeSelect = layer.querySelector('.partition-mode-select');
+            const preview = layer.querySelector('.partition-preview');
+            const layerIndex = Number(layer.getAttribute('data-layer-index'));
+            if (!slider || !label || !modeSelect || !preview || Number.isNaN(layerIndex)) return;
+            const layerColor = this.getLayerColor(layerIndex);
+
+            const updateMax = (forceValue = null) => {
+                const max = this.getPartitionMax(layerIndex, modeSelect.value, rhythmInfo);
+                slider.max = max;
+                if (forceValue != null) {
+                    slider.value = forceValue;
+                } else if (modeSelect.value === 'sequence') {
+                    slider.value = max;
+                } else if (Number(slider.value) > max) {
+                    slider.value = max;
+                }
+                label.textContent = `Partitions: ${slider.value}`;
+                this.updatePartitionBlocks(preview, layerColor, slider.value, modeSelect.value, rhythmInfo, layerIndex);
+            };
+
+            const updateValue = () => {
+                label.textContent = `Partitions: ${slider.value}`;
+                this.updatePartitionBlocks(preview, layerColor, slider.value, modeSelect.value, rhythmInfo, layerIndex);
+            };
+
+            slider.addEventListener('input', updateValue);
+            modeSelect.addEventListener('change', () => {
+                const forceValue = modeSelect.value === 'sequence' ? null : 1;
+                updateMax(forceValue);
+                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+            });
+            slider.addEventListener('input', () => {
+                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+            });
+            slider.addEventListener('dblclick', () => {
+                const container = slider.closest('div');
+                if (!container) return;
+                if (container.querySelector('.partition-count-input')) return;
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.className = 'partition-count-input';
+                input.min = slider.min;
+                input.max = slider.max;
+                input.value = slider.value;
+                input.style.cssText = `
+                    position: absolute;
+                    right: 0;
+                    top: 0;
+                    width: 48px;
+                    padding: 2px 4px;
+                    background: #111;
+                    color: #fff;
+                    border: 1px solid #444;
+                    border-radius: 3px;
+                    font-size: 10px;
+                    z-index: 2;
+                `;
+                container.appendChild(input);
+                input.focus();
+                input.select();
+
+                const commit = () => {
+                    if (!input.isConnected) return;
+                    const raw = parseFloat(input.value);
+                    const min = Number(slider.min) || 1;
+                    const max = Number(slider.max) || 64;
+                    const clamped = Math.min(max, Math.max(min, Number.isFinite(raw) ? raw : slider.value));
+                    slider.value = clamped;
+                    updateValue();
+                    input.remove();
+                    window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+                };
+
+                input.addEventListener('blur', commit, { once: true });
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') commit();
+                    if (e.key === 'Escape' && input.isConnected) input.remove();
+                });
+            });
+
+            updateMax();
+        });
+
+        this.leftSection.querySelectorAll('.partition-volume-slider').forEach(slider => {
+            const label = slider.closest('div')?.querySelector('.partition-volume-value');
+            const updateValue = () => {
+                if (label) {
+                    label.textContent = `${slider.value} dB`;
+                }
+            };
+            slider.addEventListener('input', updateValue);
+            slider.addEventListener('input', () => {
+                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+            });
+            updateValue();
+        });
+
+        this.leftSection.querySelectorAll('.partition-layer').forEach(layer => {
+            const title = layer.querySelector('.partition-layer-title');
+            const select = layer.querySelector('.partition-sample-select');
+            const resetBtn = layer.querySelector('.partition-reset-btn');
+            const settingsBtn = layer.querySelector('.partition-settings-btn');
+            const mainPanel = layer.querySelector('.partition-main-panel');
+            const settingsPanel = layer.querySelector('.partition-settings-panel');
+            const adsrContainer = layer.querySelector('.partition-adsr-controls');
+            const transposeContainer = layer.querySelector('.partition-transpose-controls');
+            const hipassInput = layer.querySelector('.partition-hipass-input');
+            const lopassInput = layer.querySelector('.partition-lopass-input');
+            const slider = layer.querySelector('.partition-count-slider');
+            const label = layer.querySelector('.partition-count-label');
+            if (!title || !select) return;
+            const updateTitle = () => {
+                title.textContent = select.value.replace(/(^|[-_])(\w)/g, (_, p1, p2) => (p1 ? ' ' : '') + p2.toUpperCase());
+            };
+            select.addEventListener('change', updateTitle);
+            select.addEventListener('change', () => {
+                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+            });
+            updateTitle();
+
+            if (resetBtn && slider && label) {
+                resetBtn.addEventListener('click', () => {
+                    const modeSelect = layer.querySelector('.partition-mode-select');
+                    if (modeSelect && modeSelect.value === 'sequence') {
+                        const max = this.getPartitionMax(Number(layer.dataset.layerIndex), modeSelect.value, rhythmInfo);
+                        slider.value = max;
+                    } else {
+                        slider.value = '1';
+                    }
+                    label.textContent = `Partitions: ${slider.value}`;
+                    const preview = layer.querySelector('.partition-preview');
+                    if (preview) {
+                        preview.dataset.mutedIndices = '';
+                        preview.dataset.orderIndices = '';
+                        this.updatePartitionBlocks(preview, this.getLayerColor(Number(layer.dataset.layerIndex)), slider.value, modeSelect?.value || 'grid', rhythmInfo, Number(layer.dataset.layerIndex));
+                    }
+                    window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+                });
+            }
+
+            if (settingsBtn && mainPanel && settingsPanel) {
+                settingsBtn.addEventListener('click', () => {
+                    const isMain = settingsBtn.dataset.mode !== 'settings';
+                    if (isMain) {
+                        settingsBtn.dataset.mode = 'settings';
+                        settingsBtn.textContent = '↩︎';
+                        settingsBtn.title = 'Back to partitions';
+                        mainPanel.style.display = 'none';
+                        settingsPanel.style.display = 'block';
+                        if (resetBtn) resetBtn.style.display = 'none';
+                        if (adsrContainer && !adsrContainer.dataset.ready) {
+                            adsrContainer.dataset.ready = 'true';
+                            const knobConfigs = {
+                                attack: { min: 0.001, max: 5, step: 0.001, unit: 'ms', precision: 0 },
+                                decay: { min: 0.001, max: 5, step: 0.001, unit: 'ms', precision: 0 },
+                                sustain: { min: 0.001, max: 1, step: 0.01, unit: '', precision: 2 },
+                                release: { min: 0.001, max: 5, step: 0.001, unit: 'ms', precision: 0 }
+                            };
+                            Object.entries(knobConfigs).forEach(([param, config]) => {
+                                if (typeof ADSRKnob === 'function') {
+                                    const defaults = { attack: 0.001, decay: 0.2, sustain: 0.7, release: 0.3 };
+                                    const knob = new ADSRKnob(adsrContainer, param, defaults[param], config);
+                                    knob.onChange = (value) => {
+                                        if (window.partitionsPlayback) {
+                                            window.partitionsPlayback.updateLayerADSR(layerIndex, param, value);
+                                        }
+                                        window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+                                    };
+                                }
+                            });
+                        }
+                        if (transposeContainer && !transposeContainer.dataset.ready) {
+                            transposeContainer.dataset.ready = 'true';
+                            if (typeof TransposeUI === 'function') {
+                                const knob = new TransposeUI(transposeContainer, 0, {
+                                    min: -24,
+                                    max: 24,
+                                    step: 0.1,
+                                    precision: 1,
+                                    label: 'transpose',
+                                    unit: 'st'
+                                });
+                                knob.onChange = (value) => {
+                                    if (window.partitionsPlayback) {
+                                        window.partitionsPlayback.updateLayerTranspose(layerIndex, value);
+                                    }
+                                    window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+                                };
+                            }
+                        }
+                    } else {
+                        settingsBtn.dataset.mode = 'main';
+                        settingsBtn.textContent = 'Settings';
+                        settingsBtn.title = 'Layer settings';
+                        mainPanel.style.display = 'block';
+                        settingsPanel.style.display = 'none';
+                        if (resetBtn) resetBtn.style.display = '';
+                    }
+                });
+            }
+
+            const layerIndex = Number(layer.dataset.layerIndex);
+            const updateFilters = () => {
+                if (!window.partitionsPlayback) return;
+                const highpass = hipassInput ? parseFloat(hipassInput.value) : null;
+                const lowpass = lopassInput ? parseFloat(lopassInput.value) : null;
+                window.partitionsPlayback.updateLayerFilters(layerIndex, { highpass, lowpass });
+            };
+            if (hipassInput) {
+                hipassInput.addEventListener('input', updateFilters);
+                hipassInput.addEventListener('change', updateFilters);
+            }
+            if (lopassInput) {
+                lopassInput.addEventListener('input', updateFilters);
+                lopassInput.addEventListener('change', updateFilters);
+            }
+        });
+
+        this.leftSection.querySelectorAll('.partition-layer').forEach(layer => {
+            const toggleBtn = layer.querySelector('.partition-layer-toggle');
+            if (!toggleBtn) return;
+            const setEnabled = (enabled) => {
+                layer.dataset.enabled = enabled ? 'true' : 'false';
+                toggleBtn.style.opacity = enabled ? '1' : '0.35';
+                toggleBtn.style.filter = enabled ? 'none' : 'grayscale(0.6)';
+                toggleBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+            };
+            const isEnabled = layer.dataset.enabled === 'true';
+            setEnabled(isEnabled);
+            toggleBtn.addEventListener('click', () => {
+                setEnabled(layer.dataset.enabled !== 'true');
+                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+            });
+        });
+
         console.log('📋 Populated Partitions content');
     }
 
     createPartitionLayerHTML(index, name, color) {
-        // Get available layer targets from current rhythm
-        const rhythmInfo = window.lrcModule ? window.lrcModule.getRhythmInfoData() : null;
-        const activeLayers = rhythmInfo?.displayLayers || rhythmInfo?.layers || [];
-
-        let layerOptions = '<option value="grid">Entire Grid</option>';
         const layerNames = ['A', 'B', 'C', 'D'];
-
-        activeLayers.forEach((layerValue, i) => {
-            if (layerValue > 0) {
-                const layerName = layerNames[i];
-                const grouping = Math.round(rhythmInfo.grid / layerValue);
-                layerOptions += `<option value="layer-${layerName.toLowerCase()}-freq">Layer ${layerName} Frequency (${layerValue})</option>`;
-                layerOptions += `<option value="layer-${layerName.toLowerCase()}-group">Layer ${layerName} Grouping (${grouping})</option>`;
-            }
-        });
+        const layerName = layerNames[index] || name || 'A';
 
         return `
-            <div class="partition-layer" data-layer-index="${index}" style="
+            <div class="partition-layer" data-layer-index="${index}" data-enabled="false" style="
                 background: rgba(255, 255, 255, 0.03);
                 border: 1px solid ${color}40;
                 border-left: 3px solid ${color};
@@ -675,34 +899,109 @@ class PartitionsUI {
                 padding: 12px 15px;
             ">
                 <div class="partition-layer-header" style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                    <span style="color: ${color}; font-weight: 600; font-size: 14px;">${name}</span>
-                    <label style="margin-left: auto; color: #888; font-size: 12px; display: flex; align-items: center; gap: 5px;">
-                        <input type="checkbox" class="partition-layer-enabled" checked style="accent-color: ${color};"> Enabled
-                    </label>
+                    <button class="partition-layer-toggle" style="
+                        background: ${color};
+                        color: #000;
+                        border: none;
+                        border-radius: 4px;
+                        font-weight: 700;
+                        font-size: 12px;
+                        width: 28px;
+                        height: 24px;
+                        cursor: pointer;
+                    ">${layerName}</button>
+                    <span class="partition-layer-title" style="color: ${color}; font-weight: 600; font-size: 13px;">${name}</span>
+                    <div style="margin-left: auto; display: flex; align-items: center; gap: 6px;">
+                        <button class="partition-reset-btn" title="Reset partitions to 1" style="
+                            background: #1b2a22;
+                            color: #00ff88;
+                            border: 1px solid #2f5d45;
+                            border-radius: 4px;
+                            padding: 2px 6px;
+                            font-size: 12px;
+                            cursor: pointer;
+                            height: 24px;
+                        ">⟲</button>
+                        <button class="partition-settings-btn" title="Layer settings" data-mode="main" style="
+                            background: #222;
+                            color: #00ff88;
+                            border: 1px solid #444;
+                            border-radius: 4px;
+                            padding: 4px 8px;
+                            font-size: 10px;
+                            cursor: pointer;
+                            height: 24px;
+                        ">Settings</button>
+                    </div>
                 </div>
-                <div class="partition-layer-controls" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                    <div class="partition-target" style="color: #aaa; font-size: 11px;">
-                        <label style="display: block; margin-bottom: 4px;">Target:</label>
-                        <select class="partition-target-select" style="width: 100%; padding: 5px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 11px;">
-                            ${layerOptions}
-                        </select>
+                <div class="partition-main-panel">
+                    <div class="partition-layer-controls" style="display: grid; grid-template-columns: 0.9fr 0.9fr 1fr 0.9fr; gap: 8px; align-items: start;">
+                        <div style="color: #aaa; font-size: 11px; position: relative;">
+                            <label class="partition-count-label" style="display: block; margin-bottom: 3px;">Partitions: 1</label>
+                            <input type="range" class="partition-count-slider" min="1" max="64" value="1" style="width: 100%; height: 10px; margin-top: 6px;">
+                        </div>
+                        <div style="color: #aaa; font-size: 11px;">
+                            <label style="display: block; margin-bottom: 3px;">Mode</label>
+                            <select class="partition-mode-select" style="width: 100%; padding: 5px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 11px;">
+                                <option value="sequence" selected>Sequence</option>
+                                <option value="grid">Grid</option>
+                                <option value="grouping">Grouping</option>
+                            </select>
+                        </div>
+                        <div style="color: #aaa; font-size: 11px;">
+                            <label style="display: block; margin-bottom: 3px;">Sample</label>
+                            <select class="partition-sample-select" style="width: 100%; padding: 5px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 11px;">
+                                <option value="assets/audio/kick1.wav">Kick 1</option>
+                                <option value="assets/audio/kick2.wav">Kick 2</option>
+                                <option value="assets/audio/kick3.wav">Kick 3</option>
+                                <option value="assets/audio/kick4.wav">Kick 4</option>
+                                <option value="assets/audio/snare1.wav">Snare 1</option>
+                                <option value="assets/audio/snare2.wav">Snare 2</option>
+                                <option value="assets/audio/snare3.wav">Snare 3</option>
+                                <option value="assets/audio/snare4.wav">Snare 4</option>
+                                <option value="assets/audio/hat1.wav">Hat 1</option>
+                                <option value="assets/audio/hat2.wav">Hat 2</option>
+                                <option value="assets/audio/hat3.wav">Hat 3</option>
+                                <option value="assets/audio/hat4.wav">Hat 4</option>
+                                <option value="assets/audio/perc1.wav">Perc 1</option>
+                                <option value="assets/audio/perc2.wav">Perc 2</option>
+                                <option value="assets/audio/perc3.wav">Perc 3</option>
+                                <option value="assets/audio/perc4.wav">Perc 4</option>
+                            </select>
+                        </div>
+                        <div style="color: #aaa; font-size: 11px;">
+                            <label style="display: block; margin-bottom: 3px;">Volume: <span class="partition-volume-value">-18 dB</span></label>
+                            <input type="range" class="partition-volume-slider" min="-40" max="0" value="-18" style="width: 100%; height: 10px; margin-top: 6px;">
+                        </div>
                     </div>
-                    <div class="partition-count" style="color: #aaa; font-size: 11px;">
-                        <label style="display: block; margin-bottom: 4px;">Partition into:</label>
-                        <input type="number" class="partition-count-input" value="4" min="1" max="64" style="width: 100%; padding: 5px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 11px; box-sizing: border-box;">
-                    </div>
-                    <div class="partition-distribution" style="color: #aaa; font-size: 11px; grid-column: span 2;">
-                        <label style="display: block; margin-bottom: 4px;">Distribution:</label>
-                        <select class="partition-distribution-select" style="width: 100%; padding: 5px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 11px;">
-                            <option value="euclidean">Euclidean (Maximally Even)</option>
-                            <option value="symmetric">Symmetric</option>
-                            <option value="random">Random</option>
-                            <option value="manual">Manual</option>
-                        </select>
+                    <div class="partition-preview" style="margin-top: 10px; padding: 10px; background: #111; border-radius: 4px; font-family: monospace; font-size: 11px; color: ${color}80;">
+                        [Partition blocks placeholder]
                     </div>
                 </div>
-                <div class="partition-preview" style="margin-top: 10px; padding: 8px; background: #111; border-radius: 4px; font-family: monospace; font-size: 11px; color: ${color}80;">
-                    Preview: [distribution will appear here]
+                <div class="partition-settings-panel" style="display: none; margin-top: 6px;">
+                    <div style="display: grid; grid-template-columns: 1fr 0.45fr 1fr; gap: 10px; align-items: start;">
+                        <div>
+                            <div style="color: #aaa; font-size: 11px; margin-bottom: 6px;">ADSR</div>
+                            <div class="partition-adsr-controls" style="display: flex; gap: 24px; flex-wrap: wrap; justify-content: center;"></div>
+                        </div>
+                        <div>
+                            <div style="color: #aaa; font-size: 10px; margin-bottom: 4px;">Pitch Shift</div>
+                            <div class="partition-transpose-controls" style="display: flex; justify-content: center; margin-top: 7px;"></div>
+                        </div>
+                        <div>
+                            <div style="color: #aaa; font-size: 10px; margin-bottom: 4px;">Filters</div>
+                            <div style="display: grid; gap: 4px;">
+                                <label style="color: #aaa; font-size: 10px;">
+                                    Hi-Pass (Hz)
+                                    <input type="number" class="partition-hipass-input" min="20" max="20000" value="20" style="width: 100%; margin-top: 3px; padding: 3px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 10px;">
+                                </label>
+                                <label style="color: #aaa; font-size: 10px;">
+                                    Lo-Pass (Hz)
+                                    <input type="number" class="partition-lopass-input" min="20" max="20000" value="20000" style="width: 100%; margin-top: 3px; padding: 3px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 10px;">
+                                </label>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         `;
@@ -711,6 +1010,84 @@ class PartitionsUI {
     updatePartitionOptions() {
         // Called when rhythm changes - update target options based on new layers
         this.populatePartitionsContent();
+    }
+
+    updatePartitionBlocks(preview, color, partitions, mode, rhythmInfo, layerIndex) {
+        if (!preview || !window.PartitionsBlocks) return;
+        const total = this.getPartitionMax(layerIndex, mode, rhythmInfo);
+        const { sizes, baseSize } = window.PartitionsBlocks.calculatePartitionSizes(total, partitions);
+        let mutedSet = new Set();
+        if (preview.dataset.mutedIndices) {
+            try {
+                const muted = JSON.parse(preview.dataset.mutedIndices);
+                if (Array.isArray(muted) && muted.length === sizes.length) {
+                    mutedSet = new Set(muted);
+                } else {
+                    preview.dataset.mutedIndices = '';
+                }
+            } catch (_) {
+                preview.dataset.mutedIndices = '';
+            }
+        }
+        let order = null;
+        if (preview.dataset.orderIndices) {
+            try {
+                const parsed = JSON.parse(preview.dataset.orderIndices);
+                if (Array.isArray(parsed) && parsed.length === sizes.length) {
+                    order = parsed;
+                } else {
+                    preview.dataset.orderIndices = '';
+                }
+            } catch (_) {
+                preview.dataset.orderIndices = '';
+            }
+        }
+
+        const render = () => {
+            window.PartitionsBlocks.renderBlocks(preview, sizes, baseSize, color, total, mutedSet, (index) => {
+                if (mutedSet.has(index)) {
+                    mutedSet.delete(index);
+                } else {
+                    mutedSet.add(index);
+                }
+                preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
+                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+                render();
+            }, order, (fromIndex, toIndex) => {
+                if (!order) {
+                    order = sizes.map((_, idx) => idx);
+                }
+                if (fromIndex === toIndex) return;
+                const moved = order.splice(fromIndex, 1)[0];
+                order.splice(toIndex, 0, moved);
+                preview.dataset.orderIndices = JSON.stringify(order);
+                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+                render();
+            });
+        };
+
+        render();
+    }
+
+    getPartitionMax(layerIndex, mode, rhythmInfo) {
+        if (!rhythmInfo) return 1;
+        const layers = rhythmInfo.displayLayers && rhythmInfo.displayLayers.length > 0
+            ? rhythmInfo.displayLayers
+            : rhythmInfo.layers || [];
+        const layerValue = layers[layerIndex] || 0;
+        if (mode === 'sequence') {
+            return Math.max(1, Math.floor(layerValue || 1));
+        }
+        if (mode === 'grouping') {
+            if (!layerValue) return 1;
+            return Math.max(1, Math.floor(rhythmInfo.grid / layerValue));
+        }
+        return Math.max(1, Math.floor(rhythmInfo.grid || 1));
+    }
+
+    getLayerColor(layerIndex) {
+        const colors = ['#ff6b6b', '#4ecdc4', '#00a638ff', '#f9ca24'];
+        return colors[layerIndex] || '#00ff88';
     }
 
     // ====================================

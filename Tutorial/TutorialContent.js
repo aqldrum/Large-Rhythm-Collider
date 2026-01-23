@@ -17,7 +17,7 @@ window.LRCTutorialSlides = [
             'Values can be input in any order, but will automatically sort greatest to least.',
             'The engine analyzes the polyrhythm and prepares it to generate audiovisual ouput.'
         ],
-        image: 'assets/rhythminput.png',
+        image: 'assets/images/rhythminput.png',
         imageAlt: 'Rhythm input panel'
     },
     {
@@ -30,7 +30,7 @@ window.LRCTutorialSlides = [
             'The Scale charts display conversions of these ratios to cents. There are 1200 cents in an octave, 100 for each half step in 12TET.',
             'Check out the Mathematical Foundation section of the About page for a step-by-step description of the serialization method.'
         ],
-        image: 'assets/rhythminfo2.png',
+        image: 'assets/images/rhythminfo2.png',
         imageAlt: 'Scale chart'
     },
     {
@@ -44,7 +44,7 @@ window.LRCTutorialSlides = [
             'Alongside general info, Export also allows you to download MIDI clips from each layer, along with tuning files for software synthesizers.',
             'Details on metrics, analysis and export can be found in Key Features.'
         ],
-        image: 'assets/rhythminfo.png',
+        image: 'assets/images/rhythminfo.png',
         imageAlt: 'Rhythm Info div'
     },
     {
@@ -57,7 +57,7 @@ window.LRCTutorialSlides = [
             'Master Volume has a final limiter and safe default, but be cautious when playing multiple layers at full volume.',
             'Use the simple global filters to carve out the sound as desired.'
         ],
-        image: 'assets/maincontrols2.png',
+        image: 'assets/images/maincontrols2.png',
         imageAlt: 'Main Controls section'
     },
     {
@@ -70,7 +70,7 @@ window.LRCTutorialSlides = [
             'The Legato button acts like a sustain pedal.',
             'Layers also have individual filters independent of the global filter.'
         ],
-        image: 'assets/layercontrols.png',
+        image: 'assets/images/layercontrols.png',
         imageAlt: 'Layer Controls panel'
     },
     {
@@ -83,7 +83,7 @@ window.LRCTutorialSlides = [
             'After running Interconsonance Analysis in Rhythm Info, you can select Families of notes instantly.',
             'Using Scale Selection disables the minimum cycle time restrictions.'
         ],
-        image: 'assets/scaleselection.png',
+        image: 'assets/images/scaleselection.png',
         imageAlt: 'Scale selection panel'
     },
     {
@@ -95,7 +95,7 @@ window.LRCTutorialSlides = [
             'The main canvas modes are controlled by the Visualizations module.',
             'Visit the Visualizations in Key Features to explore the specifics of each mode.',
         ],
-        image: 'assets/linearplot3.png',
+        image: 'assets/images/linearplot3.png',
         imageAlt: 'Linear plot display'
     },
     {
@@ -107,7 +107,7 @@ window.LRCTutorialSlides = [
             'Use Apply to send any rhythm result to the main Rhythm Input.',
             'Check the Search & Analysis section for an in-depth explanation of the search methods.',
         ],
-        image: 'assets/layersearch.png',
+        image: 'assets/images/layersearch.png',
         imageAlt: 'Layer value search input'
     },
     {
@@ -119,7 +119,7 @@ window.LRCTutorialSlides = [
             'Submit a rhythm with a vote endorsing its Playback or Visualizations. You can also vote on already-submitted rhythms.',
             'Have fun exploring the strange and beautiful universe of polyrhythms!'
         ],
-        image: 'assets/collectionsbrowse.png',
+        image: 'assets/images/collectionsbrowse.png',
         imageAlt: 'Collections browse tab'
     },
 ];
