@@ -79,7 +79,7 @@ window.LRCTutorialSlides = [
             'The Scale Selection panel lets you toggle individual notes on and off.',
             'The chart displays the appearance count for each ratio in the overall rhythm.',
             'Disabling a note in Scale Selection will also switch off its lights in the main Linear Plot.',
-            'Combine minimal Scale Selection with Legato mode to hear more minimal sustained harmonies.',
+            'Combine minimal Scale Selection with Legato mode to reduce the chaos to sparse, sustained harmonies.',
             'After running Interconsonance Analysis in Rhythm Info, you can select Families of notes instantly.',
             'Using Scale Selection disables the minimum cycle time restrictions.'
         ],

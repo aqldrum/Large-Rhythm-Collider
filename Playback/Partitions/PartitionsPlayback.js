@@ -26,6 +26,7 @@ class PartitionsPlayback {
         this.scheduleIntervalMs = 30;
         this.lookaheadSec = 0.2;
         this.schedulerTimer = null;
+        this.flashEpoch = 0;
 
         this.setupEventListeners();
         console.log('🥁 PartitionsPlayback initialized');
@@ -109,6 +110,8 @@ class PartitionsPlayback {
             this.schedulerTimer = null;
         }
         this.stopAllActiveSources();
+        window.partitionsBlockLights?.clearAll?.();
+        this.flashEpoch += 1;
     }
 
     handleTempoChange(detail = {}) {
@@ -128,6 +131,7 @@ class PartitionsPlayback {
         if (this.isRunning) {
             this.rescheduleFromNow();
         }
+        this.flashEpoch += 1;
     }
 
     rescheduleFromNow() {
@@ -136,6 +140,8 @@ class PartitionsPlayback {
         this.baseStartTime = this.audioContext.currentTime - (phaseMs / 1000);
         this.lastScheduledCycle = null;
         this.stopAllActiveSources();
+        window.partitionsBlockLights?.clearAll?.();
+        this.flashEpoch += 1;
     }
 
     refreshTiming() {
@@ -150,6 +156,7 @@ class PartitionsPlayback {
             this.baseStartTime = this.audioContext.currentTime - (phaseMs / 1000);
             this.lastScheduledCycle = null;
         }
+        this.flashEpoch += 1;
     }
 
     runScheduler() {
@@ -184,10 +191,20 @@ class PartitionsPlayback {
         const layerConfigs = this.getLayerConfigs();
         layerConfigs.forEach((config, layerIndex) => {
             if (!config.enabled) return;
-            const hitTicks = this.getHitTicks(config, rhythmInfo);
-            hitTicks.forEach((tick) => {
+            const { events, minDurationSec } = this.getHitEvents(config, rhythmInfo);
+            const shouldFlash = minDurationSec >= 0.01;
+            if (window.partitionsDebug && !shouldFlash) {
+                console.log('[PartitionsPlayback] Flash disabled (too fast)', {
+                    layerIndex,
+                    minDurationMs: Math.round(minDurationSec * 1000)
+                });
+            }
+            events.forEach(({ tick, displayIndex, durationSec }) => {
                 const time = cycleStartTime + (tick * this.secondsPerGrid);
                 this.triggerSample(config.sampleUrl, layerIndex, config.volumeDb, time);
+                if (shouldFlash) {
+                    this.scheduleFlash(layerIndex, displayIndex, time, durationSec);
+                }
             });
         });
     }
@@ -226,7 +243,7 @@ class PartitionsPlayback {
         return configs;
     }
 
-    getHitTicks(config, rhythmInfo) {
+    getHitEvents(config, rhythmInfo) {
         const { mode, partitions, mutedIndices, order } = config;
         const mutedSet = new Set(mutedIndices || []);
         const layers = rhythmInfo.displayLayers && rhythmInfo.displayLayers.length > 0
@@ -241,8 +258,20 @@ class PartitionsPlayback {
             const grouping = rhythmInfo.grid / layerValue;
             const { sizes } = PartitionsBlocks.calculatePartitionSizes(sequenceLength, partitions);
             const { orderedSizes, orderedIndices } = this.getOrderedSizes(sizes, order);
-            const hitIndices = this.getHitPositions(sequenceLength, orderedSizes, mutedSet, orderedIndices);
-            return hitIndices.map((seqIndex) => Math.round(seqIndex * grouping));
+            const events = this.getHitPositions(sequenceLength, orderedSizes, mutedSet, orderedIndices)
+                .map((event) => ({
+                    ...event,
+                    durationSec: event.size * grouping * this.secondsPerGrid
+                }));
+            const minDurationSec = this.getMinDurationSec(orderedSizes, grouping);
+            return {
+                events: events.map(({ tick, displayIndex, durationSec }) => ({
+                    tick: Math.round(tick * grouping),
+                    displayIndex,
+                    durationSec
+                })),
+                minDurationSec
+            };
         }
 
         if (mode === 'grouping' && layerValue > 0) {
@@ -251,16 +280,28 @@ class PartitionsPlayback {
             const { orderedSizes, orderedIndices } = this.getOrderedSizes(sizes, order);
             const groupHits = this.getHitPositions(grouping, orderedSizes, mutedSet, orderedIndices);
             const ticks = [];
+            const minDurationSec = this.getMinDurationSec(orderedSizes, 1);
             for (let i = 0; i < layerValue; i += 1) {
                 const base = i * grouping;
-                groupHits.forEach((hit) => ticks.push(base + hit));
+                groupHits.forEach((hit) => ticks.push({
+                    tick: base + hit.tick,
+                    displayIndex: hit.displayIndex,
+                    durationSec: hit.size * this.secondsPerGrid
+                }));
             }
-            return ticks;
+            return { events: ticks, minDurationSec };
         }
 
         const { sizes } = PartitionsBlocks.calculatePartitionSizes(rhythmInfo.grid, partitions);
         const { orderedSizes, orderedIndices } = this.getOrderedSizes(sizes, order);
-        return this.getHitPositions(rhythmInfo.grid, orderedSizes, mutedSet, orderedIndices);
+        return {
+            events: this.getHitPositions(rhythmInfo.grid, orderedSizes, mutedSet, orderedIndices)
+                .map((event) => ({
+                    ...event,
+                    durationSec: event.size * this.secondsPerGrid
+                })),
+            minDurationSec: this.getMinDurationSec(orderedSizes, 1)
+        };
     }
 
     getHitPositions(total, sizes, mutedSet = new Set(), orderedIndices = null) {
@@ -270,12 +311,41 @@ class PartitionsPlayback {
             if (cursor < total) {
                 const mutedIndex = orderedIndices ? orderedIndices[index] : index;
                 if (!mutedSet.has(mutedIndex)) {
-                    positions.push(cursor);
+                    positions.push({ tick: cursor, displayIndex: index, size });
                 }
             }
             cursor += size;
         });
         return positions;
+    }
+
+    getMinDurationSec(sizes, scale = 1) {
+        const minSize = sizes.reduce((min, size) => Math.min(min, size), Number.POSITIVE_INFINITY);
+        if (!Number.isFinite(minSize)) return 0;
+        return minSize * scale * this.secondsPerGrid;
+    }
+
+    scheduleFlash(layerIndex, displayIndex, time, durationSec = 0) {
+        if (!this.audioContext) return;
+        const now = this.audioContext.currentTime;
+        if (time <= now + 0.002) {
+            return;
+        }
+        const msUntil = Math.max(0, (time - now) * 1000);
+        const durationMs = Math.max(10, durationSec * 1000);
+        const epoch = this.flashEpoch;
+        if (window.partitionsDebug) {
+            console.log('[PartitionsPlayback] Flash scheduled', { layerIndex, displayIndex, msUntil, durationMs });
+        }
+        const timeoutId = setTimeout(() => {
+            if (this.flashEpoch !== epoch) {
+                window.partitionsBlockLights?.untrackTimeout?.(timeoutId);
+                return;
+            }
+            window.partitionsBlockLights?.flash?.(layerIndex, displayIndex, durationMs);
+            window.partitionsBlockLights?.untrackTimeout?.(timeoutId);
+        }, msUntil);
+        window.partitionsBlockLights?.trackTimeout?.(timeoutId);
     }
 
     getOrderedSizes(sizes, order) {

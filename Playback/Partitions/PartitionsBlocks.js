@@ -75,6 +75,7 @@ class PartitionsBlocks {
         orderedIndices.forEach((originalIndex, displayIndex) => {
             const size = sizes[originalIndex];
             const block = document.createElement('div');
+            block.className = 'partition-block';
             const isAltered = size !== baseSize;
             const isMuted = mutedSet.has(originalIndex);
             block.style.width = `${size * unitWidth}px`;
@@ -85,6 +86,10 @@ class PartitionsBlocks {
             block.title = `${size}`;
             block.draggable = true;
             block.dataset.displayIndex = String(displayIndex);
+            block.dataset.originalIndex = String(originalIndex);
+            block.dataset.muted = isMuted ? 'true' : 'false';
+            block.dataset.glowColor = isAltered ? color : '#e6e6e6';
+            block.dataset.baseBackground = block.style.background;
             block.addEventListener('dblclick', () => {
                 if (typeof onToggle === 'function') {
                     onToggle(originalIndex);

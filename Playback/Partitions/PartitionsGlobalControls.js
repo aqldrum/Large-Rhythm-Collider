@@ -227,10 +227,12 @@ class PartitionsGlobalControls {
             this.boundHandlers.cycleInput = (e) => {
                 playback.updateTempo(parseFloat(e.target.value), { syncInput: false });
                 this.syncOriginalControl('cycle-duration', e.target.value);
+                window.partitionsBlockLights?.clearAll?.();
             };
             this.boundHandlers.cycleSnap = () => {
                 playback.updateTempo(parseFloat(this.elements.cycleInput.value));
                 this.syncOriginalControl('cycle-duration', this.elements.cycleInput.value);
+                window.partitionsBlockLights?.clearAll?.();
             };
 
             this.elements.cycleInput.addEventListener('input', this.boundHandlers.cycleInput);

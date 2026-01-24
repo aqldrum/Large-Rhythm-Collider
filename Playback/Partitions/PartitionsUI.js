@@ -561,6 +561,28 @@ class PartitionsUI {
             }
         };
         window.addEventListener('resize', this.resizeHandler);
+
+        this.navigationGuardHandler = (event) => {
+            if (!this.isActive || !this.expandedContainer) return;
+            if (!this.expandedContainer.contains(event.target)) return;
+            if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+            const scrollContainer = event.target.closest('.partition-blocks-scroll');
+            if (!scrollContainer) {
+                event.preventDefault();
+                return;
+            }
+            const maxScroll = scrollContainer.scrollWidth - scrollContainer.clientWidth;
+            if (maxScroll <= 0) {
+                event.preventDefault();
+                return;
+            }
+            const atStart = scrollContainer.scrollLeft <= 0;
+            const atEnd = scrollContainer.scrollLeft >= maxScroll - 1;
+            if ((event.deltaX < 0 && atStart) || (event.deltaX > 0 && atEnd)) {
+                event.preventDefault();
+            }
+        };
+        document.addEventListener('wheel', this.navigationGuardHandler, { passive: false });
     }
 
     removeEventListeners() {
@@ -571,6 +593,10 @@ class PartitionsUI {
         if (this.resizeHandler) {
             window.removeEventListener('resize', this.resizeHandler);
             this.resizeHandler = null;
+        }
+        if (this.navigationGuardHandler) {
+            document.removeEventListener('wheel', this.navigationGuardHandler);
+            this.navigationGuardHandler = null;
         }
     }
 
@@ -787,9 +813,11 @@ class PartitionsUI {
             modeSelect.addEventListener('change', () => {
                 const forceValue = modeSelect.value === 'sequence' ? null : 1;
                 updateMax(forceValue);
+                window.partitionsBlockLights?.clearAll?.();
                 window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
             });
             slider.addEventListener('input', () => {
+                window.partitionsBlockLights?.clearAll?.();
                 window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
             });
             slider.addEventListener('dblclick', () => {
@@ -829,6 +857,7 @@ class PartitionsUI {
                     const clamped = Math.min(max, Math.max(min, Number.isFinite(raw) ? raw : slider.value));
                     slider.value = clamped;
                     updateValue();
+                    window.partitionsBlockLights?.clearAll?.();
                     if (input.parentElement) {
                         input.remove();
                     }
@@ -1188,6 +1217,7 @@ class PartitionsUI {
         const { sizes, baseSize } = window.PartitionsBlocks.calculatePartitionSizes(total, partitions);
         const partitionsValue = Number(partitions) || 1;
         const lastPartitions = Number(preview.dataset.lastPartitions || 0);
+        const lastBlockCount = Number(preview.dataset.lastBlockCount || 0);
         const lastMode = preview.dataset.lastMode || '';
         if (lastMode && lastMode !== mode) {
             preview.dataset.mutedIndices = '';
@@ -1215,8 +1245,14 @@ class PartitionsUI {
         } else if (partitionsValue <= 32 && lastPartitions > 32) {
             mutedSet = new Set();
             preview.dataset.mutedIndices = '';
+        } else if (partitionsValue > 32 && sizes.length > lastBlockCount) {
+            for (let i = lastBlockCount; i < sizes.length; i += 1) {
+                mutedSet.add(i);
+            }
+            preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
         }
         preview.dataset.lastPartitions = String(partitionsValue);
+        preview.dataset.lastBlockCount = String(sizes.length);
         let order = null;
         if (preview.dataset.orderIndices) {
             try {
@@ -1256,6 +1292,7 @@ class PartitionsUI {
 
         render();
     }
+
 
     getPartitionMax(layerIndex, mode, rhythmInfo) {
         if (!rhythmInfo) return 1;
