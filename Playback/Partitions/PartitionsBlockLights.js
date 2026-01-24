@@ -72,7 +72,21 @@ class PartitionsBlockLights {
         if (!track) {
             return;
         }
-        const block = track.children[displayIndex];
+        let resolvedIndex = displayIndex;
+        if (preview?.dataset?.p2DisplayMap) {
+            try {
+                const map = JSON.parse(preview.dataset.p2DisplayMap);
+                if (Array.isArray(map)) {
+                    resolvedIndex = map.indexOf(displayIndex);
+                }
+            } catch (_) {
+                // ignore
+            }
+        }
+        if (resolvedIndex < 0) {
+            return;
+        }
+        const block = track.children[resolvedIndex];
         if (!block) {
             return;
         }

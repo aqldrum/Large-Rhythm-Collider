@@ -48,10 +48,15 @@ class PartitionsPlayback {
             }
         });
         window.addEventListener('partitionsConfigChanged', () => {
-            if (this.isRunning) {
+            if (this.isRunning && this.hasEnabledLayers()) {
                 this.rescheduleFromNow();
             }
         });
+    }
+
+    hasEnabledLayers() {
+        const layers = document.querySelectorAll('.partition-layer');
+        return Array.from(layers).some((layer) => layer.dataset.enabled === 'true');
     }
 
     async initAudioContext() {
@@ -71,6 +76,15 @@ class PartitionsPlayback {
                 gain.gain.value = 1;
                 gain.connect(this.outputGain);
                 return gain;
+            });
+            const sliders = Array.from(document.querySelectorAll('.partition-volume-slider'));
+            sliders.forEach((slider, index) => {
+                const value = Number(slider.value);
+                if (!Number.isFinite(value)) return;
+                const gain = this.layerGains[index];
+                if (gain) {
+                    gain.gain.setValueAtTime(this.dbToLinear(value), this.audioContext.currentTime);
+                }
             });
             this.layerFilters = this.layerGains.map((gain) => {
                 const highpass = this.audioContext.createBiquadFilter();
@@ -216,7 +230,8 @@ class PartitionsPlayback {
             const enabled = layer.dataset.enabled === 'true';
             const linkedLayerIndex = Number(layer.dataset.linkedLayer ?? index);
             const mode = layer.querySelector('.partition-mode-select')?.value || 'grid';
-            const partitions = Number(layer.querySelector('.partition-count-slider')?.value || 1);
+            const partitions = Number(layer.querySelector('.partition-count-input-primary')?.value || 1);
+            const secondaryPartitions = Number(layer.querySelector('.partition-count-input-secondary')?.value || 0);
             const sampleUrl = layer.querySelector('.partition-sample-select')?.value || '';
             const volumeDb = Number(layer.querySelector('.partition-volume-slider')?.value || -18);
             const preview = layer.querySelector('.partition-preview');
@@ -238,14 +253,15 @@ class PartitionsPlayback {
                     // ignore
                 }
             }
-            configs.push({ enabled, mode, partitions, sampleUrl, volumeDb, layerIndex: index, linkedLayerIndex, mutedIndices: muted, order });
+            configs.push({ enabled, mode, partitions, secondaryPartitions, sampleUrl, volumeDb, layerIndex: index, linkedLayerIndex, mutedIndices: muted, order });
         });
         return configs;
     }
 
     getHitEvents(config, rhythmInfo) {
-        const { mode, partitions, mutedIndices, order } = config;
+        const { mode, partitions, secondaryPartitions, mutedIndices, order } = config;
         const mutedSet = new Set(mutedIndices || []);
+        const secondaryValue = Number.isFinite(secondaryPartitions) ? secondaryPartitions : 0;
         const layers = rhythmInfo.displayLayers && rhythmInfo.displayLayers.length > 0
             ? rhythmInfo.displayLayers
             : rhythmInfo.layers || [];
@@ -258,57 +274,49 @@ class PartitionsPlayback {
             const grouping = rhythmInfo.grid / layerValue;
             const { sizes } = PartitionsBlocks.calculatePartitionSizes(sequenceLength, partitions);
             const { orderedSizes, orderedIndices } = this.getOrderedSizes(sizes, order);
-            const events = this.getHitPositions(sequenceLength, orderedSizes, mutedSet, orderedIndices)
-                .map((event) => ({
-                    ...event,
-                    durationSec: event.size * grouping * this.secondsPerGrid
-                }));
-            const minDurationSec = this.getMinDurationSec(orderedSizes, grouping);
-            return {
-                events: events.map(({ tick, displayIndex, durationSec }) => ({
+            const allowedSet = this.getSecondaryAllowedSet(orderedSizes.length, secondaryValue);
+            const events = this.getHitPositions(sequenceLength, orderedSizes, mutedSet, orderedIndices, allowedSet)
+                .map(({ tick, displayIndex }) => ({
                     tick: Math.round(tick * grouping),
-                    displayIndex,
-                    durationSec
-                })),
-                minDurationSec
-            };
+                    displayIndex
+                }));
+            return this.computeEventDurations(events, rhythmInfo.grid);
         }
 
         if (mode === 'grouping' && layerValue > 0) {
             const grouping = Math.round(rhythmInfo.grid / layerValue);
             const { sizes } = PartitionsBlocks.calculatePartitionSizes(grouping, partitions);
             const { orderedSizes, orderedIndices } = this.getOrderedSizes(sizes, order);
-            const groupHits = this.getHitPositions(grouping, orderedSizes, mutedSet, orderedIndices);
+            const allowedSet = this.getSecondaryAllowedSet(orderedSizes.length, secondaryValue);
+            const groupHits = this.getHitPositions(grouping, orderedSizes, mutedSet, orderedIndices, allowedSet);
             const ticks = [];
-            const minDurationSec = this.getMinDurationSec(orderedSizes, 1);
             for (let i = 0; i < layerValue; i += 1) {
                 const base = i * grouping;
                 groupHits.forEach((hit) => ticks.push({
                     tick: base + hit.tick,
-                    displayIndex: hit.displayIndex,
-                    durationSec: hit.size * this.secondsPerGrid
+                    displayIndex: hit.displayIndex
                 }));
             }
-            return { events: ticks, minDurationSec };
+            return this.computeEventDurations(ticks, rhythmInfo.grid);
         }
 
         const { sizes } = PartitionsBlocks.calculatePartitionSizes(rhythmInfo.grid, partitions);
         const { orderedSizes, orderedIndices } = this.getOrderedSizes(sizes, order);
-        return {
-            events: this.getHitPositions(rhythmInfo.grid, orderedSizes, mutedSet, orderedIndices)
-                .map((event) => ({
-                    ...event,
-                    durationSec: event.size * this.secondsPerGrid
-                })),
-            minDurationSec: this.getMinDurationSec(orderedSizes, 1)
-        };
+        const allowedSet = this.getSecondaryAllowedSet(orderedSizes.length, secondaryValue);
+        const events = this.getHitPositions(rhythmInfo.grid, orderedSizes, mutedSet, orderedIndices, allowedSet)
+            .map(({ tick, displayIndex }) => ({ tick, displayIndex }));
+        return this.computeEventDurations(events, rhythmInfo.grid);
     }
 
-    getHitPositions(total, sizes, mutedSet = new Set(), orderedIndices = null) {
+    getHitPositions(total, sizes, mutedSet = new Set(), orderedIndices = null, allowedSet = null) {
         const positions = [];
         let cursor = 0;
         sizes.forEach((size, index) => {
             if (cursor < total) {
+                if (allowedSet && !allowedSet.has(index)) {
+                    cursor += size;
+                    return;
+                }
                 const mutedIndex = orderedIndices ? orderedIndices[index] : index;
                 if (!mutedSet.has(mutedIndex)) {
                     positions.push({ tick: cursor, displayIndex: index, size });
@@ -319,10 +327,38 @@ class PartitionsPlayback {
         return positions;
     }
 
-    getMinDurationSec(sizes, scale = 1) {
-        const minSize = sizes.reduce((min, size) => Math.min(min, size), Number.POSITIVE_INFINITY);
-        if (!Number.isFinite(minSize)) return 0;
-        return minSize * scale * this.secondsPerGrid;
+    computeEventDurations(events, totalTicks) {
+        if (!events.length) {
+            return { events: [], minDurationSec: 0 };
+        }
+        const total = Math.max(1, Math.floor(Number(totalTicks) || 1));
+        const withDurations = events.map((event, index) => {
+            const next = events[(index + 1) % events.length];
+            let durationTicks = ((next.tick - event.tick) + total) % total;
+            if (durationTicks === 0) durationTicks = total;
+            return {
+                ...event,
+                durationSec: durationTicks * this.secondsPerGrid
+            };
+        });
+        const minDurationSec = withDurations.reduce((min, event) => Math.min(min, event.durationSec), Number.POSITIVE_INFINITY);
+        return { events: withDurations, minDurationSec };
+    }
+
+    getSecondaryAllowedSet(stepCount, pulses) {
+        const steps = Math.max(1, Math.floor(Number(stepCount) || 1));
+        const pulseCount = Math.floor(Number(pulses) || 0);
+        if (!pulseCount) return null;
+        let pattern = PartitionsDistribution.generateEuclideanPattern(steps, pulseCount);
+        const firstOn = pattern.indexOf(1);
+        if (firstOn > 0) {
+            pattern = pattern.slice(firstOn).concat(pattern.slice(0, firstOn));
+        }
+        const allowed = new Set();
+        pattern.forEach((flag, index) => {
+            if (flag) allowed.add(index);
+        });
+        return allowed;
     }
 
     scheduleFlash(layerIndex, displayIndex, time, durationSec = 0) {
@@ -390,10 +426,6 @@ class PartitionsPlayback {
         envelope.gain.linearRampToValueAtTime(sustain, time + attack + decay);
         envelope.gain.setValueAtTime(sustain, time + attack + decay + sustainTime);
         envelope.gain.linearRampToValueAtTime(0, time + attack + decay + sustainTime + release);
-
-        if (gainNode) {
-            gainNode.gain.setValueAtTime(this.dbToLinear(volumeDb), time);
-        }
 
         source.playbackRate.setValueAtTime(playbackRate, time);
 
@@ -465,6 +497,14 @@ class PartitionsPlayback {
         if (!Number.isFinite(value)) return;
         if (typeof this.layerTranspose[layerIndex] !== 'number') return;
         this.layerTranspose[layerIndex] = value;
+    }
+
+    updateLayerVolume(layerIndex, volumeDb) {
+        if (!Number.isFinite(volumeDb)) return;
+        const gainNode = this.layerGains[layerIndex];
+        if (!gainNode || !this.audioContext) return;
+        const linear = this.dbToLinear(volumeDb);
+        gainNode.gain.setTargetAtTime(linear, this.audioContext.currentTime, 0.03);
     }
 }
 

@@ -780,95 +780,76 @@ class PartitionsUI {
         refreshUserSamples();
 
         this.leftSection.querySelectorAll('.partition-layer').forEach(layer => {
-            const slider = layer.querySelector('.partition-count-slider');
+            const p1Input = layer.querySelector('.partition-count-input-primary');
+            const p2Input = layer.querySelector('.partition-count-input-secondary');
             const label = layer.querySelector('.partition-count-label');
             const modeSelect = layer.querySelector('.partition-mode-select');
             const preview = layer.querySelector('.partition-preview');
             const layerIndex = Number(layer.getAttribute('data-layer-index'));
-            if (!slider || !label || !modeSelect || !preview || Number.isNaN(layerIndex)) return;
+            if (!p1Input || !p2Input || !label || !modeSelect || !preview || Number.isNaN(layerIndex)) return;
             const getLinkedColor = () => this.getLayerColor(Number(layer.dataset.linkedLayer ?? layerIndex));
+
+            const parseValue = (input) => {
+                const value = Number(input.value);
+                return Number.isFinite(value) ? Math.floor(value) : null;
+            };
+
+            const clampInput = (input, min, max, fallback) => {
+                const raw = parseValue(input);
+                if (raw == null) {
+                    if (fallback != null) input.value = fallback;
+                    return fallback ?? null;
+                }
+                const clamped = Math.min(max, Math.max(min, raw));
+                input.value = clamped;
+                return clamped;
+            };
 
             const updateMax = (forceValue = null) => {
                 const linkedLayerIndex = Number(layer.dataset.linkedLayer ?? layerIndex);
                 const max = this.getPartitionMax(linkedLayerIndex, modeSelect.value, rhythmInfo);
-                slider.max = max;
+                p1Input.max = max;
                 if (forceValue != null) {
-                    slider.value = forceValue;
+                    p1Input.value = forceValue;
                 } else if (modeSelect.value === 'sequence') {
-                    slider.value = max;
-                } else if (Number(slider.value) > max) {
-                    slider.value = max;
+                    p1Input.value = max;
+                } else if (Number(p1Input.value) > max) {
+                    p1Input.value = max;
                 }
-                label.textContent = `Partitions: ${slider.value}`;
-                this.updatePartitionBlocks(preview, getLinkedColor(), slider.value, modeSelect.value, rhythmInfo, layerIndex, linkedLayerIndex);
+                const p1Value = clampInput(p1Input, 1, max, 1);
+                p2Input.max = p1Value;
+                if (p2Input.value) {
+                    clampInput(p2Input, 1, p1Value, p2Input.value);
+                }
+                this.updatePartitionBlocks(preview, getLinkedColor(), p1Value, modeSelect.value, rhythmInfo, layerIndex, linkedLayerIndex, p2Input.value);
             };
 
             const updateValue = () => {
-                label.textContent = `Partitions: ${slider.value}`;
                 const linkedLayerIndex = Number(layer.dataset.linkedLayer ?? layerIndex);
-                this.updatePartitionBlocks(preview, getLinkedColor(), slider.value, modeSelect.value, rhythmInfo, layerIndex, linkedLayerIndex);
+                const max = this.getPartitionMax(linkedLayerIndex, modeSelect.value, rhythmInfo);
+                const p1Value = clampInput(p1Input, 1, max, p1Input.value || 1);
+                p2Input.max = p1Value;
+                if (p2Input.value) {
+                    clampInput(p2Input, 1, p1Value, p2Input.value);
+                }
+                this.updatePartitionBlocks(preview, getLinkedColor(), p1Value, modeSelect.value, rhythmInfo, layerIndex, linkedLayerIndex, p2Input.value);
             };
 
-            slider.addEventListener('input', updateValue);
+            p1Input.addEventListener('input', updateValue);
+            p2Input.addEventListener('input', updateValue);
             modeSelect.addEventListener('change', () => {
                 const forceValue = modeSelect.value === 'sequence' ? null : 1;
                 updateMax(forceValue);
                 window.partitionsBlockLights?.clearAll?.();
                 window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
             });
-            slider.addEventListener('input', () => {
+            p1Input.addEventListener('input', () => {
                 window.partitionsBlockLights?.clearAll?.();
                 window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
             });
-            slider.addEventListener('dblclick', () => {
-                const container = slider.closest('div');
-                if (!container) return;
-                if (container.querySelector('.partition-count-input')) return;
-                const input = document.createElement('input');
-                input.type = 'number';
-                input.className = 'partition-count-input';
-                input.min = slider.min;
-                input.max = slider.max;
-                input.value = slider.value;
-                input.style.cssText = `
-                    position: absolute;
-                    right: 0;
-                    top: 0;
-                    width: 48px;
-                    padding: 2px 4px;
-                    background: #111;
-                    color: #fff;
-                    border: 1px solid #444;
-                    border-radius: 3px;
-                    font-size: 10px;
-                    z-index: 2;
-                `;
-                container.appendChild(input);
-                input.focus();
-                input.select();
-
-                const commit = () => {
-                    if (commit.handled) return;
-                    commit.handled = true;
-                    if (!input.isConnected) return;
-                    const raw = parseFloat(input.value);
-                    const min = Number(slider.min) || 1;
-                    const max = Number(slider.max) || 64;
-                    const clamped = Math.min(max, Math.max(min, Number.isFinite(raw) ? raw : slider.value));
-                    slider.value = clamped;
-                    updateValue();
-                    window.partitionsBlockLights?.clearAll?.();
-                    if (input.parentElement) {
-                        input.remove();
-                    }
-                    window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
-                };
-
-                input.addEventListener('blur', commit, { once: true });
-                input.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter') commit();
-                    if (e.key === 'Escape' && input.isConnected) input.remove();
-                });
+            p2Input.addEventListener('input', () => {
+                window.partitionsBlockLights?.clearAll?.();
+                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
             });
 
             updateMax();
@@ -879,6 +860,11 @@ class PartitionsUI {
             const updateValue = () => {
                 if (label) {
                     label.textContent = `${slider.value} dB`;
+                }
+                const layer = slider.closest('.partition-layer');
+                const layerIndex = Number(layer?.dataset?.layerIndex);
+                if (Number.isFinite(layerIndex) && window.partitionsPlayback) {
+                    window.partitionsPlayback.updateLayerVolume(layerIndex, Number(slider.value));
                 }
             };
             slider.addEventListener('input', updateValue);
@@ -899,7 +885,8 @@ class PartitionsUI {
             const transposeContainer = layer.querySelector('.partition-transpose-controls');
             const hipassInput = layer.querySelector('.partition-hipass-input');
             const lopassInput = layer.querySelector('.partition-lopass-input');
-            const slider = layer.querySelector('.partition-count-slider');
+            const p1Input = layer.querySelector('.partition-count-input-primary');
+            const p2Input = layer.querySelector('.partition-count-input-secondary');
             const label = layer.querySelector('.partition-count-label');
             if (!title || !select) return;
             const updateTitle = () => {
@@ -916,23 +903,24 @@ class PartitionsUI {
             });
             updateTitle();
 
-            if (resetBtn && slider && label) {
+            if (resetBtn && p1Input && p2Input && label) {
                 resetBtn.addEventListener('click', () => {
                     const modeSelect = layer.querySelector('.partition-mode-select');
                     const linkedLayerIndex = Number(layer.dataset.linkedLayer ?? layer.dataset.layerIndex ?? layerIndex);
                     if (modeSelect && modeSelect.value === 'sequence') {
                         const max = this.getPartitionMax(linkedLayerIndex, modeSelect.value, rhythmInfo);
-                        slider.value = max;
+                        p1Input.value = max;
                     } else {
-                        slider.value = '1';
+                        p1Input.value = '1';
                     }
-                    label.textContent = `Partitions: ${slider.value}`;
+                    p2Input.value = '';
                     const preview = layer.querySelector('.partition-preview');
                     if (preview) {
                         preview.dataset.mutedIndices = '';
                         preview.dataset.orderIndices = '';
-                        this.updatePartitionBlocks(preview, this.getLayerColor(linkedLayerIndex), slider.value, modeSelect?.value || 'grid', rhythmInfo, Number(layer.dataset.layerIndex), linkedLayerIndex);
+                        this.updatePartitionBlocks(preview, this.getLayerColor(linkedLayerIndex), p1Input.value, modeSelect?.value || 'grid', rhythmInfo, Number(layer.dataset.layerIndex), linkedLayerIndex, p2Input.value);
                     }
+                    window.partitionsBlockLights?.clearAll?.();
                     window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
                 });
             }
@@ -1033,18 +1021,21 @@ class PartitionsUI {
 
             const preview = layer.querySelector('.partition-preview');
             const modeSelect = layer.querySelector('.partition-mode-select');
-            const slider = layer.querySelector('.partition-count-slider');
-            const label = layer.querySelector('.partition-count-label');
-            if (preview && modeSelect && slider && label) {
+            const p1Input = layer.querySelector('.partition-count-input-primary');
+            const p2Input = layer.querySelector('.partition-count-input-secondary');
+            if (preview && modeSelect && p1Input && p2Input) {
                 const max = this.getPartitionMax(linkedLayerIndex, modeSelect.value, rhythmInfo);
-                slider.max = max;
+                p1Input.max = max;
                 if (modeSelect.value === 'sequence') {
-                    slider.value = max;
-                } else if (Number(slider.value) > max) {
-                    slider.value = max;
+                    p1Input.value = max;
+                } else if (Number(p1Input.value) > max) {
+                    p1Input.value = max;
                 }
-                label.textContent = `Partitions: ${slider.value}`;
-                this.updatePartitionBlocks(preview, color, slider.value, modeSelect.value, rhythmInfo, Number(layer.dataset.layerIndex), linkedLayerIndex);
+                p2Input.max = Number(p1Input.value) || max;
+                if (p2Input.value && Number(p2Input.value) > Number(p2Input.max)) {
+                    p2Input.value = p2Input.max;
+                }
+                this.updatePartitionBlocks(preview, color, p1Input.value, modeSelect.value, rhythmInfo, Number(layer.dataset.layerIndex), linkedLayerIndex, p2Input.value);
             }
         };
 
@@ -1084,6 +1075,13 @@ class PartitionsUI {
     createPartitionLayerHTML(index, name, color) {
         const layerNames = ['A', 'B', 'C', 'D'];
         const layerName = layerNames[index] || name || 'A';
+        const defaultSamples = [
+            'assets/audio/kick1.wav',
+            'assets/audio/snare1.wav',
+            'assets/audio/hat1.wav',
+            'assets/audio/cym1.wav'
+        ];
+        const defaultSample = defaultSamples[index] || 'assets/audio/kick1.wav';
 
         return `
             <div class="partition-layer" data-layer-index="${index}" data-linked-layer="${index}" data-enabled="false" style="
@@ -1132,8 +1130,12 @@ class PartitionsUI {
                 <div class="partition-main-panel">
                     <div class="partition-layer-controls" style="display: grid; grid-template-columns: 0.9fr 0.9fr 1fr 0.9fr; gap: 8px; align-items: start;">
                         <div style="color: #aaa; font-size: 11px; position: relative;">
-                            <label class="partition-count-label" style="display: block; margin-bottom: 3px;">Partitions: 1</label>
-                            <input type="range" class="partition-count-slider" min="1" max="64" value="1" style="width: 100%; height: 10px; margin-top: 6px;">
+                            <label class="partition-count-label" style="display: block; margin-bottom: 3px;">Partitions</label>
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <input type="number" class="partition-count-input-primary" min="1" max="64" value="1" style="width: 52px; padding: 4px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 11px;">
+                                <span style="color: #666;">-</span>
+                                <input type="number" class="partition-count-input-secondary" min="1" max="64" value="" placeholder="" style="width: 52px; padding: 4px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 11px;">
+                            </div>
                         </div>
                         <div style="color: #aaa; font-size: 11px;">
                             <label style="display: block; margin-bottom: 3px;">Mode</label>
@@ -1146,26 +1148,26 @@ class PartitionsUI {
                         <div style="color: #aaa; font-size: 11px;">
                             <label style="display: block; margin-bottom: 3px;">Sample</label>
                             <select class="partition-sample-select" style="width: 100%; padding: 5px; background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 11px;">
-                                <option value="assets/audio/kick1.wav">Kick 1</option>
-                                <option value="assets/audio/kick2.wav">Kick 2</option>
-                                <option value="assets/audio/kick3.wav">Kick 3</option>
-                                <option value="assets/audio/kick4.wav">Kick 4</option>
-                                <option value="assets/audio/snare1.wav">Snare 1</option>
-                                <option value="assets/audio/snare2.wav">Snare 2</option>
-                                <option value="assets/audio/snare3.wav">Snare 3</option>
-                                <option value="assets/audio/snare4.wav">Snare 4</option>
-                                <option value="assets/audio/hat1.wav">Hat 1</option>
-                                <option value="assets/audio/hat2.wav">Hat 2</option>
-                                <option value="assets/audio/hat3.wav">Hat 3</option>
-                                <option value="assets/audio/hat4.wav">Hat 4</option>
-                                <option value="assets/audio/perc1.wav">Perc 1</option>
-                                <option value="assets/audio/perc2.wav">Perc 2</option>
-                                <option value="assets/audio/perc3.wav">Perc 3</option>
-                                <option value="assets/audio/perc4.wav">Perc 4</option>
-                                <option value="assets/audio/cym1.wav">Cym 1</option>
-                                <option value="assets/audio/cym2.wav">Cym 2</option>
-                                <option value="assets/audio/cym3.wav">Cym 3</option>
-                                <option value="assets/audio/cym4.wav">Cym 4</option>
+                                <option value="assets/audio/kick1.wav" ${defaultSample === 'assets/audio/kick1.wav' ? 'selected' : ''}>Kick 1</option>
+                                <option value="assets/audio/kick2.wav" ${defaultSample === 'assets/audio/kick2.wav' ? 'selected' : ''}>Kick 2</option>
+                                <option value="assets/audio/kick3.wav" ${defaultSample === 'assets/audio/kick3.wav' ? 'selected' : ''}>Kick 3</option>
+                                <option value="assets/audio/kick4.wav" ${defaultSample === 'assets/audio/kick4.wav' ? 'selected' : ''}>Kick 4</option>
+                                <option value="assets/audio/snare1.wav" ${defaultSample === 'assets/audio/snare1.wav' ? 'selected' : ''}>Snare 1</option>
+                                <option value="assets/audio/snare2.wav" ${defaultSample === 'assets/audio/snare2.wav' ? 'selected' : ''}>Snare 2</option>
+                                <option value="assets/audio/snare3.wav" ${defaultSample === 'assets/audio/snare3.wav' ? 'selected' : ''}>Snare 3</option>
+                                <option value="assets/audio/snare4.wav" ${defaultSample === 'assets/audio/snare4.wav' ? 'selected' : ''}>Snare 4</option>
+                                <option value="assets/audio/hat1.wav" ${defaultSample === 'assets/audio/hat1.wav' ? 'selected' : ''}>Hat 1</option>
+                                <option value="assets/audio/hat2.wav" ${defaultSample === 'assets/audio/hat2.wav' ? 'selected' : ''}>Hat 2</option>
+                                <option value="assets/audio/hat3.wav" ${defaultSample === 'assets/audio/hat3.wav' ? 'selected' : ''}>Hat 3</option>
+                                <option value="assets/audio/hat4.wav" ${defaultSample === 'assets/audio/hat4.wav' ? 'selected' : ''}>Hat 4</option>
+                                <option value="assets/audio/perc1.wav" ${defaultSample === 'assets/audio/perc1.wav' ? 'selected' : ''}>Perc 1</option>
+                                <option value="assets/audio/perc2.wav" ${defaultSample === 'assets/audio/perc2.wav' ? 'selected' : ''}>Perc 2</option>
+                                <option value="assets/audio/perc3.wav" ${defaultSample === 'assets/audio/perc3.wav' ? 'selected' : ''}>Perc 3</option>
+                                <option value="assets/audio/perc4.wav" ${defaultSample === 'assets/audio/perc4.wav' ? 'selected' : ''}>Perc 4</option>
+                                <option value="assets/audio/cym1.wav" ${defaultSample === 'assets/audio/cym1.wav' ? 'selected' : ''}>Cym 1</option>
+                                <option value="assets/audio/cym2.wav" ${defaultSample === 'assets/audio/cym2.wav' ? 'selected' : ''}>Cym 2</option>
+                                <option value="assets/audio/cym3.wav" ${defaultSample === 'assets/audio/cym3.wav' ? 'selected' : ''}>Cym 3</option>
+                                <option value="assets/audio/cym4.wav" ${defaultSample === 'assets/audio/cym4.wav' ? 'selected' : ''}>Cym 4</option>
                             </select>
                         </div>
                         <div style="color: #aaa; font-size: 11px;">
@@ -1211,11 +1213,13 @@ class PartitionsUI {
         this.populatePartitionsContent();
     }
 
-    updatePartitionBlocks(preview, color, partitions, mode, rhythmInfo, layerIndex, linkedLayerIndex = layerIndex) {
+    updatePartitionBlocks(preview, color, partitions, mode, rhythmInfo, layerIndex, linkedLayerIndex = layerIndex, p2Value = '') {
         if (!preview || !window.PartitionsBlocks) return;
         const total = this.getPartitionMax(linkedLayerIndex, mode, rhythmInfo);
         const { sizes, baseSize } = window.PartitionsBlocks.calculatePartitionSizes(total, partitions);
         const partitionsValue = Number(partitions) || 1;
+        const secondaryValue = Number(p2Value);
+        const hasSecondary = Number.isFinite(secondaryValue) && secondaryValue > 0;
         const lastPartitions = Number(preview.dataset.lastPartitions || 0);
         const lastBlockCount = Number(preview.dataset.lastBlockCount || 0);
         const lastMode = preview.dataset.lastMode || '';
@@ -1239,17 +1243,28 @@ class PartitionsUI {
                 preview.dataset.mutedIndices = '';
             }
         }
-        if (partitionsValue > 32 && lastPartitions <= 32) {
-            mutedSet = new Set(sizes.map((_, index) => index));
-            preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
-        } else if (partitionsValue <= 32 && lastPartitions > 32) {
-            mutedSet = new Set();
-            preview.dataset.mutedIndices = '';
-        } else if (partitionsValue > 32 && sizes.length > lastBlockCount) {
-            for (let i = lastBlockCount; i < sizes.length; i += 1) {
-                mutedSet.add(i);
+        if (!hasSecondary) {
+            if (partitionsValue > 32 && lastPartitions <= 32) {
+                mutedSet = new Set(sizes.map((_, index) => index));
+                preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
+            } else if (partitionsValue <= 32 && lastPartitions > 32) {
+                mutedSet = new Set();
+                preview.dataset.mutedIndices = '';
+            } else if (partitionsValue > 32 && sizes.length > lastBlockCount) {
+                for (let i = lastBlockCount; i < sizes.length; i += 1) {
+                    mutedSet.add(i);
+                }
+                preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
             }
-            preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
+            if (preview.dataset.p2MutedBackup) {
+                preview.dataset.mutedIndices = preview.dataset.p2MutedBackup;
+                preview.dataset.orderIndices = preview.dataset.p2OrderBackup || preview.dataset.orderIndices;
+                preview.dataset.p2MutedBackup = '';
+                preview.dataset.p2OrderBackup = '';
+            }
+        } else if (!preview.dataset.p2MutedBackup) {
+            preview.dataset.p2MutedBackup = preview.dataset.mutedIndices || '';
+            preview.dataset.p2OrderBackup = preview.dataset.orderIndices || '';
         }
         preview.dataset.lastPartitions = String(partitionsValue);
         preview.dataset.lastBlockCount = String(sizes.length);
@@ -1268,11 +1283,59 @@ class PartitionsUI {
         }
 
         const render = () => {
+            let visibleDisplayIndices = null;
+            let allowDrag = true;
+            if (hasSecondary && window.PartitionsDistribution) {
+                const steps = sizes.length;
+                const pulses = Math.min(steps, Math.floor(secondaryValue));
+                let pattern = window.PartitionsDistribution.generateEuclideanPattern(steps, pulses);
+                const firstOn = pattern.indexOf(1);
+                if (firstOn > 0) {
+                    pattern = pattern.slice(firstOn).concat(pattern.slice(0, firstOn));
+                }
+                const allowedDisplay = [];
+                pattern.forEach((flag, index) => {
+                    if (flag) allowedDisplay.push(index);
+                });
+                const orderIndices = Array.isArray(order) && order.length === sizes.length
+                    ? order
+                    : sizes.map((_, index) => index);
+                const allowedOriginal = new Set();
+                allowedDisplay.forEach((displayIndex) => {
+                    const originalIndex = orderIndices[displayIndex];
+                    if (Number.isFinite(originalIndex)) {
+                        allowedOriginal.add(originalIndex);
+                    }
+                });
+                visibleDisplayIndices = allowedDisplay;
+                allowDrag = false;
+                const p2Muted = preview.dataset.p2MutedIndices
+                    ? JSON.parse(preview.dataset.p2MutedIndices)
+                    : [];
+                const p2MutedSet = new Set(Array.isArray(p2Muted) ? p2Muted.filter((index) => allowedOriginal.has(index)) : []);
+                mutedSet = new Set(sizes.map((_, index) => index).filter((index) => !allowedOriginal.has(index)));
+                p2MutedSet.forEach((index) => mutedSet.add(index));
+                preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
+                preview.dataset.p2DisplayMap = JSON.stringify(visibleDisplayIndices);
+            } else {
+                preview.dataset.p2DisplayMap = '';
+                preview.dataset.p2MutedIndices = '';
+            }
             window.PartitionsBlocks.renderBlocks(preview, sizes, baseSize, color, total, mutedSet, (index) => {
                 if (mutedSet.has(index)) {
                     mutedSet.delete(index);
                 } else {
                     mutedSet.add(index);
+                }
+                if (hasSecondary) {
+                    const allowedIndices = new Set(JSON.parse(preview.dataset.p2DisplayMap || '[]').map((displayIndex) => {
+                        const orderIndices = Array.isArray(order) && order.length === sizes.length
+                            ? order
+                            : sizes.map((_, idx) => idx);
+                        return orderIndices[displayIndex];
+                    }));
+                    const p2Muted = Array.from(mutedSet).filter((idx) => allowedIndices.has(idx));
+                    preview.dataset.p2MutedIndices = JSON.stringify(p2Muted);
                 }
                 preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
                 window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
@@ -1287,7 +1350,7 @@ class PartitionsUI {
                 preview.dataset.orderIndices = JSON.stringify(order);
                 window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
                 render();
-            });
+            }, { visibleDisplayIndices, allowDrag });
         };
 
         render();

@@ -875,32 +875,24 @@ class LRCVisuals {
                 }
             });
             
-            // Draw connector lines between sequential positions for this layer
-            if (layerPositions.length > 1) {
+            // Filter to only visible positions (respect scale selection state)
+            const visiblePositions = layerPositions.filter(pos => !pos.isHiddenByScale);
+
+            // Draw connector lines between sequential visible positions for this layer
+            if (visiblePositions.length > 1) {
                 this.ctx.strokeStyle = connectorColor;
                 this.ctx.lineWidth = 1.5;
                 this.ctx.lineCap = 'round';
                 this.ctx.setLineDash([]); // Solid line
-                
-                // Handle hidden dots: only dim connector if ALL dots for this layer are hidden
-                const hiddenCount = layerPositions.filter(pos => pos.isHiddenByScale).length;
-                const allHidden = hiddenCount === layerPositions.length;
-                if (allHidden) {
-                    this.ctx.globalAlpha = 1.0;
-                    return;
-                }
-                
+
                 this.ctx.beginPath();
-                this.ctx.moveTo(layerPositions[0].x, layerPositions[0].y);
-                
-                for (let i = 1; i < layerPositions.length; i++) {
-                    this.ctx.lineTo(layerPositions[i].x, layerPositions[i].y);
+                this.ctx.moveTo(visiblePositions[0].x, visiblePositions[0].y);
+
+                for (let i = 1; i < visiblePositions.length; i++) {
+                    this.ctx.lineTo(visiblePositions[i].x, visiblePositions[i].y);
                 }
-                
+
                 this.ctx.stroke();
-                
-                // Reset alpha
-                this.ctx.globalAlpha = 1.0;
             }
         });
     }

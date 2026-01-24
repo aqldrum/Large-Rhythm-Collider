@@ -24,28 +24,41 @@ class PartitionsBlocks {
         return { sizes, baseSize };
     }
 
-    static renderBlocks(container, sizes, baseSize, color, totalUnits, mutedSet = new Set(), onToggle, order = null, onReorder) {
+    static renderBlocks(container, sizes, baseSize, color, totalUnits, mutedSet = new Set(), onToggle, order = null, onReorder, options = {}) {
         if (!container) return;
 
         const previousScroll = container.querySelector('.partition-blocks-scroll')?.scrollLeft || 0;
+        const { visibleDisplayIndices = null, allowDrag = true } = options;
 
         const gap = 4;
         const containerWidth = container.clientWidth || 0;
         const blockCount = sizes.length;
-        const unitCount = Math.max(1, Number(totalUnits) || 1);
+        const orderedIndices = Array.isArray(order) && order.length === sizes.length
+            ? order
+            : sizes.map((_, index) => index);
+        const displayIndices = Array.isArray(visibleDisplayIndices) && visibleDisplayIndices.length > 0
+            ? visibleDisplayIndices
+            : orderedIndices.map((_, index) => index);
+        const visibleCount = displayIndices.length;
+        const visibleUnits = displayIndices.reduce((sum, displayIndex) => {
+            const originalIndex = orderedIndices[displayIndex];
+            const size = sizes[originalIndex] || 0;
+            return sum + size;
+        }, 0);
+        const unitCount = Math.max(1, visibleUnits || Number(totalUnits) || 1);
 
         // Max 32 blocks visible at once; if fewer, they all fit in viewport
         const maxBlocksVisible = 32;
-        const blocksInView = Math.min(maxBlocksVisible, blockCount);
+        const blocksInView = Math.min(maxBlocksVisible, visibleCount);
 
         // Calculate block widths based on visible portion
         const totalGapsInView = Math.max(0, blocksInView - 1) * gap;
         const availableWidth = containerWidth ? (containerWidth - totalGapsInView - 12) : 0;
-        const unitsInView = unitCount * (blocksInView / blockCount);
+        const unitsInView = unitCount * (blocksInView / Math.max(1, visibleCount));
         const unitWidth = availableWidth && unitsInView ? (availableWidth / unitsInView) : 12;
 
         // Total track width for scrolling
-        const totalGaps = Math.max(0, blockCount - 1) * gap;
+        const totalGaps = Math.max(0, visibleCount - 1) * gap;
         const totalTrackWidth = unitCount * unitWidth + totalGaps + 12;
 
         container.innerHTML = `
@@ -69,10 +82,8 @@ class PartitionsBlocks {
                 }
             });
         }
-        const orderedIndices = Array.isArray(order) && order.length === sizes.length
-            ? order
-            : sizes.map((_, index) => index);
-        orderedIndices.forEach((originalIndex, displayIndex) => {
+        displayIndices.forEach((displayIndex) => {
+            const originalIndex = orderedIndices[displayIndex];
             const size = sizes[originalIndex];
             const block = document.createElement('div');
             block.className = 'partition-block';
@@ -84,7 +95,7 @@ class PartitionsBlocks {
             block.style.background = isMuted ? '#3a3a3a' : (isAltered ? color : '#e6e6e6');
             block.style.opacity = isMuted ? '0.5' : '0.9';
             block.title = `${size}`;
-            block.draggable = true;
+            block.draggable = allowDrag;
             block.dataset.displayIndex = String(displayIndex);
             block.dataset.originalIndex = String(originalIndex);
             block.dataset.muted = isMuted ? 'true' : 'false';
@@ -113,19 +124,21 @@ class PartitionsBlocks {
                 if (!event.shiftKey || !event.buttons) return;
                 maybeToggle(event);
             });
-            block.addEventListener('dragstart', (event) => {
-                event.dataTransfer.setData('text/plain', String(displayIndex));
-            });
-            block.addEventListener('dragover', (event) => {
-                event.preventDefault();
-            });
-            block.addEventListener('drop', (event) => {
-                event.preventDefault();
-                const fromIndex = Number(event.dataTransfer.getData('text/plain'));
-                const toIndex = displayIndex;
-                if (Number.isNaN(fromIndex) || typeof onReorder !== 'function') return;
-                onReorder(fromIndex, toIndex);
-            });
+            if (allowDrag) {
+                block.addEventListener('dragstart', (event) => {
+                    event.dataTransfer.setData('text/plain', String(displayIndex));
+                });
+                block.addEventListener('dragover', (event) => {
+                    event.preventDefault();
+                });
+                block.addEventListener('drop', (event) => {
+                    event.preventDefault();
+                    const fromIndex = Number(event.dataTransfer.getData('text/plain'));
+                    const toIndex = displayIndex;
+                    if (Number.isNaN(fromIndex) || typeof onReorder !== 'function') return;
+                    onReorder(fromIndex, toIndex);
+                });
+            }
             track.appendChild(block);
         });
 
