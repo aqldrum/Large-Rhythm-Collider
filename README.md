@@ -44,7 +44,7 @@ For an in-depth walkthrough of the concepts, features, and rich media gallery, r
   Computes least common multiples, composite rhythm sequences, palindromic spaces plots, nested ratio detection, and tuning serialization (ratios → frequencies → cents).
 
 - **Playback System (`Playback/`, Web Audio)**  
-  Orchestrated by `Playback/ToneRowPlayback.js` with focused modules for UI (`PlaybackMainUI`, `LayerControlsUI`, `ScaleSelectionUI`, `ConsonanceFamiliesUI`) and engine logic (`AudioEngine`, `Scheduler`). Handles envelopes, filters, scale selection, and tick-based scheduling.
+  Orchestrated by `Playback/ToneRowPlayback.js` with focused modules for UI (`PlaybackMainUI`, `LayerControlsUI`, `ScaleSelectionUI`, `ConsonanceFamiliesUI`) and engine logic (`AudioEngine`, `Scheduler`). Handles envelopes, filters, scale selection, and tick-based scheduling. Partitions engine offers sequenced drum accompaniment.
 
 - **Visualization Layer (`Visualizations/`)**  
   Individual renderers (Linear Plot, Centrifuge, Hinges, Collider, etc.) subscribe to rhythm state updates and translate structural data into canvases/SVG animations.

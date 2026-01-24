@@ -820,6 +820,8 @@ class PartitionsUI {
                 input.select();
 
                 const commit = () => {
+                    if (commit.handled) return;
+                    commit.handled = true;
                     if (!input.isConnected) return;
                     const raw = parseFloat(input.value);
                     const min = Number(slider.min) || 1;
@@ -827,7 +829,9 @@ class PartitionsUI {
                     const clamped = Math.min(max, Math.max(min, Number.isFinite(raw) ? raw : slider.value));
                     slider.value = clamped;
                     updateValue();
-                    input.remove();
+                    if (input.parentElement) {
+                        input.remove();
+                    }
                     window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
                 };
 
@@ -1182,12 +1186,22 @@ class PartitionsUI {
         if (!preview || !window.PartitionsBlocks) return;
         const total = this.getPartitionMax(linkedLayerIndex, mode, rhythmInfo);
         const { sizes, baseSize } = window.PartitionsBlocks.calculatePartitionSizes(total, partitions);
+        const partitionsValue = Number(partitions) || 1;
+        const lastPartitions = Number(preview.dataset.lastPartitions || 0);
+        const lastMode = preview.dataset.lastMode || '';
+        if (lastMode && lastMode !== mode) {
+            preview.dataset.mutedIndices = '';
+            preview.dataset.orderIndices = '';
+        }
+        preview.dataset.lastMode = mode;
+
         let mutedSet = new Set();
         if (preview.dataset.mutedIndices) {
             try {
                 const muted = JSON.parse(preview.dataset.mutedIndices);
-                if (Array.isArray(muted) && muted.length === sizes.length) {
-                    mutedSet = new Set(muted);
+                if (Array.isArray(muted)) {
+                    mutedSet = new Set(muted.filter((index) => index < sizes.length));
+                    preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
                 } else {
                     preview.dataset.mutedIndices = '';
                 }
@@ -1195,6 +1209,14 @@ class PartitionsUI {
                 preview.dataset.mutedIndices = '';
             }
         }
+        if (partitionsValue > 32 && lastPartitions <= 32) {
+            mutedSet = new Set(sizes.map((_, index) => index));
+            preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
+        } else if (partitionsValue <= 32 && lastPartitions > 32) {
+            mutedSet = new Set();
+            preview.dataset.mutedIndices = '';
+        }
+        preview.dataset.lastPartitions = String(partitionsValue);
         let order = null;
         if (preview.dataset.orderIndices) {
             try {
