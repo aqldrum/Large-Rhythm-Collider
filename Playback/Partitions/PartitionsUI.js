@@ -1184,11 +1184,11 @@ class PartitionsUI {
                             <div class="partition-adsr-controls" style="display: flex; gap: 24px; flex-wrap: wrap; justify-content: center;"></div>
                         </div>
                         <div>
-                            <div style="color: #aaa; font-size: 10px; margin-bottom: 4px;">Pitch Shift</div>
+                            <div style="color: #aaa; font-size: 11px; margin-bottom: 6px;">Pitch Shift</div>
                             <div class="partition-transpose-controls" style="display: flex; justify-content: center; margin-top: 7px;"></div>
                         </div>
                         <div>
-                            <div style="color: #aaa; font-size: 10px; margin-bottom: 4px;">Filters</div>
+                            <div style="color: #aaa; font-size: 11px; margin-bottom: 6px;">Filters</div>
                             <div style="display: grid; gap: 4px;">
                                 <label style="color: #aaa; font-size: 10px;">
                                     Hi-Pass (Hz)
