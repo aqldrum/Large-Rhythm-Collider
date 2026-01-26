@@ -47,11 +47,6 @@ class LRCHinges {
         // Tension/Expansion integration flags
         this.tensionModeEnabled = false;
         this.pendingTensionActivation = false;
-        
-        // Chain structure
-        this.nodes = [];
-        this.segments = [];
-        this.isConnected = false;
 
         // Force amplitude control
         this.forceAmplitude = 1.0; // Default scaling (middle of slider)

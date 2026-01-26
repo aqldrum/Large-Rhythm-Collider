@@ -230,8 +230,10 @@ class PartitionsPlayback {
             const enabled = layer.dataset.enabled === 'true';
             const linkedLayerIndex = Number(layer.dataset.linkedLayer ?? index);
             const mode = layer.querySelector('.partition-mode-select')?.value || 'grid';
-            const partitions = Number(layer.querySelector('.partition-count-input-primary')?.value || 1);
-            const secondaryPartitions = Number(layer.querySelector('.partition-count-input-secondary')?.value || 0);
+            const p1Input = layer.querySelector('.partition-count-input-primary');
+            const p2Input = layer.querySelector('.partition-count-input-secondary');
+            const partitions = Number(p1Input?.dataset?.committed || p1Input?.value || 1);
+            const secondaryPartitions = Number(p2Input?.dataset?.committed || p2Input?.value || 0);
             const sampleUrl = layer.querySelector('.partition-sample-select')?.value || '';
             const volumeDb = Number(layer.querySelector('.partition-volume-slider')?.value || -18);
             const preview = layer.querySelector('.partition-preview');

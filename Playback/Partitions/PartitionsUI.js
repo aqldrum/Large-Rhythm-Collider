@@ -682,12 +682,6 @@ class PartitionsUI {
                 ${this.createPartitionLayerHTML(2, 'Hi-Hat', '#00a638ff')}
                 ${this.createPartitionLayerHTML(3, 'Perc', '#f9ca24')}
             </div>
-
-            <div class="partitions-footer" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #333;">
-                <p style="color: #666; font-size: 11px; text-align: center; margin: 0;">
-                    Partition controls - UI scaffold. Playback engine coming next.
-                </p>
-            </div>
         `;
 
         const uploadBtn = this.leftSection.querySelector('.partitions-upload-samples-btn');
@@ -789,13 +783,21 @@ class PartitionsUI {
             if (!p1Input || !p2Input || !label || !modeSelect || !preview || Number.isNaN(layerIndex)) return;
             const getLinkedColor = () => this.getLayerColor(Number(layer.dataset.linkedLayer ?? layerIndex));
 
-            const parseValue = (input) => {
-                const value = Number(input.value);
-                return Number.isFinite(value) ? Math.floor(value) : null;
+            const parseValue = (value) => {
+                const num = Number(value);
+                return Number.isFinite(num) ? Math.floor(num) : null;
+            };
+
+            const getCommittedValue = (input, fallback) => {
+                const committed = parseValue(input.dataset.committed ?? '');
+                if (committed != null) return committed;
+                const current = parseValue(input.value);
+                if (current != null) return current;
+                return fallback;
             };
 
             const clampInput = (input, min, max, fallback) => {
-                const raw = parseValue(input);
+                const raw = parseValue(input.value);
                 if (raw == null) {
                     if (fallback != null) input.value = fallback;
                     return fallback ?? null;
@@ -803,6 +805,16 @@ class PartitionsUI {
                 const clamped = Math.min(max, Math.max(min, raw));
                 input.value = clamped;
                 return clamped;
+            };
+
+            const commitInput = (input, min, max, fallback) => {
+                const committed = clampInput(input, min, max, fallback);
+                if (committed != null) {
+                    input.dataset.committed = String(committed);
+                } else {
+                    input.dataset.committed = '';
+                }
+                return committed;
             };
 
             const updateMax = (forceValue = null) => {
@@ -816,38 +828,63 @@ class PartitionsUI {
                 } else if (Number(p1Input.value) > max) {
                     p1Input.value = max;
                 }
-                const p1Value = clampInput(p1Input, 1, max, 1);
+                const p1Value = commitInput(p1Input, 1, max, 1);
                 p2Input.max = p1Value;
                 if (p2Input.value) {
-                    clampInput(p2Input, 1, p1Value, p2Input.value);
+                    commitInput(p2Input, 1, p1Value, p2Input.value);
                 }
-                this.updatePartitionBlocks(preview, getLinkedColor(), p1Value, modeSelect.value, rhythmInfo, layerIndex, linkedLayerIndex, p2Input.value);
+                this.updatePartitionBlocks(preview, getLinkedColor(), p1Value, modeSelect.value, rhythmInfo, layerIndex, linkedLayerIndex, p2Input.dataset.committed || '');
             };
 
             const updateValue = () => {
                 const linkedLayerIndex = Number(layer.dataset.linkedLayer ?? layerIndex);
                 const max = this.getPartitionMax(linkedLayerIndex, modeSelect.value, rhythmInfo);
-                const p1Value = clampInput(p1Input, 1, max, p1Input.value || 1);
+                const p1Value = getCommittedValue(p1Input, 1);
                 p2Input.max = p1Value;
-                if (p2Input.value) {
-                    clampInput(p2Input, 1, p1Value, p2Input.value);
-                }
-                this.updatePartitionBlocks(preview, getLinkedColor(), p1Value, modeSelect.value, rhythmInfo, layerIndex, linkedLayerIndex, p2Input.value);
+                const p2Value = getCommittedValue(p2Input, '');
+                this.updatePartitionBlocks(preview, getLinkedColor(), p1Value, modeSelect.value, rhythmInfo, layerIndex, linkedLayerIndex, p2Value === '' ? '' : String(p2Value));
             };
 
-            p1Input.addEventListener('input', updateValue);
-            p2Input.addEventListener('input', updateValue);
+            const commitValue = () => {
+                const linkedLayerIndex = Number(layer.dataset.linkedLayer ?? layerIndex);
+                const max = this.getPartitionMax(linkedLayerIndex, modeSelect.value, rhythmInfo);
+                const p1Value = commitInput(p1Input, 1, max, 1);
+                p2Input.max = p1Value;
+                if (p2Input.value) {
+                    commitInput(p2Input, 1, p1Value, p2Input.value);
+                }
+                updateValue();
+                window.partitionsBlockLights?.clearAll?.();
+                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+            };
+            const handleKeydown = (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    commitValue();
+                    event.target.blur();
+                }
+            };
+            const clampOnInput = (input) => {
+                const max = Number(input.max);
+                const min = Number(input.min) || 1;
+                if (!input.value) return;
+                const raw = parseValue(input.value);
+                if (raw == null) return;
+                if (Number.isFinite(max) && raw > max) {
+                    input.value = max;
+                } else if (raw < min) {
+                    input.value = min;
+                }
+            };
+            p1Input.addEventListener('input', () => clampOnInput(p1Input));
+            p2Input.addEventListener('input', () => clampOnInput(p2Input));
+            p1Input.addEventListener('blur', commitValue);
+            p2Input.addEventListener('blur', commitValue);
+            p1Input.addEventListener('keydown', handleKeydown);
+            p2Input.addEventListener('keydown', handleKeydown);
             modeSelect.addEventListener('change', () => {
                 const forceValue = modeSelect.value === 'sequence' ? null : 1;
                 updateMax(forceValue);
-                window.partitionsBlockLights?.clearAll?.();
-                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
-            });
-            p1Input.addEventListener('input', () => {
-                window.partitionsBlockLights?.clearAll?.();
-                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
-            });
-            p2Input.addEventListener('input', () => {
                 window.partitionsBlockLights?.clearAll?.();
                 window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
             });
@@ -914,6 +951,8 @@ class PartitionsUI {
                         p1Input.value = '1';
                     }
                     p2Input.value = '';
+                    p1Input.dataset.committed = p1Input.value;
+                    p2Input.dataset.committed = '';
                     const preview = layer.querySelector('.partition-preview');
                     if (preview) {
                         preview.dataset.mutedIndices = '';
@@ -1035,7 +1074,9 @@ class PartitionsUI {
                 if (p2Input.value && Number(p2Input.value) > Number(p2Input.max)) {
                     p2Input.value = p2Input.max;
                 }
-                this.updatePartitionBlocks(preview, color, p1Input.value, modeSelect.value, rhythmInfo, Number(layer.dataset.layerIndex), linkedLayerIndex, p2Input.value);
+                p1Input.dataset.committed = String(p1Input.value || 1);
+                p2Input.dataset.committed = p2Input.value || '';
+                this.updatePartitionBlocks(preview, color, p1Input.dataset.committed, modeSelect.value, rhythmInfo, Number(layer.dataset.layerIndex), linkedLayerIndex, p2Input.dataset.committed);
             }
         };
 
