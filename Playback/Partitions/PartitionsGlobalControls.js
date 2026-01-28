@@ -117,7 +117,6 @@ class PartitionsGlobalControls {
                             border: 1px solid #444;
                             border-radius: 4px;
                             font-size: 11px;
-                            font-family: monospace;
                         ">
                     <span style="color: #666; font-size: 10px;">s</span>
                 </div>
@@ -136,7 +135,6 @@ class PartitionsGlobalControls {
                             border: 1px solid #444;
                             border-radius: 4px;
                             font-size: 11px;
-                            font-family: monospace;
                         ">
                     <span style="color: #666; font-size: 10px;">Hz</span>
                 </div>
@@ -168,7 +166,6 @@ class PartitionsGlobalControls {
                             border: 1px solid #444;
                             border-radius: 4px;
                             font-size: 11px;
-                            font-family: monospace;
                         ">
                 </div>
 
@@ -186,7 +183,6 @@ class PartitionsGlobalControls {
                             border: 1px solid #444;
                             border-radius: 4px;
                             font-size: 11px;
-                            font-family: monospace;
                         ">
                 </div>
             </div>

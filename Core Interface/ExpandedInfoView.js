@@ -79,11 +79,12 @@ class ExpandedInfoView {
         const canvas = document.getElementById('visualization-canvas');
         const container = canvas.parentElement;
         const containerWidth = container.clientWidth;
-        const aspectRatio = 2; // 2:1 aspect ratio
-        
-        // Use exact same calculation as LRCVisuals for consistency
+
         const logicalWidth = containerWidth;
-        const logicalHeight = logicalWidth / aspectRatio -20; // Include the -20px adjustment
+        // Use available vertical space for maximal screen usage
+        const titleBarHeight = 50;
+        const bottomBuffer = 80; // Space for floating panels
+        const logicalHeight = window.innerHeight - titleBarHeight - bottomBuffer;
         
         // Use existing EIV container from HTML instead of creating new one
         this.expandedContainer = document.getElementById('expanded-info-view');
@@ -1502,10 +1503,12 @@ class ExpandedInfoView {
         const canvas = document.getElementById('visualization-canvas');
         const container = canvas.parentElement;
         const containerWidth = container.clientWidth;
-        const aspectRatio = 2;
-        
+
         const logicalWidth = containerWidth;
-        const logicalHeight = logicalWidth / aspectRatio - 20;
+        // Use available vertical space for maximal screen usage
+        const titleBarHeight = 50;
+        const bottomBuffer = 80; // Space for floating panels
+        const logicalHeight = window.innerHeight - titleBarHeight - bottomBuffer;
         
         // Update only the dimensions
         this.expandedContainer.style.width = `${logicalWidth}px`;
