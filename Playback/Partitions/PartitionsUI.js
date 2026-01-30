@@ -10,6 +10,8 @@ class PartitionsUI {
         this.mirrorCtx = null;
         this.animationFrameId = null;
         this.originalPlaybackDisplay = null;
+        this.originalCanvasVisibility = null;
+        this.originalCanvasPointerEvents = null;
 
         // State management for proper cleanup
         this.stateBeforeExpansion = {
@@ -56,6 +58,7 @@ class PartitionsUI {
         this.setupLiveMirrorCanvas();
         this.populatePartitionsContent();
         this.hidePlaybackDiv();
+        this.hideVisualizationCanvas();
         this.setupEventListeners();
 
         console.log('🥁 Partitions view activated with live mirroring');
@@ -80,6 +83,7 @@ class PartitionsUI {
 
         // Restore playback div visibility
         this.restorePlaybackDiv();
+        this.restoreVisualizationCanvas();
 
         // Restore previous state
         this.restoreState();
@@ -541,6 +545,24 @@ class PartitionsUI {
         }
     }
 
+    hideVisualizationCanvas() {
+        const canvas = document.getElementById('visualization-canvas');
+        if (!canvas) return;
+        this.originalCanvasVisibility = canvas.style.visibility;
+        this.originalCanvasPointerEvents = canvas.style.pointerEvents;
+        canvas.style.visibility = 'hidden';
+        canvas.style.pointerEvents = 'none';
+    }
+
+    restoreVisualizationCanvas() {
+        const canvas = document.getElementById('visualization-canvas');
+        if (!canvas) return;
+        canvas.style.visibility = this.originalCanvasVisibility || '';
+        canvas.style.pointerEvents = this.originalCanvasPointerEvents || '';
+        this.originalCanvasVisibility = null;
+        this.originalCanvasPointerEvents = null;
+    }
+
     // ====================================
     // EVENT LISTENERS
     // ====================================
@@ -618,6 +640,18 @@ class PartitionsUI {
             this.expandedContainer.style.width = `${logicalWidth}px`;
             this.expandedContainer.style.height = `${logicalHeight}px`;
         }
+        this.resizeMirrorCanvas();
+    }
+
+    resizeMirrorCanvas() {
+        if (!this.canvasContainer || !this.mirrorCanvas) return;
+        const containerWidth = this.canvasContainer.clientWidth - 10;
+        const containerHeight = this.canvasContainer.clientHeight - 10;
+        if (containerWidth <= 0 || containerHeight <= 0) return;
+        if (this.mirrorCanvas.width === containerWidth && this.mirrorCanvas.height === containerHeight) return;
+        this.mirrorCanvas.width = containerWidth;
+        this.mirrorCanvas.height = containerHeight;
+        this.mirrorCtx = this.mirrorCanvas.getContext('2d');
     }
 
     updateTitle() {

@@ -47,23 +47,28 @@ class PartitionsBlocks {
         }, 0);
         const unitCount = Math.max(1, visibleUnits || Number(totalUnits) || 1);
 
-        // Max 32 blocks visible at once; if fewer, they all fit in viewport
+        // Max 32 blocks visible at once; beyond that, enable horizontal scrolling
         const maxBlocksVisible = 32;
-        const blocksInView = Math.min(maxBlocksVisible, visibleCount);
+        const needsScroll = visibleCount > maxBlocksVisible;
 
-        // Calculate block widths based on visible portion
-        const totalGapsInView = Math.max(0, blocksInView - 1) * gap;
-        const availableWidth = containerWidth ? (containerWidth - totalGapsInView - 12) : 0;
-        const unitsInView = unitCount * (blocksInView / Math.max(1, visibleCount));
-        const unitWidth = availableWidth && unitsInView ? (availableWidth / unitsInView) : 12;
+        let unitWidth = 12; // default fallback
+        let trackWidthStyle = '';
 
-        // Total track width for scrolling
-        const totalGaps = Math.max(0, visibleCount - 1) * gap;
-        const totalTrackWidth = unitCount * unitWidth + totalGaps + 12;
+        if (needsScroll) {
+            // For scrolling: calculate unitWidth so 32 blocks fit in viewport
+            const blocksInView = maxBlocksVisible;
+            const totalGapsInView = Math.max(0, blocksInView - 1) * gap;
+            const availableWidth = containerWidth ? (containerWidth - totalGapsInView - 12) : 0;
+            const unitsInView = unitCount * (blocksInView / Math.max(1, visibleCount));
+            unitWidth = availableWidth && unitsInView ? (availableWidth / unitsInView) : 12;
+            const totalGaps = Math.max(0, visibleCount - 1) * gap;
+            const totalTrackWidth = unitCount * unitWidth + totalGaps;
+            trackWidthStyle = `width: ${totalTrackWidth}px;`;
+        }
 
         container.innerHTML = `
-            <div class="partition-blocks-scroll" style="overflow-x: auto; overflow-y: hidden;">
-                <div class="partition-blocks-track" style="display: flex; gap: ${gap}px; align-items: center; padding: 6px; min-height: 34px; width: ${totalTrackWidth}px;"></div>
+            <div class="partition-blocks-scroll" style="overflow-x: ${needsScroll ? 'auto' : 'hidden'}; overflow-y: hidden;">
+                <div class="partition-blocks-track" style="display: flex; gap: ${gap}px; align-items: center; padding: 6px; min-height: 34px; ${trackWidthStyle}"></div>
             </div>
         `;
 
@@ -89,7 +94,12 @@ class PartitionsBlocks {
             block.className = 'partition-block';
             const isAltered = size !== baseSize;
             const isMuted = mutedSet.has(originalIndex);
-            block.style.width = `${size * unitWidth}px`;
+            if (needsScroll) {
+                block.style.width = `${size * unitWidth}px`;
+                block.style.flexShrink = '0';
+            } else {
+                block.style.flex = `${size} 0 0px`;
+            }
             block.style.height = '16px';
             block.style.borderRadius = '3px';
             block.style.background = isMuted ? '#3a3a3a' : (isAltered ? color : '#e6e6e6');

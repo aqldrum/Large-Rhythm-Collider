@@ -10,6 +10,8 @@ class ExpandedInfoView {
         this.originalVisualizationType = null;
         this.animationFrameId = null;
         this.originalRhythmInfoDisplay = null;
+        this.originalCanvasVisibility = null;
+        this.originalCanvasPointerEvents = null;
         
         // State management for proper cleanup
         this.stateBeforeExpansion = {
@@ -47,6 +49,7 @@ class ExpandedInfoView {
         this.setupLiveMirrorCanvas();
         this.populateExpandedContent();
         this.hideRhythmInfoDiv();
+        this.hideVisualizationCanvas();
         this.setupRhythmGenerationListener();
         this.setupWindowResizeListener();
         
@@ -63,6 +66,7 @@ class ExpandedInfoView {
         this.stopLiveMirror();
         this.removeExpandedLayout();
         this.restoreRhythmInfoDiv();
+        this.restoreVisualizationCanvas();
         this.restoreSystemState();
         this.removeRhythmGenerationListener();
         this.removeWindowResizeListener();
@@ -652,6 +656,24 @@ class ExpandedInfoView {
             rhythmInfoDiv.style.display = this.originalRhythmInfoDisplay || '';
             console.log('📊 Restored rhythm-info-div visibility');
         }
+    }
+
+    hideVisualizationCanvas() {
+        const canvas = document.getElementById('visualization-canvas');
+        if (!canvas) return;
+        this.originalCanvasVisibility = canvas.style.visibility;
+        this.originalCanvasPointerEvents = canvas.style.pointerEvents;
+        canvas.style.visibility = 'hidden';
+        canvas.style.pointerEvents = 'none';
+    }
+
+    restoreVisualizationCanvas() {
+        const canvas = document.getElementById('visualization-canvas');
+        if (!canvas) return;
+        canvas.style.visibility = this.originalCanvasVisibility || '';
+        canvas.style.pointerEvents = this.originalCanvasPointerEvents || '';
+        this.originalCanvasVisibility = null;
+        this.originalCanvasPointerEvents = null;
     }
 
     // Panels are now accessible via proper z-index layers - no repositioning needed
@@ -1513,6 +1535,18 @@ class ExpandedInfoView {
         // Update only the dimensions
         this.expandedContainer.style.width = `${logicalWidth}px`;
         this.expandedContainer.style.height = `${logicalHeight}px`;
+        this.resizeMirrorCanvas();
+    }
+
+    resizeMirrorCanvas() {
+        if (!this.canvasContainer || !this.mirrorCanvas) return;
+        const containerWidth = this.canvasContainer.clientWidth - 10;
+        const containerHeight = this.canvasContainer.clientHeight - 10;
+        if (containerWidth <= 0 || containerHeight <= 0) return;
+        if (this.mirrorCanvas.width === containerWidth && this.mirrorCanvas.height === containerHeight) return;
+        this.mirrorCanvas.width = containerWidth;
+        this.mirrorCanvas.height = containerHeight;
+        this.mirrorCtx = this.mirrorCanvas.getContext('2d');
     }
 
     setupDirectCollapsibleListeners() {
