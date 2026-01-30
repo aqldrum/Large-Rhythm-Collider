@@ -404,29 +404,24 @@
     
     <!-- Firebase SDK for Collections (optional - runs in demo mode without Firebase) -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
     <script src="Core Interface/firebase-config.js"></script>
     
-    <!-- Firebase Configuration (Replace with your own for production) -->
+    <!-- Firebase Configuration (production init + App Check) -->
     <script>
-        // Demo configuration - replace with your Firebase config for production
-        // The Collections system will run in demo mode (localStorage) if Firebase is not configured
-        /*
-        const firebaseConfig = {
-            apiKey: "your-api-key",
-            authDomain: "your-project.firebaseapp.com", 
-            projectId: "your-project-id",
-            storageBucket: "your-project.appspot.com",
-            messagingSenderId: "123456789",
-            appId: "your-app-id"
-        };
-        
-        // Uncomment to enable Firebase
-        // firebase.initializeApp(firebaseConfig);
-        */
-       
-        if (!window.firebaseConfig) {
+        if (window.firebaseConfig) {
+            if (firebase.apps.length === 0) {
+                firebase.initializeApp(window.firebaseConfig);
+            }
+            if (firebase.appCheck) {
+                const appCheck = firebase.appCheck();
+                appCheck.activate('6LdEvFssAAAAAEOOtyFa4cYkiYADERg9fiu-1Q9V', true);
+            } else {
+                console.warn('📊 App Check SDK not loaded; skipping App Check activation');
+            }
+        } else {
             console.log('📊 Collections: Firebase not configured - running in demo mode');
         }
     </script>

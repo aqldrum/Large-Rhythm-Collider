@@ -321,6 +321,9 @@
             if (!this.db) {
                 throw new Error('Firestore not initialized');
             }
+            if (!this.auth || !this.auth.currentUser) {
+                throw new Error('User must be authenticated to vote');
+            }
 
             const allowedCategories = this.allowedCategories();
             if (!allowedCategories.includes(category)) {
@@ -329,12 +332,20 @@
             }
 
             const docRef = this.db.collection('collections_rhythms').doc(docId);
+            const uid = this.auth.currentUser.uid;
+            const voteRef = docRef.collection('votes').doc(uid);
 
             // TODO: Enforce client-side rate limiting (e.g., localStorage timestamp) before hitting Firestore.
 
-            await docRef.update({
+            const batch = this.db.batch();
+            batch.set(voteRef, {
+                category,
+                votedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            batch.update(docRef, {
                 [`votes.${category}`]: firebase.firestore.FieldValue.increment(1)
             });
+            await batch.commit();
         }
 
         defaultVoteCategory() {
