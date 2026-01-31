@@ -19,6 +19,12 @@ class LRCHUDController {
         };
         
         this.lightsEnabled = true; // Track lightswitch state
+        this.scalePlaybackHighlightEnabled = true;
+        this.scaleHighlightDecayMs = 300;
+        this.scaleHighlightTimestamps = new Map();
+        this.scaleRowByFraction = new Map();
+        this.scaleHighlightAnimationId = null;
+        this.isPlaybackActive = false;
 
         this.mobileBreakpoint = window.matchMedia('(max-width: 900px)');
         this.isMobileModeActive = false;
@@ -53,6 +59,7 @@ class LRCHUDController {
         this.setupCollapsibleSections();
         this.setupVisualizationControls();
         this.setupPlaybackControls();
+        this.setupScalePlaybackHighlighting();
         
         // Set initial positions
         this.resetAllPositions();
@@ -801,6 +808,7 @@ class LRCHUDController {
         let html = `
             <div class="pitch-count-display">
                 <strong>${pitchCount} ${pitchCount === 1 ? 'Pitch' : 'Pitches'}</strong>
+                <button class="scale-light-toggle ${this.scalePlaybackHighlightEnabled ? 'active' : ''}" title="Toggle playback highlights" aria-pressed="${this.scalePlaybackHighlightEnabled ? 'true' : 'false'}" aria-label="Toggle playback highlights"></button>
             </div>
             <div class="scale-header">
                 <span class="scale-type">FUNDAMENTAL ${fundamentalDisplay}</span>
@@ -820,7 +828,7 @@ class LRCHUDController {
         ratios.forEach((ratio, index) => {
             const cents = ratio.cents ? ratio.cents.toFixed(1) : '0.0';
             html += `
-                <tr class="pitch-row" data-pitch-index="${index}" onclick="window.lrcHUD && window.lrcHUD.handlePitchSelection(${index})" style="cursor: pointer;">
+                <tr class="pitch-row" data-pitch-index="${index}" data-ratio-fraction="${ratio.fraction}" onclick="window.lrcHUD && window.lrcHUD.handlePitchSelection(${index})" style="cursor: pointer;">
                     <td class="ratio-cell">${ratio.fraction}</td>
                     <td class="cents-cell">${cents}</td>
                 </tr>
@@ -834,6 +842,8 @@ class LRCHUDController {
         `;
         
         scaleChart.innerHTML = html;
+        this.refreshScalePlaybackMapping();
+        this.setupScaleLightToggles();
         console.log('Scale chart updated with', ratios.length, 'ratios in table format');
     }
 
@@ -855,6 +865,152 @@ class LRCHUDController {
         }
         
         display.textContent = '[' + compositeRhythm.join(', ') + ']';
+    }
+
+    setupScalePlaybackHighlighting() {
+        window.addEventListener('playbackStarted', () => {
+            this.isPlaybackActive = true;
+            if (window.lrcInterconsonance && window.lrcInterconsonance.selectedPitch !== null) {
+                if (window.lrcInterconsonance.clearSelection) {
+                    window.lrcInterconsonance.clearSelection();
+                }
+            }
+        });
+
+        window.addEventListener('playbackStopped', () => {
+            this.isPlaybackActive = false;
+            this.clearScalePlaybackHighlights();
+        });
+
+        window.addEventListener('layerNoteTriggered', (e) => {
+            if (!this.isPlaybackActive || !this.scalePlaybackHighlightEnabled) return;
+            const ratioFraction = e?.detail?.ratioFraction;
+            let highlightKey = ratioFraction;
+            let rows = ratioFraction ? this.scaleRowByFraction.get(ratioFraction) : null;
+
+            if (!rows || rows.length === 0) {
+                const normalized = e?.detail?.ratioNormalized;
+                if (Number.isFinite(normalized) && window.lrcModule?.decimalToFraction) {
+                    const fallback = window.lrcModule.decimalToFraction(normalized);
+                    if (fallback) {
+                        highlightKey = fallback;
+                        const fallbackRows = this.scaleRowByFraction.get(fallback);
+                        if (fallbackRows && fallbackRows.length > 0) {
+                            rows = fallbackRows;
+                        }
+                    }
+                }
+            }
+
+            if (!rows || rows.length === 0) return;
+
+            this.scaleHighlightTimestamps.set(highlightKey, performance.now());
+            this.startScaleHighlightLoop();
+        });
+    }
+
+    setupScaleLightToggles() {
+        const toggles = document.querySelectorAll('.scale-light-toggle');
+        if (toggles.length === 0) return;
+
+        const applyState = () => {
+            toggles.forEach((toggle) => {
+                toggle.classList.toggle('active', this.scalePlaybackHighlightEnabled);
+                toggle.setAttribute('aria-pressed', String(this.scalePlaybackHighlightEnabled));
+                toggle.setAttribute(
+                    'aria-label',
+                    this.scalePlaybackHighlightEnabled ? 'Disable playback highlights' : 'Enable playback highlights'
+                );
+            });
+        };
+
+        toggles.forEach((toggle) => {
+            if (toggle.dataset.bound === 'true') return;
+            toggle.dataset.bound = 'true';
+            toggle.addEventListener('click', () => {
+                this.scalePlaybackHighlightEnabled = !this.scalePlaybackHighlightEnabled;
+                if (!this.scalePlaybackHighlightEnabled) {
+                    this.clearScalePlaybackHighlights();
+                }
+                applyState();
+            });
+        });
+
+        applyState();
+    }
+
+    refreshScalePlaybackMapping() {
+        this.scaleRowByFraction.clear();
+        const rows = document.querySelectorAll(
+            '#scale-chart .pitch-row[data-ratio-fraction], #expanded-info-view .pitch-row[data-ratio-fraction]'
+        );
+        rows.forEach((row) => {
+            const fraction = row.dataset.ratioFraction;
+            if (!fraction) return;
+            const list = this.scaleRowByFraction.get(fraction) || [];
+            list.push(row);
+            this.scaleRowByFraction.set(fraction, list);
+        });
+    }
+
+    startScaleHighlightLoop() {
+        if (this.scaleHighlightAnimationId) return;
+        this.scaleHighlightAnimationId = requestAnimationFrame(() => this.updateScalePlaybackHighlights());
+    }
+
+    updateScalePlaybackHighlights() {
+        this.scaleHighlightAnimationId = null;
+        if (!this.scalePlaybackHighlightEnabled) {
+            this.clearScalePlaybackHighlights();
+            return;
+        }
+
+        const now = performance.now();
+        let hasActive = false;
+
+        this.scaleHighlightTimestamps.forEach((timestamp, fraction) => {
+            const rows = this.scaleRowByFraction.get(fraction);
+            if (!rows || rows.length === 0) {
+                this.scaleHighlightTimestamps.delete(fraction);
+                return;
+            }
+
+            const age = now - timestamp;
+            if (age > this.scaleHighlightDecayMs) {
+                this.scaleHighlightTimestamps.delete(fraction);
+                rows.forEach((row) => this.clearScaleRowHighlight(row));
+                return;
+            }
+
+            const alpha = 1 - (age / this.scaleHighlightDecayMs);
+            rows.forEach((row) => this.applyScaleRowHighlight(row, alpha));
+            hasActive = true;
+        });
+
+        if (hasActive) {
+            this.scaleHighlightAnimationId = requestAnimationFrame(() => this.updateScalePlaybackHighlights());
+        }
+    }
+
+    applyScaleRowHighlight(row, alpha) {
+        row.classList.add('pitch-playback-highlight');
+        row.style.setProperty('--playback-alpha', alpha.toFixed(3));
+    }
+
+    clearScaleRowHighlight(row) {
+        row.classList.remove('pitch-playback-highlight');
+        row.style.removeProperty('--playback-alpha');
+    }
+
+    clearScalePlaybackHighlights() {
+        if (this.scaleHighlightAnimationId) {
+            cancelAnimationFrame(this.scaleHighlightAnimationId);
+            this.scaleHighlightAnimationId = null;
+        }
+        this.scaleHighlightTimestamps.clear();
+        this.scaleRowByFraction.forEach((rows) => {
+            rows.forEach((row) => this.clearScaleRowHighlight(row));
+        });
     }
 
     // ====================================
@@ -940,11 +1096,14 @@ class LRCHUDController {
         
         // Setup Centrifuge controls
         this.setupCentrifugeControls();
+
+        // Setup Wheel controls
+        this.setupWheelControls();
     }
     
     updateVisualizationSections(selectedType) {
         // Hide all sections first
-        const sections = ['linear-controls', 'centrifuge-controls', 'hinges-controls-section'];
+        const sections = ['linear-controls', 'wheel-controls', 'centrifuge-controls', 'hinges-controls-section'];
         sections.forEach(sectionId => {
             const section = document.getElementById(sectionId);
             if (section) {
@@ -957,6 +1116,9 @@ class LRCHUDController {
         switch(selectedType) {
             case 'linear':
                 targetSectionId = 'linear-controls';
+                break;
+            case 'wheel':
+                targetSectionId = 'wheel-controls';
                 break;
             case 'centrifuge':
                 targetSectionId = 'centrifuge-controls';
@@ -1014,6 +1176,45 @@ class LRCHUDController {
         
         const changeEvent = new Event('change', { bubbles: true });
         primary.dispatchEvent(changeEvent);
+    }
+
+    setupWheelControls() {
+        const slicesBtn = document.getElementById('wheel-slices-toggle');
+        if (!slicesBtn) return;
+
+        const applySlicesState = () => {
+            const enabled = slicesBtn.classList.contains('active');
+            slicesBtn.setAttribute('aria-pressed', String(enabled));
+            slicesBtn.setAttribute('aria-label', enabled ? 'Hide layer slices' : 'Show layer slices');
+
+            const wheel = window.lrcVisuals && window.lrcVisuals.wheel ? window.lrcVisuals.wheel : null;
+            if (wheel) {
+                wheel.setSlicesEnabled(enabled);
+                if (window.lrcVisuals.currentPlotType === 'wheel') {
+                    window.lrcVisuals.drawWheelPlot();
+                }
+            }
+        };
+
+        slicesBtn.setAttribute('aria-pressed', String(slicesBtn.classList.contains('active')));
+        slicesBtn.setAttribute('aria-label', slicesBtn.classList.contains('active') ? 'Hide layer slices' : 'Show layer slices');
+
+        slicesBtn.addEventListener('click', () => {
+            slicesBtn.classList.toggle('active');
+            applySlicesState();
+        });
+
+        window.addEventListener('rhythmGenerated', () => applySlicesState());
+
+        const waitForWheel = () => {
+            if (window.lrcVisuals && window.lrcVisuals.wheel) {
+                applySlicesState();
+            } else {
+                setTimeout(waitForWheel, 200);
+            }
+        };
+
+        waitForWheel();
     }
     
     setupHingesControls() {
@@ -1434,6 +1635,9 @@ class LRCHUDController {
 
     // Handle pitch selection with deselection support
     handlePitchSelection(pitchIndex) {
+        if (this.isPlaybackActive && this.scalePlaybackHighlightEnabled) {
+            return;
+        }
         // Check if this pitch is already selected (for deselection)
         const isAlreadySelected = window.lrcInterconsonance && 
                                  window.lrcInterconsonance.selectedPitch === pitchIndex;

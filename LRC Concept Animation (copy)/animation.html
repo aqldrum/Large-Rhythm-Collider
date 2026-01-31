@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LRC Tuning Animation</title>
+  <link rel="stylesheet" href="./animation.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="controls">
+      <div class="brand">
+        <div class="title">Large Rhythm Collider</div>
+        <div class="subtitle">Tuning Method</div>
+      </div>
+
+      <form id="rhythm-form" class="rhythm-form" autocomplete="off">
+        <div class="layer-row layer-a" data-layer="0">
+          <label for="layer-a">Layer A</label>
+          <input id="layer-a" name="layer-a" type="number" inputmode="numeric" min="1" placeholder="4" value="4" />
+        </div>
+        <div class="layer-row layer-b" data-layer="1">
+          <label for="layer-b">Layer B</label>
+          <input id="layer-b" name="layer-b" type="number" inputmode="numeric" min="1" placeholder="3" value="3" />
+        </div>
+        <div class="layer-row layer-c" data-layer="2">
+          <label for="layer-c">Layer C</label>
+          <input id="layer-c" name="layer-c" type="number" inputmode="numeric" min="1" placeholder="1" />
+        </div>
+        <div class="layer-row layer-d" data-layer="3">
+          <label for="layer-d">Layer D</label>
+          <input id="layer-d" name="layer-d" type="number" inputmode="numeric" min="1" placeholder="1" />
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="primary">Animate</button>
+          <button type="button" id="reset-btn">Reset</button>
+        </div>
+      </form>
+
+      <div class="status" id="status">Enter a rhythm to begin the sequence.</div>
+    </aside>
+
+    <main class="stage">
+      <canvas id="animation-canvas" aria-label="LRC animation canvas"></canvas>
+    </main>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+  <script src="../Core%20Interface/LRCModule.js"></script>
+  <script type="module" src="./AnimationSequence.js"></script>
+</body>
+</html>

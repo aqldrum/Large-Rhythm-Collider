@@ -937,9 +937,10 @@ class ExpandedInfoView {
         if (ratios && ratios.length > 0) {
             let html = `
                 <div class="subsection-header" style="color: #00ff88; font-size: 14px; margin: 0; padding: 10px 10px 5px 10px; font-weight: bold; background: #2a2a2a; border-bottom: 1px solid #444;">Scale</div>
-                <div style="padding: 10px;">
+                    <div style="padding: 10px;">
                     <div class="pitch-count-display">
                         <strong>${rhythmInfo.pitchCount} ${rhythmInfo.pitchCount === 1 ? 'Pitch' : 'Pitches'}</strong>
+                        <button class="scale-light-toggle ${window.lrcHUD?.scalePlaybackHighlightEnabled ? 'active' : ''}" title="Toggle playback highlights" aria-pressed="${window.lrcHUD?.scalePlaybackHighlightEnabled ? 'true' : 'false'}" aria-label="Toggle playback highlights"></button>
                     </div>
                     <div class="scale-header">
                         <span class="scale-type">FUNDAMENTAL ${Number.isFinite(rhythmInfo.fundamental) ? Math.round(rhythmInfo.fundamental).toLocaleString('en-US') : '—'}</span>
@@ -960,7 +961,7 @@ class ExpandedInfoView {
             ratios.forEach((ratio, index) => {
                 const cents = ratio.cents ? ratio.cents.toFixed(1) : '0.0';
                 html += `
-                    <tr class="pitch-row" data-pitch-index="${index}" onclick="window.expandedInfoView.selectPitch(${index})" style="cursor: pointer;">
+                    <tr class="pitch-row" data-pitch-index="${index}" data-ratio-fraction="${ratio.fraction}" onclick="window.expandedInfoView.selectPitch(${index})" style="cursor: pointer;">
                         <td class="ratio-cell">${ratio.fraction}</td>
                         <td class="cents-cell">${cents}</td>
                         <td class="count-cell">${ratio.frequency ?? 0}</td>
@@ -976,6 +977,12 @@ class ExpandedInfoView {
             `;
             
             this.scaleSection.innerHTML = html;
+            if (window.lrcHUD) {
+                window.lrcHUD.refreshScalePlaybackMapping();
+                if (window.lrcHUD.setupScaleLightToggles) {
+                    window.lrcHUD.setupScaleLightToggles();
+                }
+            }
         } else {
             this.scaleSection.innerHTML = `
                 <div class="subsection-header" style="color: #00ff88; font-size: 14px; margin: 0; padding: 10px 10px 5px 10px; font-weight: bold; background: #2a2a2a; border-bottom: 1px solid #444;">Scale</div>
@@ -2102,6 +2109,9 @@ class ExpandedInfoView {
     // ====================================
 
     selectPitch(pitchIndex) {
+        if (window.lrcHUD?.isPlaybackActive && window.lrcHUD?.scalePlaybackHighlightEnabled) {
+            return;
+        }
         // Check if this pitch is already selected (for deselection)
         const isAlreadySelected = window.lrcInterconsonance && 
                                  window.lrcInterconsonance.selectedPitch === pitchIndex;

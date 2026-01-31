@@ -58,6 +58,53 @@ class ScaleSelectionUI {
         this.playback.checkActiveFamilyIntegrity();
     }
 
+    selectConsonantNotes(ratioFraction) {
+        const ica = window.lrcInterconsonance;
+        if (!ica || !ica.pitchConsonanceMap || ica.pitchConsonanceMap.size === 0) {
+            console.log('⚠️ Interconsonance analysis not available — run ICA first');
+            return;
+        }
+
+        // Find the pitch index for this ratio fraction
+        let targetPitchIndex = null;
+        for (const [pitchIndex, data] of ica.pitchConsonanceMap) {
+            if (data.ratioFraction === ratioFraction) {
+                targetPitchIndex = pitchIndex;
+                break;
+            }
+        }
+
+        if (targetPitchIndex === null) return;
+
+        const pitchData = ica.pitchConsonanceMap.get(targetPitchIndex);
+        if (!pitchData) return;
+
+        // Collect the clicked note + all its consonant partners
+        this.playback.selectedNotes.clear();
+        this.playback.selectedNotes.add(ratioFraction);
+
+        pitchData.consonantWith.forEach(consonantIndex => {
+            const consonantData = ica.pitchConsonanceMap.get(consonantIndex);
+            if (consonantData) {
+                this.playback.selectedNotes.add(consonantData.ratioFraction);
+            }
+        });
+
+        this.updateScaleDisplay();
+        this.updateLinearPlotVisibility();
+        this.updateSelectedNotesCount();
+        this.playback.generateToneRowData();
+
+        if (this.playback.isPlaying) {
+            this.applyRealtimeNoteChanges();
+        }
+
+        this.dispatchSelectedNotesEvent();
+
+        console.log(`🎯 Consonance selection for ${ratioFraction}: ${this.playback.selectedNotes.size} notes selected`);
+        this.playback.checkActiveFamilyIntegrity();
+    }
+
     toggleNoteSelection(ratioFraction) {
         if (this.playback.selectedNotes.has(ratioFraction)) {
             this.playback.selectedNotes.delete(ratioFraction);
@@ -191,10 +238,22 @@ class ScaleSelectionUI {
         }
 
         container.querySelectorAll('.scale-row').forEach(row => {
+            let clickTimer = null;
             row.addEventListener('click', () => {
+                if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; return; }
+                clickTimer = setTimeout(() => {
+                    clickTimer = null;
+                    const ratioFraction = row.getAttribute('data-ratio');
+                    if (ratioFraction) {
+                        this.toggleNoteSelection(ratioFraction);
+                    }
+                }, 300);
+            });
+            row.addEventListener('dblclick', () => {
+                if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
                 const ratioFraction = row.getAttribute('data-ratio');
                 if (ratioFraction) {
-                    this.toggleNoteSelection(ratioFraction);
+                    this.selectConsonantNotes(ratioFraction);
                 }
             });
         });

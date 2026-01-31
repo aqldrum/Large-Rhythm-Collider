@@ -207,6 +207,7 @@
                     <label>Type:</label>
                     <select id="viz-type-selector">
                         <option value="linear">Linear Plot</option>
+                        <option value="wheel">Wheel</option>
                         <option value="centrifuge">Centrifuge</option>
                         <option value="hinges">Hinges</option>
                     </select>
@@ -223,6 +224,26 @@
                                 </button>
                                 <button id="layer-connectors-toggle" class="layer-connectors-btn" title="Toggle Layer Connectors">
                                     <span class="connectors-icon">🔗</span>
+                                </button>
+                            </div>
+                            <div class="layer-toggles">
+                                <button class="layer-toggle" data-layer="A">A</button>
+                                <button class="layer-toggle" data-layer="B">B</button>
+                                <button class="layer-toggle" data-layer="C">C</button>
+                                <button class="layer-toggle" data-layer="D">D</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Wheel Controls -->
+                <div class="viz-section" id="wheel-controls" style="display: none;">
+                    <div class="viz-section-header">Wheel</div>
+                    <div class="viz-section-content">
+                        <div class="linear-controls">
+                            <div class="linear-utility-buttons">
+                                <button id="wheel-slices-toggle" class="layer-connectors-btn" title="Toggle Layer Slices">
+                                    <span class="connectors-icon">🍕</span>
                                 </button>
                             </div>
                             <div class="layer-toggles">
@@ -456,6 +477,7 @@
     <script src="Visualizations/Hinges.js"></script>
     <script src="Visualizations/HingeExpand.js"></script>
     <script src="Visualizations/HingesAdvanced.js"></script>
+    <script src="Visualizations/Wheel.js"></script>
 
         <!-- Collider -->
         <script src="Collider/ColliderAudio.js"></script>

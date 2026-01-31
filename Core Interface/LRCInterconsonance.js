@@ -137,6 +137,34 @@ class LRCInterconsonance {
         });
     }
 
+    showLargeScaleWarning(pitchCount) {
+        return new Promise(resolve => {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:10000;';
+            overlay.innerHTML = `
+                <div style="background:rgba(20,20,20,0.95);border:1px solid rgba(100,100,100,0.3);border-radius:8px;padding:24px 28px;max-width:420px;color:#ffffff;font-family:inherit;text-align:center;">
+                    <div style="font-size:14px;font-weight:600;margin-bottom:12px;color:#00ff88;">Large Scale Warning</div>
+                    <div style="font-size:12px;line-height:1.5;margin-bottom:18px;color:#cccccc;">
+                        This scale has <strong style="color:#ffffff;">${pitchCount}</strong> pitches.
+                        The interval matrix can still be computed, but consonance family
+                        detection grows rapidly with scale size and may cause the
+                        interface to become unresponsive.
+                    </div>
+                    <div style="display:flex;gap:10px;justify-content:center;">
+                        <button id="ica-warn-cancel" style="padding:6px 16px;border-radius:4px;border:1px solid rgba(100,100,100,0.3);background:transparent;color:#cccccc;cursor:pointer;font-size:12px;">Cancel</button>
+                        <button id="ica-warn-skip" style="padding:6px 16px;border-radius:4px;border:none;background:#00ff88;color:#000000;cursor:pointer;font-size:12px;font-weight:600;">Skip Families</button>
+                        <button id="ica-warn-full" style="padding:6px 16px;border-radius:4px;border:none;background:#cc3333;color:#ffffff;cursor:pointer;font-size:12px;font-weight:600;">Full Analysis</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+            const cleanup = (result) => { overlay.remove(); resolve(result); };
+            overlay.querySelector('#ica-warn-cancel').addEventListener('click', () => cleanup('cancel'));
+            overlay.querySelector('#ica-warn-skip').addEventListener('click', () => cleanup('skip-families'));
+            overlay.querySelector('#ica-warn-full').addEventListener('click', () => cleanup('full'));
+        });
+    }
+
     async runAnalysis() {
         if (this.isAnalysisRunning) {
             console.log('Analysis already running');
@@ -151,19 +179,27 @@ class LRCInterconsonance {
 
         const ratios = window.lrcModule.currentRatios;
 
+        let skipFamilies = false;
+        if (ratios.length >= 200) {
+            const choice = await this.showLargeScaleWarning(ratios.length);
+            if (choice === 'cancel') return;
+            skipFamilies = choice === 'skip-families';
+        }
+
         console.log('🎵 Starting Interconsonance analysis for', ratios.length, 'ratios');
-        
+
         this.isAnalysisRunning = true;
         this.updateAnalyzeButton('Analyzing...');
 
         try {
             const analysis = this.analyzeRhythmScale(ratios);
-            const families = this.extractConsonanceFamilies(analysis);
+            const families = skipFamilies ? [] : this.extractConsonanceFamilies(analysis);
             
             this.currentAnalysis = {
                 analysis,
                 families,
-                ratios
+                ratios,
+                skipFamilies
             };
 
             this.displayResults();
@@ -645,7 +681,7 @@ class LRCInterconsonance {
                     </div>
                 </div>
             `;
-        } else {
+        } else if (!this.currentAnalysis.skipFamilies) {
             html += `
                 <div class="no-families">
                     <h4>No Consonance Families Found</h4>
