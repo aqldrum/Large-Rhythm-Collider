@@ -255,13 +255,22 @@ class PartitionsPlayback {
                     // ignore
                 }
             }
-            configs.push({ enabled, mode, partitions, secondaryPartitions, sampleUrl, volumeDb, layerIndex: index, linkedLayerIndex, mutedIndices: muted, order });
+            let p2Coverages = null;
+            if (preview?.dataset?.p2Coverages) {
+                try {
+                    const parsed = JSON.parse(preview.dataset.p2Coverages);
+                    if (Array.isArray(parsed) && parsed.length > 0) p2Coverages = parsed;
+                } catch (_) {
+                    // ignore
+                }
+            }
+            configs.push({ enabled, mode, partitions, secondaryPartitions, sampleUrl, volumeDb, layerIndex: index, linkedLayerIndex, mutedIndices: muted, order, p2Coverages });
         });
         return configs;
     }
 
     getHitEvents(config, rhythmInfo) {
-        const { mode, partitions, secondaryPartitions, mutedIndices, order } = config;
+        const { mode, partitions, secondaryPartitions, mutedIndices, order, p2Coverages } = config;
         const mutedSet = new Set(mutedIndices || []);
         const secondaryValue = Number.isFinite(secondaryPartitions) ? secondaryPartitions : 0;
         const layers = rhythmInfo.displayLayers && rhythmInfo.displayLayers.length > 0
@@ -270,6 +279,39 @@ class PartitionsPlayback {
         const layerIndex = config.layerIndex ?? 0;
         const linkedLayerIndex = Number.isFinite(config.linkedLayerIndex) ? config.linkedLayerIndex : layerIndex;
         const layerValue = layers[linkedLayerIndex] || 0;
+
+        if (Array.isArray(p2Coverages) && p2Coverages.length > 0) {
+            const { orderedSizes, orderedIndices } = this.getOrderedSizes(p2Coverages, order);
+            const coverageTotal = p2Coverages.reduce((sum, c) => sum + c, 0);
+
+            if (mode === 'sequence' && layerValue > 0) {
+                const grouping = rhythmInfo.grid / layerValue;
+                const events = this.getHitPositions(coverageTotal, orderedSizes, mutedSet, orderedIndices, null)
+                    .map(({ tick, displayIndex }) => ({
+                        tick: Math.round(tick * grouping),
+                        displayIndex
+                    }));
+                return this.computeEventDurations(events, rhythmInfo.grid);
+            }
+
+            if (mode === 'grouping' && layerValue > 0) {
+                const grouping = Math.round(rhythmInfo.grid / layerValue);
+                const groupHits = this.getHitPositions(coverageTotal, orderedSizes, mutedSet, orderedIndices, null);
+                const ticks = [];
+                for (let i = 0; i < layerValue; i += 1) {
+                    const base = i * grouping;
+                    groupHits.forEach((hit) => ticks.push({
+                        tick: base + hit.tick,
+                        displayIndex: hit.displayIndex
+                    }));
+                }
+                return this.computeEventDurations(ticks, rhythmInfo.grid);
+            }
+
+            const events = this.getHitPositions(coverageTotal, orderedSizes, mutedSet, orderedIndices, null)
+                .map(({ tick, displayIndex }) => ({ tick, displayIndex }));
+            return this.computeEventDurations(events, rhythmInfo.grid);
+        }
 
         if (mode === 'sequence' && layerValue > 0) {
             const sequenceLength = layerValue;

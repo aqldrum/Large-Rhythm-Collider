@@ -869,6 +869,8 @@ class PartitionsUI {
                 p2Input.max = p1Value;
                 if (p2Input.value) {
                     commitInput(p2Input, 1, p1Value, p2Input.value);
+                } else {
+                    p2Input.dataset.committed = '';
                 }
                 this.updatePartitionBlocks(preview, getLinkedColor(), p1Value, modeSelect.value, rhythmInfo, layerIndex, linkedLayerIndex, p2Input.dataset.committed || '');
             };
@@ -889,6 +891,8 @@ class PartitionsUI {
                 p2Input.max = p1Value;
                 if (p2Input.value) {
                     commitInput(p2Input, 1, p1Value, p2Input.value);
+                } else {
+                    p2Input.dataset.committed = '';
                 }
                 updateValue();
                 window.partitionsBlockLights?.clearAll?.();
@@ -994,6 +998,9 @@ class PartitionsUI {
                     if (preview) {
                         preview.dataset.mutedIndices = '';
                         preview.dataset.orderIndices = '';
+                        preview.dataset.p2MutedBackup = '';
+                        preview.dataset.p2OrderBackup = '';
+                        preview.dataset.p2Coverages = '';
                         this.updatePartitionBlocks(preview, this.getLayerColor(linkedLayerIndex), p1Input.value, modeSelect?.value || 'grid', rhythmInfo, Number(layer.dataset.layerIndex), linkedLayerIndex, p2Input.value);
                     }
                     window.partitionsBlockLights?.clearAll?.();
@@ -1307,12 +1314,16 @@ class PartitionsUI {
         }
         preview.dataset.lastMode = mode;
 
+        const p2Count = hasSecondary ? Math.min(sizes.length, Math.floor(secondaryValue)) : 0;
+        const activeL2 = hasSecondary && p2Count > 0;
+        const blockCount = activeL2 ? p2Count : sizes.length;
+
         let mutedSet = new Set();
         if (preview.dataset.mutedIndices) {
             try {
                 const muted = JSON.parse(preview.dataset.mutedIndices);
                 if (Array.isArray(muted)) {
-                    mutedSet = new Set(muted.filter((index) => index < sizes.length));
+                    mutedSet = new Set(muted.filter((index) => index < blockCount));
                     preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
                 } else {
                     preview.dataset.mutedIndices = '';
@@ -1321,36 +1332,50 @@ class PartitionsUI {
                 preview.dataset.mutedIndices = '';
             }
         }
-        if (!hasSecondary) {
-            if (partitionsValue > 32 && lastPartitions <= 32) {
-                mutedSet = new Set(sizes.map((_, index) => index));
-                preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
-            } else if (partitionsValue <= 32 && lastPartitions > 32) {
-                mutedSet = new Set();
-                preview.dataset.mutedIndices = '';
-            } else if (partitionsValue > 32 && sizes.length > lastBlockCount) {
-                for (let i = lastBlockCount; i < sizes.length; i += 1) {
-                    mutedSet.add(i);
-                }
-                preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
-            }
+        if (!activeL2) {
             if (preview.dataset.p2MutedBackup) {
                 preview.dataset.mutedIndices = preview.dataset.p2MutedBackup;
                 preview.dataset.orderIndices = preview.dataset.p2OrderBackup || preview.dataset.orderIndices;
                 preview.dataset.p2MutedBackup = '';
                 preview.dataset.p2OrderBackup = '';
+                preview.dataset.p2Coverages = '';
+                mutedSet = new Set();
+                if (preview.dataset.mutedIndices) {
+                    try {
+                        const muted = JSON.parse(preview.dataset.mutedIndices);
+                        if (Array.isArray(muted)) {
+                            mutedSet = new Set(muted.filter((index) => index < sizes.length));
+                        }
+                    } catch (_) { /* ignore */ }
+                }
+            } else {
+                if (partitionsValue > 32 && lastPartitions <= 32) {
+                    mutedSet = new Set(sizes.map((_, index) => index));
+                    preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
+                } else if (partitionsValue <= 32 && lastPartitions > 32) {
+                    mutedSet = new Set();
+                    preview.dataset.mutedIndices = '';
+                } else if (partitionsValue > 32 && sizes.length > lastBlockCount) {
+                    for (let i = lastBlockCount; i < sizes.length; i += 1) {
+                        mutedSet.add(i);
+                    }
+                    preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
+                }
             }
         } else if (!preview.dataset.p2MutedBackup) {
             preview.dataset.p2MutedBackup = preview.dataset.mutedIndices || '';
             preview.dataset.p2OrderBackup = preview.dataset.orderIndices || '';
+            preview.dataset.orderIndices = '';
+            preview.dataset.mutedIndices = '';
+            mutedSet = new Set();
         }
         preview.dataset.lastPartitions = String(partitionsValue);
-        preview.dataset.lastBlockCount = String(sizes.length);
+        preview.dataset.lastBlockCount = String(blockCount);
         let order = null;
         if (preview.dataset.orderIndices) {
             try {
                 const parsed = JSON.parse(preview.dataset.orderIndices);
-                if (Array.isArray(parsed) && parsed.length === sizes.length) {
+                if (Array.isArray(parsed) && parsed.length === blockCount) {
                     order = parsed;
                 } else {
                     preview.dataset.orderIndices = '';
@@ -1361,74 +1386,70 @@ class PartitionsUI {
         }
 
         const render = () => {
-            let visibleDisplayIndices = null;
-            let allowDrag = true;
-            if (hasSecondary && window.PartitionsDistribution) {
-                const steps = sizes.length;
-                const pulses = Math.min(steps, Math.floor(secondaryValue));
-                let pattern = window.PartitionsDistribution.generateEuclideanPattern(steps, pulses);
-                const firstOn = pattern.indexOf(1);
-                if (firstOn > 0) {
-                    pattern = pattern.slice(firstOn).concat(pattern.slice(0, firstOn));
+            if (activeL2 && window.PartitionsBlocks) {
+                let l1Order = null;
+                if (preview.dataset.p2OrderBackup) {
+                    try {
+                        const parsed = JSON.parse(preview.dataset.p2OrderBackup);
+                        if (Array.isArray(parsed) && parsed.length === sizes.length) {
+                            l1Order = parsed;
+                        }
+                    } catch (_) { /* identity */ }
                 }
-                const allowedDisplay = [];
-                pattern.forEach((flag, index) => {
-                    if (flag) allowedDisplay.push(index);
-                });
-                const orderIndices = Array.isArray(order) && order.length === sizes.length
-                    ? order
-                    : sizes.map((_, index) => index);
-                const allowedOriginal = new Set();
-                allowedDisplay.forEach((displayIndex) => {
-                    const originalIndex = orderIndices[displayIndex];
-                    if (Number.isFinite(originalIndex)) {
-                        allowedOriginal.add(originalIndex);
+                const coverages = window.PartitionsBlocks.computeL2Coverages(sizes, l1Order, sizes.length, p2Count);
+                if (!coverages || coverages.length === 0) return;
+                const blockColors = window.PartitionsBlocks.computeL2BlockColors(coverages, color);
+                const l2Total = coverages.reduce((sum, c) => sum + c, 0);
+                preview.dataset.p2Coverages = JSON.stringify(coverages);
+                preview.dataset.p2DisplayMap = '';
+                preview.dataset.p2MutedIndices = '';
+
+                window.PartitionsBlocks.renderBlocks(preview, coverages, 0, color, l2Total, mutedSet, (index) => {
+                    if (mutedSet.has(index)) {
+                        mutedSet.delete(index);
+                    } else {
+                        mutedSet.add(index);
                     }
-                });
-                visibleDisplayIndices = allowedDisplay;
-                allowDrag = false;
-                const p2Muted = preview.dataset.p2MutedIndices
-                    ? JSON.parse(preview.dataset.p2MutedIndices)
-                    : [];
-                const p2MutedSet = new Set(Array.isArray(p2Muted) ? p2Muted.filter((index) => allowedOriginal.has(index)) : []);
-                mutedSet = new Set(sizes.map((_, index) => index).filter((index) => !allowedOriginal.has(index)));
-                p2MutedSet.forEach((index) => mutedSet.add(index));
-                preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
-                preview.dataset.p2DisplayMap = JSON.stringify(visibleDisplayIndices);
+                    preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
+                    window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+                    render();
+                }, order, (fromIndex, toIndex) => {
+                    if (!order) {
+                        order = coverages.map((_, idx) => idx);
+                    }
+                    if (fromIndex === toIndex) return;
+                    const moved = order.splice(fromIndex, 1)[0];
+                    order.splice(toIndex, 0, moved);
+                    preview.dataset.orderIndices = JSON.stringify(order);
+                    window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+                    render();
+                }, { allowDrag: true, blockColors });
             } else {
                 preview.dataset.p2DisplayMap = '';
                 preview.dataset.p2MutedIndices = '';
+                preview.dataset.p2Coverages = '';
+
+                window.PartitionsBlocks.renderBlocks(preview, sizes, baseSize, color, total, mutedSet, (index) => {
+                    if (mutedSet.has(index)) {
+                        mutedSet.delete(index);
+                    } else {
+                        mutedSet.add(index);
+                    }
+                    preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
+                    window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+                    render();
+                }, order, (fromIndex, toIndex) => {
+                    if (!order) {
+                        order = sizes.map((_, idx) => idx);
+                    }
+                    if (fromIndex === toIndex) return;
+                    const moved = order.splice(fromIndex, 1)[0];
+                    order.splice(toIndex, 0, moved);
+                    preview.dataset.orderIndices = JSON.stringify(order);
+                    window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+                    render();
+                }, { allowDrag: true });
             }
-            window.PartitionsBlocks.renderBlocks(preview, sizes, baseSize, color, total, mutedSet, (index) => {
-                if (mutedSet.has(index)) {
-                    mutedSet.delete(index);
-                } else {
-                    mutedSet.add(index);
-                }
-                if (hasSecondary) {
-                    const allowedIndices = new Set(JSON.parse(preview.dataset.p2DisplayMap || '[]').map((displayIndex) => {
-                        const orderIndices = Array.isArray(order) && order.length === sizes.length
-                            ? order
-                            : sizes.map((_, idx) => idx);
-                        return orderIndices[displayIndex];
-                    }));
-                    const p2Muted = Array.from(mutedSet).filter((idx) => allowedIndices.has(idx));
-                    preview.dataset.p2MutedIndices = JSON.stringify(p2Muted);
-                }
-                preview.dataset.mutedIndices = JSON.stringify(Array.from(mutedSet));
-                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
-                render();
-            }, order, (fromIndex, toIndex) => {
-                if (!order) {
-                    order = sizes.map((_, idx) => idx);
-                }
-                if (fromIndex === toIndex) return;
-                const moved = order.splice(fromIndex, 1)[0];
-                order.splice(toIndex, 0, moved);
-                preview.dataset.orderIndices = JSON.stringify(order);
-                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
-                render();
-            }, { visibleDisplayIndices, allowDrag });
         };
 
         render();

@@ -24,11 +24,68 @@ class PartitionsBlocks {
         return { sizes, baseSize };
     }
 
+    static computeL2Coverages(l1Sizes, l1Order, p1Count, p2Count) {
+        if (!p2Count || p2Count <= 0 || !l1Sizes || l1Sizes.length === 0) {
+            return null;
+        }
+        const orderedSizes = Array.isArray(l1Order) && l1Order.length === l1Sizes.length
+            ? l1Order.map((origIdx) => l1Sizes[origIdx] || 0)
+            : l1Sizes.slice();
+        const { sizes: groupSizes } = PartitionsBlocks.calculatePartitionSizes(p1Count, p2Count);
+        const coverages = [];
+        let cursor = 0;
+        for (let g = 0; g < groupSizes.length; g++) {
+            let sum = 0;
+            for (let i = 0; i < groupSizes[g]; i++) {
+                if (cursor + i < orderedSizes.length) {
+                    sum += orderedSizes[cursor + i];
+                }
+            }
+            coverages.push(sum);
+            cursor += groupSizes[g];
+        }
+        return coverages;
+    }
+
+    static computeL2BlockColors(coverages, layerColor) {
+        const freq = new Map();
+        coverages.forEach((cov) => {
+            freq.set(cov, (freq.get(cov) || 0) + 1);
+        });
+        const sorted = [...new Set(coverages)]
+            .map((val) => ({ val, count: freq.get(val) }))
+            .sort((a, b) => b.count - a.count);
+        const rankMap = new Map();
+        let rank = 0;
+        for (let i = 0; i < sorted.length; i++) {
+            if (i > 0 && sorted[i].count < sorted[i - 1].count) {
+                rank++;
+            }
+            rankMap.set(sorted[i].val, rank);
+        }
+        const maxRank = rank;
+        const parseHex = (hex) => {
+            const h = hex.replace('#', '');
+            const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+            return [parseInt(n.slice(0, 2), 16), parseInt(n.slice(2, 4), 16), parseInt(n.slice(4, 6), 16)];
+        };
+        const white = [0xe6, 0xe6, 0xe6];
+        let target = white;
+        try { target = parseHex(layerColor); } catch (_) { /* fallback */ }
+        return coverages.map((cov) => {
+            const r = rankMap.get(cov) || 0;
+            if (maxRank === 0) return '#e6e6e6';
+            const t = r / maxRank;
+            const blend = (w, c) => Math.round(w + (c - w) * t);
+            return `rgb(${blend(white[0], target[0])}, ${blend(white[1], target[1])}, ${blend(white[2], target[2])})`;
+        });
+    }
+
     static renderBlocks(container, sizes, baseSize, color, totalUnits, mutedSet = new Set(), onToggle, order = null, onReorder, options = {}) {
         if (!container) return;
 
         const previousScroll = container.querySelector('.partition-blocks-scroll')?.scrollLeft || 0;
-        const { visibleDisplayIndices = null, allowDrag = true } = options;
+        const { visibleDisplayIndices = null, allowDrag = true, blockColors = null } = options;
 
         const gap = 4;
         const containerWidth = container.clientWidth || 0;
@@ -94,6 +151,8 @@ class PartitionsBlocks {
             block.className = 'partition-block';
             const isAltered = size !== baseSize;
             const isMuted = mutedSet.has(originalIndex);
+            const hasCustomColor = Array.isArray(blockColors) && typeof blockColors[originalIndex] === 'string';
+            const unmutedColor = hasCustomColor ? blockColors[originalIndex] : (isAltered ? color : '#e6e6e6');
             if (needsScroll) {
                 block.style.width = `${size * unitWidth}px`;
                 block.style.flexShrink = '0';
@@ -102,14 +161,14 @@ class PartitionsBlocks {
             }
             block.style.height = '16px';
             block.style.borderRadius = '3px';
-            block.style.background = isMuted ? '#3a3a3a' : (isAltered ? color : '#e6e6e6');
+            block.style.background = isMuted ? '#3a3a3a' : unmutedColor;
             block.style.opacity = isMuted ? '0.5' : '0.9';
             block.title = `${size}`;
             block.draggable = allowDrag;
             block.dataset.displayIndex = String(displayIndex);
             block.dataset.originalIndex = String(originalIndex);
             block.dataset.muted = isMuted ? 'true' : 'false';
-            block.dataset.glowColor = isAltered ? color : '#e6e6e6';
+            block.dataset.glowColor = unmutedColor;
             block.dataset.baseBackground = block.style.background;
             block.addEventListener('dblclick', () => {
                 if (typeof onToggle === 'function') {
