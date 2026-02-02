@@ -146,7 +146,7 @@ class LRCInterconsonance {
                     <div style="font-size:14px;font-weight:600;margin-bottom:12px;color:#00ff88;">Large Scale Warning</div>
                     <div style="font-size:12px;line-height:1.5;margin-bottom:18px;color:#cccccc;">
                         This scale has <strong style="color:#ffffff;">${pitchCount}</strong> pitches.
-                        The interval matrix can still be computed, but consonance family
+                        The interval matrix may still be computable, but consonance family
                         detection grows rapidly with scale size and may cause the
                         interface to become unresponsive.
                     </div>

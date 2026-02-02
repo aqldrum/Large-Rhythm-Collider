@@ -632,6 +632,151 @@ class LRCExport {
         });
     }
 
+    async exportPartitionsMIDI() {
+        if (!this.midiLibraryLoaded) {
+            console.error('📤 MIDI library not loaded');
+            return;
+        }
+
+        if (!window.partitionsPlayback) {
+            console.error('📤 PartitionsPlayback not available');
+            return;
+        }
+
+        if (!window.lrcModule) {
+            console.error('📤 LRCModule not available');
+            return;
+        }
+
+        const rhythmInfo = window.lrcModule.getRhythmInfoData();
+        if (!rhythmInfo || !rhythmInfo.grid) {
+            console.error('📤 Rhythm data not available for Partitions MIDI export');
+            return;
+        }
+
+        const cycleDuration = window.toneRowPlayback?.cycleDuration
+            || window.partitionsPlayback.cycleDuration
+            || 10;
+        if (!Number.isFinite(cycleDuration) || cycleDuration <= 0) {
+            console.error('📤 Invalid cycle duration for Partitions MIDI export');
+            return;
+        }
+
+        const grid = Math.max(1, Math.floor(Number(rhythmInfo.grid) || 1));
+        const secondsPerGrid = cycleDuration / grid;
+        const bpm = 60 / (secondsPerGrid * 4); // Grid tick = 16th note
+
+        const layerNames = ['A', 'B', 'C', 'D'];
+        const drumNotes = [36, 38, 42, 46];
+
+        const rhythmLayers = rhythmInfo.displayLayers && rhythmInfo.displayLayers.length > 0
+            ? rhythmInfo.displayLayers
+            : rhythmInfo.layers || [];
+
+        const configs = window.partitionsPlayback.getLayerConfigs?.();
+        if (!Array.isArray(configs) || configs.length === 0) {
+            console.error('📤 No Partitions layer configs available for export');
+            return;
+        }
+
+        const normalizeEvents = (events, mode, layerValue) => {
+            if (!events || events.length === 0) {
+                return { totalTicks: 0, events: [] };
+            }
+
+            if (mode === 'sequence') {
+                const totalTicks = Math.max(1, Math.floor(layerValue || 1));
+                if (!layerValue) return { totalTicks, events: [] };
+                const grouping = grid / layerValue;
+                const mapped = events.map((event) => ({
+                    ...event,
+                    tick: Math.round(event.tick / grouping)
+                })).filter((event) => event.tick >= 0 && event.tick < totalTicks);
+                return { totalTicks, events: mapped };
+            }
+
+            if (mode === 'grouping') {
+                if (!layerValue) return { totalTicks: 0, events: [] };
+                const grouping = Math.round(grid / layerValue);
+                const totalTicks = Math.max(1, grouping);
+                const mapped = events.filter((event) => event.tick >= 0 && event.tick < totalTicks)
+                    .map((event) => ({ ...event }));
+                return { totalTicks, events: mapped };
+            }
+
+            return { totalTicks: grid, events: events.map((event) => ({ ...event })) };
+        };
+
+        const computeDurations = (events, totalTicks) => {
+            if (!events || events.length === 0 || !totalTicks) return [];
+            const sorted = events.slice().sort((a, b) => a.tick - b.tick);
+            const deduped = [];
+            let lastTick = null;
+            sorted.forEach((event) => {
+                if (!Number.isFinite(event.tick)) return;
+                if (event.tick < 0 || event.tick >= totalTicks) return;
+                if (lastTick == null || event.tick !== lastTick) {
+                    deduped.push(event);
+                    lastTick = event.tick;
+                }
+            });
+            return deduped.map((event, index) => {
+                const next = deduped[index + 1];
+                const durationTicks = next
+                    ? Math.max(1, next.tick - event.tick)
+                    : Math.max(1, totalTicks - event.tick);
+                return {
+                    ...event,
+                    timeSec: event.tick * secondsPerGrid,
+                    durationSec: Math.max(0.001, durationTicks * secondsPerGrid)
+                };
+            });
+        };
+
+        configs.forEach((config, index) => {
+            if (!config?.enabled) return;
+
+            const hitData = window.partitionsPlayback.getHitEvents?.(config, rhythmInfo);
+            const events = hitData?.events || [];
+            if (!events.length) return;
+
+            const linkedLayerIndex = Number.isFinite(config.linkedLayerIndex)
+                ? config.linkedLayerIndex
+                : index;
+            const layerValue = rhythmLayers[linkedLayerIndex] || 0;
+            const mode = config.mode || 'grid';
+            const normalized = normalizeEvents(events, mode, layerValue);
+            const timedEvents = computeDurations(normalized.events, normalized.totalTicks);
+            if (!timedEvents.length) return;
+
+            const midi = new window.Midi();
+            midi.header.setTempo(bpm);
+
+            const track = midi.addTrack();
+            const layerName = layerNames[index] || `L${index + 1}`;
+            track.name = `Partitions ${layerName}`;
+
+            const midiNote = drumNotes[index] || 36;
+            timedEvents.forEach((event) => {
+                track.addNote({
+                    midi: midiNote,
+                    time: event.timeSec,
+                    duration: event.durationSec,
+                    velocity: 0.9
+                });
+            });
+
+            const partitionsValue = Number.isFinite(config.partitions) ? config.partitions : 1;
+            const secondaryValue = Number.isFinite(config.secondaryPartitions) ? config.secondaryPartitions : 0;
+            const secondarySuffix = secondaryValue
+                ? `_S${secondaryValue}`
+                : '';
+            const filename = `Partitions_Layer_${layerName}_${config.mode}_P${partitionsValue}${secondarySuffix}.mid`;
+            const blob = new Blob([midi.toArray()], { type: 'audio/midi' });
+            this.downloadBlob(blob, filename);
+        });
+    }
+
     // Note: We use existing spacesPlotByLayer from LRCModule instead of recalculating
 
     // CORRECTED - Ported from REFERENCE SCRIPT.js

@@ -30,6 +30,10 @@ class PartitionsUI {
         this.partitionLayers = [];
         this.samplesStore = null;
         this.userSampleUrls = new Map();
+        this.isLayoutBuilt = false;
+        this.needsRhythmReset = false;
+        this.rhythmGeneratedHandler = () => this.handleRhythmGenerated();
+        window.addEventListener('rhythmGenerated', this.rhythmGeneratedHandler);
 
         console.log('🥁 PartitionsUI initialized');
     }
@@ -54,9 +58,24 @@ class PartitionsUI {
         this.captureCurrentState();
 
         this.isActive = true;
-        this.createExpandedLayout();
+        if (!this.isLayoutBuilt) {
+            this.createExpandedLayout();
+            this.isLayoutBuilt = true;
+        } else if (this.expandedContainer) {
+            this.expandedContainer.style.display = 'flex';
+            this.attachLayerControls();
+            if (this.needsRhythmReset) {
+                this.updatePartitionOptions();
+                this.needsRhythmReset = false;
+            }
+            this.updateTitle();
+            this.handleResize();
+        }
         this.setupLiveMirrorCanvas();
-        this.populatePartitionsContent();
+        if (!this.leftSection || !this.leftSection.hasChildNodes()) {
+            this.populatePartitionsContent();
+            this.needsRhythmReset = false;
+        }
         this.hidePlaybackDiv();
         this.hideVisualizationCanvas();
         this.setupEventListeners();
@@ -78,8 +97,10 @@ class PartitionsUI {
         // Remove event listeners
         this.removeEventListeners();
 
-        // Remove the expanded layout
-        this.removeExpandedLayout();
+        this.restoreLayerControls();
+        if (this.expandedContainer) {
+            this.expandedContainer.style.display = 'none';
+        }
 
         // Restore playback div visibility
         this.restorePlaybackDiv();
@@ -89,8 +110,6 @@ class PartitionsUI {
         this.restoreState();
 
         this.isActive = false;
-        this.mirrorCanvas = null;
-        this.mirrorCtx = null;
 
         console.log('🥁 Partitions view deactivated');
     }
@@ -412,6 +431,7 @@ class PartitionsUI {
         this.layerControlsSection = null;
         this.layerControlsOriginalParent = null;
         this.layerControlsOriginalNextSibling = null;
+        this.isLayoutBuilt = false;
 
         console.log('📐 Partitions layout hidden and references cleared');
     }
@@ -426,15 +446,22 @@ class PartitionsUI {
             return;
         }
 
-        // Create mirror canvas that will display a live copy of the main canvas
-        this.mirrorCanvas = document.createElement('canvas');
-        this.mirrorCanvas.id = 'partitions-mirror-canvas';
-        this.mirrorCanvas.style.cssText = `
-            width: 100%;
-            height: 100%;
-            display: block;
-            background: #000000;
-        `;
+        const existingCanvas = this.canvasContainer.querySelector('#partitions-mirror-canvas');
+        if (existingCanvas) {
+            this.mirrorCanvas = existingCanvas;
+        }
+
+        if (!this.mirrorCanvas) {
+            // Create mirror canvas that will display a live copy of the main canvas
+            this.mirrorCanvas = document.createElement('canvas');
+            this.mirrorCanvas.id = 'partitions-mirror-canvas';
+            this.mirrorCanvas.style.cssText = `
+                width: 100%;
+                height: 100%;
+                display: block;
+                background: #000000;
+            `;
+        }
 
         // Get container dimensions and set canvas size
         const containerWidth = this.canvasContainer.clientWidth - 10;
@@ -446,7 +473,10 @@ class PartitionsUI {
         this.mirrorCtx = this.mirrorCanvas.getContext('2d');
 
         // Add mirror canvas to container
-        this.canvasContainer.appendChild(this.mirrorCanvas);
+        if (!existingCanvas) {
+            this.canvasContainer.innerHTML = '';
+            this.canvasContainer.appendChild(this.mirrorCanvas);
+        }
 
         // Start the live mirroring process
         this.startLiveMirror();
@@ -568,15 +598,6 @@ class PartitionsUI {
     // ====================================
 
     setupEventListeners() {
-        // Listen for rhythm generation to update partition options
-        this.rhythmGeneratedHandler = () => {
-            if (this.isActive) {
-                this.updatePartitionOptions();
-                this.updateTitle();
-            }
-        };
-        window.addEventListener('rhythmGenerated', this.rhythmGeneratedHandler);
-
         // Listen for window resize
         this.resizeHandler = () => {
             if (this.isActive) {
@@ -609,10 +630,6 @@ class PartitionsUI {
     }
 
     removeEventListeners() {
-        if (this.rhythmGeneratedHandler) {
-            window.removeEventListener('rhythmGenerated', this.rhythmGeneratedHandler);
-            this.rhythmGeneratedHandler = null;
-        }
         if (this.resizeHandler) {
             window.removeEventListener('resize', this.resizeHandler);
             this.resizeHandler = null;
@@ -620,6 +637,15 @@ class PartitionsUI {
         if (this.navigationGuardHandler) {
             document.removeEventListener('wheel', this.navigationGuardHandler);
             this.navigationGuardHandler = null;
+        }
+    }
+
+    handleRhythmGenerated() {
+        this.needsRhythmReset = true;
+        if (this.leftSection) {
+            this.updatePartitionOptions();
+            this.updateTitle();
+            this.needsRhythmReset = false;
         }
     }
 
@@ -698,16 +724,28 @@ class PartitionsUI {
                         <p style="margin: 0; font-size: 12px; color: #888;">Grid: ${rhythmInfo.grid} | Fundamental: ${rhythmInfo.fundamental}</p>
                     </div>
                     <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
-                        <button class="partitions-upload-samples-btn" style="
-                            background: #222;
-                            color: #00ff88;
-                            border: 1px solid #444;
-                            border-radius: 4px;
-                            padding: 4px 8px;
-                            font-size: 11px;
-                            cursor: pointer;
-                            white-space: nowrap;
-                        ">Upload Samples</button>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <button class="partitions-export-midi-btn" style="
+                                background: #222;
+                                color: #00ff88;
+                                border: 1px solid #444;
+                                border-radius: 4px;
+                                padding: 4px 8px;
+                                font-size: 11px;
+                                cursor: pointer;
+                                white-space: nowrap;
+                            ">Export MIDI</button>
+                            <button class="partitions-upload-samples-btn" style="
+                                background: #222;
+                                color: #00ff88;
+                                border: 1px solid #444;
+                                border-radius: 4px;
+                                padding: 4px 8px;
+                                font-size: 11px;
+                                cursor: pointer;
+                                white-space: nowrap;
+                            ">Upload Samples</button>
+                        </div>
                         <span class="partitions-upload-status" style="font-size: 11px; color: #777;">No user samples</span>
                     </div>
                 </div>
@@ -721,6 +759,7 @@ class PartitionsUI {
             </div>
         `;
 
+        const exportBtn = this.leftSection.querySelector('.partitions-export-midi-btn');
         const uploadBtn = this.leftSection.querySelector('.partitions-upload-samples-btn');
         const uploadStatus = this.leftSection.querySelector('.partitions-upload-status');
         const sampleSelects = Array.from(this.leftSection.querySelectorAll('.partition-sample-select'));
@@ -805,6 +844,16 @@ class PartitionsUI {
                     }
                 });
                 input.click();
+            });
+        }
+
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => {
+                if (!window.lrcExport || typeof window.lrcExport.exportPartitionsMIDI !== 'function') {
+                    console.error('📤 Partitions MIDI export not available');
+                    return;
+                }
+                window.lrcExport.exportPartitionsMIDI();
             });
         }
 

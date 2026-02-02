@@ -408,7 +408,7 @@ class PartitionsPlayback {
     scheduleFlash(layerIndex, displayIndex, time, durationSec = 0) {
         if (!this.audioContext) return;
         const now = this.audioContext.currentTime;
-        if (time <= now + 0.002) {
+        if (time < now - 0.005) {
             return;
         }
         const msUntil = Math.max(0, (time - now) * 1000);
@@ -439,9 +439,10 @@ class PartitionsPlayback {
     async triggerSample(url, layerIndex, volumeDb, time) {
         if (!url || !this.audioContext) return;
         const now = this.audioContext.currentTime;
-        if (time <= now + 0.002) {
+        if (time < now - 0.005) {
             return;
         }
+        const scheduleTime = Math.max(time, now + 0.001);
         const buffer = await this.loadSample(url);
         if (!buffer) return;
 
@@ -454,7 +455,7 @@ class PartitionsPlayback {
         const gainNode = this.layerGains[layerIndex] || this.outputGain;
         const filterChain = this.layerFilters[layerIndex];
         const envelope = this.audioContext.createGain();
-        envelope.gain.setValueAtTime(0, time);
+        envelope.gain.setValueAtTime(0, scheduleTime);
         const transpose = this.layerTranspose[layerIndex] ?? 0;
         const playbackRate = Math.pow(2, transpose / 12);
         const adsr = this.layerADSR[layerIndex] || this.layerADSR[0];
@@ -465,13 +466,13 @@ class PartitionsPlayback {
         const duration = buffer.duration || 0;
         const sustainTime = Math.max(0, duration - attack - decay - release);
 
-        envelope.gain.setValueAtTime(0, time);
-        envelope.gain.linearRampToValueAtTime(1, time + attack);
-        envelope.gain.linearRampToValueAtTime(sustain, time + attack + decay);
-        envelope.gain.setValueAtTime(sustain, time + attack + decay + sustainTime);
-        envelope.gain.linearRampToValueAtTime(0, time + attack + decay + sustainTime + release);
+        envelope.gain.setValueAtTime(0, scheduleTime);
+        envelope.gain.linearRampToValueAtTime(1, scheduleTime + attack);
+        envelope.gain.linearRampToValueAtTime(sustain, scheduleTime + attack + decay);
+        envelope.gain.setValueAtTime(sustain, scheduleTime + attack + decay + sustainTime);
+        envelope.gain.linearRampToValueAtTime(0, scheduleTime + attack + decay + sustainTime + release);
 
-        source.playbackRate.setValueAtTime(playbackRate, time);
+        source.playbackRate.setValueAtTime(playbackRate, scheduleTime);
 
         source.connect(envelope);
         if (filterChain && gainNode) {
@@ -482,8 +483,8 @@ class PartitionsPlayback {
             envelope.connect(this.audioContext.destination);
         }
 
-        source.start(time);
-        source.stop(time + Math.max(0.01, attack + decay + sustainTime + release + 0.01));
+        source.start(scheduleTime);
+        source.stop(scheduleTime + Math.max(0.01, attack + decay + sustainTime + release + 0.01));
     }
 
     async loadSample(url) {
