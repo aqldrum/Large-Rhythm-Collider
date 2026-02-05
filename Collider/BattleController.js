@@ -43,47 +43,74 @@ class BattleController {
     // ====================================
 
     calculateDynamicStartingPositions() {
-        // Get Grid values for players 1 and 2 (top players)
-        const player1 = this.players.find(p => p.playerId === 1);
-        const player2 = this.players.find(p => p.playerId === 2);
-        
-        const player1Grid = player1?.grid || 100; // Default fallback
-        const player2Grid = player2?.grid || 100;
-        
-        // Calculate margin (10% of Grid value)
-        const marginPercent = 0.1;
-        const player1Margin = player1Grid * marginPercent;
-        const player2Margin = player2Grid * marginPercent;
-        
+        const center = this.battleCenter || { x: 400, y: 300 };
+        const configById = new Map(this.playerConfigs.map(config => [config.id, config]));
+
+        const baseGapX = Math.abs((configById.get(2)?.baseX ?? 600) - (configById.get(1)?.baseX ?? 200)) || 400;
+        const baseGapY = Math.abs((configById.get(3)?.baseY ?? 450) - (configById.get(1)?.baseY ?? 150)) || 300;
+
+        const sizeScale = 0.5; // Scale grid length into a starting "radius"
+        const minSize = 80; // Prevent tiny rhythms from collapsing spacing
+
+        const sizes = {};
+        for (const config of this.playerConfigs) {
+            const player = this.players.find(p => p.playerId === config.id);
+            const grid = player?.grid || 0;
+            sizes[config.id] = Math.max(minSize, grid * sizeScale);
+        }
+
+        const maxSize = Math.max(...Object.values(sizes));
+        const margin = Math.max(40, maxSize * 0.15);
+        const verticalBufferScale = 0.2;
+        const verticalBufferLeft = (sizes[1] + sizes[3]) * verticalBufferScale;
+        const verticalBufferRight = (sizes[2] + sizes[4]) * verticalBufferScale;
+
+        // Ensure horizontal and vertical gaps respect the combined player sizes
+        const horizontalGap = Math.max(
+            baseGapX,
+            (sizes[1] + sizes[2] + margin),
+            (sizes[3] + sizes[4] + margin)
+        );
+        const verticalGap = Math.max(
+            baseGapY,
+            (sizes[1] + sizes[3] + margin + verticalBufferLeft),
+            (sizes[2] + sizes[4] + margin + verticalBufferRight)
+        );
+
+        const xLeft = center.x - horizontalGap / 2;
+        const xRight = center.x + horizontalGap / 2;
+        const yTop = center.y - verticalGap / 2;
+        const yBottom = center.y + verticalGap / 2;
+
+        const layoutById = {
+            1: { x: xLeft, y: yTop },
+            2: { x: xRight, y: yTop },
+            3: { x: xLeft, y: yBottom },
+            4: { x: xRight, y: yBottom }
+        };
+
         // Update starting positions for all players
         for (const config of this.playerConfigs) {
             const player = this.players.find(p => p.playerId === config.id);
             if (!player) continue;
-            
-            let newStartX = config.baseX;
-            let newStartY = config.baseY;
-            
-            // Calculate dynamic Y positions based on Grid values
-            if (config.id === 3) {
-                // Player 3: Below Player 1 by Player1's Grid + margin
-                newStartY = config.baseY + player1Grid + player1Margin;
-            } else if (config.id === 4) {
-                // Player 4: Below Player 2 by Player2's Grid + margin  
-                newStartY = config.baseY + player2Grid + player2Margin;
-            }
-            
+
+            const newStartX = layoutById[config.id]?.x ?? config.baseX;
+            const newStartY = layoutById[config.id]?.y ?? config.baseY;
+
             // Update player's starting position
             player.startX = newStartX;
             player.startY = newStartY;
-            
+
             // Also update the config for reference
             config.startX = newStartX;
             config.startY = newStartY;
-            
-            console.log(`🎯 Player ${config.id} positioned at (${newStartX}, ${newStartY})`);
+
+            console.log(`🎯 Player ${config.id} positioned at (${newStartX.toFixed(1)}, ${newStartY.toFixed(1)})`);
         }
-        
-        console.log(`📐 Dynamic positioning: P1 grid=${player1Grid}, P2 grid=${player2Grid}, margins=${player1Margin.toFixed(1)}, ${player2Margin.toFixed(1)}`);
+
+        console.log(
+            `📐 Dynamic positioning: sizes=${JSON.stringify(sizes)}, gaps=(${horizontalGap.toFixed(1)}, ${verticalGap.toFixed(1)}), margin=${margin.toFixed(1)}, vBuffer=(${verticalBufferLeft.toFixed(1)}, ${verticalBufferRight.toFixed(1)})`
+        );
     }
 
 // ====================================

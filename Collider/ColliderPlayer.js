@@ -199,6 +199,18 @@ class ColliderPlayer {
         console.log(`🎮 Player ${this.playerId} force amplitude set to ${amplitude}x`);
     }
 
+
+    resetNodeVelocities(reason = '') {
+        for (const node of this.nodes) {
+            node.oldX = node.x;
+            node.oldY = node.y;
+        }
+
+        if (reason) {
+            console.log(`🎮 Player ${this.playerId} velocities reset: ${reason}`);
+        }
+    }
+
     getMasterTime() {
         return this.parent?.battleController?.getMasterTime() || 0;
     }
@@ -392,6 +404,9 @@ class ColliderPlayer {
         const currentTime = Date.now();
         const elapsed = currentTime - this.phaseStartTime;
         
+        let shouldApplyPhysics = false;
+        let allowForces = false;
+
         switch (this.animationPhase) {
             case 'hanging':
                 if (elapsed > 2000) {
@@ -405,26 +420,49 @@ class ColliderPlayer {
                 if (progress >= 1) {
                     this.completeConnection();
                 }
+                shouldApplyPhysics = true;
                 break;
                 
             case 'settling':
                 // Check if anchor node should be unpinned
                 if (this.anchorUnpinTime && currentTime >= this.anchorUnpinTime && this.nodes[0]) {
                     this.nodes[0].pinned = false;
+                    this.resetNodeVelocities('anchor unpinned');
                     this.anchorUnpinTime = null; // Clear the timer
                     console.log(`🎮 Player ${this.playerId} anchor node unpinned - full physics enabled`);
                 }
-                
-                this.updateRhythmicProgression();
-                this.applyPhysics();
+                {
+                    shouldApplyPhysics = true;
+                    allowForces = true;
+                }
                 break;
+        }
+
+        if (shouldApplyPhysics) {
+            if (allowForces) {
+                this.updateRhythmicProgression();
+            } else {
+                this.activeForceNodes.clear();
+            }
+            this.applyPhysics();
         }
         
         // Apply constraints
         if (this.animationPhase !== 'inactive') {
-            const iterations = this.animationPhase === 'connecting' ? 8 : 15;
+            const isConnecting = this.animationPhase === 'connecting';
+            const iterations = isConnecting ? 25 : 15;
+            const originalStrength = this.tensionStrength;
+
+            if (isConnecting) {
+                this.tensionStrength = Math.min(1.0, this.tensionStrength * 2.5);
+            }
+
             for (let i = 0; i < iterations; i++) {
                 this.constrainSegments();
+            }
+
+            if (isConnecting) {
+                this.tensionStrength = originalStrength;
             }
         }
     }
@@ -432,6 +470,7 @@ class ColliderPlayer {
     startConnectionPhase() {
         this.animationPhase = 'connecting';
         this.phaseStartTime = Date.now();
+        this.activeForceNodes.clear();
         
         const lastNode = this.nodes[this.nodes.length - 1];
         const firstNode = this.nodes[0];
@@ -479,7 +518,7 @@ class ColliderPlayer {
         // CRITICAL: Keep anchor node pinned initially to prevent jump
         // It will be unpinned after a brief settling period
         anchorNode.pinned = true;
-        this.anchorUnpinTime = Date.now() + 500; // Unpin after 0.5 seconds
+        this.anchorUnpinTime = Date.now() + 100; // Unpin after 0.5 seconds
         
         // Create closing segment with safety checks
         const endNode = this.nodes[this.nodes.length - 1];
@@ -622,6 +661,12 @@ class ColliderPlayer {
         // Apply physics to all non-pinned nodes
         for (let i = 1; i < this.nodes.length; i++) {
             const node = this.nodes[i];
+            if (node.pinned) {
+                // Keep pinned nodes stable and avoid accumulating velocity
+                node.oldX = node.x;
+                node.oldY = node.y;
+                continue;
+            }
             
             const tempX = node.x;
             const tempY = node.y;
