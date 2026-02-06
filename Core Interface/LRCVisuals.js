@@ -114,6 +114,8 @@ class LRCVisuals {
         const containerHeight = container.clientHeight;
         const aspectRatio = 2; // 2:1 aspect ratio
         const isMobileMode = document.body && document.body.classList.contains('mobile-mode');
+        const rootStyle = window.getComputedStyle(document.documentElement);
+        const bottomMargin = parseFloat(rootStyle.getPropertyValue('--canvas-bottom-margin')) || 0;
 
         if (!containerWidth) return;
         
@@ -123,10 +125,8 @@ class LRCVisuals {
         // Set logical size (no cap for HD quality)
         const logicalWidth = containerWidth;
         const baseHeight = (logicalWidth / aspectRatio) - 20;
-        const cappedHeight = (!isMobileMode && containerHeight > 0)
-            ? Math.min(baseHeight, containerHeight)
-            : baseHeight;
-        const logicalHeight = Math.max(0, cappedHeight);
+        const availableHeight = Math.max(0, containerHeight - (isMobileMode ? 0 : bottomMargin));
+        const logicalHeight = isMobileMode ? Math.max(0, baseHeight) : availableHeight;
 
         if (!logicalHeight) return;
         

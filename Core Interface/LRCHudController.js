@@ -33,6 +33,8 @@ class LRCHUDController {
         this.layoutDebugOverlay = null;
         this.layoutDebugEnabled = false;
         this.layoutDebugResizeHandler = () => this.renderLayoutDebugOverlay();
+        this.fixedCanvasBottomMargin = null;
+        this.canvasBottomMarginOverride = null;
         this.handleMobileModeChange = (matches) => {
             const shouldEnable = typeof matches === 'boolean' ? matches : matches.matches;
             if (shouldEnable === this.isMobileModeActive) {
@@ -188,38 +190,35 @@ class LRCHUDController {
 
     constrainPanelToBounds(panel) {
         const rect = panel.getBoundingClientRect();
-        const viewport = {
-            width: window.innerWidth,
-            height: window.innerHeight - 50 // Account for title bar
-        };
+        const bounds = this.getPanelBounds();
         
         let newX = rect.left;
-        let newY = rect.top - 50; // Subtract title bar height
+        let newY = rect.top;
         
         // Check right boundary
-        if (rect.right > viewport.width) {
-            newX = viewport.width - rect.width;
+        if (rect.right > bounds.left + bounds.width) {
+            newX = bounds.left + bounds.width - rect.width;
         }
         
         // Check left boundary
-        if (newX < 0) {
-            newX = 0;
+        if (newX < bounds.left) {
+            newX = bounds.left;
         }
         
         // Check bottom boundary
-        if (rect.bottom > viewport.height + 50) { // Add title bar back for comparison
-            newY = viewport.height - rect.height;
+        if (rect.bottom > bounds.top + bounds.height) {
+            newY = bounds.top + bounds.height - rect.height;
         }
         
         // Check top boundary
-        if (newY < 0) {
-            newY = 0;
+        if (newY < bounds.top) {
+            newY = bounds.top;
         }
         
         // Apply constraints if needed
-        if (newX !== rect.left || newY !== (rect.top - 50)) {
-            panel.style.left = newX + 'px';
-            panel.style.top = (newY + 50) + 'px'; // Add title bar offset back
+        if (newX !== rect.left || newY !== rect.top) {
+            panel.style.left = Math.round(newX) + 'px';
+            panel.style.top = Math.round(newY) + 'px';
             panel.style.right = 'auto';
             panel.style.bottom = 'auto';
             
@@ -312,27 +311,26 @@ class LRCHUDController {
         if (!this.dragState.isDragging || !this.dragState.currentElement) return;
         
         const element = this.dragState.currentElement;
-        const viewport = {
-            width: window.innerWidth,
-            height: window.innerHeight - 50 // Account for title bar
-        };
+        const bounds = this.getPanelBounds();
         
         // Calculate new position
         let newX = e.clientX - this.dragState.offset.x;
-        let newY = e.clientY - this.dragState.offset.y - 50; // Account for title bar
+        let newY = e.clientY - this.dragState.offset.y;
         
         // Get element dimensions
         const rect = element.getBoundingClientRect();
         
         // Constrain to viewport bounds
-        newX = Math.max(0, Math.min(newX, viewport.width - rect.width));
-        newY = Math.max(0, Math.min(newY, viewport.height - rect.height));
+        newX = Math.max(bounds.left, Math.min(newX, bounds.left + bounds.width - rect.width));
+        newY = Math.max(bounds.top, Math.min(newY, bounds.top + bounds.height - rect.height));
         
         // Apply position
-        element.style.left = newX + 'px';
-        element.style.top = (newY + 50) + 'px'; // Add title bar offset back
+        element.style.left = Math.round(newX) + 'px';
+        element.style.top = Math.round(newY) + 'px';
         element.style.right = 'auto';
         element.style.bottom = 'auto';
+
+        this.storePanelPositionRatio(element);
     }
 
     endDrag() {
@@ -350,6 +348,8 @@ class LRCHUDController {
             delete panel.dataset.minimizedTop;
             delete panel.dataset.minimizedRight;
             delete panel.dataset.minimizedBottom;
+
+            this.storePanelPositionRatio(panel);
         }
         
         this.dragState.isDragging = false;
@@ -519,6 +519,9 @@ class LRCHUDController {
                 delete element.dataset.minimizedTop;
                 delete element.dataset.minimizedRight;
                 delete element.dataset.minimizedBottom;
+                delete element.dataset.userPositioned;
+                delete element.dataset.dragRatioX;
+                delete element.dataset.dragRatioY;
             });
             this.updateCanvasBottomMargin();
             return;
@@ -564,6 +567,9 @@ class LRCHUDController {
             delete element.dataset.minimizedTop;
             delete element.dataset.minimizedRight;
             delete element.dataset.minimizedBottom;
+            delete element.dataset.userPositioned;
+            delete element.dataset.dragRatioX;
+            delete element.dataset.dragRatioY;
             
             console.log(`🔍 Cleared styles for ${id}:`, oldStyles);
             
@@ -624,25 +630,7 @@ class LRCHUDController {
                 return;
             }
 
-            const panelIds = Object.keys(this.defaultPositions);
-            const defaultBottomOffset = panelIds.reduce((max, panelId) => {
-                const pos = this.defaultPositions[panelId];
-                return (typeof pos?.bottom === 'number') ? Math.max(max, pos.bottom) : max;
-            }, 0);
-
-            let maxPanelHeight = 0;
-            panelIds.forEach((panelId) => {
-                const panel = document.getElementById(panelId);
-                if (!panel) return;
-                const panelHeight = this.getCollapsedPanelHeight(panel);
-                if (panelHeight > maxPanelHeight) {
-                    maxPanelHeight = panelHeight;
-                }
-            });
-
-            if (!maxPanelHeight) return;
-
-            const bottomMargin = Math.max(0, Math.ceil(maxPanelHeight + defaultBottomOffset));
+            const bottomMargin = this.getFixedCanvasBottomMargin();
             document.documentElement.style.setProperty('--canvas-bottom-margin', `${bottomMargin}px`);
 
             if (window.lrcVisuals && window.lrcVisuals.resizeCanvas) {
@@ -650,6 +638,102 @@ class LRCHUDController {
             }
 
             this.renderLayoutDebugOverlay();
+            this.updatePanelPositionsFromRatios();
+        });
+    }
+
+    getFixedCanvasBottomMargin() {
+        if (Number.isFinite(this.canvasBottomMarginOverride)) {
+            return Math.max(0, Math.round(this.canvasBottomMarginOverride));
+        }
+
+        if (Number.isFinite(this.fixedCanvasBottomMargin)) {
+            return this.fixedCanvasBottomMargin;
+        }
+
+        const panelIds = Object.keys(this.defaultPositions);
+        const defaultBottomOffset = panelIds.reduce((max, panelId) => {
+            const pos = this.defaultPositions[panelId];
+            return (typeof pos?.bottom === 'number') ? Math.max(max, pos.bottom) : max;
+        }, 0);
+
+        let maxPanelHeight = 0;
+        panelIds.forEach((panelId) => {
+            const panel = document.getElementById(panelId);
+            if (!panel) return;
+            const panelHeight = this.getCollapsedPanelHeight(panel);
+            if (panelHeight > maxPanelHeight) {
+                maxPanelHeight = panelHeight;
+            }
+        });
+
+        const fallback = 72;
+        if (!maxPanelHeight) {
+            this.fixedCanvasBottomMargin = fallback;
+            return this.fixedCanvasBottomMargin;
+        }
+
+        this.fixedCanvasBottomMargin = Math.max(0, Math.ceil(maxPanelHeight + defaultBottomOffset));
+        return this.fixedCanvasBottomMargin;
+    }
+
+    getPanelBounds() {
+        const canvasBackground = document.getElementById('canvas-background');
+        if (canvasBackground) {
+            const rect = canvasBackground.getBoundingClientRect();
+            return {
+                left: rect.left,
+                top: rect.top,
+                width: rect.width,
+                height: rect.height
+            };
+        }
+        return {
+            left: 0,
+            top: 0,
+            width: window.innerWidth,
+            height: window.innerHeight
+        };
+    }
+
+    storePanelPositionRatio(panel) {
+        if (!panel) return;
+        const rect = panel.getBoundingClientRect();
+        const bounds = this.getPanelBounds();
+        const maxX = Math.max(0, bounds.width - rect.width);
+        const maxY = Math.max(0, bounds.height - rect.height);
+        const rawRatioX = maxX ? (rect.left - bounds.left) / maxX : 0;
+        const rawRatioY = maxY ? (rect.top - bounds.top) / maxY : 0;
+        const ratioX = Math.min(1, Math.max(0, rawRatioX));
+        const ratioY = Math.min(1, Math.max(0, rawRatioY));
+
+        panel.dataset.userPositioned = 'true';
+        panel.dataset.dragRatioX = ratioX.toFixed(4);
+        panel.dataset.dragRatioY = ratioY.toFixed(4);
+    }
+
+    updatePanelPositionsFromRatios() {
+        if (this.isMobileModeActive || this.dragState.isDragging) return;
+
+        const panelIds = Object.keys(this.defaultPositions);
+        const bounds = this.getPanelBounds();
+
+        panelIds.forEach((panelId) => {
+            const panel = document.getElementById(panelId);
+            if (!panel || panel.dataset.userPositioned !== 'true') return;
+
+            const rect = panel.getBoundingClientRect();
+            const maxX = Math.max(0, bounds.width - rect.width);
+            const maxY = Math.max(0, bounds.height - rect.height);
+            const ratioX = parseFloat(panel.dataset.dragRatioX);
+            const ratioY = parseFloat(panel.dataset.dragRatioY);
+            const resolvedX = Number.isFinite(ratioX) ? bounds.left + (maxX * ratioX) : rect.left;
+            const resolvedY = Number.isFinite(ratioY) ? bounds.top + (maxY * ratioY) : rect.top;
+
+            panel.style.left = Math.round(resolvedX) + 'px';
+            panel.style.top = Math.round(resolvedY) + 'px';
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
         });
     }
 
@@ -671,6 +755,17 @@ class LRCHUDController {
         window.toggleLayoutDebug = () => this.toggleLayoutDebug();
         window.enableLayoutDebug = () => this.enableLayoutDebug();
         window.disableLayoutDebug = () => this.disableLayoutDebug();
+        window.setCanvasBottomMargin = (value) => {
+            const parsed = Number(value);
+            if (!Number.isFinite(parsed)) return;
+            this.canvasBottomMarginOverride = Math.max(0, parsed);
+            this.updateCanvasBottomMargin();
+        };
+        window.resetCanvasBottomMargin = () => {
+            this.canvasBottomMarginOverride = null;
+            this.fixedCanvasBottomMargin = null;
+            this.updateCanvasBottomMargin();
+        };
 
         const params = new URLSearchParams(window.location.search);
         const shouldEnable = params.has('debugLayout') || localStorage.getItem('lrcDebugLayout') === '1';

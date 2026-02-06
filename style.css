@@ -16,7 +16,7 @@
     
     --border-radius: 6px;
     --transition-speed: 0.3s;
-    --canvas-bottom-margin: 140px;
+    --canvas-bottom-margin: 72px;
 }
 
 /* Reset & Base */
@@ -82,7 +82,7 @@ body.mobile-mode .visualization-canvas {
     top: 0;
     left: 0;
     right: 0;
-    bottom: var(--canvas-bottom-margin);
+    bottom: 0;
 }
 
 /* Reset Button in Title Bar */
