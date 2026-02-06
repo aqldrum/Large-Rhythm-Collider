@@ -16,6 +16,7 @@
     
     --border-radius: 6px;
     --transition-speed: 0.3s;
+    --canvas-bottom-margin: 140px;
 }
 
 /* Reset & Base */
@@ -36,6 +37,7 @@ body {
 body.mobile-mode {
     overflow-y: auto;
     padding: 56px 0 80px;
+    --canvas-bottom-margin: 0px;
 }
 
 body.mobile-mode #canvas-background {
@@ -46,6 +48,14 @@ body.mobile-mode #canvas-background {
     height: auto;
     min-height: 0;
     padding: 0 12px 40px;
+}
+
+body.mobile-mode #lrc-main {
+    position: static;
+    top: auto;
+    left: auto;
+    right: auto;
+    bottom: auto;
 }
 
 body.mobile-mode .visualization-canvas {
@@ -61,10 +71,18 @@ body.mobile-mode .visualization-canvas {
     position: fixed;
     top: 50px;  /* Below title bar */
     left: 0;
-    width: 100vw;
-    height: calc(100vh - 50px);  /* Full height minus title bar */
+    right: 0;
+    bottom: 0;
     background: #000000;
     z-index: 0;
+}
+
+#lrc-main {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: var(--canvas-bottom-margin);
 }
 
 /* Reset Button in Title Bar */

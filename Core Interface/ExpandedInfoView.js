@@ -78,17 +78,39 @@ class ExpandedInfoView {
     // LAYOUT CREATION
     // ====================================
 
+    getCanvasLayoutMetrics() {
+        const canvas = document.getElementById('visualization-canvas');
+        if (!canvas) return null;
+
+        const container = canvas.closest('#lrc-main') || canvas.parentElement;
+        if (!container) return null;
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
+        if (!containerWidth) return null;
+
+        const aspectRatio = 2; // 2:1 aspect ratio
+        const isMobileMode = document.body && document.body.classList.contains('mobile-mode');
+        const baseHeight = (containerWidth / aspectRatio) - 20;
+        const cappedHeight = (!isMobileMode && containerHeight > 0)
+            ? Math.min(baseHeight, containerHeight)
+            : baseHeight;
+        const logicalHeight = Math.max(0, cappedHeight);
+
+        if (!logicalHeight) return null;
+
+        return { width: containerWidth, height: logicalHeight };
+    }
+
     createExpandedLayout() {
         // Match the canvas dimensions exactly using the same logic as LRCVisuals.resizeCanvas()
-        const canvas = document.getElementById('visualization-canvas');
-        const container = canvas.parentElement;
-        const containerWidth = container.clientWidth;
+        const metrics = this.getCanvasLayoutMetrics();
+        if (!metrics) {
+            console.error('Unable to determine canvas layout metrics');
+            return;
+        }
 
-        const logicalWidth = containerWidth;
-        // Use available vertical space for maximal screen usage
-        const titleBarHeight = 50;
-        const bottomBuffer = 80; // Space for floating panels
-        const logicalHeight = window.innerHeight - titleBarHeight - bottomBuffer;
+        const logicalWidth = metrics.width;
+        const logicalHeight = metrics.height;
         
         // Use existing EIV container from HTML instead of creating new one
         this.expandedContainer = document.getElementById('expanded-info-view');
@@ -1529,15 +1551,11 @@ class ExpandedInfoView {
 
     resizeExpandedContainer() {
         // Recalculate dimensions using same logic as createExpandedLayout
-        const canvas = document.getElementById('visualization-canvas');
-        const container = canvas.parentElement;
-        const containerWidth = container.clientWidth;
+        const metrics = this.getCanvasLayoutMetrics();
+        if (!metrics) return;
 
-        const logicalWidth = containerWidth;
-        // Use available vertical space for maximal screen usage
-        const titleBarHeight = 50;
-        const bottomBuffer = 80; // Space for floating panels
-        const logicalHeight = window.innerHeight - titleBarHeight - bottomBuffer;
+        const logicalWidth = metrics.width;
+        const logicalHeight = metrics.height;
         
         // Update only the dimensions
         this.expandedContainer.style.width = `${logicalWidth}px`;

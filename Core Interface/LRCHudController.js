@@ -28,6 +28,11 @@ class LRCHUDController {
 
         this.mobileBreakpoint = window.matchMedia('(max-width: 900px)');
         this.isMobileModeActive = false;
+        this.canvasMarginAnimationFrame = null;
+        this.handleCanvasMarginResize = () => this.updateCanvasBottomMargin();
+        this.layoutDebugOverlay = null;
+        this.layoutDebugEnabled = false;
+        this.layoutDebugResizeHandler = () => this.renderLayoutDebugOverlay();
         this.handleMobileModeChange = (matches) => {
             const shouldEnable = typeof matches === 'boolean' ? matches : matches.matches;
             if (shouldEnable === this.isMobileModeActive) {
@@ -63,6 +68,8 @@ class LRCHUDController {
         
         // Set initial positions
         this.resetAllPositions();
+        window.addEventListener('resize', this.handleCanvasMarginResize);
+        this.setupLayoutDebugTools();
         
         console.log('LRC HUD Controller initialized with Chronosmos pattern');
     }
@@ -494,6 +501,8 @@ class LRCHUDController {
             }
             console.log('✅ Stopped playback');
         }
+
+        this.updateCanvasBottomMargin();
         
         console.log('🔄 ===== FULL RESET COMPLETE =====');
     }
@@ -511,6 +520,7 @@ class LRCHUDController {
                 delete element.dataset.minimizedRight;
                 delete element.dataset.minimizedBottom;
             });
+            this.updateCanvasBottomMargin();
             return;
         }
 
@@ -595,6 +605,207 @@ class LRCHUDController {
         });
         
         console.log('🔄 === PANEL POSITION RESET COMPLETE ===');
+        this.updateCanvasBottomMargin();
+    }
+
+    updateCanvasBottomMargin() {
+        if (this.canvasMarginAnimationFrame) {
+            cancelAnimationFrame(this.canvasMarginAnimationFrame);
+        }
+
+        this.canvasMarginAnimationFrame = requestAnimationFrame(() => {
+            this.canvasMarginAnimationFrame = null;
+
+            if (this.isMobileModeActive) {
+                document.documentElement.style.setProperty('--canvas-bottom-margin', '0px');
+                if (window.lrcVisuals && window.lrcVisuals.resizeCanvas) {
+                    window.lrcVisuals.resizeCanvas();
+                }
+                return;
+            }
+
+            const panelIds = Object.keys(this.defaultPositions);
+            const defaultBottomOffset = panelIds.reduce((max, panelId) => {
+                const pos = this.defaultPositions[panelId];
+                return (typeof pos?.bottom === 'number') ? Math.max(max, pos.bottom) : max;
+            }, 0);
+
+            let maxPanelHeight = 0;
+            panelIds.forEach((panelId) => {
+                const panel = document.getElementById(panelId);
+                if (!panel) return;
+                const panelHeight = this.getCollapsedPanelHeight(panel);
+                if (panelHeight > maxPanelHeight) {
+                    maxPanelHeight = panelHeight;
+                }
+            });
+
+            if (!maxPanelHeight) return;
+
+            const bottomMargin = Math.max(0, Math.ceil(maxPanelHeight + defaultBottomOffset));
+            document.documentElement.style.setProperty('--canvas-bottom-margin', `${bottomMargin}px`);
+
+            if (window.lrcVisuals && window.lrcVisuals.resizeCanvas) {
+                window.lrcVisuals.resizeCanvas();
+            }
+
+            this.renderLayoutDebugOverlay();
+        });
+    }
+
+    getCollapsedPanelHeight(panel) {
+        if (!panel) return 0;
+        const header = panel.querySelector('.info-header');
+        const headerHeight = header ? header.getBoundingClientRect().height : 0;
+        const panelStyle = window.getComputedStyle(panel);
+        const borderTop = parseFloat(panelStyle.borderTopWidth) || 0;
+        const borderBottom = parseFloat(panelStyle.borderBottomWidth) || 0;
+        const collapsedHeight = headerHeight + borderTop + borderBottom;
+        if (collapsedHeight > 0) return Math.round(collapsedHeight);
+        const rect = panel.getBoundingClientRect();
+        return Math.round(rect.height || 0);
+    }
+
+    setupLayoutDebugTools() {
+        window.dumpLayoutMetrics = () => this.getLayoutMetrics();
+        window.toggleLayoutDebug = () => this.toggleLayoutDebug();
+        window.enableLayoutDebug = () => this.enableLayoutDebug();
+        window.disableLayoutDebug = () => this.disableLayoutDebug();
+
+        const params = new URLSearchParams(window.location.search);
+        const shouldEnable = params.has('debugLayout') || localStorage.getItem('lrcDebugLayout') === '1';
+        if (shouldEnable) {
+            this.enableLayoutDebug();
+        }
+    }
+
+    toggleLayoutDebug() {
+        if (this.layoutDebugEnabled) {
+            this.disableLayoutDebug();
+        } else {
+            this.enableLayoutDebug();
+        }
+    }
+
+    enableLayoutDebug() {
+        if (this.layoutDebugEnabled) return;
+        this.layoutDebugEnabled = true;
+
+        if (!this.layoutDebugOverlay) {
+            this.layoutDebugOverlay = document.createElement('div');
+            this.layoutDebugOverlay.id = 'layout-debug-overlay';
+            this.layoutDebugOverlay.style.cssText = [
+                'position: fixed',
+                'right: 8px',
+                'top: 58px',
+                'z-index: 2500',
+                'padding: 8px 10px',
+                'background: rgba(0, 0, 0, 0.75)',
+                'border: 1px solid rgba(0, 255, 136, 0.4)',
+                'border-radius: 6px',
+                'color: #e6ffe6',
+                'font: 11px/1.3 ui-monospace, Menlo, Consolas, monospace',
+                'white-space: pre',
+                'pointer-events: none',
+                'max-width: 360px'
+            ].join(';');
+            document.body.appendChild(this.layoutDebugOverlay);
+        }
+
+        window.addEventListener('resize', this.layoutDebugResizeHandler);
+        this.renderLayoutDebugOverlay();
+    }
+
+    disableLayoutDebug() {
+        if (!this.layoutDebugEnabled) return;
+        this.layoutDebugEnabled = false;
+        window.removeEventListener('resize', this.layoutDebugResizeHandler);
+        if (this.layoutDebugOverlay) {
+            this.layoutDebugOverlay.remove();
+            this.layoutDebugOverlay = null;
+        }
+    }
+
+    renderLayoutDebugOverlay() {
+        if (!this.layoutDebugEnabled || !this.layoutDebugOverlay) return;
+        const metrics = this.getLayoutMetrics();
+        if (!metrics) {
+            this.layoutDebugOverlay.textContent = 'Layout metrics unavailable';
+            return;
+        }
+
+        const lines = [
+            `viewport: ${metrics.viewport.width}x${metrics.viewport.height}`,
+            `client: ${metrics.documentClient.width}x${metrics.documentClient.height}`,
+            `visualViewport: ${metrics.visualViewport.width}x${metrics.visualViewport.height}`,
+            `canvas-bg: ${metrics.canvasBackground.width}x${metrics.canvasBackground.height}`,
+            `canvas css: ${metrics.canvas.cssWidth}x${metrics.canvas.cssHeight}`,
+            `canvas px: ${metrics.canvas.width}x${metrics.canvas.height}`,
+            `bottom margin: ${metrics.canvasBottomMargin}`,
+            `mobile mode: ${metrics.isMobileMode ? 'on' : 'off'}`,
+            `panels max h: ${metrics.panels.maxHeight}px`
+        ];
+
+        this.layoutDebugOverlay.textContent = lines.join('\n');
+    }
+
+    getLayoutMetrics() {
+        const rootStyle = window.getComputedStyle(document.documentElement);
+        const canvasBottomMargin = rootStyle.getPropertyValue('--canvas-bottom-margin').trim() || 'unset';
+        const canvasBackground = document.getElementById('canvas-background');
+        const canvas = document.getElementById('visualization-canvas');
+
+        const viewport = {
+            width: Math.round(window.innerWidth),
+            height: Math.round(window.innerHeight)
+        };
+        const documentClient = {
+            width: Math.round(document.documentElement.clientWidth),
+            height: Math.round(document.documentElement.clientHeight)
+        };
+        const visualViewport = window.visualViewport
+            ? {
+                width: Math.round(window.visualViewport.width),
+                height: Math.round(window.visualViewport.height)
+            }
+            : { width: 0, height: 0 };
+
+        const canvasBackgroundRect = canvasBackground
+            ? canvasBackground.getBoundingClientRect()
+            : { width: 0, height: 0 };
+        const canvasRect = canvas ? canvas.getBoundingClientRect() : { width: 0, height: 0 };
+
+        const panelIds = Object.keys(this.defaultPositions);
+        let maxPanelHeight = 0;
+        panelIds.forEach((panelId) => {
+            const panel = document.getElementById(panelId);
+            if (!panel) return;
+            const panelHeight = this.getCollapsedPanelHeight(panel);
+            if (panelHeight > maxPanelHeight) {
+                maxPanelHeight = panelHeight;
+            }
+        });
+
+        return {
+            viewport,
+            documentClient,
+            visualViewport,
+            canvasBottomMargin,
+            canvasBackground: {
+                width: Math.round(canvasBackgroundRect.width),
+                height: Math.round(canvasBackgroundRect.height)
+            },
+            canvas: {
+                cssWidth: Math.round(canvasRect.width),
+                cssHeight: Math.round(canvasRect.height),
+                width: canvas ? canvas.width : 0,
+                height: canvas ? canvas.height : 0
+            },
+            panels: {
+                maxHeight: Math.round(maxPanelHeight)
+            },
+            isMobileMode: !!(document.body && document.body.classList.contains('mobile-mode'))
+        };
     }
 
     clearRhythmDisplays() {

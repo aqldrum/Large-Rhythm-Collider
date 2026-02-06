@@ -109,16 +109,26 @@ class LRCVisuals {
     resizeCanvas() {
         if (!this.canvas) return;
         
-        const container = this.canvas.parentElement;
+        const container = this.canvas.closest('#lrc-main') || this.canvas.parentElement;
         const containerWidth = container.clientWidth; // Full container width - no padding needed
+        const containerHeight = container.clientHeight;
         const aspectRatio = 2; // 2:1 aspect ratio
+        const isMobileMode = document.body && document.body.classList.contains('mobile-mode');
+
+        if (!containerWidth) return;
         
         // Get device pixel ratio for HD rendering
         const dpr = window.devicePixelRatio || 1;
         
         // Set logical size (no cap for HD quality)
         const logicalWidth = containerWidth;
-        const logicalHeight = logicalWidth / aspectRatio -20;
+        const baseHeight = (logicalWidth / aspectRatio) - 20;
+        const cappedHeight = (!isMobileMode && containerHeight > 0)
+            ? Math.min(baseHeight, containerHeight)
+            : baseHeight;
+        const logicalHeight = Math.max(0, cappedHeight);
+
+        if (!logicalHeight) return;
         
         // Set actual canvas size for crisp rendering
         this.canvas.width = logicalWidth * dpr;
