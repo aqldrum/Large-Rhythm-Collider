@@ -556,6 +556,10 @@ function integrateWheelVisualization() {
     const getOrCreateWheel = () => {
         if (!window.lrcVisuals.wheel) {
             window.lrcVisuals.wheel = new LRCWheel(window.lrcVisuals);
+            // Sync current scale selection state (the Wheel missed any events fired before creation)
+            if (window.lrcVisuals.hiddenSpacesIndices && window.lrcVisuals.hiddenSpacesIndices.size > 0) {
+                window.lrcVisuals.wheel.setHiddenSpacesIndices(Array.from(window.lrcVisuals.hiddenSpacesIndices));
+            }
         }
         return window.lrcVisuals.wheel;
     };
