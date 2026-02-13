@@ -82,7 +82,7 @@ class LayerControlsUI {
                 </div>
                 <div class="control-group">
                     <label for="volume-${layer}">Volume</label>
-                    <input type="range" id="volume-${layer}" min="-99" max="0" step="1" value="${state.volume}">
+                    <input type="range" id="volume-${layer}" min="-40" max="0" step="1" value="${state.volume}">
                     <div class="range-value" id="volume-value-${layer}">${state.volume} dB</div>
                 </div>
             </div>

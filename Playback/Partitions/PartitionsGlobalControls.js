@@ -72,7 +72,7 @@ class PartitionsGlobalControls {
         const isPlaying = playback?.isPlaying || false;
         const cycleDuration = playback?.cycleDuration || 10.0;
         const fundamentalFreq = playback?.fundamentalFreq || 110;
-        const masterVolumeDb = playback?.masterVolumeDb || -24;
+        const masterVolumeDb = playback?.masterVolumeDb || -12;
         const hipassFreq = playback?.globalFilterSettings?.highpass || 20;
         const lopassFreq = playback?.globalFilterSettings?.lowpass || 20000;
 

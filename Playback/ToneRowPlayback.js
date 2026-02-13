@@ -16,7 +16,7 @@ class ToneRowPlayback {
         this.fundamentalLimits = { min: 55, max: 880 };
         this.filterLimits = { min: 20, max: 20000 };
         this.maxFrequencyHz = 3520; // Five octaves above A110
-        this.masterVolumeDb = -24;
+        this.masterVolumeDb = -12;
         this.lastUpdateTime = 0;
         this.tempo = 1.0;
         
@@ -107,7 +107,7 @@ class ToneRowPlayback {
 
     createDefaultLayerState() {
         return {
-            volume: -24, // dB
+            volume: -12, // dB
             waveform: 'sine',
             adsr: {
                 attack: 0.001,
