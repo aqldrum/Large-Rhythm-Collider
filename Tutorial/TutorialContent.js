@@ -92,7 +92,7 @@ window.LRCTutorialSlides = [
         body: [
             'Experiment with 6 different visualization modes!',
             'Linear Plot, Wheel, Centrifuge and Hinges work on the main browser canvas.',
-            'Reflections and Collider are popouts.',
+            'Reflections and Collider Battle are popouts.',
             'The main canvas modes are controlled by the Visualizations module.',
             'Visit the Visualizations in Key Features to explore the specifics of each mode.',
         ],
