@@ -30,7 +30,7 @@ window.LRCTutorialSlides = [
             'The Scale charts display conversions of these ratios to cents. There are 1200 cents in an octave, 100 for each half step in 12TET.',
             'Check out the Mathematical Foundation section of the About page for a step-by-step description of the serialization method.'
         ],
-        image: 'assets/images/rhythminfo2.png',
+        image: 'assets/images/first4primes.png',
         imageAlt: 'Scale chart'
     },
     {
