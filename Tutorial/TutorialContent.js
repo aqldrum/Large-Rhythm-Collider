@@ -55,7 +55,8 @@ window.LRCTutorialSlides = [
             'Cycle time determines the length of one full loop of the rhythm. A safe minimum is calculated to avoid dangerous audio. You can adjust the Cycle length in real time.',
             'The Fundamental frequency determines the tuning of the lowest pitch, 1/1. Other notes are tuned relative to this frequency, which defaults to A110.',
             'Master Volume has a final limiter and safe default, but be cautious when playing multiple layers at full volume.',
-            'Use the simple global filters to carve out the sound as desired.'
+            'Use the simple global filters to carve out the sound as desired.',
+            'Double-click the Playback title bar to open the Partitions drum sequencer, where you can create custom patterns for each layer.'
         ],
         image: 'assets/images/maincontrols2.png',
         imageAlt: 'Main Controls section'
@@ -89,8 +90,8 @@ window.LRCTutorialSlides = [
     {
         title: 'Visualizations',
         body: [
-            'Experiment with 5 different visualization modes!',
-            'Linear Plot, Centrifuge and Hinges work on the main browser canvas.',
+            'Experiment with 6 different visualization modes!',
+            'Linear Plot, Wheel, Centrifuge and Hinges work on the main browser canvas.',
             'Reflections and Collider are popouts.',
             'The main canvas modes are controlled by the Visualizations module.',
             'Visit the Visualizations in Key Features to explore the specifics of each mode.',
