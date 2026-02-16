@@ -481,11 +481,13 @@
       <h3>Core Functionality</h3>
       <ul>
         <li><strong>Polyrhythm input and processing (up to four layers)</strong>: enter up to four frequency layers and generate the full analysis.</li>
-        <li><strong>Composite rhythm generation</strong>: automatically calculate all attack positions across all layers.</li>
+        <li><strong>Composite rhythm generation</strong>: calculate all attack positions across all layers.</li>
         <li><strong>Spaces plot calculation</strong>: derive the palindromic duration sequence.</li>
         <li><strong>Automatic scale/tuning system derivation</strong>: produce just-intonation tuning systems from rhythm structure.</li>
         <li><strong>Interconsonance analysis</strong>: reveal familiar-sounding intervals within the generated scales.</li>
-        <li><strong>Real-time audio playback</strong>: wavetable synthesis with full ADSR and filter control.</li>
+        <li><strong>Tone row playback</strong>: wavetable synthesis with real-time controls for fundamental frequency, tempo, waveform, ADSR, and filters.</li>
+        <li><strong>Partitions drum sequencer</strong>: 4 samplers with Euclidean step sequencing and 20 default sounds.</li>
+        <li><strong>Export functionality</strong>: export MIDI, tuning systems and rhythm info for use in other applications.</li>
         <li><strong>Six visualization modes</strong>: Linear Plot, Wheel, Reflections, Centrifuge, Hinges, and Collider Battle.</li>
         <li><strong>Four rhythm-finding search algorithms</strong>: Layer, Grid, Fundamental, and Inverse PG searches.</li>
         <li><strong>Collections database</strong> of anonymously-submitted results for Playback and Visualizations</li>
@@ -545,10 +547,10 @@
       <figure>
         <img src="assets/images/consonancefamily.png" alt="Consonance family diagram" style="width:60%;">
       </figure>
-      <p>The number of available unique pairs can grow very large, so this feature may break down for very large scales, but it can still comfortably handle scales with 100 pitches per octave. Very large scales will prompt a warning which allows you skip Family analysis and construct the interval matrix only.</p>
       <p>After running the analyzer, click any ratio in the scale to reveal its consonant relationships.</p>
       <p>Double-clicking a ratio in the Playback panel's Scale Selection chart will automatically select this ratio and its consonances.</p>
       <p>The Consonance Families can also be selected directly beneath Scale Selection.</p>
+      <p>The number of available unique pairs can grow very large, but the analyzer can still comfortably handle scales with 100 pitches per octave. Very large scales will prompt a warning which allows you skip Family analysis and construct the interval matrix only, but this too may become infeasible at the upper limits.</p>  
       <br>
       <h4>Export</h4>
       <br>
@@ -574,16 +576,17 @@
               <li>Global hi / lo-pass filter.</li>
             </ul>
             <br>
-            <p>The seconds value defines the length of the entire cycle - play ultrafast rhythms or stretch them out to long legato scales.</p>
-            <p>Cycle Time accepts values up to 6000 seconds, with a dynamic minimum to ensure audio safety. If Scale Selector is in use, cycle time can be pushed as low as 0.1 seconds.</p>
+            <p>The Cycle Time in seconds defines the length of the entire cycle - play ultrafast rhythms or stretch them out to long legato scales.</p>
             <p>The Fundamental input accepts Hz values between 55 and 880 Hz.</p>
             <p>The Master Volume slider has a final limiter. Despite the limiter, be cautious when playing unfiltered sine waves at high volumes.</p>
             <p>Filter provides global frequency thresholds for hi / lo-pass.</p>
-            <p>Harsh high frequencies are automatically culled from playback, which is why you may hear occasional gaps for very small spaces plot values.</p>
             <p></p>
           </td>
         </tr>
       </table>
+      <p>Harsh high frequencies are automatically culled from playback, which is why you may hear occasional gaps for very small spaces plot values.</p>
+      <p>Cycle Time accepts values up to 6000 seconds, with a dynamic minimum to ensure audio safety. If Scale Selector is in use, cycle time can be pushed as low as 0.1 seconds.</p>
+      <p>Both the Cycle Time and Fundamental Frequency inputs may be adjusted in real time during playback. Changing the Fundamental frequency introduces a gliding portamento effect!</p>
       <h4>Layer Controls</h4>
       <table>
         <tr>
@@ -600,12 +603,12 @@
               <li>Global legato mode acts like a sustain pedal</li>
             </ul>
             <br>
-            <p>The LRC offers extensive DAW-like control over individual layer audio. Layers can be soloed, muted, or have their volumes set individually. Basic waveform synthesis offers sine, triangle, square, and sawtooth waves, along with an individual ADSR envelope and simple hi/lo-pass filter for each layer.</p>
-            <p>The ADSR knobs can be double-clicked to manually edit their values.</p>
-            <p>Legato mode is a global control which toggles retrigger behavior: when legato mode is off, each new note in the spaces plot silences the previous note. In legato mode, notes on each layer are held out until that layer sounds again. This allows you to hear the harmonic tuning relationships within each system sustained at slower tempos.</p>
           </td>
         </tr>
       </table>
+      <p>The LRC offers extensive DAW-like control over individual layer audio. Layers can be soloed, muted, or have their volumes set individually. Basic waveform synthesis offers sine, triangle, square, and sawtooth waves, along with an individual ADSR envelope and simple hi/lo-pass filter for each layer.</p>
+      <p>The ADSR knobs can be double-clicked to manually edit their values.</p>
+      <p>Legato mode is a global control which toggles retrigger behavior: when legato mode is off, each new note in the spaces plot silences the previous note. In legato mode, notes on each layer are held out until that layer sounds again. This allows you to hear the harmonic tuning relationships within each system sustained at slower tempos.</p>  
       <h4>Scale Selection</h4>
       <table>
         <tr>
@@ -623,11 +626,11 @@
             <br>
             <p>With Scale Selection you can select and deselect pitches in real time to create smaller subsets of the larger tuning system.</p>
             <p>Toggling pitches in Scale Selection also toggles them on and off in the Linear Plot, helping you visualize what you add and subtract as you hear it.</p>
-            <p>If Interconsonance analysis has been run in the Rhythm Info panel, you can double click any note to select only its consonances.</p>
-            <p>Individual interconsonance families can also be automatically selected in Scale Selection below the chart.</p>
           </td>
-        </tr>
+        </tr>  
       </table>
+      <p>If Interconsonance analysis has been run in the Rhythm Info panel, you can double click any note to select only its consonances.</p>
+      <p>Individual interconsonance families can also be automatically selected in Scale Selection below the chart.</p>
       <h4>MIDI Export by Layer</h4>
       <ul>
         <li>Export MIDI with proper tone row sequencing for each layer.</li>
@@ -643,13 +646,14 @@
       <p>If you need other tuning file formats, I strongly recommend <a href="https://sevish.com/scaleworkshop">Sevish's Scale Workshop</a>.</p>
       <h3>Partitions</h3>
       <p><strong>Double-click Playback</strong> to open Partitions.</p>
+      <figure>
+        <img src="assets/images/partitions1.png?v=2" alt="Partitions preview">
+      </figure>
       <p>You can't have a Large Rhythm Collider without some drums! Partitions is a sample-based drum sequencer which offers a high level of micro-time control.</p>
       <p>After defining a polyrhythm, Partitions lets you nest new divisions inside existing structure: the layer sequence, its grouping size, or the underlying Grid. These become per-layer Modes for partitioning and sequencing.</p>
       <p>Sequence up to four drum patterns at a time (A/B/C/D), play them back, and export each layer to MIDI.</p>
-      <figure>
-        <img src="assets/images/partitions1.png" alt="Partitions preview">
-      </figure>
       <p>Partitions mirrors Expanded Info View, including the current visualization in the top-right. Sequencers live on the left; layer Playback controls remain available on the bottom-right, while the Main Controls are moved to the top of the sequencer section.</p>
+      <p>Partitions also has an individual mix bus volume for balancing with tone row playback.</p>
       <h4>Euclidean Rhythms</h4>
       <p>Euclidean rhythms are the basis of Partitions’ sequencing logic. A Euclidean distribution maps pulses onto a grid such that their spacing is as even as possible.</p>
       <p>For example, let’s say we want to fit 3 beats into a 5 grid. 3 x 2 is 6, so one of those twos needs to be a one: 2 + 2 + 1 = 5. We could then create variations by rearranging the order: 2, 1, 2 or 1, 2, 2.</p>
@@ -782,7 +786,7 @@
         <img src="assets/images/centrifuge2.png" alt="Centrifuge visualization detail" style="width:75%;">
       </figure>
       <ul>
-        <li>Layers visualized by spinning wheels.</li>
+        <li>Layers visualized by spinning discs.</li>
         <li>Scale ratios displayed around perimeter.</li>
         <li>Laps sync with tone row playback.</li>
         <li>Perimeter ratios light up in sync.</li>
@@ -790,7 +794,7 @@
         <li>Toggle layer discs on / off</li>
         <li>Ratio ring responds to scale select</li>
       </ul>
-      <p>The Centrifuge visualization displays each layer as a spinning wheel. The radii of each layer correspond to the layer's grouping size, and their rotation speeds correspond to their frequencies.</p> 
+      <p>The Centrifuge visualization displays each layer as a spinning disc. The radii of each layer correspond to the layer's grouping size, and their rotation speeds correspond to their frequencies.</p> 
       <p>Individual segments illuminate in sync with playback as their notes ring out. The perimeter also displays the ratios in the current scale, illuminating in sync with playback.</p>
       <p>You can select / deselect layers to show / hide their individual discs, and pitches chosen in Scale Selection will be reflected around the ratio ring.</p>
       <h4>Hinges</h4>
@@ -832,7 +836,7 @@
         <li>Battle progresses until only one player remains.</li>
         <li>User can control cycle speed, force amplitude, line thickness, and audio volume.</li>
       </ul>
-      <p>After developing Hinges the natural question was: what if these things could fight? The Collider battle lets multiple hinge structures dance around the scene, their nodes and segments colliding. Players can create their own rhythm with a Linear Plot preview on the Player Creation screen.</p>
+      <p>After developing Hinges the natural question was: what if these things could fight? The Collider Battle lets multiple hinge structures dance around the scene, their nodes and segments colliding. Players can create their own rhythm with a Linear Plot preview on the Player Creation screen.</p>
       <br>
       <figure>
         <img src="assets/images/createplayer.png" alt="Collider Battle player creation screen">
@@ -889,11 +893,11 @@
       <p>Slow playback down with a long cycle and use legato mode to hear sustained harmonies.</p>
       <p>Run Interconsonance Analysis on a large scale. Then, select various consonance families in Scale Selection during playback to hear more minimal subsets of the larger tone row.</p>
       <p>Isolate clusters of pitches near certain cents values for large scales in Scale Selection. These tiny tuning discrepancies create subtle color shifts during playback.</p>
-      <p>Exporting midi and tuning files opens up all sorts of possibilities. You can improvise with the tuning systems and look for interesting melodies and harmonies unconnected to the actual tone row progression.</p>
+      <p>Exporting midi and tuning files opens up all sorts of possibilities. You can improvise and compose with the tuning systems and look for interesting melodies and harmonies unconnected to the actual tone row progression.</p>
       <p>Apply chance, combine different tone rows, sample and chop them up. You could also use the tone rows without the tuning files, getting an equally-tempered version of each tone row. No rules here!</p>
       <p>Partitions is the most hands-on system in the Collider. You can mute the layers completely and program polyrhythmic drum sequences by themselves, or create specific percussive accompaniment for any tone row that catches your ear.</p>
       <p>Partitions' export feature could also prove useful to you if you're an electronic music producer looking to add variety and nuance to your drum programming.</p>
-      <p>Reflections can produce some pretty dense and intricate patterns. The Difference blend mode creates neat phasing patterns when animated. Increasing Dot Size creates more overlap which leads to even more intricate blending.</p>
+      <p>Reflections can easily produce some pretty dense and detailed patterns. The Difference blend mode creates complex phasing when animated. Increasing Dot Size creates more overlap which leads to even more intricate blending.</p>
       <p>Drive Hinges with fast cycle speeds and high force amplitude to coax wild, swimmy behavior out of the structure.</p>
       <p>The tug-of-war between the Hinges physical constraint system, layer force progressions, Tension, and Anchors' Expand feature and locking mechanisms have some interesting behavioral interplay.</p>
       <p>Collider Battle is a lot of fun to watch as the rhythms perform their bizarre martial arts, accompanied by their internal soundtracks. You might quickly realize that small changes between layer values can create players of vastly different size and HP. When players are balanced, battles often go down to the wire.</p>
