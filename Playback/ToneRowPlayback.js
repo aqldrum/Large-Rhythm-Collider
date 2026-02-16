@@ -692,6 +692,18 @@ class ToneRowPlayback {
                 noteData.isMuted = noteData.isMutedByFrequency || this.isNoteMutedBySelection(noteData.globalSpacesIndex);
             });
         });
+        // layerEvents may reference older noteData objects (e.g. after
+        // generateToneRowData rebuilt toneRowDataByLayer without a
+        // subsequent prepareLayerEvents call). Update those too so the
+        // scheduler always uses the current fundamental.
+        this.layerEvents.forEach(events => {
+            events.forEach(evt => {
+                if (evt.noteData?.ratio) {
+                    evt.noteData.frequency = this.fundamentalFreq * evt.noteData.ratio;
+                    evt.noteData.isMutedByFrequency = evt.noteData.frequency > maxFreq;
+                }
+            });
+        });
     }
 
     handleFundamentalChange(glideTime = 0.05) {
