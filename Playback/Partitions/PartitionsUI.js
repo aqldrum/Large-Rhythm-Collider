@@ -741,6 +741,11 @@ class PartitionsUI {
                         <p style="margin: 0 0 5px 0;"><strong style="color: #00ff88;">Current Rhythm:</strong> ${activeLayers.join(':')}</p>
                         <p style="margin: 0; font-size: 12px; color: #888;">Grid: ${rhythmInfo.grid} | Fundamental: ${rhythmInfo.fundamental}</p>
                     </div>
+                    <div style="display: flex; align-items: center; gap: 4px;">
+                        <label style="color: #888; font-size: 11px; white-space: nowrap;">Bus:</label>
+                        <input type="range" class="partitions-bus-volume-slider" min="-40" max="0" value="0" style="width: 70px; height: 4px; accent-color: #00ff88;">
+                        <span class="partitions-bus-volume-value" style="color: #00ff88; font-size: 10px; min-width: 32px;">0 dB</span>
+                    </div>
                     <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
                         <div style="display: flex; align-items: center; gap: 6px;">
                             <button class="partitions-export-midi-btn" style="
@@ -1018,6 +1023,20 @@ class PartitionsUI {
             });
             updateValue();
         });
+
+        const busSlider = this.leftSection.querySelector('.partitions-bus-volume-slider');
+        if (busSlider) {
+            const busLabel = this.leftSection.querySelector('.partitions-bus-volume-value');
+            const updateBus = () => {
+                if (busLabel) busLabel.textContent = `${busSlider.value} dB`;
+                if (window.partitionsPlayback) {
+                    window.partitionsPlayback.updateBusVolume(Number(busSlider.value));
+                }
+                window.dispatchEvent(new CustomEvent('partitionsConfigChanged'));
+            };
+            busSlider.addEventListener('input', updateBus);
+            updateBus();
+        }
 
         this.leftSection.querySelectorAll('.partition-layer').forEach(layer => {
             const title = layer.querySelector('.partition-layer-title');

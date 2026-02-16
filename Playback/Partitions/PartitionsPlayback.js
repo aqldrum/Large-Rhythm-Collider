@@ -551,6 +551,13 @@ class PartitionsPlayback {
         const linear = this.dbToLinear(volumeDb);
         gainNode.gain.setTargetAtTime(linear, this.audioContext.currentTime, 0.03);
     }
+
+    updateBusVolume(volumeDb) {
+        if (!Number.isFinite(volumeDb)) return;
+        if (!this.outputGain || !this.audioContext) return;
+        const linear = this.dbToLinear(volumeDb);
+        this.outputGain.gain.setTargetAtTime(linear, this.audioContext.currentTime, 0.03);
+    }
 }
 
 window.partitionsPlayback = new PartitionsPlayback();

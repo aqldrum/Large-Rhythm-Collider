@@ -452,15 +452,7 @@ class ToneRowPlayback {
 
         if (clampedValue !== previousFreq) {
             console.log(`🎼 Fundamental frequency updated: ${clampedValue}Hz (cap: ${this.maxFrequencyHz}Hz)`);
-
-            if (this.spacesPlot.length > 0) {
-                this.generateToneRowData();
-            }
-
-            if (this.isPlaying) {
-                this.stopPlayback();
-                setTimeout(() => this.startPlayback(), 100);
-            }
+            this.handleFundamentalChange();
         }
     }
 
@@ -683,6 +675,46 @@ class ToneRowPlayback {
         const mutedBySelection = this.toneRowDataByLayer.reduce((sum, layer) => sum + layer.filter(note => mutedSpacesIndices.has(note.globalSpacesIndex)).length, 0);
         console.log(`🎵 Generated tone row data: ${totalNotes} total, ${mutedNotes} muted (${mutedBySelection} by selection), ${totalNotes - mutedNotes} audible`);
         console.log(`🔇 Muted spaces indices:`, Array.from(mutedSpacesIndices).sort((a, b) => a - b));
+    }
+
+    recalcFrequencies() {
+        const maxFreq = this.maxFrequencyHz;
+        this.baseToneRowDataByLayer.forEach(layerData => {
+            layerData.forEach(noteData => {
+                noteData.frequency = this.fundamentalFreq * noteData.ratio;
+                noteData.isMutedByFrequency = noteData.frequency > maxFreq;
+            });
+        });
+        this.toneRowDataByLayer.forEach(layerData => {
+            layerData.forEach(noteData => {
+                noteData.frequency = this.fundamentalFreq * noteData.ratio;
+                noteData.isMutedByFrequency = noteData.frequency > maxFreq;
+                noteData.isMuted = noteData.isMutedByFrequency || this.isNoteMutedBySelection(noteData.globalSpacesIndex);
+            });
+        });
+    }
+
+    handleFundamentalChange(glideTime = 0.05) {
+        if (!this.baseToneRowDataByLayer || !this.toneRowDataByLayer) return;
+        this.recalcFrequencies();
+
+        if (!this.audioContext || !this.isPlaying) return;
+        const now = this.audioContext.currentTime;
+
+        for (let i = 0; i < 4; i++) {
+            const voice = this.activeLayerVoices[i];
+            if (voice?.oscillator && voice.noteData?.ratio) {
+                const newFreq = this.fundamentalFreq * voice.noteData.ratio;
+                voice.noteData.frequency = newFreq;
+                voice.oscillator.frequency.setTargetAtTime(newFreq, now, glideTime);
+            }
+
+            const bridge = this.bridgeVoices[i];
+            if (bridge?.osc && bridge.ratio) {
+                const newFreq = this.fundamentalFreq * bridge.ratio;
+                bridge.osc.frequency.setTargetAtTime(newFreq, now, glideTime);
+            }
+        }
     }
 
     // ====================================
@@ -1103,7 +1135,7 @@ class ToneRowPlayback {
 
         osc.start(this.audioContext.currentTime);
 
-        this.bridgeVoices[layerIndex] = { osc, gain };
+        this.bridgeVoices[layerIndex] = { osc, gain, ratio: noteData.ratio };
     }
 
     /**

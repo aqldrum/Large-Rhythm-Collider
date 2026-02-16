@@ -44,7 +44,7 @@ window.LRCTutorialSlides = [
             'Alongside general info, Export also allows you to download MIDI clips from each layer, along with tuning files for software synthesizers.',
             'Details on metrics, analysis and export can be found in Key Features.'
         ],
-        image: 'assets/images/rhythminfo.png',
+        image: 'assets/images/rhythminfo.png?v=2',
         imageAlt: 'Rhythm Info div'
     },
     {
