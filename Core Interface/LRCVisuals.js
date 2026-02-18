@@ -209,16 +209,21 @@ class LRCVisuals {
         window.addEventListener('playbackStarted', (e) => {
             // Only respond if Linear or Circular plot is active (core LRCVisuals plots)
             if (this.currentPlotType === 'linear' || this.currentPlotType === 'circular') {
-                this.cycleDuration = (e.detail.cycleDuration || 10) * 1000; // Convert to ms
-                this.lastLightTime = performance.now(); // align phase to start
-                this.startLightingAnimation();
+                const detail = e.detail || {};
+                if (Number.isFinite(detail.cycleDurationMs) && detail.cycleDurationMs > 0) {
+                    this.cycleDuration = detail.cycleDurationMs;
+                } else {
+                    this.cycleDuration = (detail.cycleDuration || 10) * 1000; // Convert to ms
+                }
+                const phaseMs = Number.isFinite(detail.phaseMs) ? detail.phaseMs : 0;
+                this.startLightingAnimation(phaseMs);
                 console.log(`📊 LRCVisuals (${this.currentPlotType}) responding to playback started`);
             }
         });
 
         window.addEventListener('playbackStopped', () => {
-            // Only respond if Linear or Circular plot is active
-            if (this.currentPlotType === 'linear' || this.currentPlotType === 'circular') {
+            // Always stop if running so stale animation does not survive view transitions.
+            if (this.isAnimating) {
                 this.stopLightingAnimation();
                 console.log(`📊 LRCVisuals (${this.currentPlotType}) responding to playback stopped`);
             }
@@ -226,7 +231,8 @@ class LRCVisuals {
 
         // Tempo / cycle updates (live)
         window.addEventListener('playbackTempoChanged', (e) => {
-            if (this.currentPlotType !== 'linear' && this.currentPlotType !== 'circular') return;
+            const isCorePlot = this.currentPlotType === 'linear' || this.currentPlotType === 'circular';
+            if (!isCorePlot && !this.isAnimating) return;
             const detail = e.detail || {};
             if (Number.isFinite(detail.cycleDurationMs)) {
                 this.cycleDuration = detail.cycleDurationMs;
@@ -1117,12 +1123,20 @@ class LRCVisuals {
     // LIGHTING ANIMATION
     // ====================================
 
-    startLightingAnimation() {
-        if (this.isAnimating) return;
-        
+    startLightingAnimation(phaseMs = 0) {
+        const safePhase = (Number.isFinite(phaseMs) && this.cycleDuration > 0)
+            ? ((phaseMs % this.cycleDuration) + this.cycleDuration) % this.cycleDuration
+            : 0;
+        const phaseAlignedStartTime = performance.now() - safePhase;
+
+        if (this.isAnimating) {
+            this.lastLightTime = phaseAlignedStartTime;
+            return;
+        }
+
         this.isAnimating = true;
         this.currentLightIndex = 0;
-        this.lastLightTime = performance.now();
+        this.lastLightTime = phaseAlignedStartTime;
         
         // Ensure lighting sequences are prepared with current data
         if (!this.layerLightingSequences || this.layerLightingSequences.length === 0 || 
@@ -1303,6 +1317,13 @@ class LRCVisuals {
         if (window.toneRowPlayback && window.toneRowPlayback.isPlaying) {
             window.toneRowPlayback.stopPlayback();
             console.log('🛑 Auto-stopped playback due to visualization type change');
+        }
+
+        // Ensure all animation loops are cleared before transitioning plot state.
+        if (typeof this.stopAnimation === 'function') {
+            this.stopAnimation();
+        } else {
+            this.stopLightingAnimation();
         }
         
         this.currentPlotType = requestedType;

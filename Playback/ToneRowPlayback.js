@@ -763,8 +763,16 @@ class ToneRowPlayback {
             this.runScheduler();
 
             // Notify other modules
+            const normalizedStartPhaseMs = Number.isFinite(startPhaseMs)
+                ? Math.max(0, startPhaseMs)
+                : 0;
             window.dispatchEvent(new CustomEvent('playbackStarted', {
-                detail: { cycleDuration: this.cycleDuration }
+                detail: {
+                    cycleDuration: this.cycleDuration,
+                    cycleDurationMs: this.cycleDuration * 1000,
+                    tempo: this.tempo,
+                    phaseMs: normalizedStartPhaseMs
+                }
             }));
 
         } catch (error) {
@@ -875,6 +883,15 @@ class ToneRowPlayback {
      */
     emitTempoChange({ phaseMs = 0 } = {}) {
         this.scheduler.emitTempoChange({ phaseMs });
+    }
+
+    /**
+     * Push the current transport phase to visuals after UI/view transitions.
+     */
+    resyncVisuals() {
+        if (!this.isPlaying) return;
+        const phaseMs = this.computeCurrentPhaseMs();
+        this.emitTempoChange({ phaseMs });
     }
 
     /**

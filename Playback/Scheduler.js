@@ -155,19 +155,26 @@ class Scheduler {
     }
 
     computeCurrentPhaseMs() {
-        if (!this.playback.audioContext) return 0;
+        if (!this.playback.audioContext || !this.playback.isPlaying) return 0;
+        if (!Number.isFinite(this.playback.secondsPerTick) || this.playback.secondsPerTick <= 0) return 0;
         const now = this.playback.audioContext.currentTime;
         const absTick = this.timeToAbsTick(now);
-        const phaseTick = ((absTick % this.playback.cycleTicks) + this.playback.cycleTicks) % this.playback.cycleTicks;
+        const cycleTicks = Math.max(1, this.playback.cycleTicks || 1);
+        const phaseTick = ((absTick % cycleTicks) + cycleTicks) % cycleTicks;
         return phaseTick * this.playback.secondsPerTick * 1000;
     }
 
     emitTempoChange({ phaseMs = 0 } = {}) {
+        const cycleDurationMs = this.playback.cycleDuration * 1000;
+        const rawPhase = Number.isFinite(phaseMs) ? phaseMs : 0;
+        const safePhase = cycleDurationMs > 0
+            ? ((rawPhase % cycleDurationMs) + cycleDurationMs) % cycleDurationMs
+            : 0;
         window.dispatchEvent(new CustomEvent('playbackTempoChanged', {
             detail: {
-                cycleDurationMs: this.playback.cycleDuration * 1000,
+                cycleDurationMs,
                 tempo: this.playback.tempo,
-                phaseMs
+                phaseMs: safePhase
             }
         }));
     }

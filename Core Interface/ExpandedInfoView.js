@@ -52,6 +52,7 @@ class ExpandedInfoView {
         this.hideVisualizationCanvas();
         this.setupRhythmGenerationListener();
         this.setupWindowResizeListener();
+        requestAnimationFrame(() => this.resyncPlaybackVisuals());
         
         console.log('📊 Expanded Info View activated with live mirroring');
     }
@@ -70,8 +71,23 @@ class ExpandedInfoView {
         this.restoreSystemState();
         this.removeRhythmGenerationListener();
         this.removeWindowResizeListener();
+        requestAnimationFrame(() => this.resyncPlaybackVisuals());
         
         console.log('📊 Expanded Info View closed and system state restored');
+    }
+
+    resyncPlaybackVisuals() {
+        const playback = window.toneRowPlayback;
+        if (!playback || !playback.isPlaying) return;
+
+        if (typeof playback.resyncVisuals === 'function') {
+            playback.resyncVisuals();
+            return;
+        }
+
+        if (typeof playback.computeCurrentPhaseMs === 'function' && typeof playback.emitTempoChange === 'function') {
+            playback.emitTempoChange({ phaseMs: playback.computeCurrentPhaseMs() });
+        }
     }
 
     // ====================================

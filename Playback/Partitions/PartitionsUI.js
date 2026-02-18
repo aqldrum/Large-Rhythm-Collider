@@ -79,6 +79,7 @@ class PartitionsUI {
         this.hidePlaybackDiv();
         this.hideVisualizationCanvas();
         this.setupEventListeners();
+        requestAnimationFrame(() => this.resyncPlaybackVisuals());
 
         console.log('🥁 Partitions view activated with live mirroring');
     }
@@ -110,8 +111,23 @@ class PartitionsUI {
         this.restoreState();
 
         this.isActive = false;
+        requestAnimationFrame(() => this.resyncPlaybackVisuals());
 
         console.log('🥁 Partitions view deactivated');
+    }
+
+    resyncPlaybackVisuals() {
+        const playback = window.toneRowPlayback;
+        if (!playback || !playback.isPlaying) return;
+
+        if (typeof playback.resyncVisuals === 'function') {
+            playback.resyncVisuals();
+            return;
+        }
+
+        if (typeof playback.computeCurrentPhaseMs === 'function' && typeof playback.emitTempoChange === 'function') {
+            playback.emitTempoChange({ phaseMs: playback.computeCurrentPhaseMs() });
+        }
     }
 
     // ====================================

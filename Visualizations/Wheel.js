@@ -85,37 +85,51 @@ class LRCWheel {
             this.cycleDurationMs = cycleDurationMs;
         }
         if (Number.isFinite(phaseMs)) {
-            this.lastPhaseMs = phaseMs;
+            const normalized = this.cycleDurationMs > 0
+                ? ((phaseMs % this.cycleDurationMs) + this.cycleDurationMs) % this.cycleDurationMs
+                : 0;
+            this.lastPhaseMs = normalized;
         }
         if (this.isAnimating) {
             this.startTime = performance.now() - this.lastPhaseMs;
         }
     }
 
-    startAnimation() {
-        if (this.isAnimating) return;
+    startAnimation({ phaseMs = null } = {}) {
+        if (Number.isFinite(phaseMs)) {
+            this.setPhase(this.cycleDurationMs, phaseMs);
+        }
+        if (this.isAnimating) {
+            if (Number.isFinite(phaseMs)) {
+                this.startTime = performance.now() - this.lastPhaseMs;
+            }
+            return;
+        }
         this.isAnimating = true;
         this.startTime = performance.now() - (this.lastPhaseMs || 0);
         this.animate();
     }
 
-    stopAnimation() {
+    stopAnimation({ redraw = true } = {}) {
+        const wasAnimating = this.isAnimating;
         this.isAnimating = false;
         if (this.animationId) {
             cancelAnimationFrame(this.animationId);
             this.animationId = null;
         }
-        if (this.startTime) {
+        if (wasAnimating && this.startTime) {
             const elapsed = (performance.now() - this.startTime) % this.cycleDurationMs;
             this.lastPhaseMs = Number.isFinite(elapsed) ? elapsed : 0;
         }
         this.cursorAngle = 0;
         this.lastCursorAngle = -1;
         this.highlightTimes.clear();
-        this.draw();
+        if (redraw) {
+            this.draw();
+        }
     }
 
-    resetPlaybackState() {
+    resetPlaybackState({ redraw = true } = {}) {
         this.lastPhaseMs = 0;
         this.startTime = 0;
         this.isAnimating = false;
@@ -126,7 +140,9 @@ class LRCWheel {
             cancelAnimationFrame(this.animationId);
             this.animationId = null;
         }
-        this.draw();
+        if (redraw) {
+            this.draw();
+        }
     }
 
     animate() {
@@ -633,7 +649,7 @@ function integrateWheelVisualization() {
     const originalStopAnimation = window.lrcVisuals.stopAnimation || function() {};
     window.lrcVisuals.stopAnimation = function() {
         if (this.wheel) {
-            this.wheel.stopAnimation();
+            this.wheel.stopAnimation({ redraw: this.currentPlotType === 'wheel' });
         }
         originalStopAnimation.call(this);
     };
@@ -642,15 +658,17 @@ function integrateWheelVisualization() {
         if (window.lrcVisuals && window.lrcVisuals.currentPlotType === 'wheel') {
             const wheel = getOrCreateWheel();
             const cycleDuration = e.detail?.cycleDuration || 10.0;
+            const phaseMs = Number.isFinite(e.detail?.phaseMs) ? e.detail.phaseMs : 0;
             wheel.setCycleDurationSeconds(cycleDuration);
-            wheel.startAnimation();
-            console.log('Wheel animation started with cycle duration:', cycleDuration);
+            wheel.startAnimation({ phaseMs });
+            console.log('Wheel animation started with cycle duration:', cycleDuration, 'phase:', phaseMs);
         }
     });
 
     window.addEventListener('playbackStopped', () => {
-        if (window.lrcVisuals && window.lrcVisuals.currentPlotType === 'wheel' && window.lrcVisuals.wheel) {
-            window.lrcVisuals.wheel.resetPlaybackState();
+        if (window.lrcVisuals && window.lrcVisuals.wheel) {
+            const redraw = window.lrcVisuals.currentPlotType === 'wheel';
+            window.lrcVisuals.wheel.resetPlaybackState({ redraw });
             console.log('Wheel animation stopped');
         }
     });
@@ -658,11 +676,13 @@ function integrateWheelVisualization() {
     window.addEventListener('playbackTempoChanged', (e) => {
         if (window.lrcVisuals && window.lrcVisuals.wheel) {
             const cycleMs = Number.isFinite(e.detail?.cycleDurationMs) ? e.detail.cycleDurationMs : null;
-            const phaseMs = Number.isFinite(e.detail?.phaseMs) ? e.detail.phaseMs : 0;
+            const rawPhaseMs = Number.isFinite(e.detail?.phaseMs) ? e.detail.phaseMs : 0;
+            const isPlaying = Boolean(window.toneRowPlayback?.isPlaying);
+            const phaseMs = isPlaying ? rawPhaseMs : 0;
             if (cycleMs != null) {
                 window.lrcVisuals.wheel.setPhase(cycleMs, phaseMs);
-                if (window.lrcVisuals.currentPlotType === 'wheel' && window.toneRowPlayback?.isPlaying) {
-                    window.lrcVisuals.wheel.startAnimation();
+                if (window.lrcVisuals.currentPlotType === 'wheel' && isPlaying) {
+                    window.lrcVisuals.wheel.startAnimation({ phaseMs });
                 }
                 console.log('Wheel phase/cycle updated:', { cycleMs, phaseMs });
             }
