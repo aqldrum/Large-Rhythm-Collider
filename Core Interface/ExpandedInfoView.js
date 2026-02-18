@@ -45,6 +45,9 @@ class ExpandedInfoView {
         this.captureCurrentState();
 
         this.isActive = true;
+        window.dispatchEvent(new CustomEvent('visualizationOverlayStateChanged', {
+            detail: { overlay: 'expanded-info', active: true }
+        }));
         this.createExpandedLayout();
         this.setupLiveMirrorCanvas();
         this.populateExpandedContent();
@@ -64,6 +67,9 @@ class ExpandedInfoView {
         }
 
         this.isActive = false;
+        window.dispatchEvent(new CustomEvent('visualizationOverlayStateChanged', {
+            detail: { overlay: 'expanded-info', active: false }
+        }));
         this.stopLiveMirror();
         this.removeExpandedLayout();
         this.restoreRhythmInfoDiv();

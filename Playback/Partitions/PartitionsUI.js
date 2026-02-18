@@ -58,6 +58,9 @@ class PartitionsUI {
         this.captureCurrentState();
 
         this.isActive = true;
+        window.dispatchEvent(new CustomEvent('visualizationOverlayStateChanged', {
+            detail: { overlay: 'partitions', active: true }
+        }));
         if (!this.isLayoutBuilt) {
             this.createExpandedLayout();
             this.isLayoutBuilt = true;
@@ -111,6 +114,9 @@ class PartitionsUI {
         this.restoreState();
 
         this.isActive = false;
+        window.dispatchEvent(new CustomEvent('visualizationOverlayStateChanged', {
+            detail: { overlay: 'partitions', active: false }
+        }));
         requestAnimationFrame(() => this.resyncPlaybackVisuals());
 
         console.log('🥁 Partitions view deactivated');

@@ -8,6 +8,7 @@ class LRCVisuals {
         this.ctx = null;
         this.currentPlotType = 'linear';
         this.lastNonPopupPlotType = 'linear';
+        this.lastDrawnPlotType = 'linear';
         
         // Data
         this.spacesPlot = [];
@@ -57,6 +58,22 @@ class LRCVisuals {
         this.nodePopups = null;
         this.hoveredNode = null; // Track currently hovered node
 
+        // Linear Plot camera state (linear-only zoom + pan)
+        this.linearView = {
+            zoomX: 1,
+            zoomY: 1,
+            minZoomX: 1,
+            minZoomY: 1,
+            maxZoomX: 12,
+            maxZoomY: 12,
+            panX: 0,
+            panY: 0,
+            isPanning: false,
+            lastPointerX: 0,
+            lastPointerY: 0,
+            interactionsSuspended: false
+        };
+
         // Initialize
         this.setupCanvas();
         this.setupEventListeners();
@@ -98,7 +115,20 @@ class LRCVisuals {
             this.handleCanvasMouseMove(e);
         });
 
+        this.canvas.addEventListener('mousedown', (e) => {
+            this.handleCanvasMouseDown(e);
+        });
+
+        this.canvas.addEventListener('mouseup', () => {
+            this.endLinearPan();
+        });
+
+        this.canvas.addEventListener('wheel', (e) => {
+            this.handleCanvasWheel(e);
+        }, { passive: false });
+
         this.canvas.addEventListener('mouseleave', () => {
+            this.endLinearPan();
             this.hideNodePopup();
         });
 
@@ -248,10 +278,17 @@ class LRCVisuals {
             this.resizeCanvas();
         });
 
+        // Expanded overlays suspend linear zoom/pan and force reset to default view
+        window.addEventListener('visualizationOverlayStateChanged', () => {
+            this.syncLinearInteractionSuspension();
+        });
+
         // Listen for spaces plot visibility changes from Scale chart
         window.addEventListener('spacesPlotVisibilityChanged', (e) => {
             this.updateSpacesPlotVisibility(e.detail.hiddenSpacesIndices);
         });
+
+        this.syncLinearInteractionSuspension();
     }
 
     initializeNodePopupSystem() {
@@ -277,6 +314,7 @@ class LRCVisuals {
         this.compositeRhythm = compositeRhythm || [];
         this.ratios = ratios || [];
         this.grid = grid || 0;
+        this.updateLinearZoomBounds();
 
         console.log('Updating visualization with:', {
             spacesLength: this.spacesPlot.length,
@@ -611,6 +649,11 @@ class LRCVisuals {
 
     drawPlot() {
         if (!this.ctx || this.spacesPlot.length === 0) return;
+
+        if (this.lastDrawnPlotType !== this.currentPlotType) {
+            this.resetLinearViewState(false);
+            this.lastDrawnPlotType = this.currentPlotType;
+        }
         
         this.clearCanvas();
         this.dotPositions = [];
@@ -628,12 +671,125 @@ class LRCVisuals {
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     }
 
-    drawLinearPlot() {
-        const width = parseInt(this.canvas.style.width);
-        const height = parseInt(this.canvas.style.height);
+    getCanvasLogicalSize() {
+        const width = parseInt(this.canvas.style.width, 10) || this.canvas.clientWidth || this.canvas.width;
+        const height = parseInt(this.canvas.style.height, 10) || this.canvas.clientHeight || this.canvas.height;
+        return { width, height };
+    }
+
+    getLinearPlotMetrics(width, height) {
         const padding = 40;
-        const plotWidth = width - (padding * 2);
-        const plotHeight = height - (padding * 2);
+        const plotWidth = Math.max(1, width - (padding * 2));
+        const plotHeight = Math.max(1, height - (padding * 2));
+        return { padding, plotWidth, plotHeight };
+    }
+
+    isLinearZoomedIn() {
+        return this.linearView.zoomX > this.linearView.minZoomX || this.linearView.zoomY > this.linearView.minZoomY;
+    }
+
+    updateLinearZoomBounds() {
+        const compositeNodeCount = Math.max(
+            1,
+            this.spacesPlot.length || 0,
+            this.compositeRhythm.length || 0
+        );
+        const minSpace = this.spacesPlot.length > 0 ? Math.min(...this.spacesPlot) : 0;
+        const maxSpace = this.spacesPlot.length > 0 ? Math.max(...this.spacesPlot) : 0;
+        const spaceRange = Math.max(1, maxSpace - minSpace);
+
+        // Keep baseline zoom-out anchored to full view.
+        this.linearView.minZoomX = 1;
+        this.linearView.minZoomY = 1;
+
+        // Dynamic maxima for dense/large rhythms.
+        this.linearView.maxZoomX = Math.max(16, Math.ceil(compositeNodeCount / 2));
+        this.linearView.maxZoomY = Math.max(16, Math.ceil(spaceRange * 2));
+
+        this.linearView.zoomX = Math.max(this.linearView.minZoomX, Math.min(this.linearView.maxZoomX, this.linearView.zoomX));
+        this.linearView.zoomY = Math.max(this.linearView.minZoomY, Math.min(this.linearView.maxZoomY, this.linearView.zoomY));
+    }
+
+    resetLinearViewState(redraw = false) {
+        this.updateLinearZoomBounds();
+        this.linearView.zoomX = 1;
+        this.linearView.zoomY = 1;
+        this.linearView.panX = 0;
+        this.linearView.panY = 0;
+        this.endLinearPan();
+        this.hideNodePopup();
+
+        if (redraw && this.currentPlotType === 'linear' && this.spacesPlot.length > 0) {
+            this.drawPlot();
+        }
+    }
+
+    clampLinearViewPan(plotWidth, plotHeight) {
+        const maxPanX = Math.max(0, ((this.linearView.zoomX - 1) * plotWidth) / 2);
+        const maxPanY = Math.max(0, ((this.linearView.zoomY - 1) * plotHeight) / 2);
+        this.linearView.panX = Math.max(-maxPanX, Math.min(maxPanX, this.linearView.panX));
+        this.linearView.panY = Math.max(-maxPanY, Math.min(maxPanY, this.linearView.panY));
+
+        if (!this.isLinearZoomedIn()) {
+            this.linearView.panX = 0;
+            this.linearView.panY = 0;
+        }
+    }
+
+    applyLinearViewTransform(x, y, width, height) {
+        const centerX = width / 2;
+        const centerY = height / 2;
+        return {
+            x: ((x - centerX) * this.linearView.zoomX) + centerX + this.linearView.panX,
+            y: ((y - centerY) * this.linearView.zoomY) + centerY + this.linearView.panY
+        };
+    }
+
+    zoomLinearAxis(axis, zoomFactor, anchorX, anchorY, width, height, plotWidth, plotHeight) {
+        const centerX = width / 2;
+        const centerY = height / 2;
+
+        if (axis === 'x') {
+            const oldZoom = this.linearView.zoomX;
+            const nextZoom = Math.max(this.linearView.minZoomX, Math.min(this.linearView.maxZoomX, oldZoom * zoomFactor));
+            if (nextZoom === oldZoom) return false;
+
+            const worldX = ((anchorX - this.linearView.panX - centerX) / oldZoom) + centerX;
+            this.linearView.zoomX = nextZoom;
+            this.linearView.panX = anchorX - (((worldX - centerX) * nextZoom) + centerX);
+        } else if (axis === 'y') {
+            const oldZoom = this.linearView.zoomY;
+            const nextZoom = Math.max(this.linearView.minZoomY, Math.min(this.linearView.maxZoomY, oldZoom * zoomFactor));
+            if (nextZoom === oldZoom) return false;
+
+            const worldY = ((anchorY - this.linearView.panY - centerY) / oldZoom) + centerY;
+            this.linearView.zoomY = nextZoom;
+            this.linearView.panY = anchorY - (((worldY - centerY) * nextZoom) + centerY);
+        } else {
+            return false;
+        }
+
+        this.clampLinearViewPan(plotWidth, plotHeight);
+        return true;
+    }
+
+    syncLinearInteractionSuspension() {
+        const overlayActive = Boolean(
+            (window.expandedInfoView && window.expandedInfoView.isActive) ||
+            (window.partitionsUI && window.partitionsUI.isActive)
+        );
+
+        this.linearView.interactionsSuspended = overlayActive;
+
+        if (overlayActive) {
+            this.resetLinearViewState(true);
+        }
+    }
+
+    drawLinearPlot() {
+        const { width, height } = this.getCanvasLogicalSize();
+        const { padding, plotWidth, plotHeight } = this.getLinearPlotMetrics(width, height);
+        this.clampLinearViewPan(plotWidth, plotHeight);
         
         const maxValue = Math.max(...this.spacesPlot);
         const spacing = plotWidth / (this.spacesPlot.length - 1);
@@ -645,11 +801,11 @@ class LRCVisuals {
             // Skip only for layer visibility, not for scale hiding
             if (!this.shouldShowDot(contributingLayers)) return;
             
-            const x = padding + (index * spacing);
-            // Y-axis inversion: if inverted, flip the coordinate calculation
-            const y = this.yAxisInverted ? 
+            const baseX = padding + (index * spacing);
+            const baseY = this.yAxisInverted ? 
                 padding + ((space / maxValue) * plotHeight) : 
                 height - padding - ((space / maxValue) * plotHeight);
+            const transformed = this.applyLinearViewTransform(baseX, baseY, width, height);
             
             const size = this.calculateDotSize();
             const baseColor = this.calculateDotColor(contributingLayers);
@@ -659,12 +815,12 @@ class LRCVisuals {
             const color = isHiddenByScale ? this.makeColorTransparent(baseColor) : baseColor;
             const actualSize = isHiddenByScale ? size * 0.3 : size; // Make smaller when hidden
             
-            this.drawDot(x, y, actualSize, color, false);
+            this.drawDot(transformed.x, transformed.y, actualSize, color, false);
             
             // Always add to dotPositions to maintain timing structure
             this.dotPositions.push({
-                x: x,
-                y: y,
+                x: transformed.x,
+                y: transformed.y,
                 size: actualSize,
                 index: index,
                 space: space,
@@ -875,14 +1031,15 @@ class LRCVisuals {
                 if (contributingLayers.includes(layerName)) {
                     // Only include if the dot should be shown (layer visibility)
                     if (this.shouldShowDot(contributingLayers)) {
-                        const x = padding + (index * spacing);
-                        const y = this.yAxisInverted ? 
+                        const baseX = padding + (index * spacing);
+                        const baseY = this.yAxisInverted ? 
                             padding + ((space / maxValue) * plotHeight) : 
                             height - padding - ((space / maxValue) * plotHeight);
+                        const transformed = this.applyLinearViewTransform(baseX, baseY, width, height);
                         
                         layerPositions.push({
-                            x: x,
-                            y: y,
+                            x: transformed.x,
+                            y: transformed.y,
                             index: index,
                             space: space,
                             isHiddenByScale: this.isDotHiddenByScale(index)
@@ -993,12 +1150,97 @@ class LRCVisuals {
         }
     }
 
-    handleCanvasMouseMove(event) {
+    handleCanvasWheel(event) {
         if (this.currentPlotType !== 'linear') return;
+        if (this.linearView.interactionsSuspended) return;
+
+        const wantsHorizontalZoom = event.metaKey || event.ctrlKey;
+        const wantsVerticalZoom = event.altKey;
+        if (!wantsHorizontalZoom && !wantsVerticalZoom) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const rect = this.canvas.getBoundingClientRect();
+        const anchorX = event.clientX - rect.left;
+        const anchorY = event.clientY - rect.top;
+        const { width, height } = this.getCanvasLogicalSize();
+        const { plotWidth, plotHeight } = this.getLinearPlotMetrics(width, height);
+        const zoomFactor = Math.exp(-event.deltaY * 0.002);
+
+        const axis = wantsVerticalZoom ? 'y' : 'x';
+        const changed = this.zoomLinearAxis(axis, zoomFactor, anchorX, anchorY, width, height, plotWidth, plotHeight);
+        if (!changed) return;
+
+        this.hideNodePopup();
+        this.drawPlot();
+    }
+
+    handleCanvasMouseDown(event) {
+        if (this.currentPlotType !== 'linear') return;
+        if (this.linearView.interactionsSuspended) return;
+        if (event.button !== 0) return;
+        if (!this.isLinearZoomedIn()) return;
 
         const rect = this.canvas.getBoundingClientRect();
         const x = event.clientX - rect.left;
         const y = event.clientY - rect.top;
+
+        if (this.toggleButtonBounds &&
+            x >= this.toggleButtonBounds.x &&
+            x <= this.toggleButtonBounds.x + this.toggleButtonBounds.width &&
+            y >= this.toggleButtonBounds.y &&
+            y <= this.toggleButtonBounds.y + this.toggleButtonBounds.height) {
+            return;
+        }
+
+        this.linearView.isPanning = true;
+        this.linearView.lastPointerX = x;
+        this.linearView.lastPointerY = y;
+        this.hideNodePopup();
+        this.canvas.style.cursor = 'grabbing';
+        event.preventDefault();
+    }
+
+    endLinearPan() {
+        if (!this.linearView.isPanning) return;
+        this.linearView.isPanning = false;
+        if (this.currentPlotType === 'linear') {
+            this.canvas.style.cursor = this.isLinearZoomedIn() ? 'grab' : 'default';
+        }
+    }
+
+    handleCanvasMouseMove(event) {
+        if (this.currentPlotType !== 'linear') return;
+        if (this.linearView.interactionsSuspended) {
+            this.endLinearPan();
+            this.hideNodePopup();
+            this.canvas.style.cursor = 'default';
+            return;
+        }
+
+        const rect = this.canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+
+        if (this.linearView.isPanning) {
+            const dx = x - this.linearView.lastPointerX;
+            const dy = y - this.linearView.lastPointerY;
+            this.linearView.lastPointerX = x;
+            this.linearView.lastPointerY = y;
+
+            if (dx !== 0 || dy !== 0) {
+                const { width, height } = this.getCanvasLogicalSize();
+                const { plotWidth, plotHeight } = this.getLinearPlotMetrics(width, height);
+                this.linearView.panX += dx;
+                this.linearView.panY += dy;
+                this.clampLinearViewPan(plotWidth, plotHeight);
+                this.drawPlot();
+            }
+
+            this.canvas.style.cursor = 'grabbing';
+            return;
+        }
 
         // Check if mouse is over toggle button
         let isOverButton = false;
@@ -1046,7 +1288,13 @@ class LRCVisuals {
                 this.nodeUI.hidePopup();
                 this.hoveredNode = null;
             }
-            this.canvas.style.cursor = isOverButton ? 'pointer' : 'default';
+            if (isOverButton) {
+                this.canvas.style.cursor = 'pointer';
+            } else if (this.isLinearZoomedIn()) {
+                this.canvas.style.cursor = 'grab';
+            } else {
+                this.canvas.style.cursor = 'default';
+            }
         }
     }
 
@@ -1324,6 +1572,10 @@ class LRCVisuals {
             this.stopAnimation();
         } else {
             this.stopLightingAnimation();
+        }
+
+        if (previousType !== requestedType) {
+            this.resetLinearViewState(false);
         }
         
         this.currentPlotType = requestedType;
