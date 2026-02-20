@@ -315,6 +315,7 @@ class LRCVisuals {
         this.ratios = ratios || [];
         this.grid = grid || 0;
         this.updateLinearZoomBounds();
+        this.resetLinearViewState(false);
 
         console.log('Updating visualization with:', {
             spacesLength: this.spacesPlot.length,
