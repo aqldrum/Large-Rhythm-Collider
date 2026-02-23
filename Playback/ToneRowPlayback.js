@@ -16,6 +16,7 @@ class ToneRowPlayback {
         this.fundamentalLimits = { min: 55, max: 880 };
         this.filterLimits = { min: 20, max: 20000 };
         this.maxFrequencyHz = 3520; // Five octaves above A110
+        this.highFreqAttenMinGain = 0.58; // gain floor at maxFrequencyHz
         this.masterVolumeDb = -12;
         this.lastUpdateTime = 0;
         this.tempo = 1.0;
@@ -355,6 +356,22 @@ class ToneRowPlayback {
     clampFilterFrequency(value) {
         const { min, max } = this.filterLimits || { min: 20, max: 20000 };
         return Math.min(max, Math.max(min, value));
+    }
+
+    getHighFrequencyAttenuation(frequencyHz) {
+        if (!Number.isFinite(frequencyHz) || frequencyHz <= 0) return 1;
+        const maxFrequency = Number(this.maxFrequencyHz);
+        if (!Number.isFinite(maxFrequency) || maxFrequency <= 0) return 1;
+
+        const kneeStart = maxFrequency / 2;
+        if (frequencyHz <= kneeStart) return 1;
+
+        const denominator = Math.max(1e-9, maxFrequency - kneeStart);
+        const t = Math.max(0, Math.min(1, (frequencyHz - kneeStart) / denominator));
+        const smooth = t * t * (3 - 2 * t); // smoothstep
+        const minGain = Math.max(0, Math.min(1, this.highFreqAttenMinGain));
+
+        return 1 - (1 - minGain) * smooth;
     }
 
     setGlobalHighpass(rawValue, options = {}) {
@@ -1004,12 +1021,15 @@ class ToneRowPlayback {
         envelope.connect(this.layerNodes[layerIndex].gain);
 
         const { attack, decay, sustain, release } = layerState.adsr;
+        const highFreqAtten = this.getHighFrequencyAttenuation(noteData.frequency);
+        const peakGain = highFreqAtten;
+        const sustainGain = sustain * highFreqAtten;
         const sustainTime = Math.max(0, duration - attack - decay - release);
         const endTime = start + Math.max(0.01, duration);
 
-        envelope.gain.linearRampToValueAtTime(1, start + attack);
-        envelope.gain.linearRampToValueAtTime(sustain, start + attack + decay);
-        envelope.gain.setValueAtTime(sustain, start + attack + decay + sustainTime);
+        envelope.gain.linearRampToValueAtTime(peakGain, start + attack);
+        envelope.gain.linearRampToValueAtTime(sustainGain, start + attack + decay);
+        envelope.gain.setValueAtTime(sustainGain, start + attack + decay + sustainTime);
         envelope.gain.linearRampToValueAtTime(0, start + duration);
 
         oscillator.start(start);
@@ -1056,9 +1076,13 @@ class ToneRowPlayback {
             attack = Math.min(attack, 0.01);
         }
 
-        envelope.gain.linearRampToValueAtTime(1, start + attack);
-        envelope.gain.linearRampToValueAtTime(sustain, start + attack + decay);
-        envelope.gain.setValueAtTime(sustain, start + attack + decay + 0.01);
+        const highFreqAtten = this.getHighFrequencyAttenuation(noteData.frequency);
+        const peakGain = highFreqAtten;
+        const sustainGain = sustain * highFreqAtten;
+
+        envelope.gain.linearRampToValueAtTime(peakGain, start + attack);
+        envelope.gain.linearRampToValueAtTime(sustainGain, start + attack + decay);
+        envelope.gain.setValueAtTime(sustainGain, start + attack + decay + 0.01);
 
         oscillator.start(start);
 
@@ -1159,7 +1183,8 @@ class ToneRowPlayback {
         gain.connect(this.layerNodes[layerIndex].gain);
 
         const attack = 0.01;
-        const target = Number(layerState.adsr?.sustain) || 1;
+        const highFreqAtten = this.getHighFrequencyAttenuation(freq);
+        const target = (Number(layerState.adsr?.sustain) || 1) * highFreqAtten;
         gain.gain.linearRampToValueAtTime(target, this.audioContext.currentTime + attack);
 
         osc.start(this.audioContext.currentTime);
