@@ -310,15 +310,42 @@ export class AnimationGeometry {
     ctx.restore();
   }
 
-  drawText({ text, position, color = '#ffffff', font = '12px sans-serif', align = 'left', baseline = 'middle', alpha = 1 }) {
+  drawText({ text, position, color = '#ffffff', font = '12px sans-serif', align = 'left', baseline = 'middle', alpha = 1, letterSpacing = 0 }) {
     const ctx = this.ctx;
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.fillStyle = color;
     ctx.font = font;
-    ctx.textAlign = align;
     ctx.textBaseline = baseline;
-    ctx.fillText(text, position.x, position.y);
+
+    const spacing = Number.isFinite(letterSpacing) ? letterSpacing : 0;
+    if (!spacing) {
+      ctx.textAlign = align;
+      ctx.fillText(text, position.x, position.y);
+      ctx.restore();
+      return;
+    }
+
+    const glyphs = Array.from(String(text || ''));
+    if (!glyphs.length) {
+      ctx.restore();
+      return;
+    }
+
+    const widths = glyphs.map((glyph) => ctx.measureText(glyph).width);
+    const totalWidth = widths.reduce((sum, width) => sum + width, 0) + spacing * Math.max(0, glyphs.length - 1);
+    let cursorX = position.x;
+    if (align === 'center') {
+      cursorX -= totalWidth * 0.5;
+    } else if (align === 'right' || align === 'end') {
+      cursorX -= totalWidth;
+    }
+
+    ctx.textAlign = 'left';
+    glyphs.forEach((glyph, idx) => {
+      ctx.fillText(glyph, cursorX, position.y);
+      cursorX += widths[idx] + spacing;
+    });
     ctx.restore();
   }
 

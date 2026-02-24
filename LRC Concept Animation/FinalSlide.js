@@ -26,6 +26,8 @@ export class FinalSlide {
     this.synth = null;
     this.output = null;
     this.baseFrequency = 220;
+    this.maxFrequencyHz = 3520;
+    this.highFreqAttenMinGain = 0.58;
 
     this.lastTriggeredBoundary = -1;
     this.justStarted = false;
@@ -223,10 +225,28 @@ export class FinalSlide {
 
     const ratio = seq.fundamentalValue / segment.value;
     const frequency = this.baseFrequency * ratio;
-    const maxFrequency = this.baseFrequency * 32;
+    const maxFrequency = Number(this.maxFrequencyHz);
+    if (!Number.isFinite(maxFrequency) || maxFrequency <= 0) return;
     if (frequency > maxFrequency) return;
 
-    this.synth.triggerAttackRelease(frequency, 0.5);
+    const velocity = this.getHighFrequencyAttenuation(frequency);
+    this.synth.triggerAttackRelease(frequency, 0.5, undefined, velocity);
+  }
+
+  getHighFrequencyAttenuation(frequencyHz) {
+    if (!Number.isFinite(frequencyHz) || frequencyHz <= 0) return 1;
+    const maxFrequency = Number(this.maxFrequencyHz);
+    if (!Number.isFinite(maxFrequency) || maxFrequency <= 0) return 1;
+
+    const kneeStart = maxFrequency / 2;
+    if (frequencyHz <= kneeStart) return 1;
+
+    const denominator = Math.max(1e-9, maxFrequency - kneeStart);
+    const t = Math.max(0, Math.min(1, (frequencyHz - kneeStart) / denominator));
+    const smooth = t * t * (3 - 2 * t);
+    const minGain = Math.max(0, Math.min(1, this.highFreqAttenMinGain));
+
+    return 1 - (1 - minGain) * smooth;
   }
 
   getCursorAngle() {

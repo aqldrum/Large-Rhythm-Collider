@@ -8,12 +8,12 @@ export class ScaleAnimation {
     this.leftoverRows = [];
   }
 
-  static TRACE_MS = 100;
-  static COLLAPSE_MS = 100;
-  static TRACER_SUSTAIN_MS = 200;
-  static BRACKET_MS = 500;
-  static TABLE_MS = 2400;
-  static TABLE_MOVE_MS = 900;
+  static TRACE_MS = 140;
+  static COLLAPSE_MS = 160;
+  static TRACER_SUSTAIN_MS = 380;
+  static BRACKET_MS = 780;
+  static TABLE_MS = 3300;
+  static TABLE_MOVE_MS = 1200;
 
   setRatios(rows, fundamentalValue) {
     this.order = [];
@@ -158,6 +158,7 @@ export class ScaleAnimation {
     tableProgress = 0,
     tableMoveProgress = 0,
     tableLayout = null,
+    numberPhaseScale = 1,
     viewScale = 1,
     viewTranslate = { x: 0, y: 0 },
     tableHighlights = []
@@ -166,9 +167,12 @@ export class ScaleAnimation {
 
     const baseFont = `${fontSize}px "Space Grotesk", sans-serif`;
     const stepCount = this.order.length;
-    const traceMs = ScaleAnimation.TRACE_MS;
-    const sustainMs = ScaleAnimation.TRACER_SUSTAIN_MS;
-    const collapseMs = ScaleAnimation.COLLAPSE_MS;
+    const timingScale = Number.isFinite(numberPhaseScale) && numberPhaseScale > 0
+      ? numberPhaseScale
+      : 1;
+    const traceMs = ScaleAnimation.TRACE_MS * timingScale;
+    const sustainMs = ScaleAnimation.TRACER_SUSTAIN_MS * timingScale;
+    const collapseMs = ScaleAnimation.COLLAPSE_MS * timingScale;
     const stepMs = traceMs + sustainMs + collapseMs;
     const totalMs = stepMs * stepCount;
     const effectiveElapsedMs = elapsedMs !== undefined && elapsedMs !== null
@@ -341,7 +345,7 @@ export class ScaleAnimation {
       }
       const columnGap = Math.max(18, rows[0].labelOffset * 1.4);
       const capSize = Math.max(6, lineWidth * 3);
-      const bracketMs = ScaleAnimation.BRACKET_MS;
+      const bracketMs = ScaleAnimation.BRACKET_MS * timingScale;
       const totalBracketMs = bracketMs * this.octaveGroups.length;
       const elapsed = Math.min(Math.max(octaveElapsedMs, 0), totalBracketMs);
 
@@ -499,7 +503,7 @@ export class ScaleAnimation {
       const fontHeader = `bold ${(tableLayout.fontHeaderSize || 9) / viewScale}px ${fontFamily}`;
       const entries = tableLayout.rows || [];
       if (entries.length) {
-        const totalTableMs = ScaleAnimation.TABLE_MS;
+        const totalTableMs = ScaleAnimation.TABLE_MS * timingScale;
         const elapsedTableMs = Math.min(Math.max(tableProgress, 0), 1) * totalTableMs;
         const perMs = entries.length > 0 ? totalTableMs / entries.length : totalTableMs;
         const moveProgress = Math.min(Math.max(tableMoveProgress, 0), 1);

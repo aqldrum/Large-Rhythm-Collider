@@ -93,6 +93,11 @@ class AnimationSequence {
     this.tableEnd = 0;
     this.tableMoveStart = 0;
     this.tableMoveEnd = 0;
+    this.numberPhaseScale = 1;
+    this.polyrhythmTitle = '';
+    this.gridValue = 0;
+    this.gridStart = 0;
+    this.gridEnd = 0;
 
     this.handleResize = this.handleResize.bind(this);
     this.tick = this.tick.bind(this);
@@ -162,6 +167,11 @@ class AnimationSequence {
     this.tableEnd = 0;
     this.tableMoveStart = 0;
     this.tableMoveEnd = 0;
+    this.numberPhaseScale = 1;
+    this.polyrhythmTitle = '';
+    this.gridValue = 0;
+    this.gridStart = 0;
+    this.gridEnd = 0;
     if (this.finalSlide.isActive()) {
       this.finalSlide.stop();
     }
@@ -178,6 +188,17 @@ class AnimationSequence {
     const { center, radius, lineWidth } = this.layout;
     this.geometry.clear();
     this.geometry.drawCircle(center, radius, COLORS.white, lineWidth);
+  }
+
+  formatPolyrhythmTitle(layers) {
+    if (!Array.isArray(layers)) return '';
+    const parts = layers
+      .map((value) => {
+        const parsed = Number.isFinite(value) ? Math.floor(value) : parseInt(value, 10);
+        return Number.isFinite(parsed) ? parsed : 0;
+      })
+      .filter((value) => value > 1);
+    return parts.join(' : ');
   }
 
   start(rawLayers) {
@@ -211,6 +232,8 @@ class AnimationSequence {
     this.tableEnd = 0;
     this.tableMoveStart = 0;
     this.tableMoveEnd = 0;
+    this.numberPhaseScale = 1;
+    this.polyrhythmTitle = this.formatPolyrhythmTitle(layers);
     this.sequenceStart = performance.now();
     this.lastLayers = [...layers];
 
@@ -300,7 +323,7 @@ class AnimationSequence {
       case 2:
         return this.pauseStart ?? 0;
       case 3:
-        return this.unrollEnd ?? this.totalDuration ?? 0;
+        return this.gridEnd ?? this.unrollEnd ?? this.totalDuration ?? 0;
       case 4:
         return this.organizeEnd ?? this.totalDuration ?? 0;
       case 5:
@@ -513,6 +536,7 @@ class AnimationSequence {
       this.scaleRatios = [];
       this.spacesMapping = new Map();
       this.scaleRatioIndex = new Map();
+      this.gridValue = 0;
       for (let i = 0; i < this.boundaries.length - 1; i += 1) {
         const start = this.boundaries[i];
         const end = this.boundaries[i + 1];
@@ -531,6 +555,7 @@ class AnimationSequence {
     }
 
     this.spacesPlotValues = spacesPlot.slice();
+    this.gridValue = grid;
     this.fundamentalValue = Math.max(...spacesPlot);
     this.maxDenominator = 1;
     this.scaleRatios = ratios ? ratios.slice() : [];
@@ -646,6 +671,11 @@ class AnimationSequence {
     this.unrollEnd = cursor + 4;
     cursor = this.unrollEnd;
 
+    const preGridPause = 0.5;
+    this.gridStart = cursor + preGridPause;
+    this.gridEnd = this.gridStart + 1.0 + this.segments.length * 0.25;
+    cursor = this.gridEnd;
+
     this.organizeStart = cursor;
     this.organizeEnd = cursor + 4.6;
     cursor = this.organizeEnd;
@@ -654,12 +684,19 @@ class AnimationSequence {
     this.waveEnd = cursor + 3;
     cursor = this.waveEnd;
 
+    const rowCount = this.segmentRows?.length || 0;
+    const octaveGroupCount = this.scaleAnimation.octaveGroups?.length || 0;
+    const adaptiveScale = 1
+      + Math.max(0, rowCount - 8) * 0.04
+      + octaveGroupCount * 0.03;
+    this.numberPhaseScale = clamp(adaptiveScale, 1, 1.8);
+
     this.ratioStart = cursor;
     const ratioSteps = Math.max(1, this.segmentRows.length);
     const ratioStepMs = ScaleAnimation.TRACE_MS
       + ScaleAnimation.TRACER_SUSTAIN_MS
       + ScaleAnimation.COLLAPSE_MS;
-    const ratioDuration = (ratioSteps * ratioStepMs) / 1000;
+    const ratioDuration = (ratioSteps * ratioStepMs * this.numberPhaseScale) / 1000;
     this.ratioEnd = cursor + ratioDuration;
     cursor = this.ratioEnd;
 
@@ -667,22 +704,22 @@ class AnimationSequence {
     const octaveGroups = this.scaleAnimation.octaveGroups?.length || 0;
     const leftoverCount = this.scaleAnimation.leftoverRows?.length || 0;
     const bracketDuration = octaveGroups > 0
-      ? (octaveGroups * ScaleAnimation.BRACKET_MS) / 1000
+      ? (octaveGroups * ScaleAnimation.BRACKET_MS * this.numberPhaseScale) / 1000
       : 0;
     const leftoverDuration = leftoverCount > 0
-      ? (ScaleAnimation.BRACKET_MS * 2) / 1000
+      ? (ScaleAnimation.BRACKET_MS * 2 * this.numberPhaseScale) / 1000
       : 0;
     const octaveDuration = bracketDuration + leftoverDuration;
     this.octaveEnd = cursor + octaveDuration;
     cursor = this.octaveEnd;
 
     this.tableStart = cursor;
-    const tableDuration = ScaleAnimation.TABLE_MS / 1000;
+    const tableDuration = (ScaleAnimation.TABLE_MS * this.numberPhaseScale) / 1000;
     this.tableEnd = cursor + tableDuration;
     cursor = this.tableEnd;
 
     this.tableMoveStart = cursor;
-    const tableMoveDuration = ScaleAnimation.TABLE_MOVE_MS / 1000;
+    const tableMoveDuration = (ScaleAnimation.TABLE_MOVE_MS * this.numberPhaseScale) / 1000;
     this.tableMoveEnd = cursor + tableMoveDuration;
     cursor = this.tableMoveEnd;
 
@@ -873,6 +910,24 @@ class AnimationSequence {
     const tableMoveProgress = tableMoveDuration > 0
       ? clamp((elapsed - this.tableMoveStart) / tableMoveDuration, 0, 1)
       : 0;
+    const titleFadeOutDuration = 0.9;
+    let titleAlpha = 0;
+    if (this.polyrhythmTitle) {
+      if (elapsed < this.organizeStart) {
+        titleAlpha = 1;
+      } else {
+        const t = clamp((elapsed - this.organizeStart) / titleFadeOutDuration, 0, 1);
+        titleAlpha = 1 - easeInOutCubic(t);
+      }
+
+      const finalReturnStart = 0.68;
+      const returnProgress = clamp((tableMoveProgress - finalReturnStart) / (1 - finalReturnStart), 0, 1);
+      titleAlpha = Math.max(titleAlpha, easeInOutCubic(returnProgress));
+
+      if (this.finalSlide.isActive()) {
+        titleAlpha = 1;
+      }
+    }
 
     const pauseFadeRaw = clamp((elapsed - this.pauseStart) / (this.pauseEnd - this.pauseStart), 0, 1);
     const pauseFade = 1 - easeInOutCubic(pauseFadeRaw);
@@ -945,6 +1000,46 @@ class AnimationSequence {
         strokeStyle: COLORS.white,
         lineWidth: screenLineWidth
       });
+    }
+
+    if (organizeProgress === 0 && unrollProgress >= 0.999 && this.gridValue > 0) {
+      const gridDur = this.gridEnd - this.gridStart;
+      const gridProg = gridDur > 0
+        ? clamp((elapsed - this.gridStart) / gridDur, 0, 1)
+        : 0;
+
+      if (gridProg > 0) {
+        const fontSize = (this.layout.fontSize || 13) / viewScale;
+        const font = `${Math.round(fontSize)}px monospace`;
+        const labelOffsetY = markLength * 1.8;
+
+        this.geometry.drawText({
+          text: `Grid: ${this.gridValue}`,
+          position: { x: anchor.x + lineLength * 0.5, y: anchor.y + labelOffsetY },
+          color: COLORS.white,
+          font,
+          align: 'center',
+          baseline: 'top',
+          alpha: clamp(gridProg / 0.15, 0, 1)
+        });
+
+        const segCount = this.segments.length;
+        this.segments.forEach((segment, idx) => {
+          const threshold = 0.25 + (idx / Math.max(1, segCount)) * 0.7;
+          const segAlpha = clamp((gridProg - threshold) / 0.12, 0, 1);
+          if (segAlpha <= 0) return;
+
+          this.geometry.drawText({
+            text: String(segment.value),
+            position: { x: anchor.x + segment.start + segment.length * 0.5, y: anchor.y - labelOffsetY },
+            color: COLORS.white,
+            font,
+            align: 'center',
+            baseline: 'bottom',
+            alpha: segAlpha
+          });
+        });
+      }
     }
 
     let activeLayer = null;
@@ -1125,6 +1220,62 @@ class AnimationSequence {
         });
       });
 
+      if (this.gridValue > 0) {
+        const labelFadeMs = 400;
+        const stepDurationMs = (ScaleAnimation.TRACE_MS + ScaleAnimation.TRACER_SUSTAIN_MS + ScaleAnimation.COLLAPSE_MS) * this.numberPhaseScale;
+        const ratioElapsedMs = Math.max(0, (elapsed - this.ratioStart) * 1000);
+        const fundamentalRowIndex = this.segmentRows.length - 1;
+        const order = this.scaleAnimation.order || [];
+
+        const fontSize = (this.layout.fontSize || 13) / viewScale;
+        const font = `${Math.round(fontSize)}px monospace`;
+        const labelOffsetY = markLength * 1.8;
+        const labelMargin = markLength * 0.8;
+        const positionBlend = clamp(waveProgress / 0.25, 0, 1);
+
+        this.segments.forEach((segment) => {
+          const state = segmentStates.get(segment.index);
+          if (!state || state.alpha <= 0) return;
+
+          let labelAlpha;
+          if (segment.rowIndex === fundamentalRowIndex) {
+            const fundamentalFadeStart = Math.max(0, (this.ratioEnd - labelFadeMs / 1000 - this.ratioStart) * 1000);
+            labelAlpha = 1 - clamp((ratioElapsedMs - fundamentalFadeStart) / labelFadeMs, 0, 1);
+          } else {
+            const stepIndex = order.indexOf(segment.rowIndex);
+            const fadeStart = stepIndex >= 0 ? stepIndex * stepDurationMs : 0;
+            labelAlpha = 1 - clamp((ratioElapsedMs - fadeStart) / labelFadeMs, 0, 1);
+          }
+
+          const finalAlpha = state.alpha * labelAlpha;
+          if (finalAlpha <= 0) return;
+
+          const midXScreen = (state.startScreen.x + state.endScreen.x) * 0.5;
+          const aboveWorld = screenToWorld({ x: midXScreen, y: state.startScreen.y });
+          aboveWorld.y -= labelOffsetY;
+
+          const leftWorld = screenToWorld({ x: state.startScreen.x, y: state.startScreen.y });
+          leftWorld.x -= labelMargin;
+
+          const labelWorld = {
+            x: lerp(aboveWorld.x, leftWorld.x, positionBlend),
+            y: lerp(aboveWorld.y, leftWorld.y, positionBlend)
+          };
+          const align = positionBlend > 0.5 ? 'right' : 'center';
+          const baseline = positionBlend > 0.5 ? 'middle' : 'bottom';
+
+          this.geometry.drawText({
+            text: String(segment.value),
+            position: labelWorld,
+            color: COLORS.white,
+            font,
+            align,
+            baseline,
+            alpha: finalAlpha
+          });
+        });
+      }
+
       if (organizeProgress > 0 && waveProgress === 0) {
         this.marks.forEach((mark) => {
           const state = segmentStates.get(mark.segmentIndex);
@@ -1298,6 +1449,7 @@ class AnimationSequence {
           tableProgress,
           tableMoveProgress,
           tableLayout,
+          numberPhaseScale: this.numberPhaseScale,
           viewScale,
           viewTranslate,
           tableHighlights: this.finalSlide.isActive() ? this.finalSlide.getTableHighlights(performance.now()) : []
@@ -1375,6 +1527,25 @@ class AnimationSequence {
         progress: drawProgress,
         lineWidth: screenLineWidth
       });
+      });
+    }
+
+    if (titleAlpha > 0 && this.polyrhythmTitle) {
+      const fontSize = ((this.layout.fontSize || 13) * 2.75) / viewScale;
+      const titleLetterSpacing = 1.2 / viewScale;
+      const titlePos = screenToWorld({
+        x: this.layout.width * 0.5,
+        y: Math.max(28, this.layout.height * 0.07)
+      });
+      this.geometry.drawText({
+        text: this.polyrhythmTitle,
+        position: titlePos,
+        color: COLORS.white,
+        font: `${Math.round(fontSize)}px "Space Grotesk", sans-serif`,
+        align: 'center',
+        baseline: 'middle',
+        alpha: titleAlpha,
+        letterSpacing: titleLetterSpacing
       });
     }
 

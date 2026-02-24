@@ -3498,3 +3498,8 @@ body.mobile-mode .collections-panel {
     background: var(--hud-accent);
     color: #000;
 }
+
+.concept-animation-open-btn {
+    display: inline-block;
+    text-decoration: none;
+}
