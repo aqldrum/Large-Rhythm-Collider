@@ -73,6 +73,44 @@ export class AnimationGeometry {
     ctx.restore();
   }
 
+  drawArcSlice({
+    center,
+    radius,
+    startAngle,
+    endAngle,
+    fillStyle = '#ffffff',
+    strokeStyle = null,
+    lineWidth = 1,
+    alpha = 1,
+    fillAlpha = null
+  }) {
+    const ctx = this.ctx;
+    const wedgeFillAlpha = fillAlpha === null ? alpha : fillAlpha;
+
+    if (fillStyle && wedgeFillAlpha > 0) {
+      ctx.save();
+      ctx.globalAlpha = wedgeFillAlpha;
+      ctx.beginPath();
+      ctx.moveTo(center.x, center.y);
+      ctx.arc(center.x, center.y, radius, startAngle, endAngle);
+      ctx.closePath();
+      ctx.fillStyle = fillStyle;
+      ctx.fill();
+      ctx.restore();
+    }
+
+    if (strokeStyle && alpha > 0) {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, radius, startAngle, endAngle);
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = lineWidth;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   drawMorphPath({ center, radius, anchor, progress, samples, strokeStyle, lineWidth, alpha = 1, curveDepth = 0 }) {
     const ctx = this.ctx;
     ctx.save();

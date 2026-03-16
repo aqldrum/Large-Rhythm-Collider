@@ -922,11 +922,8 @@ class RhythmLayerSearch {
                         uniqueTones.delete("2/1");
 
                         if (targetPitches === null || uniqueTones.size === targetPitches) {
-                            // Calculate average deviation for 12-tone scales
-                            const deviations = ratios.map(r => Math.abs(100 - (r.cents % 100)));
-                            const avgDeviation = uniqueTones.size === 12 ? 
-                                (deviations.reduce((sum, dev) => sum + dev, 0) / deviations.length) : null;
-                            
+                            const avgDeviation = window.lrcModule.calculateAverageDeviation(spacesPlot);
+
                             const result = {
                                 grid,
                                 pitches: uniqueTones.size,
@@ -1046,11 +1043,8 @@ class GridSearch {
                             uniqueTones.delete("2/1");
                             
                             if (targetPitches === null || uniqueTones.size === targetPitches) {
-                                // Calculate average deviation for 12-tone scales
-                                const deviations = ratios.map(r => Math.abs(100 - (r.cents % 100)));
-                                const avgDeviation = uniqueTones.size === 12 ? 
-                                    (deviations.reduce((sum, dev) => sum + dev, 0) / deviations.length) : null;
-                                
+                                const avgDeviation = window.lrcModule.calculateAverageDeviation(spacesPlot);
+
                                 const result = {
                                     grid: gridSize,
                                     pitches: uniqueTones.size,
@@ -1187,11 +1181,8 @@ class FundamentalSearch {
                             uniqueTones.delete("2/1");
 
                             if (targetPitches === null || uniqueTones.size === targetPitches) {
-                                // Calculate average deviation for 12-tone scales
-                                const deviations = ratios.map(r => Math.abs(100 - (r.cents % 100)));
-                                const avgDeviation = uniqueTones.size === 12 ? 
-                                    (deviations.reduce((sum, dev) => sum + dev, 0) / deviations.length) : null;
-                                
+                                const avgDeviation = window.lrcModule.calculateAverageDeviation(spacesPlot);
+
                                 const result = {
                                     grid,
                                     pitches: uniqueTones.size,
@@ -1301,10 +1292,7 @@ class InversePGSearch {
                     // Get target pitches from parent search instance
                     const targetPitches = this.lrcSearch.targetPitches;
                     if (targetPitches === null || uniqueTones.size === targetPitches) {
-                        // Calculate average deviation for 12-tone scales
-                        const deviations = ratios.map(r => Math.abs(100 - (r.cents % 100)));
-                        const avgDeviation = uniqueTones.size === 12 ? 
-                            (deviations.reduce((sum, dev) => sum + dev, 0) / deviations.length) : null;
+                        const avgDeviation = window.lrcModule.calculateAverageDeviation(spacesPlot);
                         const result = {
                             grid,
                             pitches: uniqueTones.size,

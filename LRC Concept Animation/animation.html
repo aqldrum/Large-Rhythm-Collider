@@ -15,26 +15,32 @@
       </div>
 
       <form id="rhythm-form" class="rhythm-form" autocomplete="off">
-        <div class="layer-row layer-a" data-layer="0">
-          <label for="layer-a">Layer A</label>
-          <input id="layer-a" name="layer-a" type="number" inputmode="numeric" min="1" placeholder="4" value="4" />
-        </div>
-        <div class="layer-row layer-b" data-layer="1">
-          <label for="layer-b">Layer B</label>
-          <input id="layer-b" name="layer-b" type="number" inputmode="numeric" min="1" placeholder="3" value="3" />
-        </div>
-        <div class="layer-row layer-c" data-layer="2">
-          <label for="layer-c">Layer C</label>
-          <input id="layer-c" name="layer-c" type="number" inputmode="numeric" min="1" placeholder="1" />
-        </div>
-        <div class="layer-row layer-d" data-layer="3">
-          <label for="layer-d">Layer D</label>
-          <input id="layer-d" name="layer-d" type="number" inputmode="numeric" min="1" placeholder="1" />
+        <div class="layer-inputs">
+          <div class="layer-row layer-a" data-layer="0">
+            <label for="layer-a">Layer A</label>
+            <input id="layer-a" name="layer-a" type="number" inputmode="numeric" min="1" placeholder="4" value="4" />
+          </div>
+          <div class="layer-row layer-b" data-layer="1">
+            <label for="layer-b">Layer B</label>
+            <input id="layer-b" name="layer-b" type="number" inputmode="numeric" min="1" placeholder="3" value="3" />
+          </div>
+          <div class="layer-row layer-c" data-layer="2">
+            <label for="layer-c">Layer C</label>
+            <input id="layer-c" name="layer-c" type="number" inputmode="numeric" min="1" placeholder="1" />
+          </div>
+          <div class="layer-row layer-d" data-layer="3">
+            <label for="layer-d">Layer D</label>
+            <input id="layer-d" name="layer-d" type="number" inputmode="numeric" min="1" placeholder="1" />
+          </div>
         </div>
 
-        <div class="actions">
+        <div class="actions primary-actions">
           <button type="submit" class="primary">Animate</button>
           <button type="button" id="reset-btn">Reset</button>
+        </div>
+        <div class="actions">
+          <button type="button" id="record-btn" class="record-btn">Record Sequence</button>
+          <button type="button" id="fullscreen-btn">Enter Fullscreen</button>
         </div>
       </form>
 

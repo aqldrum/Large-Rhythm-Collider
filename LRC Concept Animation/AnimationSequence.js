@@ -6,6 +6,10 @@ import { FinalSlide } from './FinalSlide.js';
 
 const LAYER_COLORS = [COLORS.layerA, COLORS.layerB, COLORS.layerC, COLORS.layerD];
 const LAYER_NAMES = ['A', 'B', 'C', 'D'];
+const CURSOR_PATH_D = 'M 14.78125 5 C 14.75 5.007813 14.71875 5.019531 14.6875 5.03125 C 14.644531 5.050781 14.601563 5.070313 14.5625 5.09375 C 14.550781 5.09375 14.542969 5.09375 14.53125 5.09375 C 14.511719 5.101563 14.488281 5.113281 14.46875 5.125 C 14.457031 5.136719 14.449219 5.144531 14.4375 5.15625 C 14.425781 5.167969 14.417969 5.175781 14.40625 5.1875 C 14.375 5.207031 14.34375 5.226563 14.3125 5.25 C 14.289063 5.269531 14.269531 5.289063 14.25 5.3125 C 14.238281 5.332031 14.226563 5.355469 14.21875 5.375 C 14.183594 5.414063 14.152344 5.457031 14.125 5.5 C 14.113281 5.511719 14.105469 5.519531 14.09375 5.53125 C 14.09375 5.542969 14.09375 5.550781 14.09375 5.5625 C 14.082031 5.582031 14.070313 5.605469 14.0625 5.625 C 14.050781 5.636719 14.042969 5.644531 14.03125 5.65625 C 14.03125 5.675781 14.03125 5.699219 14.03125 5.71875 C 14.019531 5.757813 14.007813 5.800781 14 5.84375 C 14 5.875 14 5.90625 14 5.9375 C 14 5.949219 14 5.957031 14 5.96875 C 14 5.980469 14 5.988281 14 6 C 13.996094 6.050781 13.996094 6.105469 14 6.15625 L 14 39 C 14.003906 39.398438 14.242188 39.757813 14.609375 39.914063 C 14.972656 40.070313 15.398438 39.992188 15.6875 39.71875 L 22.9375 32.90625 L 28.78125 46.40625 C 28.890625 46.652344 29.09375 46.847656 29.347656 46.941406 C 29.601563 47.035156 29.882813 47.023438 30.125 46.90625 L 34.5 44.90625 C 34.996094 44.679688 35.21875 44.09375 35 43.59375 L 28.90625 30.28125 L 39.09375 29.40625 C 39.496094 29.378906 39.84375 29.113281 39.976563 28.730469 C 40.105469 28.347656 39.992188 27.921875 39.6875 27.65625 L 15.84375 5.4375 C 15.796875 5.378906 15.746094 5.328125 15.6875 5.28125 C 15.648438 5.234375 15.609375 5.195313 15.5625 5.15625 C 15.550781 5.15625 15.542969 5.15625 15.53125 5.15625 C 15.511719 5.132813 15.492188 5.113281 15.46875 5.09375 C 15.457031 5.09375 15.449219 5.09375 15.4375 5.09375 C 15.386719 5.070313 15.335938 5.046875 15.28125 5.03125 C 15.269531 5.03125 15.261719 5.03125 15.25 5.03125 C 15.230469 5.019531 15.207031 5.007813 15.1875 5 C 15.175781 5 15.167969 5 15.15625 5 C 15.136719 5 15.113281 5 15.09375 5 C 15.082031 5 15.074219 5 15.0625 5 C 15.042969 5 15.019531 5 15 5 C 14.988281 5 14.980469 5 14.96875 5 C 14.9375 5 14.90625 5 14.875 5 C 14.84375 5 14.8125 5 14.78125 5 Z M 16 8.28125 L 36.6875 27.59375 L 27.3125 28.40625 C 26.992188 28.4375 26.707031 28.621094 26.546875 28.902344 C 26.382813 29.179688 26.367188 29.519531 26.5 29.8125 L 32.78125 43.5 L 30.21875 44.65625 L 24.21875 30.8125 C 24.089844 30.515625 23.828125 30.296875 23.511719 30.230469 C 23.195313 30.160156 22.863281 30.25 22.625 30.46875 L 16 36.6875 Z';
+const CURSOR_VIEWBOX = {
+  height: 50
+};
 
 function easeInOutCubic(t) {
   return t < 0.5
@@ -55,6 +59,7 @@ function lcmAll(values) {
 class AnimationSequence {
   constructor(canvas, { statusEl, layerRows }) {
     this.canvas = canvas;
+    this.stageEl = canvas.parentElement;
     this.statusEl = statusEl;
     this.layerRows = layerRows;
 
@@ -96,22 +101,172 @@ class AnimationSequence {
     this.numberPhaseScale = 1;
     this.polyrhythmTitle = '';
     this.gridValue = 0;
+    this.gridSubtitleStart = 0;
     this.gridStart = 0;
     this.gridEnd = 0;
+    this.groupingDemoEntries = [];
+    this.groupingDemoStart = 0;
+    this.groupingDemoEnd = 0;
+    this.groupingIntroDuration = 0;
+    this.groupingStepDuration = 0;
+    this.resizeRaf = null;
+    this.resizeObserver = null;
+    this.pointer = {
+      x: 0,
+      y: 0,
+      inside: false,
+      visible: false
+    };
+    this.pointerPath = typeof Path2D !== 'undefined'
+      ? new Path2D(CURSOR_PATH_D)
+      : null;
 
     this.handleResize = this.handleResize.bind(this);
+    this.scheduleResize = this.scheduleResize.bind(this);
     this.tick = this.tick.bind(this);
+    this.handlePointerMove = this.handlePointerMove.bind(this);
+    this.handlePointerEnter = this.handlePointerEnter.bind(this);
+    this.handlePointerLeave = this.handlePointerLeave.bind(this);
 
-    window.addEventListener('resize', this.handleResize);
+    window.addEventListener('resize', this.scheduleResize);
+    this.canvas.style.cursor = 'none';
+    this.canvas.addEventListener('pointermove', this.handlePointerMove);
+    this.canvas.addEventListener('pointerenter', this.handlePointerEnter);
+    this.canvas.addEventListener('pointerleave', this.handlePointerLeave);
+    if (typeof ResizeObserver !== 'undefined' && this.stageEl) {
+      this.resizeObserver = new ResizeObserver(() => {
+        this.scheduleResize();
+      });
+      this.resizeObserver.observe(this.stageEl);
+    }
     this.handleResize();
     this.renderIdle();
   }
 
-  handleResize() {
+  handlePointerMove(event) {
+    if (event.pointerType && event.pointerType !== 'mouse') return;
     const rect = this.canvas.getBoundingClientRect();
-    this.geometry.resize(rect.width, rect.height);
-    this.layout = this.computeLayout(rect.width, rect.height);
+    const width = this.layout?.width ?? rect.width;
+    const height = this.layout?.height ?? rect.height;
+    this.pointer.x = clamp(event.clientX - rect.left, 0, Math.max(1, width));
+    this.pointer.y = clamp(event.clientY - rect.top, 0, Math.max(1, height));
+    this.pointer.inside = true;
+    this.pointer.visible = true;
+
     if (!this.isPlaying) {
+      this.renderIdle();
+    }
+  }
+
+  handlePointerEnter(event) {
+    if (event.pointerType && event.pointerType !== 'mouse') return;
+    this.handlePointerMove(event);
+  }
+
+  handlePointerLeave(event) {
+    if (event.pointerType && event.pointerType !== 'mouse') return;
+    this.pointer.inside = false;
+    this.pointer.visible = false;
+    if (!this.isPlaying) {
+      this.renderIdle();
+    }
+  }
+
+  drawPointerOverlay() {
+    if (!this.pointer.visible || !this.pointer.inside) return;
+    if (!this.layout) return;
+    const { x, y } = this.pointer;
+    const size = clamp(Math.min(this.layout.width, this.layout.height) * 0.024, 13, 20);
+    const ctx = this.geometry.ctx;
+    const scale = size / CURSOR_VIEWBOX.height;
+
+    if (this.pointerPath) {
+      ctx.save();
+      ctx.translate(x - scale * 14, y - scale * 6);
+      ctx.scale(scale, scale);
+
+      ctx.save();
+      ctx.translate(1.2, 1.4);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+      ctx.fill(this.pointerPath);
+      ctx.restore();
+
+      ctx.fillStyle = '#000000';
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.1;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.miterLimit = 2;
+      ctx.fill(this.pointerPath);
+      ctx.stroke(this.pointerPath);
+      ctx.restore();
+      return;
+    }
+
+    const drawShape = (offsetX = 0, offsetY = 0) => {
+      const px = x + offsetX;
+      const py = y + offsetY;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px, py + size);
+      ctx.lineTo(px + size * 0.3, py + size * 0.72);
+      ctx.lineTo(px + size * 0.52, py + size * 1.28);
+      ctx.lineTo(px + size * 0.72, py + size * 1.2);
+      ctx.lineTo(px + size * 0.48, py + size * 0.66);
+      ctx.lineTo(px + size * 0.94, py + size * 0.66);
+      ctx.closePath();
+    };
+
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    drawShape(2, 2);
+    ctx.fillStyle = '#000000';
+    ctx.fill();
+    ctx.restore();
+
+    ctx.save();
+    drawShape(0, 0);
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(1, size * 0.09);
+    ctx.lineJoin = 'miter';
+    ctx.lineCap = 'butt';
+    ctx.miterLimit = 4;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  scheduleResize() {
+    if (this.resizeRaf) {
+      cancelAnimationFrame(this.resizeRaf);
+    }
+    this.resizeRaf = requestAnimationFrame(() => {
+      this.resizeRaf = null;
+      this.handleResize();
+    });
+  }
+
+  handleResize() {
+    const source = this.stageEl || this.canvas;
+    const rect = source.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    const dpr = window.devicePixelRatio || 1;
+    const needsResize = !this.layout
+      || this.layout.width !== width
+      || this.layout.height !== height
+      || Math.abs((this.geometry.dpr || 1) - dpr) > 0.001;
+    if (!needsResize) return;
+
+    this.geometry.resize(width, height);
+    this.layout = this.computeLayout(width, height);
+    // Cached view translation/scale is screen-size dependent.
+    // Reset it so it is recomputed for the current canvas dimensions.
+    this.unrollView = null;
+    if (this.isPlaying) {
+      this.render(this.lastElapsed);
+    } else {
       this.renderIdle();
     }
   }
@@ -170,8 +325,14 @@ class AnimationSequence {
     this.numberPhaseScale = 1;
     this.polyrhythmTitle = '';
     this.gridValue = 0;
+    this.gridSubtitleStart = 0;
     this.gridStart = 0;
     this.gridEnd = 0;
+    this.groupingDemoEntries = [];
+    this.groupingDemoStart = 0;
+    this.groupingDemoEnd = 0;
+    this.groupingIntroDuration = 0;
+    this.groupingStepDuration = 0;
     if (this.finalSlide.isActive()) {
       this.finalSlide.stop();
     }
@@ -188,6 +349,7 @@ class AnimationSequence {
     const { center, radius, lineWidth } = this.layout;
     this.geometry.clear();
     this.geometry.drawCircle(center, radius, COLORS.white, lineWidth);
+    this.drawPointerOverlay();
   }
 
   formatPolyrhythmTitle(layers) {
@@ -234,6 +396,11 @@ class AnimationSequence {
     this.tableMoveEnd = 0;
     this.numberPhaseScale = 1;
     this.polyrhythmTitle = this.formatPolyrhythmTitle(layers);
+    this.groupingDemoEntries = [];
+    this.groupingDemoStart = 0;
+    this.groupingDemoEnd = 0;
+    this.groupingIntroDuration = 0;
+    this.groupingStepDuration = 0;
     this.sequenceStart = performance.now();
     this.lastLayers = [...layers];
 
@@ -663,16 +830,37 @@ class AnimationSequence {
       cursor += duration;
     });
 
-    this.pauseStart = cursor;
-    this.pauseEnd = cursor + 2;
+    const postSlicesStart = cursor;
+    const preGridSubtitleBuffer = 1.0;
+    const preGroupingBuffer = 1.0;
+    this.gridSubtitleStart = postSlicesStart + preGridSubtitleBuffer;
+    this.groupingDemoEntries = activeLayers
+      .filter(({ value }) => value > 1 && this.gridValue > 0)
+      .map(({ index, value }) => ({
+        layerIndex: index,
+        layerValue: value,
+        groupingValue: Math.round(this.gridValue / value),
+        color: LAYER_COLORS[index]
+      }));
+    this.groupingIntroDuration = 0;
+    this.groupingStepDuration = 1.2;
+    const groupingHoldDuration = 0;
+    const groupingDuration = this.groupingIntroDuration
+      + this.groupingDemoEntries.length * this.groupingStepDuration
+      + groupingHoldDuration;
+    this.groupingDemoStart = this.gridSubtitleStart + preGroupingBuffer;
+    this.groupingDemoEnd = this.groupingDemoStart + groupingDuration;
+    this.pauseStart = this.groupingDemoEnd;
+    const pauseDuration = 2;
+    this.pauseEnd = this.pauseStart + pauseDuration;
     cursor = this.pauseEnd;
 
     this.unrollStart = cursor;
     this.unrollEnd = cursor + 4;
     cursor = this.unrollEnd;
 
-    const preGridPause = 0.5;
-    this.gridStart = cursor + preGridPause;
+    const preSpacesBuffer = 0;
+    this.gridStart = this.unrollEnd + preSpacesBuffer;
     this.gridEnd = this.gridStart + 1.0 + this.segments.length * 0.25;
     cursor = this.gridEnd;
 
@@ -928,6 +1116,12 @@ class AnimationSequence {
         titleAlpha = 1;
       }
     }
+    let gridSubtitleAlpha = 0;
+    if (this.gridValue > 0 && elapsed >= this.gridSubtitleStart && elapsed <= this.organizeStart) {
+      const gridSubtitleFadeIn = 0.22;
+      const t = clamp((elapsed - this.gridSubtitleStart) / gridSubtitleFadeIn, 0, 1);
+      gridSubtitleAlpha = easeInOutCubic(t);
+    }
 
     const pauseFadeRaw = clamp((elapsed - this.pauseStart) / (this.pauseEnd - this.pauseStart), 0, 1);
     const pauseFade = 1 - easeInOutCubic(pauseFadeRaw);
@@ -959,9 +1153,17 @@ class AnimationSequence {
       lineWidth
     });
     if (unrollProgress >= 0.999 && !this.unrollView) {
+      // Lock view to match Stage 1's line geometry exactly:
+      // line from width*0.14 to width*0.86 at y = height*0.5
+      const s1Scale = (this.layout.width * 0.72) / lineLength;
+      const worldLineLeft = centerShifted.x;
+      const worldLineY = centerShifted.y - radius;
       this.unrollView = {
-        scale: autoView.scale,
-        translate: { ...autoView.translate }
+        scale: s1Scale,
+        translate: {
+          x: this.layout.width * 0.14 - worldLineLeft * s1Scale,
+          y: this.layout.height * 0.5 - worldLineY * s1Scale
+        }
       };
     }
 
@@ -1002,6 +1204,83 @@ class AnimationSequence {
       });
     }
 
+    if (organizeProgress === 0
+      && elapsed >= this.groupingDemoStart
+      && elapsed < this.unrollStart
+      && this.groupingDemoEntries.length) {
+      const groupingElapsed = elapsed - this.groupingDemoStart;
+      const stageElapsed = groupingElapsed - this.groupingIntroDuration;
+      const topAngle = -Math.PI / 2;
+      const groupingFont = `${Math.round(((this.layout.fontSize || 13) * 1.05) / viewScale)}px monospace`;
+      const activeIndex = Math.floor(stageElapsed / this.groupingStepDuration);
+
+      if (stageElapsed >= 0 && activeIndex >= 0 && activeIndex < this.groupingDemoEntries.length) {
+        const entry = this.groupingDemoEntries[activeIndex];
+        const localSlotProgress = clamp(
+          (stageElapsed - activeIndex * this.groupingStepDuration) / this.groupingStepDuration,
+          0,
+          1
+        );
+        const fadeWindow = 0.14;
+        const fadeIn = clamp(localSlotProgress / fadeWindow, 0, 1);
+        const fadeOut = clamp((1 - localSlotProgress) / fadeWindow, 0, 1);
+        const slotAlpha = easeInOutCubic(Math.min(fadeIn, fadeOut));
+        const wedgeEnd = topAngle + (TAU / entry.layerValue);
+        const startPoint = {
+          x: centerShifted.x + Math.cos(topAngle) * radius,
+          y: centerShifted.y + Math.sin(topAngle) * radius
+        };
+        const endPoint = {
+          x: centerShifted.x + Math.cos(wedgeEnd) * radius,
+          y: centerShifted.y + Math.sin(wedgeEnd) * radius
+        };
+
+        this.geometry.drawArcSlice({
+          center: centerShifted,
+          radius,
+          startAngle: topAngle,
+          endAngle: wedgeEnd,
+          fillStyle: entry.color,
+          strokeStyle: entry.color,
+          lineWidth: Math.max(1, screenLineWidth),
+          alpha: 0.7 * slotAlpha,
+          fillAlpha: 0.16 * slotAlpha
+        });
+
+        this.geometry.drawLine({
+          start: centerShifted,
+          end: startPoint,
+          strokeStyle: entry.color,
+          lineWidth: Math.max(1, screenLineWidth * 0.9),
+          alpha: 0.45 * slotAlpha
+        });
+        this.geometry.drawLine({
+          start: centerShifted,
+          end: endPoint,
+          strokeStyle: entry.color,
+          lineWidth: Math.max(1, screenLineWidth * 0.9),
+          alpha: 0.45 * slotAlpha
+        });
+
+        const midTheta = (TAU / entry.layerValue) * 0.5;
+        const labelRadius = radius + screenMarkLength * 1.25;
+        const labelPos = {
+          x: centerShifted.x + Math.sin(midTheta) * labelRadius,
+          y: centerShifted.y - Math.cos(midTheta) * labelRadius
+        };
+
+        this.geometry.drawText({
+          text: String(entry.groupingValue),
+          position: labelPos,
+          color: entry.color,
+          font: groupingFont,
+          align: 'center',
+          baseline: 'middle',
+          alpha: slotAlpha
+        });
+      }
+    }
+
     if (organizeProgress === 0 && unrollProgress >= 0.999 && this.gridValue > 0) {
       const gridDur = this.gridEnd - this.gridStart;
       const gridProg = gridDur > 0
@@ -1012,16 +1291,6 @@ class AnimationSequence {
         const fontSize = (this.layout.fontSize || 13) / viewScale;
         const font = `${Math.round(fontSize)}px monospace`;
         const labelOffsetY = markLength * 1.8;
-
-        this.geometry.drawText({
-          text: `Grid: ${this.gridValue}`,
-          position: { x: anchor.x + lineLength * 0.5, y: anchor.y + labelOffsetY },
-          color: COLORS.white,
-          font,
-          align: 'center',
-          baseline: 'top',
-          alpha: clamp(gridProg / 0.15, 0, 1)
-        });
 
         const segCount = this.segments.length;
         this.segments.forEach((segment, idx) => {
@@ -1533,9 +1802,10 @@ class AnimationSequence {
     if (titleAlpha > 0 && this.polyrhythmTitle) {
       const fontSize = ((this.layout.fontSize || 13) * 2.75) / viewScale;
       const titleLetterSpacing = 1.2 / viewScale;
+      const titleScreenY = Math.max(28, this.layout.height * 0.07);
       const titlePos = screenToWorld({
         x: this.layout.width * 0.5,
-        y: Math.max(28, this.layout.height * 0.07)
+        y: titleScreenY
       });
       this.geometry.drawText({
         text: this.polyrhythmTitle,
@@ -1547,9 +1817,27 @@ class AnimationSequence {
         alpha: titleAlpha,
         letterSpacing: titleLetterSpacing
       });
+
+      if (gridSubtitleAlpha > 0) {
+        const subtitleFontSize = ((this.layout.fontSize || 13) * 1.25) / viewScale;
+        const subtitlePos = screenToWorld({
+          x: this.layout.width * 0.5,
+          y: titleScreenY + Math.max(42, (this.layout.fontSize || 13) * 2)
+        });
+        this.geometry.drawText({
+          text: `Grid: ${this.gridValue}`,
+          position: subtitlePos,
+          color: COLORS.white,
+          font: `${Math.round(subtitleFontSize)}px monospace`,
+          align: 'center',
+          baseline: 'middle',
+          alpha: gridSubtitleAlpha
+        });
+      }
     }
 
     this.geometry.endFrame();
+    this.drawPointerOverlay();
   }
 }
 
@@ -1559,21 +1847,410 @@ document.addEventListener('DOMContentLoaded', () => {
   const layerRows = Array.from(document.querySelectorAll('.layer-row'));
   const form = document.getElementById('rhythm-form');
   const resetBtn = document.getElementById('reset-btn');
+  const recordBtn = document.getElementById('record-btn');
+  const fullscreenBtn = document.getElementById('fullscreen-btn');
+  const appRoot = document.querySelector('.app');
 
   if (!canvas || !form) return;
+  const stageEl = canvas.parentElement;
+  const fullscreenTarget = stageEl || appRoot;
 
   const sequence = new AnimationSequence(canvas, { statusEl, layerRows });
   new AnimationControls(sequence);
-  new AnimationPlayback(sequence, canvas);
+  const playback = new AnimationPlayback(sequence, canvas);
+  let mediaRecorder = null;
+  let recordingChunks = [];
+  let recordingAudioCleanup = null;
+  let recordingDataInterval = null;
+  let recordingCaptureCleanup = null;
+  let isRecording = false;
+  const RECORD_EXPORT_WIDTH = 1920;
+  const RECORD_EXPORT_HEIGHT = 1080;
+  const RECORD_EXPORT_FPS = 60;
+
+  const readLayerValues = () => ['layer-a', 'layer-b', 'layer-c', 'layer-d'].map((id) => {
+    const input = document.getElementById(id);
+    return input ? parseInt(input.value, 10) : 0;
+  });
+
+  const setRecordingState = (recording) => {
+    isRecording = recording;
+    if (!recordBtn) return;
+    recordBtn.classList.toggle('is-recording', recording);
+    recordBtn.textContent = recording ? 'Stop Recording' : 'Record Sequence';
+    recordBtn.setAttribute('aria-pressed', recording ? 'true' : 'false');
+  };
+
+  const cleanupRecordingAudioTap = () => {
+    if (typeof recordingAudioCleanup === 'function') {
+      try {
+        recordingAudioCleanup();
+      } catch (_) {
+        // no-op
+      }
+    }
+    recordingAudioCleanup = null;
+  };
+
+  const clearRecordingDataInterval = () => {
+    if (recordingDataInterval) {
+      clearInterval(recordingDataInterval);
+      recordingDataInterval = null;
+    }
+  };
+
+  const createCoverCaptureStream = (sourceCanvas, fps = RECORD_EXPORT_FPS) => {
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = RECORD_EXPORT_WIDTH;
+    exportCanvas.height = RECORD_EXPORT_HEIGHT;
+    const exportCtx = exportCanvas.getContext('2d', { alpha: false });
+    if (!exportCtx || typeof exportCanvas.captureStream !== 'function') return null;
+
+    let rafId = 0;
+    let isRunning = true;
+
+    const drawFrame = () => {
+      if (!isRunning) return;
+      const sourceWidth = Math.max(1, sourceCanvas.width || Math.round(sourceCanvas.getBoundingClientRect().width) || 1);
+      const sourceHeight = Math.max(1, sourceCanvas.height || Math.round(sourceCanvas.getBoundingClientRect().height) || 1);
+      const scale = Math.max(RECORD_EXPORT_WIDTH / sourceWidth, RECORD_EXPORT_HEIGHT / sourceHeight);
+      const drawWidth = sourceWidth * scale;
+      const drawHeight = sourceHeight * scale;
+      const offsetX = (RECORD_EXPORT_WIDTH - drawWidth) * 0.5;
+      const offsetY = (RECORD_EXPORT_HEIGHT - drawHeight) * 0.5;
+
+      exportCtx.fillStyle = '#000';
+      exportCtx.fillRect(0, 0, RECORD_EXPORT_WIDTH, RECORD_EXPORT_HEIGHT);
+      exportCtx.drawImage(sourceCanvas, offsetX, offsetY, drawWidth, drawHeight);
+      rafId = requestAnimationFrame(drawFrame);
+    };
+
+    drawFrame();
+    return {
+      stream: exportCanvas.captureStream(fps),
+      stop: () => {
+        isRunning = false;
+        if (rafId) cancelAnimationFrame(rafId);
+      }
+    };
+  };
+
+  const stopRecording = () => {
+    clearRecordingDataInterval();
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      try {
+        mediaRecorder.requestData();
+      } catch (_) {
+        // no-op
+      }
+    }
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+    } else {
+      if (typeof recordingCaptureCleanup === 'function') recordingCaptureCleanup();
+      recordingCaptureCleanup = null;
+      cleanupRecordingAudioTap();
+      setRecordingState(false);
+    }
+  };
+
+  const getSupportedMimeType = () => {
+    if (typeof MediaRecorder === 'undefined' || typeof MediaRecorder.isTypeSupported !== 'function') {
+      return '';
+    }
+    const candidates = [
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm'
+    ];
+    return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+  };
+
+  const startRecording = async () => {
+    if (typeof MediaRecorder === 'undefined' || typeof canvas.captureStream !== 'function') {
+      if (statusEl) {
+        statusEl.textContent = 'Recording is not supported in this browser.';
+      }
+      return;
+    }
+
+    const layers = readLayerValues();
+    if (!layers.some((value) => value > 1)) {
+      if (statusEl) {
+        statusEl.textContent = 'Enter at least one layer value greater than 1 before recording.';
+      }
+      return;
+    }
+
+    if (window.Tone && typeof window.Tone.start === 'function') {
+      try {
+        await window.Tone.start();
+      } catch (_) {
+        // continue without guaranteed audio context start
+      }
+    }
+
+    const capture = createCoverCaptureStream(canvas, RECORD_EXPORT_FPS);
+    if (!capture?.stream) {
+      if (statusEl) {
+        statusEl.textContent = 'Could not prepare 1920x1080 recording stream.';
+      }
+      return;
+    }
+    const stream = capture.stream;
+    recordingCaptureCleanup = capture.stop;
+    let recordingHasAudioTrack = false;
+
+    // Try to include Tone.js output in the recording stream.
+    if (window.Tone) {
+      try {
+        const toneContext = (typeof window.Tone.getContext === 'function')
+          ? window.Tone.getContext()
+          : window.Tone.context;
+        const rawContext = toneContext?.rawContext || toneContext;
+        if (rawContext && typeof rawContext.createMediaStreamDestination === 'function' && window.Tone.Destination) {
+          const mediaDest = rawContext.createMediaStreamDestination();
+          if (typeof window.Tone.Destination.connect === 'function') {
+            const hookedOutputs = new Set();
+            const disconnectFns = [];
+            const hookEnsureFns = [];
+
+            const connectNodeToTap = (node) => {
+              if (!node || typeof node.connect !== 'function') return;
+              if (hookedOutputs.has(node)) return;
+              try {
+                node.connect(mediaDest);
+                hookedOutputs.add(node);
+                disconnectFns.push(() => {
+                  try { node.disconnect(mediaDest); } catch (_) { /* no-op */ }
+                });
+              } catch (_) {
+                // no-op
+              }
+            };
+
+            const hookEnsureAudio = (owner) => {
+              if (!owner || typeof owner.ensureAudio !== 'function') return;
+              const original = owner.ensureAudio.bind(owner);
+              owner.ensureAudio = (...args) => {
+                const ok = original(...args);
+                if (ok && owner.output) connectNodeToTap(owner.output);
+                return ok;
+              };
+              hookEnsureFns.push(() => {
+                owner.ensureAudio = original;
+              });
+            };
+
+            window.Tone.Destination.connect(mediaDest);
+            connectNodeToTap(playback.output);
+            connectNodeToTap(sequence.finalSlide?.output);
+            hookEnsureAudio(playback);
+            hookEnsureAudio(sequence.finalSlide);
+            const audioTracks = mediaDest.stream.getAudioTracks();
+            if (audioTracks && audioTracks.length) {
+              audioTracks.forEach((track) => stream.addTrack(track));
+              recordingHasAudioTrack = true;
+            }
+
+            // Keep a silent signal running so audio timestamps stay continuous.
+            let keepAliveOsc = null;
+            let keepAliveGain = null;
+            try {
+              keepAliveOsc = rawContext.createOscillator();
+              keepAliveGain = rawContext.createGain();
+              keepAliveGain.gain.value = 0.00001;
+              keepAliveOsc.connect(keepAliveGain);
+              keepAliveGain.connect(mediaDest);
+              keepAliveOsc.start();
+            } catch (_) {
+              keepAliveOsc = null;
+              keepAliveGain = null;
+            }
+
+            recordingAudioCleanup = () => {
+              hookEnsureFns.forEach((fn) => {
+                try { fn(); } catch (_) { /* no-op */ }
+              });
+              disconnectFns.forEach((fn) => {
+                try { fn(); } catch (_) { /* no-op */ }
+              });
+              try {
+                if (typeof window.Tone.Destination.disconnect === 'function') {
+                  window.Tone.Destination.disconnect(mediaDest);
+                }
+              } catch (_) {
+                // no-op
+              }
+              if (keepAliveOsc) {
+                try { keepAliveOsc.stop(); } catch (_) { /* no-op */ }
+                try { keepAliveOsc.disconnect(); } catch (_) { /* no-op */ }
+              }
+              if (keepAliveGain) {
+                try { keepAliveGain.disconnect(); } catch (_) { /* no-op */ }
+              }
+              mediaDest.stream.getTracks().forEach((track) => track.stop());
+            };
+          }
+        }
+      } catch (_) {
+        cleanupRecordingAudioTap();
+      }
+    }
+
+    const mimeType = getSupportedMimeType();
+    const options = { videoBitsPerSecond: 12_000_000 };
+    if (mimeType) options.mimeType = mimeType;
+
+    try {
+      mediaRecorder = new MediaRecorder(stream, options);
+    } catch (error) {
+      if (typeof recordingCaptureCleanup === 'function') recordingCaptureCleanup();
+      recordingCaptureCleanup = null;
+      stream.getTracks().forEach((track) => track.stop());
+      cleanupRecordingAudioTap();
+      if (statusEl) {
+        statusEl.textContent = 'Could not start recording in this browser.';
+      }
+      return;
+    }
+
+    recordingChunks = [];
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        recordingChunks.push(event.data);
+      }
+    };
+    mediaRecorder.onerror = () => {
+      if (typeof recordingCaptureCleanup === 'function') recordingCaptureCleanup();
+      recordingCaptureCleanup = null;
+      stream.getTracks().forEach((track) => track.stop());
+      cleanupRecordingAudioTap();
+      clearRecordingDataInterval();
+      setRecordingState(false);
+      if (statusEl) {
+        statusEl.textContent = 'Recording failed. Please try again.';
+      }
+      mediaRecorder = null;
+    };
+    mediaRecorder.onstop = () => {
+      if (typeof recordingCaptureCleanup === 'function') recordingCaptureCleanup();
+      recordingCaptureCleanup = null;
+      stream.getTracks().forEach((track) => track.stop());
+      cleanupRecordingAudioTap();
+      clearRecordingDataInterval();
+      setRecordingState(false);
+
+      if (!recordingChunks.length) {
+        if (statusEl) {
+          statusEl.textContent = 'No recording data was captured.';
+        }
+        mediaRecorder = null;
+        return;
+      }
+
+      const finalType = mediaRecorder?.mimeType || mimeType || 'video/webm';
+      const extension = finalType.includes('mp4') ? 'mp4' : 'webm';
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `lrc-concept-animation-${timestamp}.${extension}`;
+      const blob = new Blob(recordingChunks, { type: finalType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      if (statusEl) {
+        statusEl.textContent = `Recording downloaded: ${filename}`;
+      }
+      mediaRecorder = null;
+    };
+
+    setRecordingState(true);
+    mediaRecorder.start(1000);
+    recordingDataInterval = setInterval(() => {
+      if (!mediaRecorder || mediaRecorder.state !== 'recording') return;
+      try {
+        mediaRecorder.requestData();
+      } catch (_) {
+        // no-op
+      }
+    }, 1000);
+    sequence.start(layers);
+
+    if (statusEl) {
+      statusEl.textContent = recordingHasAudioTrack
+        ? 'Recording... press "Stop Recording" when done (audio included).'
+        : 'Recording... press "Stop Recording" when done.';
+    }
+  };
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    const layers = ['layer-a', 'layer-b', 'layer-c', 'layer-d'].map((id) => {
-      const input = document.getElementById(id);
-      return input ? parseInt(input.value, 10) : 0;
-    });
+    const layers = readLayerValues();
     sequence.start(layers);
   });
 
-  resetBtn.addEventListener('click', () => sequence.reset());
+  resetBtn.addEventListener('click', () => {
+    if (isRecording) {
+      stopRecording();
+    }
+    sequence.reset();
+  });
+
+  if (recordBtn) {
+    recordBtn.addEventListener('click', () => {
+      if (isRecording) {
+        stopRecording();
+      } else {
+        startRecording();
+      }
+    });
+  }
+
+  const syncFullscreenUi = () => {
+    const isFullscreen = document.fullscreenElement === fullscreenTarget;
+    if (appRoot) {
+      appRoot.classList.toggle('is-fullscreen-recording', isFullscreen);
+    }
+    // Fullscreen transitions can complete before layout settles.
+    // Force a couple of resize passes so canvas dimensions and center stay correct.
+    sequence.scheduleResize();
+    requestAnimationFrame(() => {
+      sequence.scheduleResize();
+    });
+    setTimeout(() => {
+      sequence.scheduleResize();
+    }, 220);
+    if (fullscreenBtn) {
+      fullscreenBtn.textContent = isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen';
+      fullscreenBtn.setAttribute('aria-pressed', isFullscreen ? 'true' : 'false');
+    }
+  };
+
+  if (fullscreenBtn && fullscreenTarget) {
+    if (typeof fullscreenTarget.requestFullscreen !== 'function') {
+      fullscreenBtn.disabled = true;
+      fullscreenBtn.textContent = 'Fullscreen Unavailable';
+    } else {
+      fullscreenBtn.addEventListener('click', async () => {
+        try {
+          if (document.fullscreenElement === fullscreenTarget) {
+            await document.exitFullscreen();
+          } else {
+            await fullscreenTarget.requestFullscreen();
+          }
+        } catch (error) {
+          if (statusEl) {
+            statusEl.textContent = 'Could not toggle fullscreen. Continue in windowed mode.';
+          }
+        }
+      });
+      document.addEventListener('fullscreenchange', syncFullscreenUi);
+      syncFullscreenUi();
+    }
+  }
 });

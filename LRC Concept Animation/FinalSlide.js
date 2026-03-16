@@ -109,8 +109,31 @@ export class FinalSlide {
     return true;
   }
 
+  sweepScheduledNotes() {
+    if (!this.synth) return;
+    try {
+      const now = (window.Tone && typeof window.Tone.now === 'function') ? window.Tone.now() : undefined;
+      this.synth.releaseAll(now);
+    } catch (_) {
+      // no-op
+    }
+  }
+
+  resetAudioChain() {
+    this.sweepScheduledNotes();
+    if (this.synth) {
+      try { this.synth.dispose(); } catch (_) { /* no-op */ }
+      this.synth = null;
+    }
+    if (this.output) {
+      try { this.output.dispose(); } catch (_) { /* no-op */ }
+      this.output = null;
+    }
+  }
+
   async start() {
     if (!this.prepare()) return;
+    this.resetAudioChain();
     if (!this.ensureAudio()) return;
     try { await window.Tone.start(); } catch (e) { /* ok */ }
 
@@ -125,6 +148,7 @@ export class FinalSlide {
   }
 
   stop() {
+    this.sweepScheduledNotes();
     this.active = false;
     this.markHighlights.clear();
     this.tableHighlights.clear();
@@ -159,7 +183,8 @@ export class FinalSlide {
       this.justStarted = false;
       this.cursorAngle = 0;
       this.lastCursorAngle = -1;
-      this.triggerBoundary(0, now);
+      this.triggerBoundary(0, now, { playAudio: false });
+      this.playFundamentalDownbeat();
       return;
     }
 
@@ -198,7 +223,8 @@ export class FinalSlide {
     }
   }
 
-  triggerBoundary(boundaryIndex, now) {
+  triggerBoundary(boundaryIndex, now, options = {}) {
+    const { playAudio = true } = options;
     this.lastTriggeredBoundary = boundaryIndex;
 
     const markIndices = this.boundaryToMarks[boundaryIndex];
@@ -213,7 +239,20 @@ export class FinalSlide {
       this.tableHighlights.set(tableRow, now);
     }
 
-    this.playNote(boundaryIndex);
+    if (playAudio) {
+      this.playNote(boundaryIndex);
+    }
+  }
+
+  playFundamentalDownbeat() {
+    if (!this.synth) return;
+    const frequency = this.baseFrequency;
+    const maxFrequency = Number(this.maxFrequencyHz);
+    if (!Number.isFinite(maxFrequency) || maxFrequency <= 0) return;
+    if (frequency > maxFrequency) return;
+
+    const velocity = this.getHighFrequencyAttenuation(frequency);
+    this.synth.triggerAttackRelease(frequency, 0.5, undefined, velocity);
   }
 
   playNote(boundaryIndex) {
