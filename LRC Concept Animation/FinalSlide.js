@@ -97,7 +97,7 @@ export class FinalSlide {
     if (!this.synth) {
       this.output = new window.Tone.Volume(-4).toDestination();
       const sustain = Math.pow(10, -22 / 20);
-      this.synth = new window.Tone.PolySynth(window.Tone.Synth, {
+      this.synth = new window.Tone.PolySynth(window.Tone.MonoSynth, {
         oscillator: { type: 'triangle' },
         envelope: {
           attack: 0.006,
@@ -107,6 +107,19 @@ export class FinalSlide {
           sustain,
           release: 0.55,
           releaseCurve: 'exponential'
+        },
+        filter: {
+          Q: 1.2,
+          type: 'lowpass',
+          rolloff: -24
+        },
+        filterEnvelope: {
+          attack: 0.001,
+          decay: 0.22,
+          sustain: 0,
+          release: 0.35,
+          baseFrequency: 500,
+          octaves: 3.4
         }
       }).connect(this.output);
     }
