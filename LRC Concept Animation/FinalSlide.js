@@ -31,6 +31,7 @@ export class FinalSlide {
 
     this.lastTriggeredBoundary = -1;
     this.justStarted = false;
+    this.lastTickNow = 0;
   }
 
   prepare() {
@@ -172,6 +173,7 @@ export class FinalSlide {
     this.cursorAngle = 0;
     this.lastTriggeredBoundary = -1;
     this.lastCursorAngle = -1;
+    this.lastTickNow = 0;
     this.tempoScale = 1;
     this.baseCycleMs = this.cycleMs || 0;
   }
@@ -198,12 +200,21 @@ export class FinalSlide {
 
     if (this.justStarted) {
       this.justStarted = false;
+      this.startTime = now;
+      this.lastTickNow = now;
       this.cursorAngle = 0;
       this.lastCursorAngle = -1;
       this.triggerBoundary(0, now, { playAudio: false });
       this.playFundamentalDownbeat();
       return;
     }
+
+    // If the gap since the last tick exceeds half a cycle (e.g. due to recording
+    // overhead stalling a frame), cursor position is already updated above so the
+    // visual stays correct — just skip audio triggering to prevent a note burst.
+    const prevTickNow = this.lastTickNow;
+    this.lastTickNow = now;
+    if (prevTickNow > 0 && now - prevTickNow > this.cycleMs * 0.5) return;
 
     const numBoundaries = this.boundaryAngles.length - 1;
 
