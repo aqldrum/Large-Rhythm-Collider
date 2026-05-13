@@ -7,6 +7,7 @@ export class AnimationPlayback {
     this.synth = null;
     this.output = null;
     this.baseFrequency = 220;
+    this.maxFrequencyHz = 3520;
 
     this.handlePointerDown = this.handlePointerDown.bind(this);
     this.handlePointerMove = this.handlePointerMove.bind(this);
@@ -24,15 +25,31 @@ export class AnimationPlayback {
   ensureAudio() {
     if (!window.Tone) return false;
     if (!this.synth) {
-      const sustain = Math.pow(10, -18 / 20);
+      const sustain = Math.pow(10, -22 / 20);
       this.output = new window.Tone.Volume(-4).toDestination();
-      this.synth = new window.Tone.PolySynth(window.Tone.Synth, {
+      this.synth = new window.Tone.PolySynth(window.Tone.MonoSynth, {
         oscillator: { type: 'triangle' },
         envelope: {
-          attack: 0.005,
-          decay: 0.2,
+          attack: 0.006,
+          attackCurve: 'exponential',
+          decay: 0.18,
+          decayCurve: 'exponential',
           sustain,
-          release: 0.4
+          release: 0.55,
+          releaseCurve: 'exponential'
+        },
+        filter: {
+          Q: 1.2,
+          type: 'lowpass',
+          rolloff: -24
+        },
+        filterEnvelope: {
+          attack: 0.001,
+          decay: 0.22,
+          sustain: 0,
+          release: 0.35,
+          baseFrequency: 500,
+          octaves: 3.4
         }
       }).connect(this.output);
     }
@@ -108,7 +125,8 @@ export class AnimationPlayback {
     const value = row.value || 1;
     const ratio = fundamental / value;
     const frequency = this.baseFrequency * ratio;
-    const maxFrequency = this.baseFrequency * 32;
+    const maxFrequency = Number(this.maxFrequencyHz);
+    if (!Number.isFinite(maxFrequency) || maxFrequency <= 0) return;
     if (frequency > maxFrequency) return;
     this.synth.triggerAttackRelease(frequency, 0.6);
   }

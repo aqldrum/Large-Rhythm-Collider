@@ -96,13 +96,17 @@ export class FinalSlide {
     if (!window.Tone) return false;
     if (!this.synth) {
       this.output = new window.Tone.Volume(-4).toDestination();
+      const sustain = Math.pow(10, -22 / 20);
       this.synth = new window.Tone.PolySynth(window.Tone.Synth, {
         oscillator: { type: 'triangle' },
         envelope: {
-          attack: 0.005,
-          decay: 0.25,
-          sustain: Math.pow(10, -18 / 20),
-          release: 0.4
+          attack: 0.006,
+          attackCurve: 'exponential',
+          decay: 0.18,
+          decayCurve: 'exponential',
+          sustain,
+          release: 0.55,
+          releaseCurve: 'exponential'
         }
       }).connect(this.output);
     }
