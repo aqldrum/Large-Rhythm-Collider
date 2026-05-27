@@ -143,6 +143,7 @@ class ToneRowPlayback {
             this.playbackMainUI.setupMasterControls();
             this.setupLayerTabs();
             this.showLayerControls('a');
+            this.syncFromModuleState();
         }, 100);
         
         // Listen for data updates
@@ -156,6 +157,16 @@ class ToneRowPlayback {
             this.familyDisplayState.currentPage = 0;
             this.updateInterconsonanceFamilies();
         });
+    }
+
+    syncFromModuleState() {
+        const currentData = window.lrcModule?.getCurrentData?.();
+        if (!currentData?.spacesPlot?.length) {
+            return false;
+        }
+
+        this.updateData(currentData);
+        return true;
     }
 
     setupMasterControls() {
