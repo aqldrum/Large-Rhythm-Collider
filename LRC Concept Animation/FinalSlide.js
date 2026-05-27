@@ -32,6 +32,7 @@ export class FinalSlide {
     this.lastTriggeredBoundary = -1;
     this.justStarted = false;
     this.lastTickNow = 0;
+    this.silenced = false;
   }
 
   prepare() {
@@ -101,9 +102,9 @@ export class FinalSlide {
       this.synth = new window.Tone.PolySynth(window.Tone.MonoSynth, {
         oscillator: { type: 'triangle' },
         envelope: {
-          attack: 0.006,
+          attack: 0.01,
           attackCurve: 'exponential',
-          decay: 0.18,
+          decay: 0.88,
           decayCurve: 'exponential',
           sustain,
           release: 0.55,
@@ -273,7 +274,7 @@ export class FinalSlide {
   }
 
   playFundamentalDownbeat() {
-    if (!this.synth) return;
+    if (this.silenced || !this.synth) return;
     const frequency = this.baseFrequency;
     const maxFrequency = Number(this.maxFrequencyHz);
     if (!Number.isFinite(maxFrequency) || maxFrequency <= 0) return;
@@ -284,7 +285,7 @@ export class FinalSlide {
   }
 
   playNote(boundaryIndex) {
-    if (!this.synth) return;
+    if (this.silenced || !this.synth) return;
     const seq = this.sequence;
     const segIndex = this.boundaryToSegment[boundaryIndex];
     const segment = seq.segments[segIndex];

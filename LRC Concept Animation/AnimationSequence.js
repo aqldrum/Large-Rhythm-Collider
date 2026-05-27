@@ -1913,7 +1913,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!isRunning) return;
       const sourceWidth = Math.max(1, sourceCanvas.width || Math.round(sourceCanvas.getBoundingClientRect().width) || 1);
       const sourceHeight = Math.max(1, sourceCanvas.height || Math.round(sourceCanvas.getBoundingClientRect().height) || 1);
-      const scale = Math.max(RECORD_EXPORT_WIDTH / sourceWidth, RECORD_EXPORT_HEIGHT / sourceHeight);
+      // Preserve the full frame inside the fixed 16:9 export canvas.
+      // Using "cover" here cropped the source whenever the live stage aspect
+      // ratio was taller than 1920x1080, which cut off the bottom of recordings.
+      const scale = Math.min(RECORD_EXPORT_WIDTH / sourceWidth, RECORD_EXPORT_HEIGHT / sourceHeight);
       const drawWidth = sourceWidth * scale;
       const drawHeight = sourceHeight * scale;
       const offsetX = (RECORD_EXPORT_WIDTH - drawWidth) * 0.5;

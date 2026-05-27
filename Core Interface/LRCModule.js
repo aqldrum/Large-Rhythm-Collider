@@ -469,6 +469,50 @@ class LRCModule {
         });
     }
 
+    getLaunchRhythmsFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        const compactRhythm = params.get('layers') || params.get('rhythm');
+
+        let launchLayers = [];
+
+        if (compactRhythm) {
+            launchLayers = compactRhythm
+                .split(/[\s,:;]+/)
+                .map(value => parseInt(value, 10))
+                .filter(value => Number.isInteger(value) && value > 0)
+                .slice(0, 4);
+        } else {
+            const parameterAliases = [
+                ['a', 'layerA', 'layer-a'],
+                ['b', 'layerB', 'layer-b'],
+                ['c', 'layerC', 'layer-c'],
+                ['d', 'layerD', 'layer-d']
+            ];
+
+            launchLayers = parameterAliases.map(keys => {
+                for (const key of keys) {
+                    const rawValue = params.get(key);
+                    if (rawValue === null) continue;
+
+                    const parsedValue = parseInt(rawValue, 10);
+                    return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : 0;
+                }
+
+                return 0;
+            });
+        }
+
+        if (!launchLayers.length || launchLayers.every(value => value <= 0)) {
+            return null;
+        }
+
+        while (launchLayers.length < 4) {
+            launchLayers.push(0);
+        }
+
+        return launchLayers.slice(0, 4);
+    }
+
     // ====================================
     // MAIN GENERATION FUNCTION
     // ====================================
@@ -773,10 +817,17 @@ class LRCModule {
     }
 
     setRhythms(layerA, layerB, layerC, layerD) {
-        document.getElementById('layer-a').value = layerA;
-        document.getElementById('layer-b').value = layerB;
-        document.getElementById('layer-c').value = layerC;
-        document.getElementById('layer-d').value = layerD;
+        const values = [layerA, layerB, layerC, layerD];
+        const inputIds = ['layer-a', 'layer-b', 'layer-c', 'layer-d'];
+
+        inputIds.forEach((id, index) => {
+            const input = document.getElementById(id);
+            if (!input) return;
+
+            const value = parseInt(values[index], 10);
+            input.value = Number.isInteger(value) && value > 0 ? value : '';
+        });
+
         this.generateRhythm();
     }
 }
@@ -787,6 +838,13 @@ let lrcModule;
 document.addEventListener('DOMContentLoaded', () => {
     lrcModule = new LRCModule();
     window.lrcModule = lrcModule; // Make globally accessible
+
+    const launchRhythms = lrcModule.getLaunchRhythmsFromUrl();
+    if (launchRhythms) {
+        console.log('Loaded launch rhythm from URL:', launchRhythms.filter(value => value > 0).join(':'));
+        lrcModule.setRhythms(...launchRhythms);
+        return;
+    }
     
     // Initialize display sections with placeholder content
     lrcModule.updateCompositeDisplay();
