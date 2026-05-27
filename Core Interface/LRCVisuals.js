@@ -291,6 +291,29 @@ class LRCVisuals {
         this.syncLinearInteractionSuspension();
     }
 
+    syncFromModuleState() {
+        const currentData = window.lrcModule?.getCurrentData?.();
+        if (!currentData?.spacesPlot?.length) {
+            return false;
+        }
+
+        if (this.canvas) {
+            this.canvas.classList.add('active');
+        }
+
+        this.invertedMode = true;
+        this.updateVisualization(
+            currentData.spacesPlot,
+            currentData.layerMap,
+            currentData.rhythms,
+            currentData.spacesPlotByLayer,
+            currentData.compositeRhythm,
+            currentData.ratios,
+            currentData.grid
+        );
+        return true;
+    }
+
     initializeNodePopupSystem() {
         // Initialize node popup system if classes are available
         if (typeof NodeUI !== 'undefined' && typeof NodePopups !== 'undefined') {
@@ -1644,4 +1667,5 @@ let lrcVisuals;
 document.addEventListener('DOMContentLoaded', () => {
     lrcVisuals = new LRCVisuals();
     window.lrcVisuals = lrcVisuals; // Make globally accessible
+    lrcVisuals.syncFromModuleState();
 });

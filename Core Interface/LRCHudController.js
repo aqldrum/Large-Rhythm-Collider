@@ -1970,6 +1970,14 @@ function initializeHUD() {
     if (window.lrcModule) {
         lrcHUD = new LRCHUDController();
         window.lrcHUD = lrcHUD;
+
+        const currentData = window.lrcModule.getCurrentData?.();
+        if (currentData?.spacesPlot?.length) {
+            lrcHUD.isFirstRhythmInput = false;
+            lrcHUD.activateVisualization();
+            lrcHUD.updateRhythmInfoFromModule();
+        }
+
         console.log('LRC HUD Interface ready');
     } else {
         // Retry if LRCModule not ready yet
