@@ -61,7 +61,7 @@ audible." So a deliberately **silent** stage cannot use an empty set — it rout
 
 ## Next steps (in priority order)
 
-1. **Persist progressions** — `PaintTimeline.toJSON()/fromJSON()` already exist; wire save/load (localStorage + URL param) and a small preset library.
+1. ~~**Persist progressions**~~ — DONE: autosave to localStorage + shareable `?prog=` URL (base64 of `{rhythm, mode, timeline.toJSON()}`); restores on boot (URL → localStorage → default). 🔗 Share link button copies the restoring URL. Next: named preset library on top of this.
 2. **Richer structural slicing** — currently "by pulses" (one stage per pulse of the smallest layer) and "equal." Add Euclidean-derived boundaries (Bjorklund from `PartitionsDistribution`) and spaces-plot-gap boundaries, per Avery's "let the math speak" ethos. `PaintTimeline.deriveByOnsets()` is ready to receive them.
 3. **Per-stage export** — emit a chord chart + per-stage MIDI region (reuse `LRCExport`), so the progression leaves the browser.
 4. **Morphing** (Fable's design, deferred this session) — per-voice glide via minimal-total-cents voice-leading between two rhythm-scales; pin shared interconsonance tones as pivots; swap the spaces plot at the cycle boundary while pitches glide. Exact metric modulation when grids share factors.

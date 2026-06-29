@@ -13,9 +13,82 @@
         ready: false
     };
 
+    const STORAGE_KEY = 'lrc-quality-painting:autosave';
+
     function $(id) { return document.getElementById(id); }
 
     function setStatus(msg) { const el = $('ap-status'); if (el) el.textContent = msg; }
+
+    // ---- persistence: autosave to localStorage + shareable ?prog= URL ----
+    function currentState() {
+        const lm = window.lrcModule;
+        return {
+            v: 1,
+            rhythm: (lm && lm.currentRhythms) ? lm.currentRhythms.slice(0, 4) : [8, 7, 6, 5],
+            mode: modeValue(),
+            timeline: App.timeline ? App.timeline.toJSON() : null
+        };
+    }
+
+    function encodeState(state) {
+        try { return btoa(encodeURIComponent(JSON.stringify(state))); } catch (e) { return null; }
+    }
+    function decodeState(str) {
+        try { return JSON.parse(decodeURIComponent(atob(str))); } catch (e) { return null; }
+    }
+
+    let _persistTimer = null;
+    function persist() {
+        // debounce — paint edits can fire rapidly
+        if (_persistTimer) clearTimeout(_persistTimer);
+        _persistTimer = setTimeout(() => {
+            const state = currentState();
+            const enc = encodeState(state);
+            if (!enc) return;
+            try { localStorage.setItem(STORAGE_KEY, enc); } catch (e) {}
+            try {
+                const url = new URL(window.location.href);
+                url.searchParams.set('prog', enc);
+                window.history.replaceState(null, '', url.toString());
+            } catch (e) {}
+        }, 250);
+    }
+
+    // Rebuild the page from a saved state (rhythm + stage timeline).
+    function applyState(state) {
+        if (!state || !state.rhythm) return false;
+        const [a, b, c, d] = state.rhythm;
+        $('layer-a').value = a; $('layer-b').value = b; $('layer-c').value = c; $('layer-d').value = d;
+        if (state.mode && $('ap-derive-mode')) $('ap-derive-mode').value = state.mode;
+        try {
+            window.lrcModule.setRhythms(a, b, c, d);
+            window.toneRowPlayback.updateData(window.lrcModule.getCurrentData());
+        } catch (e) { console.error('[AdvancedPlayback] applyState load failed', e); return false; }
+        if (state.timeline && state.timeline.stages && state.timeline.stages.length) {
+            App.timeline = window.PaintTimeline.fromJSON(state.timeline);
+            App.timeline.setAvailableFractions(allFractions());
+        } else {
+            App.timeline = buildTimeline(defaultStageCount(window.lrcModule.currentRhythms), modeValue());
+        }
+        if (App.paintEngine) App.paintEngine.setTimeline(App.timeline);
+        if (App.ui) App.ui.setTimeline(App.timeline);
+        $('ap-stage-count').value = App.timeline.stages.length;
+        setStatus(`Restored ${a}:${b}:${c}:${d} — ${App.timeline.stages.length} stages.`);
+        return true;
+    }
+
+    function shareLink() {
+        persist();
+        setTimeout(() => {
+            const href = window.location.href;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(href).then(
+                    () => setStatus('Share link copied to clipboard.'),
+                    () => setStatus('Share link is in the address bar (copy failed).')
+                );
+            } else { setStatus('Share link is in the address bar.'); }
+        }, 300);
+    }
 
     // Available scale as [{fraction, ratio, cents}] from the live LRCModule.
     function getAvailableRatios() {
@@ -78,6 +151,7 @@
         }
         if (App.paintEngine) App.paintEngine.markDirty();
         refreshTimelineUI();
+        persist();
         setStatus(`Auto-progression: ${n} stages from ${cands.length} catalog qualities in the scale.`);
     }
 
@@ -102,6 +176,7 @@
         if (App.paintEngine) App.paintEngine.setTimeline(App.timeline);
         if (App.ui) App.ui.setTimeline(App.timeline);
         const ratios = getAvailableRatios();
+        persist();
         setStatus(`Loaded ${a}:${b}:${c}:${d} — ${ratios.length} pitches, grid ${window.lrcModule.currentGrid}. ${count} stages (by pulses).`);
     }
 
@@ -113,6 +188,7 @@
         App.timeline = buildTimeline(count, modeValue());
         if (App.paintEngine) App.paintEngine.setTimeline(App.timeline);
         if (App.ui) App.ui.setTimeline(App.timeline);
+        persist();
         setStatus(`Derived ${App.timeline.stages.length} stages (${modeValue()}).`);
     }
 
@@ -140,6 +216,7 @@
         $('ap-auto').addEventListener('click', autoProgression);
         $('ap-play').addEventListener('click', togglePlay);
         $('ap-paint-toggle').addEventListener('click', () => setPaint(!App.paintEngine.enabled));
+        const share = $('ap-share'); if (share) share.addEventListener('click', shareLink);
         // keep my play label synced if the engine stops on its own
         window.addEventListener('keydown', (e) => {
             if (e.code === 'Space' && e.target.tagName !== 'INPUT') { e.preventDefault(); togglePlay(); }
@@ -160,13 +237,17 @@
                     container: $('ap-timeline'),
                     timeline: null,
                     paintEngine: App.paintEngine,
-                    getAvailableRatios: getAvailableRatios
+                    getAvailableRatios: getAvailableRatios,
+                    onChange: persist
                 });
                 wire();
                 App.ready = true;
                 window.AdvancedPlaybackApp = App;
-                setStatus('Engine ready. Load a rhythm.');
-                loadRhythm(); // auto-load the default rhythm so the page is immediately alive
+                // restore: URL ?prog -> localStorage autosave -> default rhythm
+                const urlProg = new URLSearchParams(window.location.search).get('prog');
+                const saved = urlProg || (function () { try { return localStorage.getItem(STORAGE_KEY); } catch (e) { return null; } })();
+                const restored = saved ? applyState(decodeState(saved)) : false;
+                if (!restored) { setStatus('Engine ready.'); loadRhythm(); }
             } else if (tries > 100) {
                 clearInterval(timer);
                 setStatus('Engine failed to initialise (missing globals). Check console.');

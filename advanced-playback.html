@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Advanced Playback — Quality Painting · Large Rhythm Collider</title>
-    <link rel="stylesheet" href="Playback/AdvancedPlayback/advanced-playback.css">
+    <link rel="stylesheet" href="Playback/AdvancedPlayback/advanced-playback.css?v=2">
 </head>
 <body>
     <!-- Hidden legacy sink: ids that LRCModule.updateUI / display helpers write to.
@@ -48,6 +48,8 @@
             <input type="number" id="ap-stage-count" class="ap-num" value="5" min="1" max="64" title="Number of stages">
             <button class="ap-btn" id="ap-derive">Derive</button>
             <button class="ap-btn accent" id="ap-auto" title="Assign each stage a named chord found in the scale">✨ Auto-suggest progression</button>
+            <span class="ap-spacer"></span>
+            <button class="ap-btn" id="ap-share" title="Copy a link that restores this rhythm + progression">🔗 Share link</button>
         </div>
         <div class="ap-status" id="ap-status">Booting engine…</div>
     </section>
@@ -81,11 +83,11 @@
     <script src="Playback/Scheduler.js"></script>
     <script src="Playback/ToneRowPlayback.js"></script>
     <!-- Advanced Playback: Quality Painting -->
-    <script src="Playback/AdvancedPlayback/QualityCatalog.js"></script>
-    <script src="Playback/AdvancedPlayback/QualityMatcher.js"></script>
-    <script src="Playback/AdvancedPlayback/PaintTimeline.js"></script>
-    <script src="Playback/AdvancedPlayback/PaintEngine.js"></script>
-    <script src="Playback/AdvancedPlayback/PaintTimelineUI.js"></script>
-    <script src="Playback/AdvancedPlayback/advanced-playback-main.js"></script>
+    <script src="Playback/AdvancedPlayback/QualityCatalog.js?v=2"></script>
+    <script src="Playback/AdvancedPlayback/QualityMatcher.js?v=2"></script>
+    <script src="Playback/AdvancedPlayback/PaintTimeline.js?v=2"></script>
+    <script src="Playback/AdvancedPlayback/PaintEngine.js?v=2"></script>
+    <script src="Playback/AdvancedPlayback/PaintTimelineUI.js?v=2"></script>
+    <script src="Playback/AdvancedPlayback/advanced-playback-main.js?v=2"></script>
 </body>
 </html>
