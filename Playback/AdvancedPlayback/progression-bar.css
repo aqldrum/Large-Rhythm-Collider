@@ -1,0 +1,65 @@
+/* Progression Solver — main-page bracket bar + in-panel controls.
+   Scoped to .prog-* so it can't disturb existing HUD styles. */
+
+.prog-section { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--hud-border); }
+.prog-toggle {
+    width: 100%; background: rgba(40, 40, 40, 0.9); color: var(--hud-text); border: 1px solid var(--hud-border);
+    border-radius: var(--border-radius); padding: 7px 10px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s;
+}
+.prog-toggle:hover { border-color: var(--hud-accent); }
+.prog-toggle.active { background: var(--hud-accent); color: #062a18; border-color: var(--hud-accent); }
+
+.prog-bar { margin-top: 8px; display: flex; flex-direction: column; gap: 7px; }
+.prog-input {
+    width: 100%; background: rgba(20, 20, 20, 0.9); border: 1px solid var(--hud-border); border-radius: var(--border-radius);
+    color: var(--hud-text); padding: 7px 9px; font-size: 13px; font-family: ui-monospace, Menlo, monospace; outline: none;
+}
+.prog-input:focus { border-color: var(--hud-accent); }
+.prog-row2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.prog-row2 label { font-size: 11px; color: var(--hud-text-muted); display: flex; align-items: center; gap: 4px; }
+.prog-mini {
+    width: 52px; background: rgba(20, 20, 20, 0.9); border: 1px solid var(--hud-border); border-radius: var(--border-radius);
+    color: var(--hud-text); padding: 5px 6px; font-size: 12px; outline: none;
+}
+.prog-mini-btn {
+    background: rgba(40, 40, 40, 0.9); border: 1px solid var(--hud-border); border-radius: var(--border-radius);
+    color: var(--hud-text); padding: 5px 9px; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.prog-mini-btn.active { background: var(--hud-accent); color: #062a18; border-color: var(--hud-accent); }
+.prog-solve {
+    flex: 1 1 auto; background: var(--hud-accent); color: #062a18; border: 1px solid var(--hud-accent);
+    border-radius: var(--border-radius); padding: 6px 10px; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.prog-solve:hover { filter: brightness(1.1); }
+.prog-status { font-size: 11px; color: var(--hud-text-muted); font-family: ui-monospace, monospace; line-height: 1.35; }
+
+/* ---- bracket bar carved above the canvas ---- */
+.prog-brackets {
+    position: absolute; top: 0; left: 0; width: 100%; height: var(--canvas-top-margin, 64px);
+    z-index: 2; pointer-events: none; overflow: hidden;
+}
+.prog-bracket {
+    position: absolute; bottom: 6px; height: 26px;
+    border: 1px solid rgba(255, 255, 255, 0.25); border-bottom: none;
+    border-radius: 7px 7px 0 0; display: flex; align-items: flex-start; justify-content: center;
+    pointer-events: auto; cursor: pointer; transition: border-color .12s, background .12s;
+}
+.prog-bracket:hover { border-color: rgba(255, 255, 255, 0.5); }
+.prog-bracket.sel { border-color: var(--hud-accent); background: rgba(0, 255, 136, 0.08); }
+.prog-bracket-label {
+    font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: 13px; white-space: nowrap;
+    transform: translateY(-15px); background: rgba(0, 0, 0, 0.6); padding: 1px 7px; border-radius: 5px;
+}
+.prog-bhandle {
+    position: absolute; bottom: 6px; height: 26px; width: 12px; transform: translateX(-50%);
+    cursor: ew-resize; pointer-events: auto;
+}
+.prog-bhandle::before { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); background: rgba(255, 255, 255, 0.3); }
+.prog-bhandle:hover::before { background: var(--hud-accent); box-shadow: 0 0 6px var(--hud-accent); }
+.prog-playhead { position: absolute; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); background: var(--hud-accent); box-shadow: 0 0 8px var(--hud-accent); opacity: 0; }
+
+.prog-bracket-label.tier-consonant { color: #00ff88; }
+.prog-bracket-label.tier-specialized { color: #4ecdc4; }
+.prog-bracket-label.tier-scale { color: #f9ca24; }
+.prog-bracket-label.tier-dissonant { color: #ff6b6b; }
+.prog-bracket-label.tier-empty { color: #888; }

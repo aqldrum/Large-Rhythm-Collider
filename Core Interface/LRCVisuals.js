@@ -146,16 +146,18 @@ class LRCVisuals {
         const isMobileMode = document.body && document.body.classList.contains('mobile-mode');
         const rootStyle = window.getComputedStyle(document.documentElement);
         const bottomMargin = parseFloat(rootStyle.getPropertyValue('--canvas-bottom-margin')) || 0;
+        // top strip carved by the Progression Solver bracket bar (0 normally)
+        const topMargin = parseFloat(rootStyle.getPropertyValue('--canvas-top-margin')) || 0;
 
         if (!containerWidth) return;
-        
+
         // Get device pixel ratio for HD rendering
         const dpr = window.devicePixelRatio || 1;
-        
+
         // Set logical size (no cap for HD quality)
         const logicalWidth = containerWidth;
         const baseHeight = (logicalWidth / aspectRatio) - 20;
-        const availableHeight = Math.max(0, containerHeight - (isMobileMode ? 0 : bottomMargin));
+        const availableHeight = Math.max(0, containerHeight - (isMobileMode ? 0 : bottomMargin) - (isMobileMode ? 0 : topMargin));
         const logicalHeight = isMobileMode ? Math.max(0, baseHeight) : availableHeight;
 
         if (!logicalHeight) return;

@@ -69,6 +69,17 @@ The painting surface is now the Linear Plot itself (replaced the abstract stage 
 
 UI restyled to the main Collider HUD palette (black bg, `#00ff88` green accent, translucent dark panels, Segoe UI) — light pass, per Avery "don't go too deep yet."
 
+## Main-page integration (DONE — `ProgressionBar.js` + `progression-bar.css`)
+
+Quality-Painting progressions now run on the MAIN Collider page, not just the popout. A "🎹 Progression Solver" button injected under the Consonance Families section (no engine-HTML edit — injected via DOM after `#interconsonance-families-content`) toggles a compact bar (input + root + Thick + ±¢ + Solve & voice). On solve it runs `ProgressionSolver` against the live rhythm, applies per-section masks to playback via `PaintEngine`, retunes the Fundamental, and draws labeled chord **brackets** in a strip carved above the canvas.
+
+- **Carve**: gated `--canvas-top-margin` (0 normally → inert). `resizeCanvas()` got a 2-line mirror of its existing `--canvas-bottom-margin` handling; `.visualization-canvas { top: var(--canvas-top-margin) }`. This is the ONLY live-engine edit.
+- **Brackets align to node-index ranges**: each paint section = a contiguous span of `lrcVisuals.dotPositions` (grouped by `stageIndexAtFraction(compositeRhythm[i]/grid)`); bracket spans min→max dot X. A rAF loop re-lays them so they follow pan/zoom; draggable boundary handles snap to nearest node.
+- **Bracket → Scale Selection**: clicking a bracket loads that chord into the live `selectedNotes` and refreshes the main Scale Selection panel + Linear-Plot dimming (`scaleSelectionUI.updateScaleDisplay/updateLinearPlotVisibility`).
+- **Mode gating**: `_watchMode()` reconciles on a 250ms poll (idempotent — cheap section-visibility every poll, expensive carve/resize only when the `_carved` flag flips). Feature is gated to `currentPlotType === 'linear'`; any non-linear mode (e.g. Hinges, which has no playback) hides the button + brackets and uncarves; returning to linear restores. (Edge-detection on `_lastMode` was the earlier bug — it desynced mid-transition; reconcile fixed it.)
+
+Verified on the main page: button injects, carve on open, brackets align + drag, bracket-click drives the scale panel, full Linear↔Hinges↔Linear cycle restores correctly. (Canvas needs a real Generate to become `.active`/visible — page behaviour, not the feature.)
+
 ## Next steps (in priority order)
 
 1. **Per-slice auto-derive** — "most consonant quality among the nodes actually in THIS time slice" (small variant of QualityMatcher), vs the current whole-scale round-robin.
