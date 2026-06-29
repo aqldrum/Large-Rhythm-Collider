@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Advanced Playback — Quality Painting · Large Rhythm Collider</title>
-    <link rel="stylesheet" href="Playback/AdvancedPlayback/advanced-playback.css?v=2">
+    <link rel="stylesheet" href="Playback/AdvancedPlayback/advanced-playback.css?v=3">
 </head>
 <body>
     <!-- Hidden legacy sink: ids that LRCModule.updateUI / display helpers write to.
@@ -39,6 +39,13 @@
             <button class="ap-btn play" id="ap-play">▶ Play</button>
             <button class="ap-btn toggle" id="ap-paint-toggle">Painting: OFF</button>
         </div>
+        <div class="ap-row ap-prog-row">
+            <span class="ap-label">Progression:</span>
+            <input type="text" id="ap-progression" class="ap-prog-input" value="Cmaj7 Am7 Dm7 G7" placeholder="e.g. Cmaj7 Am7 Dm7 G7  •  Dm7 G7 Cmaj7  •  C7#9 Fmaj7">
+            <span class="ap-label">root</span>
+            <input type="text" id="ap-root-note" class="ap-num" value="C3" title="Sound chord 1's root at this note — retunes the Fundamental (Hz)">
+            <button class="ap-btn accent" id="ap-solve" title="Voice the typed progression from THIS rhythm's tone row">🎹 Solve &amp; voice</button>
+        </div>
         <div class="ap-row ap-derive-row">
             <span class="ap-label">Stages:</span>
             <select id="ap-derive-mode" class="ap-select" title="How stage boundaries are placed">
@@ -47,7 +54,7 @@
             </select>
             <input type="number" id="ap-stage-count" class="ap-num" value="5" min="1" max="64" title="Number of stages">
             <button class="ap-btn" id="ap-derive">Derive</button>
-            <button class="ap-btn accent" id="ap-auto" title="Assign each stage a named chord found in the scale">✨ Auto-suggest progression</button>
+            <button class="ap-btn" id="ap-auto" title="Assign each stage a named chord found in the scale">✨ Auto-suggest</button>
             <span class="ap-spacer"></span>
             <button class="ap-btn" id="ap-share" title="Copy a link that restores this rhythm + progression">🔗 Share link</button>
         </div>
@@ -85,9 +92,10 @@
     <!-- Advanced Playback: Quality Painting -->
     <script src="Playback/AdvancedPlayback/QualityCatalog.js?v=2"></script>
     <script src="Playback/AdvancedPlayback/QualityMatcher.js?v=2"></script>
+    <script src="Playback/AdvancedPlayback/ProgressionSolver.js?v=3"></script>
     <script src="Playback/AdvancedPlayback/PaintTimeline.js?v=2"></script>
     <script src="Playback/AdvancedPlayback/PaintEngine.js?v=2"></script>
     <script src="Playback/AdvancedPlayback/PaintTimelineUI.js?v=2"></script>
-    <script src="Playback/AdvancedPlayback/advanced-playback-main.js?v=2"></script>
+    <script src="Playback/AdvancedPlayback/advanced-playback-main.js?v=3"></script>
 </body>
 </html>

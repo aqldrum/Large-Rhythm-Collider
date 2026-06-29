@@ -26,6 +26,8 @@
             v: 1,
             rhythm: (lm && lm.currentRhythms) ? lm.currentRhythms.slice(0, 4) : [8, 7, 6, 5],
             mode: modeValue(),
+            progression: ($('ap-progression') || {}).value || '',
+            rootNote: ($('ap-root-note') || {}).value || '',
             timeline: App.timeline ? App.timeline.toJSON() : null
         };
     }
@@ -60,6 +62,8 @@
         const [a, b, c, d] = state.rhythm;
         $('layer-a').value = a; $('layer-b').value = b; $('layer-c').value = c; $('layer-d').value = d;
         if (state.mode && $('ap-derive-mode')) $('ap-derive-mode').value = state.mode;
+        if (state.progression && $('ap-progression')) $('ap-progression').value = state.progression;
+        if (state.rootNote && $('ap-root-note')) $('ap-root-note').value = state.rootNote;
         try {
             window.lrcModule.setRhythms(a, b, c, d);
             window.toneRowPlayback.updateData(window.lrcModule.getCurrentData());
@@ -155,6 +159,46 @@
         setStatus(`Auto-progression: ${n} stages from ${cands.length} catalog qualities in the scale.`);
     }
 
+    // ---- type a progression, voice it from the current rhythm's tone row ----
+    function retuneRoot(candidate) {
+        const noteText = ($('ap-root-note').value || 'C3').trim();
+        const hz = window.ProgressionSolver.noteToHz(noteText);
+        if (!hz) { setStatus('Bad root note: ' + noteText); return null; }
+        // chord-1's root is voiced by the solver's tonic-anchor ratio (rootFraction)
+        const rootRow = getAvailableRatios().find(r => r.fraction === candidate.rootFraction);
+        const rootDecimal = rootRow ? rootRow.ratio : Math.pow(2, candidate.rootCents / 1200);
+        let fundamental = hz / rootDecimal;
+        while (fundamental < 55) fundamental *= 2;     // keep within the engine's 55–880 Hz range
+        while (fundamental > 880) fundamental /= 2;     // by octave-shifting (pitch class preserved)
+        window.toneRowPlayback.updateFundamentalFreq(fundamental);
+        return fundamental;
+    }
+
+    function solveProgression() {
+        const text = ($('ap-progression').value || '').trim();
+        const scale = getAvailableRatios();
+        if (!scale.length) { setStatus('Load a rhythm first.'); return; }
+        const res = window.ProgressionSolver.solve(text, scale);
+        if (!res.ok) {
+            setStatus('Progression: ' + (res.reason === 'parse' ? 'could not parse — check the chord symbols.' : res.reason));
+            return;
+        }
+        // one equal section per chord; each section's mask = that chord's solved tones
+        const n = res.perChord.length;
+        App.timeline = new window.PaintTimeline();
+        App.timeline.setAvailableFractions(allFractions());
+        App.timeline.deriveEqual(n);
+        res.perChord.forEach((c, i) => App.timeline.setStageMask(i, c.fractions));
+        if (App.paintEngine) App.paintEngine.setTimeline(App.timeline);
+        if (App.ui) App.ui.setTimeline(App.timeline);
+        retuneRoot(res.candidate);
+        setPaint(true);
+        persist();
+        const fits = res.perChord.map(c => Math.round(c.strength * 100) + '%').join(' ');
+        setStatus(`Voiced ${n} chords on the ${scale.length}-note row — overall ${(res.strength * 100).toFixed(0)}% fit`
+            + `${res.relaxed ? ' (reused tones — row too small to cover it cleanly)' : ''}. Per-chord: ${fits}. Root → ${$('ap-root-note').value}.`);
+    }
+
     // ---- rhythm load ----
     function loadRhythm() {
         const a = parseInt($('layer-a').value) || 1;
@@ -217,6 +261,9 @@
         $('ap-play').addEventListener('click', togglePlay);
         $('ap-paint-toggle').addEventListener('click', () => setPaint(!App.paintEngine.enabled));
         const share = $('ap-share'); if (share) share.addEventListener('click', shareLink);
+        const solveBtn = $('ap-solve'); if (solveBtn) solveBtn.addEventListener('click', solveProgression);
+        const progInput = $('ap-progression');
+        if (progInput) progInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); solveProgression(); } });
         // keep my play label synced if the engine stops on its own
         window.addEventListener('keydown', (e) => {
             if (e.code === 'Space' && e.target.tagName !== 'INPUT') { e.preventDefault(); togglePlay(); }

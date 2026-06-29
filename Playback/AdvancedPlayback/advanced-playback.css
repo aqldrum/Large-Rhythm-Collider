@@ -44,6 +44,8 @@ body {
 .ap-field span { color: var(--muted); font-weight: 700; width: 12px; text-align: center; }
 .ap-field input { width: 54px; background: transparent; border: none; color: var(--text); font-size: 15px; font-weight: 600; outline: none; }
 .ap-num { width: 60px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 6px 8px; font-size: 14px; }
+.ap-prog-input { flex: 1 1 260px; min-width: 200px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 8px 10px; font-size: 14px; font-family: ui-monospace, Menlo, monospace; }
+.ap-prog-input:focus { outline: none; border-color: var(--accent-2); }
 .ap-select { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 6px 8px; font-size: 13px; }
 
 .ap-btn { background: var(--panel-2); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .12s; }
