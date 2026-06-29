@@ -44,6 +44,8 @@
             <input type="text" id="ap-progression" class="ap-prog-input" value="Cmaj7 Am7 Dm7 G7" placeholder="e.g. Cmaj7 Am7 Dm7 G7  •  Dm7 G7 Cmaj7  •  C7#9 Fmaj7">
             <span class="ap-label">root</span>
             <input type="text" id="ap-root-note" class="ap-num" value="C3" title="Sound chord 1's root at this note — retunes the Fundamental (Hz)">
+            <button class="ap-btn toggle active" id="ap-thicken" title="Include EVERY ratio within the window of each chord tone, not just the best one">Thick</button>
+            <input type="number" id="ap-window" class="ap-num" value="15" min="0" max="60" step="1" title="Consonance window in cents — ratios within this of a chord tone are included">
             <button class="ap-btn accent" id="ap-solve" title="Voice the typed progression from THIS rhythm's tone row">🎹 Solve &amp; voice</button>
         </div>
         <div class="ap-row ap-derive-row">
@@ -92,10 +94,10 @@
     <!-- Advanced Playback: Quality Painting -->
     <script src="Playback/AdvancedPlayback/QualityCatalog.js?v=2"></script>
     <script src="Playback/AdvancedPlayback/QualityMatcher.js?v=2"></script>
-    <script src="Playback/AdvancedPlayback/ProgressionSolver.js?v=3"></script>
+    <script src="Playback/AdvancedPlayback/ProgressionSolver.js?v=4"></script>
     <script src="Playback/AdvancedPlayback/PaintTimeline.js?v=2"></script>
     <script src="Playback/AdvancedPlayback/PaintEngine.js?v=2"></script>
     <script src="Playback/AdvancedPlayback/PaintTimelineUI.js?v=2"></script>
-    <script src="Playback/AdvancedPlayback/advanced-playback-main.js?v=3"></script>
+    <script src="Playback/AdvancedPlayback/advanced-playback-main.js?v=4"></script>
 </body>
 </html>

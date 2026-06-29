@@ -28,6 +28,8 @@
             mode: modeValue(),
             progression: ($('ap-progression') || {}).value || '',
             rootNote: ($('ap-root-note') || {}).value || '',
+            thicken: ($('ap-thicken') || {}).classList ? $('ap-thicken').classList.contains('active') : true,
+            windowCents: ($('ap-window') || {}).value || '15',
             timeline: App.timeline ? App.timeline.toJSON() : null
         };
     }
@@ -64,6 +66,8 @@
         if (state.mode && $('ap-derive-mode')) $('ap-derive-mode').value = state.mode;
         if (state.progression && $('ap-progression')) $('ap-progression').value = state.progression;
         if (state.rootNote && $('ap-root-note')) $('ap-root-note').value = state.rootNote;
+        if (state.windowCents && $('ap-window')) $('ap-window').value = state.windowCents;
+        if ($('ap-thicken')) $('ap-thicken').classList.toggle('active', state.thicken !== false);
         try {
             window.lrcModule.setRhythms(a, b, c, d);
             window.toneRowPlayback.updateData(window.lrcModule.getCurrentData());
@@ -178,25 +182,30 @@
         const text = ($('ap-progression').value || '').trim();
         const scale = getAvailableRatios();
         if (!scale.length) { setStatus('Load a rhythm first.'); return; }
-        const res = window.ProgressionSolver.solve(text, scale);
+        const thicken = ($('ap-thicken') || {}).classList ? $('ap-thicken').classList.contains('active') : true;
+        const windowCents = Math.max(0, parseFloat(($('ap-window') || {}).value) || 15);
+        const res = window.ProgressionSolver.solve(text, scale, { windowCents });
         if (!res.ok) {
             setStatus('Progression: ' + (res.reason === 'parse' ? 'could not parse — check the chord symbols.' : res.reason));
             return;
         }
-        // one equal section per chord; each section's mask = that chord's solved tones
+        // one equal section per chord; each section's mask = that chord's solved tones.
+        // thick = every ratio within the consonance window of each chord tone; lean = best per tone.
         const n = res.perChord.length;
         App.timeline = new window.PaintTimeline();
         App.timeline.setAvailableFractions(allFractions());
         App.timeline.deriveEqual(n);
-        res.perChord.forEach((c, i) => App.timeline.setStageMask(i, c.fractions));
+        res.perChord.forEach((c, i) => App.timeline.setStageMask(i, thicken ? c.windowFractions : c.fractions));
         if (App.paintEngine) App.paintEngine.setTimeline(App.timeline);
         if (App.ui) App.ui.setTimeline(App.timeline);
         retuneRoot(res.candidate);
         setPaint(true);
         persist();
         const fits = res.perChord.map(c => Math.round(c.strength * 100) + '%').join(' ');
+        const tones = App.timeline.stages.map(s => s.mask.length).join('/');
         setStatus(`Voiced ${n} chords on the ${scale.length}-note row — overall ${(res.strength * 100).toFixed(0)}% fit`
-            + `${res.relaxed ? ' (reused tones — row too small to cover it cleanly)' : ''}. Per-chord: ${fits}. Root → ${$('ap-root-note').value}.`);
+            + `${res.relaxed ? ' (reused tones — row too small to cover it cleanly)' : ''}. Per-chord: ${fits}`
+            + `. ${thicken ? `Thick (±${windowCents}¢): ${tones} tones` : `Lean: ${tones} tones`}. Root → ${$('ap-root-note').value}.`);
     }
 
     // ---- rhythm load ----
@@ -262,6 +271,11 @@
         $('ap-paint-toggle').addEventListener('click', () => setPaint(!App.paintEngine.enabled));
         const share = $('ap-share'); if (share) share.addEventListener('click', shareLink);
         const solveBtn = $('ap-solve'); if (solveBtn) solveBtn.addEventListener('click', solveProgression);
+        const thickenBtn = $('ap-thicken');
+        if (thickenBtn) thickenBtn.addEventListener('click', () => {
+            thickenBtn.classList.toggle('active');
+            if (getAvailableRatios().length && $('ap-progression').value.trim()) solveProgression();
+        });
         const progInput = $('ap-progression');
         if (progInput) progInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); solveProgression(); } });
         // keep my play label synced if the engine stops on its own

@@ -332,14 +332,40 @@
         const avgDeviation = pairCount > 0 ? total / pairCount : 0;
         return { strength: clamp(1 - avgDeviation / 50, 0, 1), avgDeviation, maxDeviation, pairCount, matches };
     }
-    function analyzePerChord(parsed, candidate) {
+    // For a chord tone at relative semitone `s` (vs the progression reference), the
+    // absolute target pitch within the octave is rootCents + s*100. Collect EVERY scale
+    // ratio whose cents lands within `windowCents` of that target — all the rhythm's
+    // representatives of that chord tone, not just the best-tuned one. Falls back to the
+    // solver's chosen representative if nothing sits inside the window.
+    function chordWindowFractions(ratios, candidate, relativeTones, windowCents) {
+        const out = new Set();
+        (relativeTones || []).forEach(s => {
+            const target = mod1200(candidate.rootCents + s * 100);
+            let any = false;
+            ratios.forEach(row => {
+                if (minCircularDistance(row.cents, target) <= windowCents) { out.add(row.fraction); any = true; }
+            });
+            if (!any) {
+                const rep = candidate.matches.find(m => m.semitone === s);
+                if (rep) out.add(rep.fraction);
+            }
+        });
+        return Array.from(out);
+    }
+
+    function analyzePerChord(parsed, candidate, ratios = null, windowCents = 15) {
         const chords = Array.isArray(parsed?.chords) ? parsed.chords : [];
-        return chords.map(chord => ({
-            symbol: chord.symbol, rootSemitone: chord.rootSemitone, relativeTones: chord.relativeTones,
-            // the actual ratio fractions sounding for this chord = the section's mask
-            fractions: scoreTonesWithBatch(chord.relativeTones, candidate).matches.map(m => m.fraction),
-            ...scoreTonesWithBatch(chord.relativeTones, candidate)
-        }));
+        return chords.map(chord => {
+            const scored = scoreTonesWithBatch(chord.relativeTones, candidate);
+            return {
+                symbol: chord.symbol, rootSemitone: chord.rootSemitone, relativeTones: chord.relativeTones,
+                // lean mask: one best-tuned ratio per chord tone
+                fractions: scored.matches.map(m => m.fraction),
+                // thick mask: every ratio within the consonance window of each chord tone
+                windowFractions: ratios ? chordWindowFractions(ratios, candidate, chord.relativeTones, windowCents) : scored.matches.map(m => m.fraction),
+                ...scored
+            };
+        });
     }
 
     // ---- high-level: text + scale -> per-chord masks, with relaxed-reuse fallback ----
@@ -362,8 +388,9 @@
         }
         const candidate = res.candidates[0] || null;
         if (!candidate) return { ok: false, reason: 'no-solution', parsed };
-        const perChord = analyzePerChord(parsed, candidate);
-        return { ok: true, parsed, candidate, perChord, relaxed, strength: candidate.strength, avgDeviation: candidate.avgDeviation };
+        const windowCents = opts.windowCents != null ? opts.windowCents : 15;
+        const perChord = analyzePerChord(parsed, candidate, ratios, windowCents);
+        return { ok: true, parsed, candidate, perChord, relaxed, windowCents, strength: candidate.strength, avgDeviation: candidate.avgDeviation };
     }
 
     // Note name (e.g. "C", "F#", "Bb", optional octave "C4") -> frequency in Hz.
