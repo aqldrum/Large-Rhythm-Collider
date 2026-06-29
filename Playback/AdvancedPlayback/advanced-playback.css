@@ -1,24 +1,26 @@
 /* Advanced Playback — Quality Painting. Self-contained dark theme. */
 :root {
-    --bg: #0e0f13;
-    --panel: #16181f;
-    --panel-2: #1d2029;
-    --line: #2a2e3a;
-    --text: #e8eaf0;
-    --muted: #8b91a3;
-    --accent: #34d3c4;
-    --accent-2: #7c8cff;
-    --play: #4ade80;
-    --tier-consonant: #4ade80;
-    --tier-specialized: #60a5fa;
-    --tier-scale: #fbbf24;
-    --tier-dissonant: #f87171;
-    --tier-empty: #4b5160;
+    /* aligned to the main Collider HUD palette (style.css :root) */
+    --bg: #000000;
+    --panel: rgba(20, 20, 20, 0.92);
+    --panel-2: rgba(45, 45, 45, 0.85);
+    --line: rgba(120, 120, 120, 0.28);
+    --text: #ffffff;
+    --muted: #b8b8b8;
+    --accent: #00ff88;
+    --accent-2: #4ecdc4;
+    --play: #00ff88;
+    --tier-consonant: #00ff88;
+    --tier-specialized: #4ecdc4;
+    --tier-scale: #f9ca24;
+    --tier-dissonant: #ff6b6b;
+    --tier-empty: #6a6a6a;
+    --layer-a: #ff6b6b; --layer-b: #4ecdc4; --layer-c: #00a638; --layer-d: #f9ca24;
 }
 * { box-sizing: border-box; }
 body {
     margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-family: 'Segoe UI', 'Roboto', system-ui, -apple-system, sans-serif;
     font-size: 14px; line-height: 1.45; padding: 0 0 60px;
 }
 .ap-header {
@@ -58,7 +60,22 @@ body {
 
 .ap-status { margin-top: 12px; color: var(--muted); font-size: 12.5px; font-family: 'SF Mono', ui-monospace, Menlo, monospace; }
 
-/* ---- timeline strip ---- */
+/* ---- Linear Plot timeline (painting surface) ---- */
+.pt-linear { width: 100%; }
+.lpt { width: 100%; }
+.lpt-labels { position: relative; height: 24px; margin-bottom: 2px; }
+.lpt-label { position: absolute; transform: translateX(-50%); top: 0; font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: 13px; white-space: nowrap; cursor: pointer; padding: 1px 7px; border-radius: 5px; }
+.lpt-label:hover { background: rgba(255, 255, 255, 0.06); }
+.lpt-label.sel { background: rgba(0, 255, 136, 0.14); }
+.lpt-plot { position: relative; height: 230px; width: 100%; }
+.lpt-canvas { display: block; width: 100%; height: 100%; border: 1px solid var(--line); border-radius: 8px; background: rgba(0, 0, 0, 0.4); }
+.lpt-overlay { position: absolute; inset: 0; pointer-events: none; }
+.lpt-divider { position: absolute; top: 0; bottom: 0; width: 11px; transform: translateX(-50%); cursor: ew-resize; pointer-events: auto; }
+.lpt-divider::before { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); background: rgba(255, 255, 255, 0.22); transition: background .1s; }
+.lpt-divider:hover::before { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.lpt-playhead { position: absolute; top: 0; bottom: 0; width: 2px; transform: translateX(-50%); background: var(--play); box-shadow: 0 0 8px var(--play); opacity: 0; transition: opacity .15s; }
+
+/* ---- timeline strip (legacy, unused) ---- */
 .ap-timeline { display: flex; flex-direction: column; gap: 14px; }
 .pt-strip-wrap { position: relative; }
 .pt-strip { display: flex; gap: 3px; height: 84px; }

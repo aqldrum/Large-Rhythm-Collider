@@ -107,6 +107,28 @@
 
     function allFractions() { return getAvailableRatios().map(r => r.fraction); }
 
+    // Linear Plot nodes: one per composite attack, positioned at true cycle time.
+    // x = compositeRhythm[i]/grid, cents = the node's ratio pitch, layers from layerMap.
+    function getNodes() {
+        const lm = window.lrcModule;
+        if (!lm || !lm.currentSpacesPlot || !lm.currentSpacesPlot.length) return [];
+        const sp = lm.currentSpacesPlot;
+        const cr = lm.currentCompositeRhythm || [];
+        const lmap = lm.currentLayerMap || [];
+        const grid = lm.currentGrid || 1;
+        const centsOf = new Map(getAvailableRatios().map(r => [r.fraction, r.cents]));
+        const map = lm.currentSpacesMapping;
+        const idxToFrac = [];
+        if (map) for (const [frac, idxs] of map.entries()) idxs.forEach(i => { idxToFrac[i] = frac; });
+        const nodes = [];
+        for (let i = 0; i < sp.length; i++) {
+            const frac = idxToFrac[i];
+            if (frac == null) continue;
+            nodes.push({ x: (cr[i] || 0) / grid, cents: centsOf.get(frac) || 0, fraction: frac, layers: lmap[i] || [] });
+        }
+        return nodes;
+    }
+
     // smallest layer value > 1 -> fewest, widest stages (sensible harmonic rhythm).
     function defaultStageCount(rhythms) {
         const valid = (rhythms || []).filter(v => v > 1);
@@ -299,6 +321,7 @@
                     timeline: null,
                     paintEngine: App.paintEngine,
                     getAvailableRatios: getAvailableRatios,
+                    getNodes: getNodes,
                     onChange: persist
                 });
                 wire();

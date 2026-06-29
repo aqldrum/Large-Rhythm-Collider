@@ -17,20 +17,22 @@
             this.timeline = opts.timeline;
             this.paintEngine = opts.paintEngine;
             this.getAvailableRatios = opts.getAvailableRatios; // () => [{fraction, ratio, cents}]
+            this.getNodes = opts.getNodes;                     // () => [{x, cents, fraction, layers}]
             this.onChange = opts.onChange || function () {};
             this.selectedStage = 0;
-            this._raf = null;
             this._build();
         }
 
-        setTimeline(timeline) { this.timeline = timeline; this.selectedStage = 0; this.render(); }
+        setTimeline(timeline) {
+            this.timeline = timeline;
+            this.selectedStage = 0;
+            if (this.linear) this.linear.setTimeline(timeline);
+            this.render();
+        }
 
         _build() {
             this.container.innerHTML = `
-                <div class="pt-strip-wrap">
-                    <div class="pt-strip" id="pt-strip"></div>
-                    <div class="pt-playhead" id="pt-playhead"></div>
-                </div>
+                <div class="pt-linear" id="pt-linear"></div>
                 <div class="pt-readout" id="pt-readout"></div>
                 <div class="pt-editor">
                     <div class="pt-editor-col">
@@ -49,12 +51,21 @@
                     </div>
                 </div>
             `;
-            this.elStrip = this.container.querySelector('#pt-strip');
-            this.elPlayhead = this.container.querySelector('#pt-playhead');
             this.elReadout = this.container.querySelector('#pt-readout');
             this.elTitle = this.container.querySelector('#pt-editor-title');
             this.elGrid = this.container.querySelector('#pt-ratio-grid');
             this.elQuality = this.container.querySelector('#pt-quality');
+
+            // the Linear Plot is the painting surface (true-time X, pitch Y, draggable sections)
+            this.linear = new root.LinearPlotTimeline({
+                container: this.container.querySelector('#pt-linear'),
+                getNodes: this.getNodes,
+                timeline: this.timeline,
+                paintEngine: this.paintEngine,
+                getSelectedStage: () => this.selectedStage,
+                onSelectStage: (i) => { this.selectedStage = i; this.render(); },
+                onChange: () => { this.render(); this.onChange(); }
+            });
 
             this.container.querySelector('#pt-stage-all').addEventListener('click', () => {
                 this.timeline.setStageMaskAll(this.selectedStage);
@@ -65,7 +76,6 @@
                 this._afterEdit();
             });
             this.render();
-            this._startPlayheadLoop();
         }
 
         _afterEdit() {
@@ -84,23 +94,8 @@
         render() {
             if (!this.timeline) return;
             const stages = this.timeline.stages;
-            // ---- strip ----
-            this.elStrip.innerHTML = '';
-            stages.forEach((s, i) => {
-                const a = this._analyzeStage(s);
-                s.label = a.primary ? a.primary.quality.symbol : (s.mask.length ? '·' : '∅');
-                const block = document.createElement('div');
-                block.className = 'pt-stage' + (i === this.selectedStage ? ' selected' : '');
-                block.style.flexGrow = String(Math.max(0.001, s.endFrac - s.startFrac));
-                const tierClass = a.primary ? ('tier-' + a.primary.quality.tier) : 'tier-empty';
-                block.innerHTML = `
-                    <span class="pt-stage-idx">${i + 1}</span>
-                    <span class="pt-stage-label ${tierClass}">${s.label}</span>
-                    <span class="pt-stage-count">${s.mask.length}/${(this.getAvailableRatios() || []).length}</span>
-                `;
-                block.addEventListener('click', () => { this.selectedStage = i; this.render(); });
-                this.elStrip.appendChild(block);
-            });
+            // ---- the Linear Plot painting surface ----
+            if (this.linear) this.linear.render();
             // ---- readout ----
             this.elReadout.innerHTML = stages.map((s, i) => {
                 const a = this._analyzeStage(s);
@@ -158,28 +153,7 @@
             `;
         }
 
-        _startPlayheadLoop() {
-            const loop = () => {
-                if (this.paintEngine && this.elPlayhead) {
-                    const f = this.paintEngine.currentFraction();
-                    if (f == null) {
-                        this.elPlayhead.style.opacity = '0';
-                    } else {
-                        this.elPlayhead.style.opacity = '1';
-                        this.elPlayhead.style.left = (f * 100) + '%';
-                        const idx = this.timeline ? this.timeline.stageIndexAtFraction(f) : -1;
-                        const blocks = this.elStrip.children;
-                        for (let i = 0; i < blocks.length; i++) {
-                            blocks[i].classList.toggle('playing', i === idx);
-                        }
-                    }
-                }
-                this._raf = requestAnimationFrame(loop);
-            };
-            this._raf = requestAnimationFrame(loop);
-        }
-
-        destroy() { if (this._raf) cancelAnimationFrame(this._raf); }
+        destroy() { if (this.linear) this.linear.destroy(); }
     }
 
     if (root) root.PaintTimelineUI = PaintTimelineUI;
