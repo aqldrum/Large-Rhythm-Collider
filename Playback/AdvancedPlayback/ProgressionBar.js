@@ -121,9 +121,14 @@
         },
         clear() {
             if (this.paintEngine) this.paintEngine.disable();
+            this._lockScale(false);
             this.timeline = null;
+            this.selectedSection = 0;
             this.overlay.innerHTML = '';
-            const s = document.getElementById('prog-status'); if (s) s.textContent = 'Cleared — restored full scale.';
+            const pb = window.toneRowPlayback;
+            // restore the full scale: re-select everything (also re-dispatches plot visibility)
+            try { pb.scaleSelectionUI && pb.scaleSelectionUI.selectAllNotes(); } catch (e) {}
+            const s = document.getElementById('prog-status'); if (s) s.textContent = 'Cleared — scale unlocked, full scale restored.';
         },
 
         _setStrip(px) {
@@ -151,8 +156,13 @@
             this.paintEngine.enable();
             this._retune(res.candidate);
 
+            this.selectedSection = 0;
+            this._lockScale(true);   // freeze the Scale Selection panel until Clear
+            this._paintPlot();       // light each section's nodes per its chord
+            this._refreshChart(true);
+
             const fits = res.perChord.map(c => Math.round(c.strength * 100) + '%').join(' ');
-            status.textContent = `${n} chords on the ${scale.length}-note row — ${(res.strength * 100).toFixed(0)}% (per-chord ${fits}). Root → ${document.getElementById('prog-root').value}.`;
+            status.textContent = `${n} chords — ${(res.strength * 100).toFixed(0)}% (${fits}). Scale panel locked; Clear to edit.`;
             this._renderBrackets();
         },
 
@@ -168,20 +178,77 @@
             window.toneRowPlayback.updateFundamentalFreq(fundamental);
         },
 
-        // Clicking a bracket loads that chord into the main Scale Selection panel +
-        // dims the Linear Plot to it (so the scale UI updates per bracket).
+        // Clicking a bracket selects it; the (locked) Scale Selection panel then shows that
+        // chord. The plot keeps the whole-progression per-section painting (_paintPlot).
         _selectSection(si) {
             if (!this.timeline || !this.timeline.stages[si]) return;
             this.selectedSection = si;
-            const pb = window.toneRowPlayback;
-            const stage = this.timeline.stages[si];
-            // mirror the section mask into the live selection so the scale chart + plot reflect it
-            pb.selectedNotes = new Set(stage.mask);
-            if (this.paintEngine) this.paintEngine._snapshot = new Set(stage.mask); // keep restore sane
-            try { pb.scaleSelectionUI && pb.scaleSelectionUI.updateScaleDisplay(); } catch (e) {}
-            try { pb.scaleSelectionUI && pb.scaleSelectionUI.updateLinearPlotVisibility(); } catch (e) {}
-            try { pb.scaleSelectionUI && pb.scaleSelectionUI.updateSelectedNotesCount(); } catch (e) {}
+            this._refreshChart(true);
             this._renderBrackets();
+        },
+
+        // Lock/unlock the main Scale Selection panel (display still updates; just not clickable).
+        // Locks the chart's whole section so the Select All/None buttons can't override either.
+        _lockScale(on) {
+            this.locked = on;
+            const chart = document.getElementById('scale-chart-container');
+            if (chart) {
+                chart.classList.toggle('prog-locked', on);
+                const section = chart.closest('.collapse-content') || chart.parentElement;
+                if (section) section.classList.toggle('prog-locked', on);
+            }
+            const pc = document.getElementById('partitions-scale-container');
+            if (pc) pc.classList.toggle('prog-locked', on);
+        },
+
+        _activeSection() {
+            const pb = window.toneRowPlayback;
+            if (pb && pb.isPlaying && this.paintEngine) {
+                const i = this.paintEngine.currentStageIndex();
+                if (i >= 0) return i;
+            }
+            return this.selectedSection || 0;
+        },
+
+        // Scale chart follows the active section. Stopped → drive it from the selected
+        // section's mask. Playing → read whatever PaintEngine set (no write — avoids
+        // fighting the per-note audio masking) so the chart tracks the music live.
+        _refreshChart(force) {
+            if (!this.timeline) return;
+            const pb = window.toneRowPlayback;
+            const si = this._activeSection();
+            if (!force && si === this._chartSection) return;
+            this._chartSection = si;
+            if (!pb.isPlaying) {
+                const stage = this.timeline.stages[si];
+                if (stage) pb.selectedNotes = new Set(stage.mask);
+                if (this.paintEngine) this.paintEngine._snapshot = pb.selectedNotes; // keep restore sane
+            }
+            try { pb.scaleSelectionUI && pb.scaleSelectionUI.updateScaleDisplay(); } catch (e) {}
+            try { pb.scaleSelectionUI && pb.scaleSelectionUI.updateSelectedNotesCount(); } catch (e) {}
+        },
+
+        // Drive the Linear Plot directly: each visible node is lit iff its OWN section's
+        // mask contains its fraction. Dispatched as the engine's own visibility event so
+        // LRCVisuals dims the rest. This shows the whole progression and re-toggles live
+        // as section boundaries move — independent of the per-note audio selection.
+        _paintPlot() {
+            if (!this.timeline) return;
+            const lm = window.lrcModule;
+            const sp = lm.currentSpacesPlot || [], cr = lm.currentCompositeRhythm || [], grid = lm.currentGrid || 1;
+            const map = lm.currentSpacesMapping, idxToFrac = [];
+            if (map) for (const [f, idxs] of map.entries()) idxs.forEach(i => { idxToFrac[i] = f; });
+            const hidden = [];
+            for (let i = 0; i < sp.length; i++) {
+                const f = idxToFrac[i];
+                if (f == null) continue;
+                const si = this.timeline.stageIndexAtFraction((cr[i] || 0) / grid);
+                const stage = this.timeline.stages[si];
+                if (!stage || stage.mask.indexOf(f) < 0) hidden.push(i);
+            }
+            window.dispatchEvent(new CustomEvent('spacesPlotVisibilityChanged', {
+                detail: { hiddenSpacesIndices: hidden, selectedRatios: [], visibleSpacesIndices: [] }
+            }));
         },
 
         // ---- bracket overlay aligned to the Linear Plot's node X positions ----
@@ -267,6 +334,8 @@
             const frac = (cr[nearest.index] || 0) / grid;
             this.timeline.moveBoundary(this._drag.si, frac);
             if (this.paintEngine) this.paintEngine.markDirty();
+            this._paintPlot();          // realtime: nodes re-toggle as the boundary moves
+            this._refreshChart(true);
             this._renderBrackets();
         },
 
@@ -275,6 +344,8 @@
                 if (this.open && this.timeline) {
                     // follow pan/zoom/resize by re-laying brackets from current dotPositions
                     this._renderBrackets();
+                    // scale chart follows the active section live (only re-renders on change)
+                    this._refreshChart(false);
                     // playhead
                     const ph = document.getElementById('prog-ph');
                     if (ph && this.paintEngine) {

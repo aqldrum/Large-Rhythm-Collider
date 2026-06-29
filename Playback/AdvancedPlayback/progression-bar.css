@@ -63,3 +63,12 @@
 .prog-bracket-label.tier-scale { color: #f9ca24; }
 .prog-bracket-label.tier-dissonant { color: #ff6b6b; }
 .prog-bracket-label.tier-empty { color: #888; }
+
+/* scale panel locked while a progression is loaded (updates live, not clickable) */
+.prog-locked { pointer-events: none; position: relative; }
+#scale-chart-container.prog-locked { outline: 1px solid rgba(0, 255, 136, 0.35); outline-offset: 2px; border-radius: 4px; }
+#scale-chart-container.prog-locked::before {
+    content: '🔒 progression'; position: absolute; top: -9px; right: 6px; z-index: 3;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.04em; color: #062a18;
+    background: var(--hud-accent); padding: 1px 6px; border-radius: 4px; pointer-events: none;
+}
