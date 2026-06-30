@@ -1,8 +1,19 @@
 # Advanced Playback — Quality Painting (handoff)
 
-**Branch:** `advanced-playback` (worktree at `LRC_Builds/lrc-adv-playback`, off live `Large-Rhythm-Collider` repo)
-**Built:** 2026-06-28, autonomous session while Avery was at a gig.
-**Status:** Working + browser-verified. Additive only — does **not** touch `index.html` or the live engine source.
+**Branch:** `advanced-playback` (worktree at `LRC_Builds/lrc-adv-playback`, off live `Large-Rhythm-Collider` repo). **11 commits, local/unpushed.**
+**Built:** 2026-06-28 → 06-30 across several sessions with Avery.
+**Status: ~95% done, browser-verified.** Inert-by-default on the main page (only one gated 2-line `resizeCanvas` edit + one CSS var touch the live engine; everything else additive).
+
+## TL;DR — what exists
+Two surfaces share the same engine modules:
+1. **Popout** `advanced-playback.html` — the full lab. Linear-Plot timeline as the painting surface (drag dividers, click nodes), Quality Painting, type-a-progression solver, thick voicings, persistence/share.
+2. **Main-page inline** (`ProgressionBar.js`) — "🎹 Progression Solver" button under Consonance Families → compact bar → on Solve, voices a typed progression from the live rhythm, retunes the Fundamental, paints the Linear Plot per-section, and draws **labeled, draggable chord brackets** in a strip carved above the canvas. Gated to linear-plot mode.
+
+**Engine modules** (`Playback/AdvancedPlayback/`, all reused by both surfaces): `QualityCatalog.js`, `QualityMatcher.js`, `ProgressionSolver.js` (ported from Overworld `progression-optimizer.js`), `PaintTimeline.js`, `PaintEngine.js` (monkey-patches `playNoteAtTime`, no engine edits), `LinearPlotTimeline.js` (popout surface), `ProgressionBar.js` (main-page), `advanced-playback-main.js` (popout controller). CSS: `advanced-playback.css`, `progression-bar.css`.
+
+## REMAINING (~5%) — for the next agent
+1. **Undo/redo for bracket movements** — boundary drags (single + bookend-group) should be undoable. Suggest an undo stack of `PaintTimeline` boundary snapshots (capture on drag-start in `_onDragMove`/pointerdown, push on pointerup; redo stack cleared on new edit). `PaintTimeline.toJSON()/fromJSON()` already exist for cheap snapshots. Wire Cmd/Ctrl+Z / Shift+Cmd+Z while the bar is open.
+2. **Brackets in Wheel + Centrifuge viz modes** (the other two playback-driven modes; Hinges has no playback and stays gated out). Currently `ProgressionBar` gates to `currentPlotType === 'linear'` and positions brackets from `lrcVisuals.dotPositions` (horizontal X). Wheel/Centrifuge are RADIAL — brackets become arcs/sectors, and the carve-strip-above-canvas idea won't map. The next agent needs: (a) how Wheel/Centrifuge expose per-node screen positions (a `dotPositions` equivalent?), (b) Avery's specifics on how the brackets should look there (radial arc labels?). Start by reading `Visualizations/Wheel.js` + `Visualizations/Centrifuge.js` for their node-layout + draw loop. **Avery will provide specifics.**
 
 ---
 
