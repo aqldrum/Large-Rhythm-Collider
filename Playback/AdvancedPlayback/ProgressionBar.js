@@ -151,15 +151,23 @@
             this.timeline = new window.PaintTimeline();
             this.timeline.setAvailableFractions(scale.map(r => r.fraction));
             this.timeline.deriveEqual(n);
-            res.perChord.forEach((c, i) => this.timeline.setStageMask(i, thick ? c.windowFractions : c.fractions));
+            res.perChord.forEach((c, i) => {
+                this.timeline.setStageMask(i, thick ? c.windowFractions : c.fractions);
+                const stage = this.timeline.stages[i], pc = res.parsed.chords[i];
+                if (stage && pc) {
+                    stage.chordSymbol = pc.symbol;                       // label = exactly what the user typed
+                    stage.chordTier = this._tierForIntervals(pc.baseIntervals); // colour from the typed chord's quality
+                }
+            });
             this.paintEngine.setTimeline(this.timeline);
             this.paintEngine.enable();
             this._retune(res.candidate);
 
             this.selectedSection = 0;
-            this._lockScale(true);   // freeze the Scale Selection panel until Clear
+            this._lockScale(true);   // freeze the Scale Selection panel until Clear (still scrolls)
             this._paintPlot();       // light each section's nodes per its chord
-            this._refreshChart(true);
+            try { window.toneRowPlayback.scaleSelectionUI && window.toneRowPlayback.scaleSelectionUI.updateScaleDisplay(); } catch (e) {}
+            this._paintChartForSection(0);
 
             const fits = res.perChord.map(c => Math.round(c.strength * 100) + '%').join(' ');
             status.textContent = `${n} chords — ${(res.strength * 100).toFixed(0)}% (${fits}). Scale panel locked; Clear to edit.`;
@@ -183,8 +191,18 @@
         _selectSection(si) {
             if (!this.timeline || !this.timeline.stages[si]) return;
             this.selectedSection = si;
-            this._refreshChart(true);
+            this._paintChartForSection(this._activeSection());
             this._renderBrackets();
+        },
+
+        // intended tier from the TYPED chord (exact rooted interval match — no set-class dedup,
+        // so Am7 stays Am7 and isn't collapsed onto C6). Falls back to the realized tier.
+        _tierForIntervals(intervals) {
+            const cat = window.AdvancedQualityCatalog;
+            if (!cat || !Array.isArray(intervals)) return null;
+            const key = intervals.slice().sort((a, b) => a - b).join(',');
+            const q = cat.catalog.find(q => q.intervals.slice().sort((a, b) => a - b).join(',') === key);
+            return q ? q.tier : null;
         },
 
         // Lock/unlock the main Scale Selection panel (display still updates; just not clickable).
@@ -210,22 +228,26 @@
             return this.selectedSection || 0;
         },
 
-        // Scale chart follows the active section. Stopped → drive it from the selected
-        // section's mask. Playing → read whatever PaintEngine set (no write — avoids
-        // fighting the per-note audio masking) so the chart tracks the music live.
-        _refreshChart(force) {
+        // Highlight the locked Scale chart to the active section by toggling row classes
+        // directly (no innerHTML rebuild → scroll preserved; no selectedNotes write → audio
+        // safe). Updates "in time" with the brackets as the playhead crosses sections.
+        _paintChartForSection(si) {
             if (!this.timeline) return;
-            const pb = window.toneRowPlayback;
-            const si = this._activeSection();
-            if (!force && si === this._chartSection) return;
+            const stage = this.timeline.stages[si];
+            if (!stage) return;
+            const set = new Set(stage.mask);
+            let on = 0;
+            document.querySelectorAll('#scale-chart-container .scale-row, #partitions-scale-container .scale-row').forEach(row => {
+                const f = row.getAttribute('data-ratio');
+                const lit = set.has(f);
+                row.classList.toggle('note-selected', lit);
+                row.classList.toggle('note-deselected', !lit);
+                if (lit) on++;
+            });
+            document.querySelectorAll('[data-scale-count]').forEach(el => {
+                el.textContent = `${stage.mask.length} in ${stage.chordSymbol || 'chord'}`;
+            });
             this._chartSection = si;
-            if (!pb.isPlaying) {
-                const stage = this.timeline.stages[si];
-                if (stage) pb.selectedNotes = new Set(stage.mask);
-                if (this.paintEngine) this.paintEngine._snapshot = pb.selectedNotes; // keep restore sane
-            }
-            try { pb.scaleSelectionUI && pb.scaleSelectionUI.updateScaleDisplay(); } catch (e) {}
-            try { pb.scaleSelectionUI && pb.scaleSelectionUI.updateSelectedNotesCount(); } catch (e) {}
         },
 
         // Drive the Linear Plot directly: each visible node is lit iff its OWN section's
@@ -291,11 +313,16 @@
             spans.forEach((s, k) => {
                 if (!isFinite(s.minX)) return;
                 const left = offX + s.minX, right = offX + s.maxX;
+                const stage = this.timeline.stages[s.si];
+                const typed = stage && stage.chordSymbol;
+                const label = typed || this._chordLabel(s.si);
+                const tier = (stage && stage.chordTier) || this._tier(s.si);
                 const br = document.createElement('div');
                 br.className = 'prog-bracket' + (s.si === this.selectedSection ? ' sel' : '');
                 br.style.left = left + 'px';
                 br.style.width = Math.max(8, right - left) + 'px';
-                br.innerHTML = `<span class="prog-bracket-label tier-${this._tier(s.si)}">${this._chordLabel(s.si)}</span>`;
+                br.innerHTML = `<span class="prog-bracket-label tier-${tier}">${label}</span>`;
+                if (typed) br.title = `you typed ${typed} — realized as ${this._chordLabel(s.si)}`;
                 br.addEventListener('click', () => this._selectSection(s.si));
                 this.overlay.appendChild(br);
                 // draggable boundary handle at the right edge (except last)
@@ -335,7 +362,7 @@
             this.timeline.moveBoundary(this._drag.si, frac);
             if (this.paintEngine) this.paintEngine.markDirty();
             this._paintPlot();          // realtime: nodes re-toggle as the boundary moves
-            this._refreshChart(true);
+            this._paintChartForSection(this._activeSection());
             this._renderBrackets();
         },
 
@@ -344,8 +371,8 @@
                 if (this.open && this.timeline) {
                     // follow pan/zoom/resize by re-laying brackets from current dotPositions
                     this._renderBrackets();
-                    // scale chart follows the active section live (only re-renders on change)
-                    this._refreshChart(false);
+                    // scale chart highlight follows the active section live (in time with brackets)
+                    if (this.locked) this._paintChartForSection(this._activeSection());
                     // playhead
                     const ph = document.getElementById('prog-ph');
                     if (ph && this.paintEngine) {

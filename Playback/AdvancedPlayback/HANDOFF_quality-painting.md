@@ -80,6 +80,12 @@ Quality-Painting progressions now run on the MAIN Collider page, not just the po
 
 Verified on the main page: button injects, carve on open, brackets align + drag, bracket-click drives the scale panel, full Linear↔Hinges↔Linear cycle restores correctly. (Canvas needs a real Generate to become `.active`/visible — page behaviour, not the feature.)
 
+## Bracket labels = typed symbols; scroll-preserving lock; live chart highlight (DONE)
+
+- **Labels show what the user TYPED**, not the matcher's re-derivation. QualityMatcher dedupes by set-class (Am7 ≡ C6 under inversion), so the realized analysis would mislabel. Fix: at solve, store `stage.chordSymbol = parsed.chords[i].symbol` and `stage.chordTier` (from an EXACT rooted interval match against the catalog via `_tierForIntervals` — the catalog has both major_6th and minor_7th as distinct entries, so no dedup). Bracket label = `chordSymbol`; tier colour = `chordTier`; hover title = "you typed X — realized as <matcher label>". Labels persist through boundary drags (intent is fixed; only time extent / lit nodes change).
+- **Scroll-preserving lock**: `.prog-locked` now sets `pointer-events:none` on `.scale-row` + `[data-scale-action]` only (NOT the container) so the chart still scrolls (scrollable only at >15 pitches) but rows/select-all-none can't override the progression.
+- **Live chart highlight** (`_paintChartForSection`): toggles row `.note-selected/.note-deselected` classes directly from the active section's mask — no innerHTML rebuild (scroll preserved), no `selectedNotes` write (audio-safe). Runs every loop tick when locked, so the chart tracks the playhead across sections in time. Replaced the old `_refreshChart`.
+
 ## Next steps (in priority order)
 
 1. **Per-slice auto-derive** — "most consonant quality among the nodes actually in THIS time slice" (small variant of QualityMatcher), vs the current whole-scale round-robin.
