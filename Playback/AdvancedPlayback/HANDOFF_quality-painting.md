@@ -91,6 +91,13 @@ Verified on the main page: button injects, carve on open, brackets align + drag,
 - **Playhead tracks cmd-scroll zoom + drag-pan** (`linearView.zoomX/panX`): `_playheadX(f)` interpolates the cycle time between the two *transformed* `dotPositions` that bracket it (same space as the brackets), so it follows the view and the loop hides it (`opacity 0`) when `x` is outside `[0, canvas.clientWidth]` — i.e. offscreen when you've zoomed into another section. (Old code used raw `padding + f*plotWidth`, ignoring the transform.)
 - **Shift-click multi-select + proportional group resize**: `multiSelect` Set; shift-click toggles a bracket in. A contiguous selection (`_selectedGroup` → `{a,b}`) shows a `.grp` highlight and turns the group's right-edge handle into a scale handle. Dragging it scales ALL internal boundaries proportionally about the group's fixed left edge (`nf = S + (orig−S)·(E'−S)/(E−S)`) and pushes the next section. Verified: internal proportion preserved (0.5→0.5), group scales, section after pushed.
 
+## Bracket interaction fixes (DONE)
+
+- **Click breakage fixed**: the rAF loop was calling `_renderBrackets()` every frame, destroying the bracket DOM mid-click (click needs down+up on the same element) → shift-click (and clicks generally) silently failed. Now the loop rebuilds only when `_bracketSig()` changes (zoom/pan/canvas-width/boundaries/selection); `_renderBrackets` stamps `_lastSig` at the end. Playhead + chart-highlight still update every frame (separate elements, no rebuild).
+- **Bookend-only group dragging**: with a contiguous shift-select group `{a,b}`, internal boundary handles are `disabled`; only the two bookends drag — left bookend (`si=a-1`) scales the group about the fixed right edge, right bookend (`si=b`) about the fixed left edge. Both keep internal proportions and push the adjacent section.
+- **Selection illumination** on the bracket header strip (`.sel`/`.grp`: accent fill + label highlight), not on the plot.
+- **Reset on new rhythm**: a `rhythmGenerated` listener calls `clear()` (paint off, scale unlocked, brackets gone, plot restored, multiSelect cleared) so a stale voicing never lingers.
+
 ## Next steps (in priority order)
 
 1. **Per-slice auto-derive** — "most consonant quality among the nodes actually in THIS time slice" (small variant of QualityMatcher), vs the current whole-scale round-robin.

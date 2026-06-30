@@ -45,10 +45,14 @@
     pointer-events: auto; cursor: pointer; transition: border-color .12s, background .12s;
 }
 .prog-bracket:hover { border-color: rgba(255, 255, 255, 0.5); }
-.prog-bracket.sel { border-color: var(--hud-accent); background: rgba(0, 255, 136, 0.08); }
-.prog-bracket.grp { background: rgba(0, 255, 136, 0.14); }              /* part of a multi-select group */
-.prog-bhandle.grp { width: 16px; }                                      /* group's right edge = scale handle */
+/* selected bracket header illuminates (not the plot) */
+.prog-bracket.sel { border-color: var(--hud-accent); background: rgba(0, 255, 136, 0.22); box-shadow: inset 0 0 12px rgba(0, 255, 136, 0.25); }
+.prog-bracket.sel .prog-bracket-label { background: var(--hud-accent); color: #062a18; }
+.prog-bracket.grp { background: rgba(0, 255, 136, 0.3); }               /* part of a multi-select group */
+.prog-bhandle.grp { width: 18px; }                                      /* group bookend = scale handle */
 .prog-bhandle.grp::before { width: 3px; background: var(--hud-accent); box-shadow: 0 0 6px var(--hud-accent); }
+.prog-bhandle.disabled { pointer-events: none; }                        /* internal boundary locked while grouped */
+.prog-bhandle.disabled::before { background: rgba(255, 255, 255, 0.12); }
 .prog-bracket-label {
     font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: 13px; white-space: nowrap;
     transform: translateY(-15px); background: rgba(0, 0, 0, 0.6); padding: 1px 7px; border-radius: 5px;

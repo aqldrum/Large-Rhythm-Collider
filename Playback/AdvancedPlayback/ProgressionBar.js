@@ -81,6 +81,12 @@
             window.addEventListener('pointermove', e => this._onDragMove(e));
             window.addEventListener('pointerup', () => { if (this._drag) { this._drag = null; } });
 
+            // a new rhythm invalidates the current voicing → turn the solver off + reset
+            window.addEventListener('rhythmGenerated', () => {
+                if (this.timeline) { this.clear(); }
+                const s = document.getElementById('prog-status'); if (s && this.open) s.textContent = 'New rhythm — solve a progression.';
+            });
+
             // Watch the viz mode: the brackets only make sense over the Linear Plot, and
             // modes like Hinges don't use playback — so hide the whole feature + uncarve
             // the canvas when not in linear mode, and restore when it returns.
@@ -334,33 +340,41 @@
                 if (typed) br.title = `you typed ${typed} — realized as ${this._chordLabel(s.si)}`;
                 br.addEventListener('click', (e) => this._selectSection(s.si, e.shiftKey));
                 this.overlay.appendChild(br);
-                // draggable boundary handle at the right edge (except last)
+                // boundary handle at this bracket's right edge (except the very last)
                 if (k < spans.length - 1) {
+                    const g = this._selectedGroup();
+                    // role: when a group is selected, only its BOOKENDS (the boundary just before
+                    // section a, and just after section b) are draggable; internal ones are locked.
+                    let role = 'single';
+                    if (g) {
+                        if (s.si >= g.a && s.si < g.b) role = 'internal';     // inside the group → locked
+                        else if (s.si === g.a - 1) role = 'group-left';        // left bookend
+                        else if (s.si === g.b) role = 'group-right';           // right bookend
+                    }
                     const h = document.createElement('div');
-                    const group = this._selectedGroup();
-                    const isGroupEdge = group && s.si === group.b; // right edge of the selected group
-                    h.className = 'prog-bhandle' + (isGroupEdge ? ' grp' : '');
-                    h.style.left = (right) + 'px';
+                    h.className = 'prog-bhandle' + (role === 'internal' ? ' disabled' : (role.startsWith('group') ? ' grp' : ''));
+                    h.style.left = right + 'px';
                     h.dataset.si = String(s.si);
-                    h.addEventListener('pointerdown', e => {
-                        e.preventDefault();
-                        const g = this._selectedGroup();
-                        if (g && s.si === g.b) {
-                            // group resize: capture geometry, scale internal boundaries proportionally
+                    if (role !== 'internal') {
+                        h.addEventListener('pointerdown', e => {
+                            e.preventDefault();
                             const stages = this.timeline.stages;
-                            const S = stages[g.a].startFrac, E = stages[g.b].endFrac;
-                            const orig = [];
-                            for (let bIdx = g.a; bIdx < g.b; bIdx++) orig.push(stages[bIdx].endFrac);
-                            this._drag = { type: 'group', a: g.a, b: g.b, S, E, orig, offX };
-                        } else {
-                            this._drag = { type: 'single', si: s.si, offX };
-                        }
-                    });
+                            if (role === 'group-left' || role === 'group-right') {
+                                const orig = [];
+                                for (let bIdx = g.a; bIdx < g.b; bIdx++) orig.push(stages[bIdx].endFrac);
+                                this._drag = { type: 'group', edge: role === 'group-left' ? 'left' : 'right',
+                                    a: g.a, b: g.b, S: stages[g.a].startFrac, E: stages[g.b].endFrac, orig, offX };
+                            } else {
+                                this._drag = { type: 'single', si: s.si, offX };
+                            }
+                        });
+                    }
                     this.overlay.appendChild(h);
                 }
             });
             // playhead
             const ph = document.createElement('div'); ph.className = 'prog-playhead'; ph.id = 'prog-ph'; this.overlay.appendChild(ph);
+            this._lastSig = this._bracketSig();
         },
 
         _tier(si) {
@@ -396,6 +410,16 @@
             return (b - a + 1 === arr.length) ? { a, b } : null; // contiguous only
         },
 
+        // change-signature: brackets rebuild only when this differs (zoom/pan/size/boundaries/selection).
+        _bracketSig() {
+            const lv = window.lrcVisuals;
+            const v = lv && lv.linearView ? `${lv.linearView.zoomX},${lv.linearView.zoomY},${Math.round(lv.linearView.panX)},${Math.round(lv.linearView.panY)}` : '';
+            const w = lv && lv.canvas ? lv.canvas.clientWidth : 0;
+            const bounds = this.timeline ? this.timeline.stages.map(s => s.endFrac.toFixed(4)).join(',') : '';
+            const sel = `${Array.from(this.multiSelect).sort((a, b) => a - b).join('-')}/${this.selectedSection}`;
+            return `${v}|${w}|${bounds}|${sel}`;
+        },
+
         _onDragMove(e) {
             if (!this._drag || !this.timeline) return;
             // map mouse X -> cycle fraction via the nearest plot node
@@ -410,19 +434,30 @@
             const stages = this.timeline.stages;
 
             if (this._drag.type === 'group') {
-                // resize the whole selected group: scale internal boundaries proportionally,
-                // pushing the section after the group. Keeps relative lengths within the group.
-                const { a, b, S, E, orig } = this._drag;
-                const maxE = (b + 1 < stages.length) ? stages[b + 1].endFrac - 0.02 : 1;
-                const Eprime = Math.max(S + 0.02, Math.min(maxE, frac));
-                const scale = (E - S > 1e-6) ? (Eprime - S) / (E - S) : 1;
-                for (let bIdx = a; bIdx < b; bIdx++) {
-                    const nf = S + (orig[bIdx - a] - S) * scale;
-                    stages[bIdx].endFrac = nf;
-                    stages[bIdx + 1].startFrac = nf;
+                // resize the whole selected group from a bookend: internal boundaries scale
+                // proportionally, the opposite edge stays fixed, the adjacent section is pushed.
+                const { a, b, S, E, orig, edge } = this._drag;
+                if (edge === 'right') {
+                    const maxE = (b + 1 < stages.length) ? stages[b + 1].endFrac - 0.02 : 1;
+                    const Eprime = Math.max(S + 0.02, Math.min(maxE, frac));
+                    const scale = (E - S > 1e-6) ? (Eprime - S) / (E - S) : 1;
+                    for (let bIdx = a; bIdx < b; bIdx++) {
+                        const nf = S + (orig[bIdx - a] - S) * scale;
+                        stages[bIdx].endFrac = nf; stages[bIdx + 1].startFrac = nf;
+                    }
+                    stages[b].endFrac = Eprime;
+                    if (stages[b + 1]) stages[b + 1].startFrac = Eprime;
+                } else { // left bookend: fixed right edge E
+                    const minS = stages[a - 1] ? stages[a - 1].startFrac + 0.02 : 0;
+                    const Sprime = Math.max(minS, Math.min(E - 0.02, frac));
+                    const scale = (E - S > 1e-6) ? (E - Sprime) / (E - S) : 1;
+                    for (let bIdx = a; bIdx < b; bIdx++) {
+                        const nf = E - (E - orig[bIdx - a]) * scale;
+                        stages[bIdx].endFrac = nf; stages[bIdx + 1].startFrac = nf;
+                    }
+                    stages[a].startFrac = Sprime;
+                    if (stages[a - 1]) stages[a - 1].endFrac = Sprime;
                 }
-                stages[b].endFrac = Eprime;
-                if (stages[b + 1]) stages[b + 1].startFrac = Eprime;
             } else {
                 this.timeline.moveBoundary(this._drag.si, frac);
             }
@@ -436,8 +471,9 @@
         _loop() {
             const tick = () => {
                 if (this.open && this.timeline) {
-                    // follow pan/zoom/resize by re-laying brackets from current dotPositions
-                    this._renderBrackets();
+                    // rebuild brackets ONLY when something changed (zoom/pan/boundaries/selection)
+                    // — rebuilding every frame would destroy elements mid-click and break clicks.
+                    if (this._bracketSig() !== this._lastSig) this._renderBrackets();
                     // scale chart highlight follows the active section live (in time with brackets)
                     if (this.locked) this._paintChartForSection(this._activeSection());
                     // playhead — positioned in the SAME transformed node space as the
