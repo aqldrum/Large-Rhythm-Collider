@@ -19,6 +19,8 @@
         _carved: false,
         timeline: null,
         paintEngine: null,
+        selectedSection: 0,
+        multiSelect: new Set(),
         _raf: null,
         _drag: null,
 
@@ -124,6 +126,7 @@
             this._lockScale(false);
             this.timeline = null;
             this.selectedSection = 0;
+            this.multiSelect = new Set();
             this.overlay.innerHTML = '';
             const pb = window.toneRowPlayback;
             // restore the full scale: re-select everything (also re-dispatches plot visibility)
@@ -188,9 +191,14 @@
 
         // Clicking a bracket selects it; the (locked) Scale Selection panel then shows that
         // chord. The plot keeps the whole-progression per-section painting (_paintPlot).
-        _selectSection(si) {
+        _selectSection(si, additive) {
             if (!this.timeline || !this.timeline.stages[si]) return;
             this.selectedSection = si;
+            if (additive) {
+                if (this.multiSelect.has(si)) this.multiSelect.delete(si); else this.multiSelect.add(si);
+            } else {
+                this.multiSelect = new Set([si]); // single-select resets the group
+            }
             this._paintChartForSection(this._activeSection());
             this._renderBrackets();
         },
@@ -317,21 +325,37 @@
                 const typed = stage && stage.chordSymbol;
                 const label = typed || this._chordLabel(s.si);
                 const tier = (stage && stage.chordTier) || this._tier(s.si);
+                const inGroup = this.multiSelect.has(s.si);
                 const br = document.createElement('div');
-                br.className = 'prog-bracket' + (s.si === this.selectedSection ? ' sel' : '');
+                br.className = 'prog-bracket' + (inGroup ? ' sel' : '') + (this.multiSelect.size > 1 && inGroup ? ' grp' : '');
                 br.style.left = left + 'px';
                 br.style.width = Math.max(8, right - left) + 'px';
                 br.innerHTML = `<span class="prog-bracket-label tier-${tier}">${label}</span>`;
                 if (typed) br.title = `you typed ${typed} — realized as ${this._chordLabel(s.si)}`;
-                br.addEventListener('click', () => this._selectSection(s.si));
+                br.addEventListener('click', (e) => this._selectSection(s.si, e.shiftKey));
                 this.overlay.appendChild(br);
                 // draggable boundary handle at the right edge (except last)
                 if (k < spans.length - 1) {
                     const h = document.createElement('div');
-                    h.className = 'prog-bhandle';
+                    const group = this._selectedGroup();
+                    const isGroupEdge = group && s.si === group.b; // right edge of the selected group
+                    h.className = 'prog-bhandle' + (isGroupEdge ? ' grp' : '');
                     h.style.left = (right) + 'px';
                     h.dataset.si = String(s.si);
-                    h.addEventListener('pointerdown', e => { e.preventDefault(); this._drag = { si: s.si, offX }; });
+                    h.addEventListener('pointerdown', e => {
+                        e.preventDefault();
+                        const g = this._selectedGroup();
+                        if (g && s.si === g.b) {
+                            // group resize: capture geometry, scale internal boundaries proportionally
+                            const stages = this.timeline.stages;
+                            const S = stages[g.a].startFrac, E = stages[g.b].endFrac;
+                            const orig = [];
+                            for (let bIdx = g.a; bIdx < g.b; bIdx++) orig.push(stages[bIdx].endFrac);
+                            this._drag = { type: 'group', a: g.a, b: g.b, S, E, orig, offX };
+                        } else {
+                            this._drag = { type: 'single', si: s.si, offX };
+                        }
+                    });
                     this.overlay.appendChild(h);
                 }
             });
@@ -348,9 +372,33 @@
             return a && a.primary ? a.primary.quality.tier : 'empty';
         },
 
+        // Screen X (canvas-local, post zoom/pan) of cycle time `f`, by interpolating the
+        // transformed plot-node positions that bracket it. Returns null if not resolvable.
+        _playheadX(f) {
+            const lv = window.lrcVisuals, lm = window.lrcModule;
+            const dots = lv && lv.dotPositions; if (!dots || !dots.length) return null;
+            const cr = lm.currentCompositeRhythm || [], grid = lm.currentGrid || 1;
+            let prev = null, next = null;
+            for (const d of dots) {
+                const t = (cr[d.index] || 0) / grid;
+                if (t <= f) { if (!prev || t > prev.t) prev = { t, x: d.x }; }
+                else { if (!next || t < next.t) next = { t, x: d.x }; }
+            }
+            if (prev && next) return prev.x + (next.x - prev.x) * ((f - prev.t) / ((next.t - prev.t) || 1));
+            return prev ? prev.x : (next ? next.x : null);
+        },
+
+        // contiguous selected range {a,b} from the multi-select, else null.
+        _selectedGroup() {
+            if (!this.multiSelect || this.multiSelect.size < 2) return null;
+            const arr = Array.from(this.multiSelect).sort((x, y) => x - y);
+            const a = arr[0], b = arr[arr.length - 1];
+            return (b - a + 1 === arr.length) ? { a, b } : null; // contiguous only
+        },
+
         _onDragMove(e) {
             if (!this._drag || !this.timeline) return;
-            // map mouse X -> cycle fraction via nearest plot node, set the boundary
+            // map mouse X -> cycle fraction via the nearest plot node
             const lv = window.lrcVisuals, lm = window.lrcModule;
             const host = this.overlay.parentElement, hRect = host.getBoundingClientRect();
             const localX = e.clientX - hRect.left - this._drag.offX;
@@ -359,9 +407,28 @@
             if (!nearest) return;
             const cr = lm.currentCompositeRhythm || [], grid = lm.currentGrid || 1;
             const frac = (cr[nearest.index] || 0) / grid;
-            this.timeline.moveBoundary(this._drag.si, frac);
+            const stages = this.timeline.stages;
+
+            if (this._drag.type === 'group') {
+                // resize the whole selected group: scale internal boundaries proportionally,
+                // pushing the section after the group. Keeps relative lengths within the group.
+                const { a, b, S, E, orig } = this._drag;
+                const maxE = (b + 1 < stages.length) ? stages[b + 1].endFrac - 0.02 : 1;
+                const Eprime = Math.max(S + 0.02, Math.min(maxE, frac));
+                const scale = (E - S > 1e-6) ? (Eprime - S) / (E - S) : 1;
+                for (let bIdx = a; bIdx < b; bIdx++) {
+                    const nf = S + (orig[bIdx - a] - S) * scale;
+                    stages[bIdx].endFrac = nf;
+                    stages[bIdx + 1].startFrac = nf;
+                }
+                stages[b].endFrac = Eprime;
+                if (stages[b + 1]) stages[b + 1].startFrac = Eprime;
+            } else {
+                this.timeline.moveBoundary(this._drag.si, frac);
+            }
+
             if (this.paintEngine) this.paintEngine.markDirty();
-            this._paintPlot();          // realtime: nodes re-toggle as the boundary moves
+            this._paintPlot();          // realtime: nodes re-toggle as boundaries move
             this._paintChartForSection(this._activeSection());
             this._renderBrackets();
         },
@@ -373,19 +440,20 @@
                     this._renderBrackets();
                     // scale chart highlight follows the active section live (in time with brackets)
                     if (this.locked) this._paintChartForSection(this._activeSection());
-                    // playhead
+                    // playhead — positioned in the SAME transformed node space as the
+                    // brackets, so it tracks cmd-scroll zoom + drag pan and clips offscreen
+                    // when the current moment is scrolled out of the view.
                     const ph = document.getElementById('prog-ph');
                     if (ph && this.paintEngine) {
                         const f = this.paintEngine.currentFraction();
                         const canvas = window.lrcVisuals.canvas, host = this.overlay.parentElement;
-                        if (f == null) ph.style.opacity = '0';
+                        const x = (f == null) ? null : this._playheadX(f);
+                        if (x == null) ph.style.opacity = '0';
                         else {
-                            const cRect = canvas.getBoundingClientRect(), hRect = host.getBoundingClientRect();
-                            const { padding, plotWidth } = window.lrcVisuals.getLinearPlotMetrics
-                                ? window.lrcVisuals.getLinearPlotMetrics(canvas.clientWidth, canvas.clientHeight)
-                                : { padding: 40, plotWidth: canvas.clientWidth - 80 };
-                            ph.style.opacity = '1';
-                            ph.style.left = ((cRect.left - hRect.left) + padding + f * plotWidth) + 'px';
+                            const offX = canvas.getBoundingClientRect().left - host.getBoundingClientRect().left;
+                            const inView = x >= 0 && x <= canvas.clientWidth;
+                            ph.style.opacity = inView ? '1' : '0';
+                            ph.style.left = (offX + x) + 'px';
                         }
                     }
                 }

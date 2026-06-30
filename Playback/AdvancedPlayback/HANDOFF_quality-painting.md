@@ -86,6 +86,11 @@ Verified on the main page: button injects, carve on open, brackets align + drag,
 - **Scroll-preserving lock**: `.prog-locked` now sets `pointer-events:none` on `.scale-row` + `[data-scale-action]` only (NOT the container) so the chart still scrolls (scrollable only at >15 pitches) but rows/select-all-none can't override the progression.
 - **Live chart highlight** (`_paintChartForSection`): toggles row `.note-selected/.note-deselected` classes directly from the active section's mask — no innerHTML rebuild (scroll preserved), no `selectedNotes` write (audio-safe). Runs every loop tick when locked, so the chart tracks the playhead across sections in time. Replaced the old `_refreshChart`.
 
+## Zoom-aware playhead + multi-bracket group resize (DONE)
+
+- **Playhead tracks cmd-scroll zoom + drag-pan** (`linearView.zoomX/panX`): `_playheadX(f)` interpolates the cycle time between the two *transformed* `dotPositions` that bracket it (same space as the brackets), so it follows the view and the loop hides it (`opacity 0`) when `x` is outside `[0, canvas.clientWidth]` — i.e. offscreen when you've zoomed into another section. (Old code used raw `padding + f*plotWidth`, ignoring the transform.)
+- **Shift-click multi-select + proportional group resize**: `multiSelect` Set; shift-click toggles a bracket in. A contiguous selection (`_selectedGroup` → `{a,b}`) shows a `.grp` highlight and turns the group's right-edge handle into a scale handle. Dragging it scales ALL internal boundaries proportionally about the group's fixed left edge (`nf = S + (orig−S)·(E'−S)/(E−S)`) and pushes the next section. Verified: internal proportion preserved (0.5→0.5), group scales, section after pushed.
+
 ## Next steps (in priority order)
 
 1. **Per-slice auto-derive** — "most consonant quality among the nodes actually in THIS time slice" (small variant of QualityMatcher), vs the current whole-scale round-robin.

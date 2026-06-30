@@ -46,6 +46,9 @@
 }
 .prog-bracket:hover { border-color: rgba(255, 255, 255, 0.5); }
 .prog-bracket.sel { border-color: var(--hud-accent); background: rgba(0, 255, 136, 0.08); }
+.prog-bracket.grp { background: rgba(0, 255, 136, 0.14); }              /* part of a multi-select group */
+.prog-bhandle.grp { width: 16px; }                                      /* group's right edge = scale handle */
+.prog-bhandle.grp::before { width: 3px; background: var(--hud-accent); box-shadow: 0 0 6px var(--hud-accent); }
 .prog-bracket-label {
     font-family: ui-monospace, Menlo, monospace; font-weight: 700; font-size: 13px; white-space: nowrap;
     transform: translateY(-15px); background: rgba(0, 0, 0, 0.6); padding: 1px 7px; border-radius: 5px;
