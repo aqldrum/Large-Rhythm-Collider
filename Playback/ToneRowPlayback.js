@@ -990,7 +990,7 @@ class ToneRowPlayback {
         const useLegato = this.legatoEnabled;
 
         if (useLegato) {
-            this.startLegatoNote(noteData, layerIndex, layerState, startTime, { softAttack: true });
+            this.startLegatoNote(noteData, layerIndex, layerState, startTime);
         } else {
             this.startStandardNote(noteData, duration, layerIndex, layerState, startTime);
         }
@@ -1064,7 +1064,7 @@ class ToneRowPlayback {
         this.trackOscillatorLifecycle(oscillator, layerIndex);
     }
 
-    startLegatoNote(noteData, layerIndex, layerState, startTime = null, { softAttack = false } = {}) {
+    startLegatoNote(noteData, layerIndex, layerState, startTime = null) {
         if (!this.audioContext) return;
 
         // Release any currently sustained voice for this layer before starting the next one
@@ -1082,10 +1082,7 @@ class ToneRowPlayback {
         oscillator.connect(envelope);
         envelope.connect(this.layerNodes[layerIndex].gain);
 
-        let { attack, decay, sustain, release } = layerState.adsr;
-        if (softAttack) {
-            attack = Math.min(attack, 0.01);
-        }
+        const { attack, decay, sustain, release } = layerState.adsr;
 
         const highFreqAtten = this.getHighFrequencyAttenuation(noteData.frequency);
         const peakGain = highFreqAtten;
