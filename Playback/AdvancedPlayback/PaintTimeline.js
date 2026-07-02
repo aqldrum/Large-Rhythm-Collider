@@ -162,7 +162,8 @@
                 version: 1,
                 allFractions: this.allFractions.slice(),
                 stages: this.stages.map(s => ({
-                    startFrac: s.startFrac, endFrac: s.endFrac, mask: s.mask.slice(), label: s.label || null
+                    startFrac: s.startFrac, endFrac: s.endFrac, mask: s.mask.slice(), label: s.label || null,
+                    chordSymbol: s.chordSymbol || null, chordTier: s.chordTier || null
                 }))
             };
         }
@@ -176,7 +177,9 @@
                 startFrac: clampFrac(s.startFrac),
                 endFrac: clampFrac(s.endFrac),
                 mask: Array.isArray(s.mask) ? s.mask.slice() : [],
-                label: s.label || null
+                label: s.label || null,
+                chordSymbol: s.chordSymbol || null,
+                chordTier: s.chordTier || null
             }));
             return t;
         }

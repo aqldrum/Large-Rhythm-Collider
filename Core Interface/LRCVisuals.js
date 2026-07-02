@@ -16,6 +16,7 @@ class LRCVisuals {
         this.layerMap = [];
         this.rhythms = [1, 1, 1, 1];
         this.dotPositions = [];
+        this.allDotPositions = []; // every node's screen position regardless of layer visibility (composite plot)
         this.compositeRhythm = []; // Full composite rhythm positions
         this.ratios = []; // Musical ratios
         this.grid = 0; // LCM grid size
@@ -683,7 +684,8 @@ class LRCVisuals {
         
         this.clearCanvas();
         this.dotPositions = [];
-        
+        this.allDotPositions = [];
+
         if (this.currentPlotType === 'linear') {
             this.drawLinearPlot();
         } else if (this.currentPlotType === 'circular') {
@@ -823,16 +825,21 @@ class LRCVisuals {
         // Draw dots - maintain all positions for timing, but make some transparent
         this.spacesPlot.forEach((space, index) => {
             const contributingLayers = this.layerMap[index] || ['Composite'];
-            
-            // Skip only for layer visibility, not for scale hiding
-            if (!this.shouldShowDot(contributingLayers)) return;
-            
+
             const baseX = padding + (index * spacing);
-            const baseY = this.yAxisInverted ? 
-                padding + ((space / maxValue) * plotHeight) : 
+            const baseY = this.yAxisInverted ?
+                padding + ((space / maxValue) * plotHeight) :
                 height - padding - ((space / maxValue) * plotHeight);
             const transformed = this.applyLinearViewTransform(baseX, baseY, width, height);
-            
+
+            // Record every node's position regardless of layer visibility, so overlays
+            // that must follow the full composite plot (e.g. progression brackets) aren't
+            // distorted when layers are toggled off. Only the visible dots get drawn + hit-tested.
+            this.allDotPositions.push({ x: transformed.x, y: transformed.y, index, space, layers: contributingLayers });
+
+            // Skip only for layer visibility, not for scale hiding
+            if (!this.shouldShowDot(contributingLayers)) return;
+
             const size = this.calculateDotSize();
             const baseColor = this.calculateDotColor(contributingLayers);
             
@@ -882,15 +889,19 @@ class LRCVisuals {
         // Draw dots - maintain all positions for timing, but make some transparent
         this.spacesPlot.forEach((space, index) => {
             const contributingLayers = this.layerMap[index] || ['Composite'];
-            
-            // Skip only for layer visibility, not for scale hiding
-            if (!this.shouldShowDot(contributingLayers)) return;
-            
+
             const angle = (index * angleStep) - (Math.PI / 2); // Start from top
             const radius = (space / maxValue) * maxRadius;
-            
+
             const x = centerX + (radius * Math.cos(angle));
             const y = centerY + (radius * Math.sin(angle));
+
+            // Composite position for every node regardless of layer visibility (see linear plot).
+            this.allDotPositions.push({ x, y, index, space, layers: contributingLayers });
+
+            // Skip only for layer visibility, not for scale hiding
+            if (!this.shouldShowDot(contributingLayers)) return;
+
             const size = this.calculateDotSize();
             const baseColor = this.calculateDotColor(contributingLayers);
             
