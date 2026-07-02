@@ -175,6 +175,33 @@
             const s = document.getElementById('prog-status'); if (s) s.textContent = 'Cleared — scale unlocked, full scale restored.';
         },
 
+        // ---- external trigger surface (e.g. the Partitions window) ----
+        // Another surface can drive the ONE solver instance without duplicating its state:
+        // it mirrors its field values into the canonical controls, ensures the bar is open
+        // (so the live loop + per-section chart reflection run), solves, then mirrors the
+        // status text back to the caller's own status element.
+        solveFromExternal(vals = {}) {
+            if (!document.getElementById('prog-input')) return; // main bar not mounted yet
+            const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+            set('prog-input', vals.text);
+            set('prog-root', vals.root);
+            set('prog-window', vals.window);
+            const thickBtn = document.getElementById('prog-thick');
+            if (thickBtn && vals.thick != null) thickBtn.classList.toggle('active', !!vals.thick);
+            if (!this.open) this._openBar();
+            this.solve();
+            this._mirrorStatus(vals.statusEl);
+        },
+        clearFromExternal(statusEl) {
+            this.clear();
+            this._mirrorStatus(statusEl);
+        },
+        _mirrorStatus(targetId) {
+            if (!targetId) return;
+            const src = document.getElementById('prog-status'), dst = document.getElementById(targetId);
+            if (src && dst) dst.textContent = src.textContent;
+        },
+
         _setStrip(px) {
             document.documentElement.style.setProperty('--canvas-top-margin', px + 'px');
             if (window.lrcVisuals && window.lrcVisuals.resizeCanvas) window.lrcVisuals.resizeCanvas();

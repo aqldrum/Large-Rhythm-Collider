@@ -412,6 +412,23 @@ class PartitionsUI {
                                 <!-- Families populated by ToneRowPlayback -->
                             </div>
                         </div>
+                        <!-- Progression Solver (same spot as the main page: under Consonance Families).
+                             Drives the shared window.ProgressionBar instance so you can voice a new
+                             progression without leaving the Partitions window. -->
+                        <div class="prog-section" style="margin-top: 6px;">
+                            <button class="prog-toggle" id="part-prog-toggle">🎹 Progression Solver</button>
+                            <div class="prog-bar" id="part-prog-bar" style="display:none">
+                                <input type="text" id="part-prog-input" class="prog-input" value="Cmaj7 Am7 Dm7 G7" placeholder="Cmaj7 Am7 Dm7 G7">
+                                <div class="prog-row2">
+                                    <label>root <input type="text" id="part-prog-root" class="prog-mini" value="C3"></label>
+                                    <button class="prog-mini-btn active" id="part-prog-thick" title="All ratios within the window per chord tone">Thick</button>
+                                    <input type="number" id="part-prog-window" class="prog-mini" value="15" min="0" max="60" title="consonance window ¢">
+                                    <button class="prog-solve" id="part-prog-solve">Solve &amp; voice</button>
+                                    <button class="prog-mini-btn" id="part-prog-clear" title="Clear voicing + restore">Clear</button>
+                                </div>
+                                <div class="prog-status" id="part-prog-status"></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -449,8 +466,64 @@ class PartitionsUI {
         }
 
         this.attachLayerControls();
+        this.wireProgressionSolver();
 
         console.log('📐 Created Partitions expanded layout (matching EIV dimensions)');
+    }
+
+    // Wire the in-window Progression Solver to the shared window.ProgressionBar instance.
+    // Rebuilt every open (the window's innerHTML is regenerated), so this re-binds fresh
+    // elements each time. Seeds its fields from the canonical main-page controls so both
+    // surfaces stay in step, and mirrors solver status back into the Partitions panel.
+    wireProgressionSolver() {
+        const bar = document.getElementById('part-prog-bar');
+        const toggle = document.getElementById('part-prog-toggle');
+        if (!bar || !toggle) return;
+        const input = document.getElementById('part-prog-input');
+        const rootEl = document.getElementById('part-prog-root');
+        const thick = document.getElementById('part-prog-thick');
+        const win = document.getElementById('part-prog-window');
+        const solveBtn = document.getElementById('part-prog-solve');
+        const clearBtn = document.getElementById('part-prog-clear');
+        const status = document.getElementById('part-prog-status');
+        const PB = window.ProgressionBar;
+        const main = id => document.getElementById(id);
+
+        // Seed from the main-page controls so the two surfaces show the same state.
+        if (input && main('prog-input')) input.value = main('prog-input').value;
+        if (rootEl && main('prog-root')) rootEl.value = main('prog-root').value;
+        if (win && main('prog-window')) win.value = main('prog-window').value;
+        if (thick && main('prog-thick')) thick.classList.toggle('active', main('prog-thick').classList.contains('active'));
+        // If a voicing is already active, open the bar and echo its status.
+        if (PB && PB.timeline) {
+            bar.style.display = 'block';
+            toggle.classList.add('active');
+            if (status && main('prog-status')) status.textContent = main('prog-status').textContent;
+        }
+
+        const doSolve = () => {
+            if (!PB || !PB.solveFromExternal) return;
+            PB.solveFromExternal({
+                text: input ? input.value : '',
+                root: rootEl ? rootEl.value : 'C3',
+                window: win ? win.value : '15',
+                thick: thick ? thick.classList.contains('active') : true,
+                statusEl: 'part-prog-status'
+            });
+        };
+
+        toggle.addEventListener('click', () => {
+            const open = bar.style.display !== 'none';
+            bar.style.display = open ? 'none' : 'block';
+            toggle.classList.toggle('active', !open);
+        });
+        thick.addEventListener('click', () => {
+            thick.classList.toggle('active');
+            if (PB && PB.timeline) doSolve(); // re-voice live, like the main bar
+        });
+        solveBtn.addEventListener('click', doSolve);
+        clearBtn.addEventListener('click', () => { if (PB && PB.clearFromExternal) PB.clearFromExternal('part-prog-status'); });
+        if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSolve(); } });
     }
 
     removeExpandedLayout() {
