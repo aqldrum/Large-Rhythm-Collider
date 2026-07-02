@@ -17,6 +17,7 @@
     --border-radius: 6px;
     --transition-speed: 0.3s;
     --canvas-bottom-margin: 72px;
+    --canvas-top-margin: 0px; /* carved by the Progression Solver bracket bar; 0 = inert */
 }
 
 /* Reset & Base */
@@ -967,7 +968,7 @@ body.mobile-mode .visualization-canvas {
 /* Visualization Canvas */
 .visualization-canvas {
     position: absolute;
-    top: 0;
+    top: var(--canvas-top-margin, 0px);
     left: 0;
     width: 100%;
     height: 100%;
