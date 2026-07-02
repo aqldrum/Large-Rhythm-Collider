@@ -146,12 +146,13 @@ class LRCExport {
                 value,
                 rgb: this.hexToRgb(layerColorMap[layerNames[i]]) || { r: 200, g: 205, b: 214 }
             }));
-            const legendHeight = legendItems.length ? 12 : 0;
+            const hasLegend = legendItems.length > 0;
 
             // Dark plot card: the capture renders on near-black, so a dark surface (rather than
             // the light body cards) lets the plot sit flush instead of floating on pale grey.
+            // Heights: 16 above the image (heading) + image + 13/8 below (legend or padding).
             const plotCard = { bg: { r: 11, g: 14, b: 19 }, border: { r: 38, g: 44, b: 56 }, label: { r: 232, g: 236, b: 244 } };
-            const cardHeight = plotHeight + 28 + legendHeight;
+            const cardHeight = plotHeight + 16 + (hasLegend ? 13 : 8);
 
             if (yPos + cardHeight > maxContentHeight) {
                 doc.addPage();
@@ -198,21 +199,18 @@ class LRCExport {
                     doc.roundedRect(lx, ly, swatch, swatch, 1, 1, 'F');
                     doc.setTextColor(plotCard.label.r, plotCard.label.g, plotCard.label.b);
                     const text = `${item.name} · ${item.value}`;
-                    doc.text(text, lx + swatch + 2, ly + swatch);
+                    // baseline:'middle' at the swatch's vertical center so text and box align.
+                    doc.text(text, lx + swatch + 2, ly + swatch / 2, { baseline: 'middle' });
                     lx += swatch + 2 + doc.getTextWidth(text) + 8;
                 });
             }
 
-            yPos += cardHeight + 14;
+            yPos += cardHeight + 12;
         }
 
-        // Check if we need a new page for metrics
-        if (yPos + 60 > maxContentHeight) {
-            doc.addPage();
-            yPos = margin;
-        }
-
-        // Metrics section
+        // Metrics section — addMetricsToPDF now owns its own page-break decision (it checks
+        // heading + card together before drawing), so no pre-check here that could strand a
+        // heading or double it across pages.
         yPos = this.addMetricsToPDF(doc, rhythmInfo, margin, yPos, pageHeight, maxContentHeight, contentWidth);
 
         // Nested ratios (if they exist)
@@ -543,9 +541,7 @@ class LRCExport {
             { label: 'Composite Nodes', value: String(rhythmInfo.compositeLength) }
         ];
 
-        y = this.addSectionTitleBar(doc, 'Metrics', x, y, contentWidth);
-
-        const cardPadding = 12;
+        const cardPadding = 10;
         const columnCount = 3;
         const columnGap = 14;
         const columnWidth = (contentWidth - cardPadding * 2 - columnGap * (columnCount - 1)) / columnCount;
@@ -555,7 +551,7 @@ class LRCExport {
 
         const preparedMetrics = metrics.map((metric, index) => {
             const lines = doc.splitTextToSize(String(metric.value), columnWidth);
-            const blockHeight = 18 + Math.max(0, lines.length - 1) * 5;
+            const blockHeight = 15 + Math.max(0, lines.length - 1) * 5;
             const rowIndex = Math.floor(index / columnCount);
             rowHeights[rowIndex] = Math.max(rowHeights[rowIndex], blockHeight);
             return { ...metric, lines, blockHeight };
@@ -563,11 +559,14 @@ class LRCExport {
 
         const cardHeight = cardPadding * 2 + rowHeights.reduce((sum, h) => sum + h, 0);
 
-        if (y + cardHeight > maxContentHeight) {
+        // Decide the page break BEFORE drawing the heading, using heading + card together, so
+        // we never strand a "Metrics" heading at the bottom of a page (or draw it twice).
+        const headingHeight = 14;
+        if (y + headingHeight + cardHeight > maxContentHeight) {
             doc.addPage();
             y = 20;
-            y = this.addSectionTitleBar(doc, 'Metrics', x, y, contentWidth);
         }
+        y = this.addSectionTitleBar(doc, 'Metrics', x, y, contentWidth);
 
         doc.setFillColor(colors.cardBackground.r, colors.cardBackground.g, colors.cardBackground.b);
         doc.roundedRect(x, y, contentWidth, cardHeight, 4, 4, 'F');
@@ -590,17 +589,17 @@ class LRCExport {
                 doc.setFont('helvetica', 'bold');
                 doc.setFontSize(7);
                 doc.setTextColor(colors.textMuted.r, colors.textMuted.g, colors.textMuted.b);
-                doc.text(metric.label.toUpperCase(), cellX, cellY + 3.5);
+                doc.text(metric.label.toUpperCase(), cellX, cellY + 3);
 
                 doc.setFont('helvetica', 'normal');
                 doc.setFontSize(9.5);
                 doc.setTextColor(colors.textPrimary.r, colors.textPrimary.g, colors.textPrimary.b);
-                doc.text(metric.lines, cellX, cellY + 11);
+                doc.text(metric.lines, cellX, cellY + 9.5);
             }
             rowBaseline += rowHeights[rowIndex];
         }
 
-        return y + cardHeight + 18;
+        return y + cardHeight + 12;
     }
 
     addNestedRatiosToPDF(doc, nestedRatios, x, y, pageHeight, maxContentHeight, contentWidth) {
