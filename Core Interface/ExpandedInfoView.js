@@ -648,6 +648,21 @@ class ExpandedInfoView {
                     offsetX, offsetY,
                     scaledWidth, scaledHeight
                 );
+
+                // Overlay the Progression Solver's brackets (display-only) above the mirrored
+                // plot. Map the plot's backing-pixel rect into CSS px within the container.
+                if (window.ProgressionBar && window.ProgressionBar.paintMirrorBrackets) {
+                    const cRect = this.mirrorCanvas.getBoundingClientRect();
+                    const hRect = this.canvasContainer.getBoundingClientRect();
+                    const sx = cRect.width / this.mirrorCanvas.width;
+                    const sy = cRect.height / this.mirrorCanvas.height;
+                    window.ProgressionBar.paintMirrorBrackets(this.canvasContainer, {
+                        left: (cRect.left - hRect.left) + offsetX * sx,
+                        top: (cRect.top - hRect.top) + offsetY * sy,
+                        width: scaledWidth * sx,
+                        height: scaledHeight * sy
+                    });
+                }
             }
 
             // Continue mirroring
