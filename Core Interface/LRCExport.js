@@ -110,11 +110,22 @@ class LRCExport {
         doc.setTextColor(255, 255, 255);
         doc.text(title, margin, headerHeight - 9);
 
+        // Document metadata — names the file in the viewer's title bar and search index.
+        try {
+            doc.setProperties({
+                title: `Rhythm Info — ${titleLayersText}`,
+                subject: 'Large Rhythm Collider — polyrhythm & tuning analysis',
+                author: 'Large Rhythm Collider',
+                creator: 'Large Rhythm Collider',
+                keywords: `polyrhythm, ${titleLayersText}, just intonation, tuning, spaces plot`
+            });
+        } catch (e) { /* metadata is non-critical */ }
+
         let yPos = headerHeight + 12;
 
-        // Capture existing linear plot image at a higher resolution
+        // Capture the linear plot at high resolution (downscaled crisply into the card below).
         const plotCapture = this.captureExistingLinearPlot({
-            targetWidth: 1400,
+            targetWidth: 2000,
             backgroundColor: '#050607',
             format: 'image/png',
             quality: 0.96
@@ -126,27 +137,42 @@ class LRCExport {
             const plotAspect = intrinsicHeight / intrinsicWidth || 0.3;
             const plotWidth = contentWidth - 24;
             const plotHeight = plotWidth * plotAspect;
-            const cardHeight = plotHeight + 28;
+
+            // Active-layer legend so the exported plot is self-describing (swatch · value).
+            const layerNames = ['A', 'B', 'C', 'D'];
+            const layerColorMap = (window.lrcVisuals && window.lrcVisuals.layerColors) || {};
+            const legendItems = displayLayers.map((value, i) => ({
+                name: layerNames[i] || `L${i + 1}`,
+                value,
+                rgb: this.hexToRgb(layerColorMap[layerNames[i]]) || { r: 200, g: 205, b: 214 }
+            }));
+            const legendHeight = legendItems.length ? 12 : 0;
+
+            // Dark plot card: the capture renders on near-black, so a dark surface (rather than
+            // the light body cards) lets the plot sit flush instead of floating on pale grey.
+            const plotCard = { bg: { r: 11, g: 14, b: 19 }, border: { r: 38, g: 44, b: 56 }, label: { r: 232, g: 236, b: 244 } };
+            const cardHeight = plotHeight + 28 + legendHeight;
 
             if (yPos + cardHeight > maxContentHeight) {
                 doc.addPage();
                 yPos = margin;
             }
 
-            // Plot card container
-            doc.setFillColor(colors.cardBackground.r, colors.cardBackground.g, colors.cardBackground.b);
+            doc.setFillColor(plotCard.bg.r, plotCard.bg.g, plotCard.bg.b);
             doc.roundedRect(margin, yPos, contentWidth, cardHeight, 4, 4, 'F');
-            doc.setDrawColor(colors.cardBorder.r, colors.cardBorder.g, colors.cardBorder.b);
+            doc.setDrawColor(plotCard.border.r, plotCard.border.g, plotCard.border.b);
             doc.setLineWidth(0.4);
             doc.roundedRect(margin, yPos, contentWidth, cardHeight, 4, 4);
 
+            // Section heading — same style as the body sections (bold label + accent rule),
+            // light-on-dark here.
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(9.5);
-            doc.setTextColor(colors.textPrimary.r, colors.textPrimary.g, colors.textPrimary.b);
-            doc.text('Linear Plot', margin + 12, yPos + 12);
+            doc.setTextColor(plotCard.label.r, plotCard.label.g, plotCard.label.b);
+            doc.text('Linear Plot', margin + 12, yPos + 11);
             doc.setDrawColor(colors.accent.r, colors.accent.g, colors.accent.b);
             doc.setLineWidth(0.8);
-            doc.line(margin + 12, yPos + 13.5, margin + 48, yPos + 13.5);
+            doc.line(margin + 12, yPos + 13.5, margin + 42, yPos + 13.5);
 
             const imageFormat = (plotCapture.format || 'image/png').split('/')[1].toUpperCase();
             doc.addImage(
@@ -157,8 +183,25 @@ class LRCExport {
                 plotWidth,
                 plotHeight,
                 undefined,
-                'FAST'
+                'SLOW'
             );
+
+            // Legend row beneath the plot.
+            if (legendItems.length) {
+                let lx = margin + 12;
+                const ly = yPos + 16 + plotHeight + 3;
+                const swatch = 4;
+                doc.setFont('helvetica', 'normal');
+                doc.setFontSize(7.5);
+                legendItems.forEach(item => {
+                    doc.setFillColor(item.rgb.r, item.rgb.g, item.rgb.b);
+                    doc.roundedRect(lx, ly, swatch, swatch, 1, 1, 'F');
+                    doc.setTextColor(plotCard.label.r, plotCard.label.g, plotCard.label.b);
+                    const text = `${item.name} · ${item.value}`;
+                    doc.text(text, lx + swatch + 2, ly + swatch);
+                    lx += swatch + 2 + doc.getTextWidth(text) + 8;
+                });
+            }
 
             yPos += cardHeight + 14;
         }
@@ -188,10 +231,46 @@ class LRCExport {
         // Add compact scale table at the bottom
         yPos = this.addCompactScaleTable(doc, ratios, rhythmInfo, margin, yPos, contentWidth, pageHeight, maxContentHeight);
 
+        // Footer on every page (site · date · page N of M) — added last so the count is final.
+        this.addFooters(doc, 'Large Rhythm Collider');
+
         // Save the PDF
         const filenameLayers = displayLayers.length > 0 ? displayLayers.join(':') : rhythmInfo.layers.join(':');
         const filename = `Rhythm Info - ${filenameLayers || '1'}.pdf`;
         doc.save(filename);
+    }
+
+    // Small #rgb / #rrggbb / #rrggbbaa hex -> {r,g,b}; alpha ignored. null on bad input.
+    hexToRgb(hex) {
+        if (typeof hex !== 'string') return null;
+        let h = hex.trim().replace('#', '');
+        if (h.length === 3) h = h.split('').map(c => c + c).join('');
+        if (h.length < 6) return null;
+        const r = parseInt(h.slice(0, 2), 16);
+        const g = parseInt(h.slice(2, 4), 16);
+        const b = parseInt(h.slice(4, 6), 16);
+        return [r, g, b].some(n => Number.isNaN(n)) ? null : { r, g, b };
+    }
+
+    // Stamp a thin footer rule + "site · date · Page i of n" on every page.
+    addFooters(doc, siteName = 'Large Rhythm Collider') {
+        const pageCount = doc.internal.getNumberOfPages();
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        let dateStr = '';
+        try { dateStr = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); } catch (e) {}
+        for (let i = 1; i <= pageCount; i++) {
+            doc.setPage(i);
+            doc.setDrawColor(224, 227, 233);
+            doc.setLineWidth(0.3);
+            doc.line(20, pageHeight - 12, pageWidth - 20, pageHeight - 12);
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(7);
+            doc.setTextColor(140, 148, 160);
+            doc.text(siteName, 20, pageHeight - 7);
+            const right = `${dateStr ? dateStr + '  ·  ' : ''}Page ${i} of ${pageCount}`;
+            doc.text(right, pageWidth - 20, pageHeight - 7, { align: 'right' });
+        }
     }
 
     captureExistingLinearPlot(options = {}) {
@@ -206,6 +285,23 @@ class LRCExport {
 
         const canvas = document.getElementById('visualization-canvas');
         if (canvas && canvas.getContext) {
+            // The export should always show the COMPLETE Linear Plot, independent of the
+            // current scale selection (or an active Progression Solver voicing). Both dim
+            // nodes purely via lrcVisuals.hiddenSpacesIndices, so temporarily lift that set,
+            // redraw the full plot, capture, then restore. It's all synchronous — the browser
+            // only composites the restored (dimmed) canvas at the next frame, so no flash.
+            let restoreFullPlot = null;
+            const lv = window.lrcVisuals;
+            if (lv && lv.currentPlotType === 'linear' && lv.hiddenSpacesIndices &&
+                lv.hiddenSpacesIndices.size && typeof lv.drawPlot === 'function') {
+                const savedHidden = lv.hiddenSpacesIndices;
+                lv.hiddenSpacesIndices = new Set();
+                try { lv.drawPlot(); } catch (e) { /* fall through to capture whatever is there */ }
+                restoreFullPlot = () => {
+                    lv.hiddenSpacesIndices = savedHidden;
+                    try { lv.drawPlot(); } catch (e) {}
+                };
+            }
             try {
                 const sourceWidth = canvas.width || canvas.getBoundingClientRect().width || 800;
                 const sourceHeight = canvas.height || canvas.getBoundingClientRect().height || 200;
@@ -233,6 +329,8 @@ class LRCExport {
             } catch (error) {
                 console.warn('📤 Could not capture existing canvas, creating fallback:', error);
                 return this.createFallbackLinearPlot(targetWidth, targetHeight, backgroundColor, format, quality);
+            } finally {
+                if (restoreFullPlot) restoreFullPlot();
             }
         } else {
             console.warn('📤 Visualization canvas not found, creating fallback');
@@ -298,20 +396,19 @@ class LRCExport {
         return { dataUrl, width, height, format };
     }
 
-    addSectionTitleBar(doc, title, x, y, width) {
-        const barHeight = 12;
-        doc.setFillColor(233, 236, 244);
-        doc.roundedRect(x, y, width, barHeight, 3, 3, 'F');
-        doc.setDrawColor(214, 219, 227);
-        doc.setLineWidth(0.3);
-        doc.roundedRect(x, y, width, barHeight, 3, 3);
-
+    // Unified section heading: bold label + short accent rule (matches the plot card's
+    // "Linear Plot" heading), so every section shares one type style instead of a mix of
+    // filled bars and inline labels. Returns the y past the heading.
+    addSectionTitleBar(doc, title, x, y, width, accent = { r: 0, g: 197, b: 168 }) {
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(8);
-        doc.setTextColor(53, 60, 73);
-        doc.text(title.toUpperCase(), x + 7, y + 8.5);
+        doc.setFontSize(9.5);
+        doc.setTextColor(39, 45, 56);
+        doc.text(String(title), x, y + 5);
+        doc.setDrawColor(accent.r, accent.g, accent.b);
+        doc.setLineWidth(0.8);
+        doc.line(x, y + 7.5, x + 30, y + 7.5);
 
-        return y + barHeight + 6;
+        return y + 14;
     }
 
     addCompactScaleTable(doc, ratios, rhythmInfo, x, y, width, pageHeight, maxContentHeight) {
