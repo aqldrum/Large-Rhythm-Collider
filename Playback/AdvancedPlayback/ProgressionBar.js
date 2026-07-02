@@ -83,6 +83,15 @@
             window.addEventListener('pointermove', e => this._onDragMove(e));
             window.addEventListener('pointerup', () => { if (this._drag) { this._commitDrag(); this._drag = null; } });
 
+            // Clicking anywhere that isn't a bracket or its drag handle clears the selection
+            // highlight (fires before the bracket's own click, so selecting still works).
+            window.addEventListener('pointerdown', e => {
+                if (!this.open || !this.timeline || !this.multiSelect.size) return;
+                if (e.target && e.target.closest && e.target.closest('.prog-bracket, .prog-bhandle')) return;
+                this.multiSelect = new Set();
+                this._renderBrackets();
+            });
+
             // Undo/redo for bracket boundary moves ONLY. Gated to when the solver is open
             // with a live timeline; defers to native text-undo while a text field is focused
             // (the prog input/root/window controls), so typing there is unaffected.
