@@ -155,6 +155,29 @@
       border-radius: 12px;
       box-shadow: 0 10px 20px rgba(0, 0, 0, 0.12);
     }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+      background: #f2f3f7;
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+    }
+    .chord-table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1.5rem 0;
+    }
+    .chord-table th,
+    .chord-table td {
+      border: 1px solid #e2e2e2;
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    .chord-table thead th {
+      background: #f6f7fb;
+      border-bottom: 2px solid #ececec;
+    }
     .checklist {
       list-style: none;
       padding-left: 0;
@@ -550,7 +573,8 @@
       <p>After running the analyzer, click any ratio in the scale to reveal its consonant relationships.</p>
       <p>Double-clicking a ratio in the Playback panel's Scale Selection chart will automatically select this ratio and its consonances.</p>
       <p>The Consonance Families can also be selected directly beneath Scale Selection.</p>
-      <p>The number of available unique pairs can grow very large, but the analyzer can still comfortably handle scales with 100 pitches per octave. Very large scales will prompt a warning which allows you skip Family analysis and construct the interval matrix only, but this too may become infeasible at the upper limits.</p>  
+      <p>The number of available unique pairs can grow very large, but the analyzer can still comfortably handle scales with 100 pitches per octave. Very large scales will prompt a warning which allows you skip Family analysis and construct the interval matrix only, but this too may become infeasible at the upper limits.</p>
+      <p>The Interconsonance concept culminates in the Progression Solver, which allows you to extract subsets of the tuning system tuned to a specific 12TET chord progression. Read on to the Playback section for details.</p>
       <br>
       <h4>Export</h4>
       <br>
@@ -631,6 +655,70 @@
       </table>
       <p>If Interconsonance analysis has been run in the Rhythm Info panel, you can double click any note to select only its consonances.</p>
       <p>Individual interconsonance families can also be automatically selected in Scale Selection below the chart.</p>
+      <p>The Scale Selection features culminate in the Progression Solver, which can be utilized without running full Interconsonance analysis.</p>
+      <h4>Progression Solver</h4>
+      <figure>
+        <img src="assets/images/giantsteps.png" alt="Progression Solver voicing a familiar chord progression from a rhythm's own tone row">
+      </figure>
+      <p>The LRC is capable of quickly encoding massive tuning systems with jumbled, discordant tone rows. The Interconsonance Analysis system is designed to reveal the friendlier aural relationships hidden within these larger systems. With the Progression Solver, you can extract and play back a familiar chord progression, quickly transforming a complex dying-alien-spaceship tone row into a pleasant music box.</p>
+      <table>
+        <tr>
+          <td width="260" align="center" valign="top">
+            <img src="assets/images/progressions.png" alt="Progression Solver panel" width="240">
+          </td>
+          <td>
+            <p><strong>Controls</strong></p>
+            <ul>
+              <li>Toggle the Progression Solver field.</li>
+              <li>Type standard chord symbols to define a Progression.</li>
+              <li>Set root note tuning and consonance window (default 15 cents).</li>
+              <li>Choose &ldquo;Thick&rdquo; to retain all tones within the window, or disable to retain only the best-tuned.</li>
+            </ul>
+            <br>
+            <p>Use the Progression Solver to instruct Scale Selection to segment the rhythm&rsquo;s tone row into chorded sections. Works best on larger systems with more available ratio tones.</p>
+          </td>
+        </tr>
+      </table>
+      <p>The Progression Solver lives at the bottom of the Playback div (also accessible while in Partitions). Type in a chord progression, set a root note and consonance window, and press <strong>Solve &amp; voice</strong>. The solver flattens the progression into one required pitch-class set, effectively asking: what subset of the standard 12-tone chromatic scale is required to construct this progression?</p>
+      <p>A beam search then assigns ratios from the rhythm&rsquo;s tuning system to the required pitch classes, choosing the set whose intervals most closely match the requested chords. The consonance window (default 15 cents) then governs &ldquo;Thick&rdquo; voicing &mdash; how wide a band around each chord tone counts as the same note.</p>
+      <p>To match your chosen root, the solver tries every ratio in the system as the anchor and keeps whichever produces the best-fitting assignment for the entire Progression. Because this root may not be the Fundamental of the tuning system (1/1), the system retunes the Fundamental Hz setting so that the chosen anchor sounds as the root note you specified. After a solve, the Fundamental Hz tuning may not match the frequency of the Progression&rsquo;s root note, but upon playback, those of you with perfect pitch or an instrument nearby will be able to confirm that the Progression has been tuned appropriately.</p>
+      <p>A status line shows a per-chord and overall fit percentage, describing how well the rhythm&rsquo;s tone row was able to match the Progression. Smaller tone rows with fewer pitches are less likely to achieve a strong solve.</p>
+      <p>Once the Progression&rsquo;s full ratio set has been solved, the set is decomposed into per-chord masks. The Scale Selection chart and Linear Plot both update to reflect the ratios selected for each section. Further Scale Selection is locked while a Progression is in place; press <strong>Clear</strong> to unlock Scale Selection and restore the full tone row (generating a new rhythm clears it automatically).</p>
+      <figure>
+        <img src="assets/images/chordbrackets.png" alt="Chord brackets displayed above the visualization canvas" style="width:100%;">
+      </figure>
+      <p>The system automatically creates equal partitions for the number of chords in the Progression across the tone row and displays these sections with brackets above the main visualization canvas. Clicking one of these brackets selects that chord and loads the proper Scale Selection state for inspection. Click and drag the bookends of a bracket to resize its section, or shift-click to select multiple chord brackets and resize them all at once. Use Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z to undo or redo bracket resizing.</p>
+      <h5>Chord Symbols</h5>
+      <p>Separate chords with spaces or bar lines (<code>Cmaj7 Am7 Dm7 G7</code> or <code>Cmaj7 | Am7 | Dm7 | G7</code>). Each symbol is a root note (<code>A</code>&ndash;<code>G</code>, with optional <code>#</code>/<code>b</code>) followed by a quality.</p>
+      <table class="chord-table">
+        <thead>
+          <tr><th>You want</th><th>Type</th><th>Also accepts</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Major triad</td><td><code>C</code></td><td></td></tr>
+          <tr><td>Minor</td><td><code>Cm</code></td><td><code>Cmin</code>, <code>Cmi</code>, <code>C-</code></td></tr>
+          <tr><td>Dominant 7</td><td><code>C7</code></td><td></td></tr>
+          <tr><td>Major 7</td><td><code>Cmaj7</code></td><td><code>C&#916;7</code>, <code>C&#916;</code></td></tr>
+          <tr><td>Minor 7</td><td><code>Cm7</code></td><td><code>C-7</code></td></tr>
+          <tr><td>Half-diminished</td><td><code>Cm7b5</code></td><td><code>C&#248;</code></td></tr>
+          <tr><td>Diminished / dim 7</td><td><code>Cdim</code>, <code>Cdim7</code></td><td><code>C&#176;</code>, <code>C&#176;7</code></td></tr>
+          <tr><td>Augmented</td><td><code>Caug</code></td><td><code>C+</code></td></tr>
+          <tr><td>Suspended</td><td><code>Csus4</code>, <code>Csus2</code></td><td><code>Csus</code> = sus4</td></tr>
+          <tr><td>Sixth / minor 6</td><td><code>C6</code>, <code>Cm6</code></td><td></td></tr>
+          <tr><td>Six-nine</td><td><code>C6/9</code></td><td><code>C69</code></td></tr>
+          <tr><td>Extensions</td><td><code>C9</code>, <code>C11</code>, <code>C13</code></td><td><code>Cmaj9</code>, <code>Cm11</code>, &hellip;</td></tr>
+          <tr><td>Power chord</td><td><code>C5</code></td><td></td></tr>
+          <tr><td>Slash / inversion</td><td><code>C/E</code>, <code>Dm7/G</code></td><td>bass is a note name</td></tr>
+        </tbody>
+      </table>
+      <p><strong>Tensions &amp; alterations:</strong> stack <code>add</code>, sharps/flats, and omissions &mdash; <code>Cadd9</code>, <code>C7b9</code>, <code>C7#9</code>, <code>C7#11</code>, <code>C7b13</code>, <code>C7#5</code>, <code>C7no5</code>, <code>Comit3</code>. Extended chords include the lower extensions automatically (<code>C13</code> already contains its 7th and 9th).</p>
+      <p><strong>Shortcuts that work:</strong> the jazz glyphs <code>&#916;</code> (major 7), <code>&#8722;</code> (minor), <code>&#176;</code> (dim), <code>&#248;</code> (half-dim), and <code>+</code> (aug).</p>
+      <p><strong>Watch out for:</strong></p>
+      <ul>
+        <li>Use <code>maj</code> for a major seventh, <em>not</em> a capital <code>M</code>. <code>Cmaj7</code> is right; <code>CM7</code> is read as C <em>minor</em> 7 (any <code>m</code>/<code>M</code> means minor).</li>
+        <li>Bass notes in slash chords are note names, not scale degrees: <code>C/E</code>, not <code>C/3</code>.</li>
+        <li>Unrecognized text is silently ignored, not rejected. <code>C7alt</code> just plays as <code>C7</code> (the alteration isn&rsquo;t applied), and polychords aren&rsquo;t supported. A symbol only fails outright if it doesn&rsquo;t begin with a note letter <code>A</code>&ndash;<code>G</code> or has a malformed slash.</li>
+      </ul>
       <h4>MIDI Export by Layer</h4>
       <ul>
         <li>Export MIDI with proper tone row sequencing for each layer.</li>
