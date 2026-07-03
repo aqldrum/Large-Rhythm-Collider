@@ -25,6 +25,9 @@ class PartitionsUI {
         this.layerControlsSection = null;
         this.layerControlsOriginalParent = null;
         this.layerControlsOriginalNextSibling = null;
+        this.midiOutSection = null;
+        this.midiOutOriginalParent = null;
+        this.midiOutOriginalNextSibling = null;
 
         // Partition layer configurations (will be populated by PartitionsPlayback.js)
         this.partitionLayers = [];
@@ -67,6 +70,7 @@ class PartitionsUI {
         } else if (this.expandedContainer) {
             this.expandedContainer.style.display = 'flex';
             this.attachLayerControls();
+            this.attachMidiOutControls();
             if (this.needsRhythmReset) {
                 this.updatePartitionOptions();
                 this.needsRhythmReset = false;
@@ -102,6 +106,7 @@ class PartitionsUI {
         this.removeEventListeners();
 
         this.restoreLayerControls();
+        this.restoreMidiOutControls();
         if (this.expandedContainer) {
             this.expandedContainer.style.display = 'none';
         }
@@ -337,6 +342,13 @@ class PartitionsUI {
             border-bottom: 1px solid #444;
         `;
 
+        // MIDI Out section (relocated from the main Playback panel - see attachMidiOutControls)
+        const midiOutContainer = document.createElement('div');
+        midiOutContainer.id = 'partitions-midi-out-container';
+        midiOutContainer.style.cssText = `
+            flex-shrink: 0;
+        `;
+
         // Left section content (partition layers, scrollable)
         const leftContent = document.createElement('div');
         leftContent.id = 'partitions-left-content';
@@ -348,6 +360,7 @@ class PartitionsUI {
 
         // Assemble left section
         leftSection.appendChild(mainControlsContainer);
+        leftSection.appendChild(midiOutContainer);
         leftSection.appendChild(leftContent);
 
         // Right section (50% width, split into quadrants like EIV)
@@ -466,6 +479,7 @@ class PartitionsUI {
         }
 
         this.attachLayerControls();
+        this.attachMidiOutControls();
         this.wireProgressionSolver();
 
         console.log('📐 Created Partitions expanded layout (matching EIV dimensions)');
@@ -532,6 +546,7 @@ class PartitionsUI {
             window.partitionsGlobalControls.destroy();
         }
         this.restoreLayerControls();
+        this.restoreMidiOutControls();
 
         if (this.expandedContainer) {
             // Clear content and hide container
@@ -548,6 +563,9 @@ class PartitionsUI {
         this.layerControlsSection = null;
         this.layerControlsOriginalParent = null;
         this.layerControlsOriginalNextSibling = null;
+        this.midiOutSection = null;
+        this.midiOutOriginalParent = null;
+        this.midiOutOriginalNextSibling = null;
         this.isLayoutBuilt = false;
 
         console.log('📐 Partitions layout hidden and references cleared');
@@ -670,6 +688,39 @@ class PartitionsUI {
             this.layerControlsOriginalParent.insertBefore(this.layerControlsSection, this.layerControlsOriginalNextSibling);
         } else {
             this.layerControlsOriginalParent.appendChild(this.layerControlsSection);
+        }
+    }
+
+    // ====================================
+    // MIDI OUT MIRRORING (same relocate-in-place pattern as layer controls, so it's
+    // usable without leaving the Partitions window and without duplicating its ids/listeners)
+    // ====================================
+
+    attachMidiOutControls() {
+        const target = document.getElementById('partitions-midi-out-container');
+        if (!target) return;
+
+        const midiOutContent = document.getElementById('midi-out-content');
+        const section = midiOutContent ? midiOutContent.closest('.playback-section') : null;
+        if (!section) return;
+
+        if (!this.midiOutSection) {
+            this.midiOutSection = section;
+            this.midiOutOriginalParent = section.parentElement;
+            this.midiOutOriginalNextSibling = section.nextSibling;
+        }
+
+        target.innerHTML = '';
+        target.appendChild(section);
+    }
+
+    restoreMidiOutControls() {
+        if (!this.midiOutSection || !this.midiOutOriginalParent) return;
+
+        if (this.midiOutOriginalNextSibling) {
+            this.midiOutOriginalParent.insertBefore(this.midiOutSection, this.midiOutOriginalNextSibling);
+        } else {
+            this.midiOutOriginalParent.appendChild(this.midiOutSection);
         }
     }
 

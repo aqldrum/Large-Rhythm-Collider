@@ -540,7 +540,13 @@ class MIDIOut {
     schedulePartitionHit(layerIndex, time, volumeDb, transposeSemitones) {
         if (!this.enabled || !this.output || !this.sendPartitionsAsDrums) return;
 
-        const ts = Math.max(performance.now(), this.audioTimeToMidiTs(time));
+        // A stale `time` (e.g. a reschedule rescanning already-elapsed hits) must be
+        // dropped, not clamped to now - clamping fires every stale hit as an instant
+        // burst instead of silently skipping it.
+        const targetTs = this.audioTimeToMidiTs(time);
+        if (targetTs < performance.now() - 5) return;
+
+        const ts = Math.max(performance.now(), targetTs);
         const chIdx = 9; // channel 10, GM drum convention
         const baseNotes = [36, 38, 42, 46];
         const transpose = Number.isFinite(transposeSemitones) ? Math.round(transposeSemitones) : 0;
@@ -621,6 +627,25 @@ class MIDIOut {
         matches.forEach(entry => {
             if (entry.timer) clearTimeout(entry.timer);
             this._cancelRetuneRamp(entry.chIdx);
+            this._sendNoteOff(entry.chIdx, entry.note, now);
+            entry.__off = true;
+            this._pruneEntry(entry);
+        });
+
+        this._scheduleStragglerSweep(matches.map(e => ({ chIdx: e.chIdx, note: e.note })));
+    }
+
+    // Same as releaseLayerNotes but for the drum channel (hook: PartitionsPlayback.rebuildAndReschedule)
+    // - disabling/removing a Partitions layer mid-cycle stops its WebAudio locally but has no idea a
+    // MIDI note-on for that layer is already out there, so we have to close it out explicitly here too.
+    releasePartitionLayerNotes(layerIndex) {
+        if (!this.enabled || !this.output) return;
+        const now = performance.now();
+        const matches = this.liveNotes.filter(e => e.layerIndex === layerIndex && e.kind === 'drum' && !e.__off);
+        if (!matches.length) return;
+
+        matches.forEach(entry => {
+            if (entry.timer) clearTimeout(entry.timer);
             this._sendNoteOff(entry.chIdx, entry.note, now);
             entry.__off = true;
             this._pruneEntry(entry);

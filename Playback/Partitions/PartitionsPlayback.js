@@ -17,16 +17,18 @@ class PartitionsPlayback {
         this.activeSources = new Set();
         this.isRunning = false;
 
-        this.baseStartTime = null;
-        this.lastScheduledCycle = null;
-        this.cycleDuration = 10;
+        this.lastScheduledTickAbs = null;
         this.grid = 1;
+        this.cycleDuration = 10; // mirrored from toneRowPlayback each rebuild - LRCExport.js reads this as a fallback
         this.secondsPerGrid = 1;
+        this.layerEvents = [[], [], [], []]; // precomputed per-layer hits in shared-tick space
 
         this.scheduleIntervalMs = 30;
-        this.lookaheadSec = 0.2;
+        this.lookaheadMs = 200;
         this.schedulerTimer = null;
         this.flashEpoch = 0;
+        this._lastEventsFingerprint = null;
+        this._lastGroupingWarnKey = null;
 
         this.setupEventListeners();
         console.log('🥁 PartitionsPlayback initialized');
@@ -39,17 +41,15 @@ class PartitionsPlayback {
         window.addEventListener('playbackStopped', () => {
             this.stop();
         });
-        window.addEventListener('playbackTempoChanged', (e) => {
-            this.handleTempoChange(e.detail);
+        window.addEventListener('playbackTempoChanged', () => {
+            if (this.isRunning) this.handleSharedClockChange();
         });
         window.addEventListener('rhythmGenerated', () => {
-            if (this.isRunning) {
-                this.refreshTiming();
-            }
+            if (this.isRunning) this.rebuildAndReschedule();
         });
         window.addEventListener('partitionsConfigChanged', () => {
             if (this.isRunning && this.hasEnabledLayers()) {
-                this.rescheduleFromNow();
+                this.rebuildAndReschedule();
             }
         });
     }
@@ -109,7 +109,12 @@ class PartitionsPlayback {
         if (!window.toneRowPlayback || !window.toneRowPlayback.isPlaying) return;
 
         this.initAudioContext().then(() => {
-            this.refreshTiming();
+            const rhythmInfo = window.lrcModule?.getRhythmInfoData?.();
+            if (rhythmInfo && rhythmInfo.grid) {
+                this.layerEvents = this.buildLayerEvents(rhythmInfo);
+                this._lastEventsFingerprint = this.fingerprintEvents(this.layerEvents);
+            }
+            this.snapScheduleToNow();
             this.isRunning = true;
             this.runScheduler();
         });
@@ -117,8 +122,7 @@ class PartitionsPlayback {
 
     stop() {
         this.isRunning = false;
-        this.baseStartTime = null;
-        this.lastScheduledCycle = null;
+        this.lastScheduledTickAbs = null;
         if (this.schedulerTimer) {
             clearTimeout(this.schedulerTimer);
             this.schedulerTimer = null;
@@ -128,96 +132,139 @@ class PartitionsPlayback {
         this.flashEpoch += 1;
     }
 
-    handleTempoChange(detail = {}) {
-        if (!window.toneRowPlayback) return;
-        this.cycleDuration = window.toneRowPlayback.cycleDuration || this.cycleDuration;
-        if (detail && Number.isFinite(detail.cycleDurationMs)) {
-            this.cycleDuration = detail.cycleDurationMs / 1000;
-        }
-        if (this.grid > 0) {
-            this.secondsPerGrid = this.cycleDuration / this.grid;
-        }
-        if (this.audioContext) {
-            const phaseSec = (detail.phaseMs || 0) / 1000;
-            this.baseStartTime = this.audioContext.currentTime - phaseSec;
-            this.lastScheduledCycle = null;
-        }
-        if (this.isRunning) {
-            this.rescheduleFromNow();
-        }
-        this.flashEpoch += 1;
+    // A cycle-duration/tempo change doesn't move any event's tick position - ticks are
+    // shared-tick-relative (musical), only absTickToTime's wall-clock mapping changes -
+    // so this only needs to resync the schedule pointer, never rebuild layerEvents.
+    handleSharedClockChange() {
+        if (!this.audioContext || !window.toneRowPlayback) return;
+        this.snapScheduleToNow();
     }
 
-    rescheduleFromNow() {
-        if (!this.audioContext) return;
-        const phaseMs = window.toneRowPlayback?.computeCurrentPhaseMs?.() || 0;
-        this.baseStartTime = this.audioContext.currentTime - (phaseMs / 1000);
-        this.lastScheduledCycle = null;
-        this.stopAllActiveSources();
-        window.partitionsBlockLights?.clearAll?.();
-        this.flashEpoch += 1;
+    snapScheduleToNow() {
+        if (!this.audioContext || !window.toneRowPlayback) return;
+        this.lastScheduledTickAbs = window.toneRowPlayback.timeToAbsTick(this.audioContext.currentTime);
     }
 
-    refreshTiming() {
+    // Single entry point for both rhythm regeneration and any partitionsConfigChanged
+    // firing (mode/count/mute/order/sample changes, but also volume/ADSR/transpose
+    // sliders, which dispatch the same event on every drag tick). Rebuilding
+    // layerEvents is cheap and safe to do unconditionally - it's pure, has no side
+    // effects, and is what keeps MIDI velocity/flash timing live during a slider drag.
+    // The disruptive part (stopping in-flight audio, clearing lights, resyncing the
+    // schedule pointer) only fires when the rebuilt events are actually structurally
+    // different from last time, so a volume nudge mid-drum-hit doesn't click/flicker.
+    rebuildAndReschedule() {
+        if (!this.audioContext || !window.toneRowPlayback) return;
         const rhythmInfo = window.lrcModule?.getRhythmInfoData?.();
         if (!rhythmInfo || !rhythmInfo.grid) return;
-        this.grid = rhythmInfo.grid;
-        this.cycleDuration = window.toneRowPlayback?.cycleDuration || this.cycleDuration;
-        this.secondsPerGrid = this.grid > 0 ? this.cycleDuration / this.grid : 1;
 
-        if (this.audioContext) {
-            const phaseMs = window.toneRowPlayback?.computeCurrentPhaseMs?.() || 0;
-            this.baseStartTime = this.audioContext.currentTime - (phaseMs / 1000);
-            this.lastScheduledCycle = null;
+        const previousEvents = this.layerEvents;
+        const newEvents = this.buildLayerEvents(rhythmInfo);
+        const fingerprint = this.fingerprintEvents(newEvents);
+        const structurallyChanged = fingerprint !== this._lastEventsFingerprint;
+
+        if (structurallyChanged) {
+            previousEvents.forEach((events, layerIndex) => {
+                if (events.length > 0 && newEvents[layerIndex].length === 0) {
+                    window.lrcMidiOut?.releasePartitionLayerNotes?.(layerIndex);
+                }
+            });
         }
-        this.flashEpoch += 1;
+
+        this.layerEvents = newEvents;
+        this._lastEventsFingerprint = fingerprint;
+
+        if (structurallyChanged) {
+            this.snapScheduleToNow();
+            this.stopAllActiveSources();
+            window.partitionsBlockLights?.clearAll?.();
+            this.flashEpoch += 1;
+        }
+    }
+
+    // Cheap structural fingerprint: per-layer hit count + first/last tick is enough to
+    // distinguish "ticks moved" from "cosmetic param changed" without a deep-equal.
+    // False positives just cost an extra flush, not correctness.
+    fingerprintEvents(layerEventsArr) {
+        return layerEventsArr.map((events) => {
+            if (!events.length) return '0';
+            const first = events[0].startTick;
+            const last = events[events.length - 1].startTick;
+            return `${events.length}:${first}:${last}`;
+        }).join('|');
+    }
+
+    // Precomputes each enabled layer's hits once, converted from grid-tick space
+    // (0..grid-1, musical) into the tone row's shared 960-ticks/sec transport space,
+    // so scheduling can ride the same clock as Scheduler.js instead of drifting.
+    buildLayerEvents(rhythmInfo) {
+        const cycleTicks = window.toneRowPlayback?.cycleTicks || 1;
+        const grid = Math.max(1, rhythmInfo.grid || 1);
+        const cycleDuration = window.toneRowPlayback?.cycleDuration || 10;
+        const sharedTicksPerGridUnit = cycleTicks / grid;
+        const secondsPerSharedTick = window.toneRowPlayback?.secondsPerTick || (1 / 960);
+
+        this.grid = grid;
+        this.cycleDuration = cycleDuration;
+        this.secondsPerGrid = cycleDuration / grid;
+
+        const layerConfigs = this.getLayerConfigs();
+        const result = [[], [], [], []];
+        layerConfigs.forEach((config, layerIndex) => {
+            if (!config.enabled) return;
+            const { events } = this.getHitEvents(config, rhythmInfo);
+            result[layerIndex] = events.map((evt) => ({
+                startTick: Math.round(evt.tick * sharedTicksPerGridUnit),
+                durationSharedTicks: Math.max(1, Math.round(evt.durationSec / secondsPerSharedTick)),
+                displayIndex: evt.displayIndex,
+                sampleUrl: config.sampleUrl,
+                volumeDb: config.volumeDb
+            }));
+        });
+        return result;
     }
 
     runScheduler() {
         if (!this.isRunning || !this.audioContext || !window.toneRowPlayback?.isPlaying) return;
 
         const now = this.audioContext.currentTime;
-        if (this.baseStartTime == null) {
-            this.baseStartTime = now;
+        const lookaheadSec = this.lookaheadMs / 1000;
+        const windowEndTime = now + lookaheadSec;
+
+        if (this.lastScheduledTickAbs == null) {
+            this.lastScheduledTickAbs = window.toneRowPlayback.timeToAbsTick(now);
         }
 
-        const elapsed = Math.max(0, now - this.baseStartTime);
-        const currentCycle = Math.floor(elapsed / this.cycleDuration);
-        if (this.lastScheduledCycle == null) {
-            this.lastScheduledCycle = currentCycle - 1;
-        }
+        const windowStartTickAbs = this.lastScheduledTickAbs;
+        const windowEndTickAbs = window.toneRowPlayback.timeToAbsTick(windowEndTime);
 
-        const windowEnd = now + this.lookaheadSec;
-        while (this.baseStartTime + (this.lastScheduledCycle + 1) * this.cycleDuration < windowEnd) {
-            this.lastScheduledCycle += 1;
-            this.scheduleCycle(this.lastScheduledCycle);
-        }
+        this.scheduleWindow(windowStartTickAbs, windowEndTickAbs);
+        this.lastScheduledTickAbs = windowEndTickAbs;
 
         this.schedulerTimer = setTimeout(() => this.runScheduler(), this.scheduleIntervalMs);
     }
 
-    scheduleCycle(cycleIndex) {
-        if (!window.toneRowPlayback?.isPlaying) return;
-        const cycleStartTime = this.baseStartTime + cycleIndex * this.cycleDuration;
-        const rhythmInfo = window.lrcModule?.getRhythmInfoData?.();
-        if (!rhythmInfo) return;
+    // Mirrors Scheduler.scheduleWindow: walks each layer's precomputed events and fires
+    // only the cycle occurrences landing inside [startAbs, endAbs) - never more than one
+    // lookahead window of MIDI/audio is ever committed at a time.
+    scheduleWindow(startAbs, endAbs) {
+        const cycleTicks = window.toneRowPlayback?.cycleTicks || 1;
+        const secondsPerSharedTick = window.toneRowPlayback?.secondsPerTick || (1 / 960);
 
-        const layerConfigs = this.getLayerConfigs();
-        layerConfigs.forEach((config, layerIndex) => {
-            if (!config.enabled) return;
-            const { events, minDurationSec } = this.getHitEvents(config, rhythmInfo);
-            const shouldFlash = minDurationSec >= 0.01;
-            if (window.partitionsDebug && !shouldFlash) {
-                console.log('[PartitionsPlayback] Flash disabled (too fast)', {
-                    layerIndex,
-                    minDurationMs: Math.round(minDurationSec * 1000)
-                });
-            }
-            events.forEach(({ tick, displayIndex, durationSec }) => {
-                const time = cycleStartTime + (tick * this.secondsPerGrid);
-                this.triggerSample(config.sampleUrl, layerIndex, config.volumeDb, time);
-                if (shouldFlash) {
-                    this.scheduleFlash(layerIndex, displayIndex, time, durationSec);
+        this.layerEvents.forEach((events, layerIndex) => {
+            if (!events.length) return;
+            events.forEach((evt) => {
+                const base = evt.startTick;
+                const firstCycle = Math.ceil((startAbs - base) / cycleTicks);
+                let occTick = base + Math.max(0, firstCycle) * cycleTicks;
+                while (occTick < endAbs) {
+                    const startTime = window.toneRowPlayback.absTickToTime(occTick);
+                    const durationSec = evt.durationSharedTicks * secondsPerSharedTick;
+                    this.triggerSample(evt.sampleUrl, layerIndex, evt.volumeDb, startTime);
+                    if (durationSec >= 0.01) {
+                        this.scheduleFlash(layerIndex, evt.displayIndex, startTime, durationSec);
+                    }
+                    occTick += cycleTicks;
                 }
             });
         });
@@ -296,6 +343,9 @@ class PartitionsPlayback {
 
             if (mode === 'grouping' && layerValue > 0) {
                 const grouping = Math.round(rhythmInfo.grid / layerValue);
+                if (rhythmInfo.grid % layerValue !== 0) {
+                    this._warnNonDivisibleGrouping(layerIndex, rhythmInfo.grid, layerValue);
+                }
                 const groupHits = this.getHitPositions(coverageTotal, orderedSizes, mutedSet, orderedIndices, null);
                 const ticks = [];
                 for (let i = 0; i < layerValue; i += 1) {
@@ -329,6 +379,9 @@ class PartitionsPlayback {
 
         if (mode === 'grouping' && layerValue > 0) {
             const grouping = Math.round(rhythmInfo.grid / layerValue);
+            if (rhythmInfo.grid % layerValue !== 0) {
+                this._warnNonDivisibleGrouping(layerIndex, rhythmInfo.grid, layerValue);
+            }
             const { sizes } = PartitionsBlocks.calculatePartitionSizes(grouping, partitions);
             const { orderedSizes, orderedIndices } = this.getOrderedSizes(sizes, order);
             const allowedSet = this.getSecondaryAllowedSet(orderedSizes.length, secondaryValue);
@@ -350,6 +403,13 @@ class PartitionsPlayback {
         const events = this.getHitPositions(rhythmInfo.grid, orderedSizes, mutedSet, orderedIndices, allowedSet)
             .map(({ tick, displayIndex }) => ({ tick, displayIndex }));
         return this.computeEventDurations(events, rhythmInfo.grid);
+    }
+
+    _warnNonDivisibleGrouping(layerIndex, grid, layerValue) {
+        const key = `${layerIndex}:${grid}:${layerValue}`;
+        if (this._lastGroupingWarnKey === key) return;
+        this._lastGroupingWarnKey = key;
+        console.warn('[PartitionsPlayback] Grouping mode: grid not evenly divisible by layer value, hits may spill past cycle boundary', { layerIndex, grid, layerValue });
     }
 
     getHitPositions(total, sizes, mutedSet = new Set(), orderedIndices = null, allowedSet = null) {
