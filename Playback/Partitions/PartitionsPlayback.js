@@ -437,6 +437,7 @@ class PartitionsPlayback {
     }
 
     async triggerSample(url, layerIndex, volumeDb, time) {
+        window.lrcMidiOut?.schedulePartitionHit(layerIndex, time, volumeDb, this.layerTranspose[layerIndex]);
         if (!url || !this.audioContext) return;
         const now = this.audioContext.currentTime;
         if (time < now - 0.005) {

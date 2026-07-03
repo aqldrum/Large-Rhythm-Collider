@@ -234,10 +234,14 @@ class ToneRowPlayback {
                 
                 if (this.audioContext && this.layerNodes[index].gain) {
                     this.layerNodes[index].gain.gain.setTargetAtTime(
-                        targetVolume, 
-                        this.audioContext.currentTime, 
+                        targetVolume,
+                        this.audioContext.currentTime,
                         0.05
                     );
+                }
+
+                if (shouldBeMuted) {
+                    window.lrcMidiOut?.releaseLayerNotes?.(index);
                 }
             }
         });
@@ -738,6 +742,8 @@ class ToneRowPlayback {
         if (!this.baseToneRowDataByLayer || !this.toneRowDataByLayer) return;
         this.recalcFrequencies();
 
+        window.lrcMidiOut?.handleFundamentalRetune?.(glideTime);
+
         if (!this.audioContext || !this.isPlaying) return;
         const now = this.audioContext.currentTime;
 
@@ -986,6 +992,8 @@ class ToneRowPlayback {
                 detail: noteEventDetail
             }));
         }
+
+        window.lrcMidiOut?.scheduleNote(noteData, duration, layerIndex, startTime, this.legatoEnabled);
 
         const useLegato = this.legatoEnabled;
 

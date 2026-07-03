@@ -3085,6 +3085,35 @@ body.mobile-mode .collections-panel {
     background: rgba(0, 0, 0, 0.1);
 }
 
+.control-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.midi-status {
+    font-size: 10px;
+    color: var(--hud-text-muted);
+    font-family: monospace;
+    margin: 4px 0 8px;
+}
+
+.midi-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--hud-text);
+    margin: 6px 0;
+    cursor: pointer;
+}
+
+.midi-hint {
+    font-size: 10px;
+    color: var(--hud-text-muted);
+    line-height: 1.4;
+    margin-top: 8px;
+}
+
 /* Custom scrollbar for scale chart */
 .scale-chart-scroll::-webkit-scrollbar {
     width: 6px;

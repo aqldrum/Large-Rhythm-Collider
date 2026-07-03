@@ -76,7 +76,7 @@ class AudioEngine {
     updateMasterVolume(dbValue) {
         this.playback.masterVolumeDb = dbValue;
         if (this.playback.masterGain) {
-            const linearValue = this.dbToLinear(dbValue);
+            const linearValue = this.playback.midiLocalMute ? 0 : this.dbToLinear(dbValue);
             this.playback.masterGain.gain.setTargetAtTime(
                 linearValue,
                 this.playback.audioContext.currentTime,

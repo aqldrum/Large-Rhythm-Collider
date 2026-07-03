@@ -51,7 +51,9 @@ class PlaybackMainUI {
                     </div>
                 </div>
             </div>
-            
+
+            ${window.lrcMidiOut?.getSectionHTML?.() ?? ''}
+
             <!-- Layer Controls Section (collapsible) -->
             <div class="playback-section collapsible-section">
                 <button class="collapse-btn layer-controls-header" data-target="layer-controls-content">
@@ -220,6 +222,7 @@ class PlaybackMainUI {
 
         this.setupCollapsibleSections();
         this.playback.setupScaleControls();
+        window.lrcMidiOut?.bindUI?.();
 
         console.log('✅ Enhanced master controls setup complete');
     }
