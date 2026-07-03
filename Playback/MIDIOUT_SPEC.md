@@ -138,8 +138,12 @@ All sends timestamped (Web MIDI `output.send(data, ts)`) so MIDI rides the sched
 B0|ch 101 127, B0|ch 100 127`. **MPE MCM (mpe mode, master ch1):**
 `B0 101 0, B0 100 6, B0 6 15`. Send on enable / device change / mode change / range change.
 
-**Partitions hit:** ch10 (chIdx 9), notes `[36, 38, 42, 46]` per layer + layer transpose;
-velocity from layer volume (−40..0 dB → 20..127); off after 100ms.
+**Partitions hit:** one channel per layer, ch10-13 (chIdx `[9,10,11,12]`, layer A-D) — not a
+shared ch10, so one layer's still-ringing note can't be voice-stolen by a hit in another
+layer on synths with per-channel polyphony limits. Notes `[36, 38, 42, 46]` per layer +
+layer transpose; velocity from layer volume (−40..0 dB → 20..127); off at the next
+scheduled hit in that layer (`durationSec * 1000 - 10`, floor 10ms) rather than a fixed
+delay, so a sample/patch that honors note-off isn't truncated early.
 
 **Panic (`allNotesOff`, on `playbackStopped` / disable / device switch):**
 `output.clear()` (try/catch — flushes queued future-timestamped sends), then explicit
@@ -194,7 +198,7 @@ heldEntry.note| ≤ bendRangeSemitones` (leave ~1-semi margin for subsequent ret
   change; re-send RPN/MCM.
 - **Bend range** number input (1–96, default 48) — re-send RPN on change.
 - **Velocity** (1–127, default 100).
-- **☐ Send Partitions as drums (ch 10)**; **☐ Mute browser synth (MIDI only)**.
+- **☐ Send Partitions as drums (ch 10-13, one per layer)**; **☐ Mute browser synth (MIDI only)**.
 - Hint paragraph: match synth bend range; IAC/loopMIDI routing; fundamental retunes live.
 - **Persistence:** localStorage `lrcMidiOut.v1` (all settings + enabled + preferredDeviceId).
   On load, auto-reconnect ONLY if previously enabled AND

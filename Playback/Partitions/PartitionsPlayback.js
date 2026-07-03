@@ -260,7 +260,7 @@ class PartitionsPlayback {
                 while (occTick < endAbs) {
                     const startTime = window.toneRowPlayback.absTickToTime(occTick);
                     const durationSec = evt.durationSharedTicks * secondsPerSharedTick;
-                    this.triggerSample(evt.sampleUrl, layerIndex, evt.volumeDb, startTime);
+                    this.triggerSample(evt.sampleUrl, layerIndex, evt.volumeDb, startTime, durationSec);
                     if (durationSec >= 0.01) {
                         this.scheduleFlash(layerIndex, evt.displayIndex, startTime, durationSec);
                     }
@@ -496,8 +496,8 @@ class PartitionsPlayback {
         return { orderedSizes, orderedIndices };
     }
 
-    async triggerSample(url, layerIndex, volumeDb, time) {
-        window.lrcMidiOut?.schedulePartitionHit(layerIndex, time, volumeDb, this.layerTranspose[layerIndex]);
+    async triggerSample(url, layerIndex, volumeDb, time, durationSec) {
+        window.lrcMidiOut?.schedulePartitionHit(layerIndex, time, volumeDb, this.layerTranspose[layerIndex], durationSec);
         if (!url || !this.audioContext) return;
         const now = this.audioContext.currentTime;
         if (time < now - 0.005) {

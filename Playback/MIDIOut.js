@@ -21,6 +21,8 @@ class MIDIOut {
         this._wasEnabled = false;
 
         this.liveNotes = [];                 // { chIdx, note, ratio, layerIndex, onTs, offTs, timer, kind, __off }
+        this.partitionChannels = [9, 10, 11, 12]; // ch 10-13, one per Partitions layer (A-D) - keeps drum
+                                              // hits off any channel tone-row notes might land on
         this.MAX_REGISTRY = 128;
         this.mpeNextMember = 0;              // round-robin cursor, index into the member pool
         this.retuneRamps = new Map();         // chIdx -> setInterval id
@@ -380,7 +382,7 @@ class MIDIOut {
     _mpeMemberPool() {
         const pool = [];
         for (let chIdx = 1; chIdx <= 15; chIdx += 1) {
-            if (this.sendPartitionsAsDrums && chIdx === 9) continue;
+            if (this.sendPartitionsAsDrums && this.partitionChannels.includes(chIdx)) continue;
             pool.push(chIdx);
         }
         return pool;
@@ -537,7 +539,7 @@ class MIDIOut {
     // PARTITIONS (hook: PartitionsPlayback.triggerSample)
     // ====================================
 
-    schedulePartitionHit(layerIndex, time, volumeDb, transposeSemitones) {
+    schedulePartitionHit(layerIndex, time, volumeDb, transposeSemitones, durationSec) {
         if (!this.enabled || !this.output || !this.sendPartitionsAsDrums) return;
 
         // A stale `time` (e.g. a reschedule rescanning already-elapsed hits) must be
@@ -547,7 +549,10 @@ class MIDIOut {
         if (targetTs < performance.now() - 5) return;
 
         const ts = Math.max(performance.now(), targetTs);
-        const chIdx = 9; // channel 10, GM drum convention
+        // One channel per layer (ch 10-13) - a single shared drum channel let unrelated
+        // layers steal each other's still-ringing voices on synths with per-channel
+        // polyphony limits (e.g. a monophonic or low-voice patch on ch 10).
+        const chIdx = this.partitionChannels[layerIndex] ?? 9;
         const baseNotes = [36, 38, 42, 46];
         const transpose = Number.isFinite(transposeSemitones) ? Math.round(transposeSemitones) : 0;
         const note = Math.min(127, Math.max(0, (baseNotes[layerIndex] ?? 36) + transpose));
@@ -558,7 +563,12 @@ class MIDIOut {
 
         const entry = { chIdx, note, ratio: null, layerIndex, onTs: ts, offTs: null, timer: null, kind: 'drum' };
         this._registerLiveNote(entry);
-        this._scheduleNoteOff(entry, ts + 100);
+        // Let it ring until the next hit in this layer (matches the tone row's own
+        // offDelayMs pattern) instead of a flat 100ms - a fixed cutoff truncates any
+        // sample/patch that actually listens for note-off (long cymbal decays, held
+        // synth drum voices) regardless of what's happening in other layers.
+        const offDelayMs = Number.isFinite(durationSec) ? Math.max(10, durationSec * 1000 - 10) : 100;
+        this._scheduleNoteOff(entry, ts + offDelayMs);
     }
 
     _partitionVelocity(volumeDb) {
@@ -693,7 +703,7 @@ class MIDIOut {
                         <input type="number" id="midi-velocity" min="1" max="127" value="${this.velocity}">
                     </div>
 
-                    <label class="midi-check"><input type="checkbox" id="midi-partitions-drums"> Send Partitions as drums (ch 10)</label>
+                    <label class="midi-check"><input type="checkbox" id="midi-partitions-drums"> Send Partitions as drums (ch 10-13, one per layer)</label>
                     <label class="midi-check"><input type="checkbox" id="midi-local-mute"> Mute browser synth (MIDI only)</label>
 
                     <p class="midi-hint">Match this bend range to your synth's per-patch bend setting. Route through a
