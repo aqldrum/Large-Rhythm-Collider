@@ -71,6 +71,10 @@ class PartitionsUI {
             this.expandedContainer.style.display = 'flex';
             this.attachLayerControls();
             this.attachMidiOutControls();
+            // Global controls (cycle/fundamental/volume/filters) are only ever synced
+            // from toneRowPlayback at first build - re-sync on every reopen so changes
+            // made from the main Playback panel while Partitions was closed aren't stale.
+            window.partitionsGlobalControls?.refresh?.();
             if (this.needsRhythmReset) {
                 this.updatePartitionOptions();
                 this.needsRhythmReset = false;
