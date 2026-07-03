@@ -74,10 +74,16 @@ different musical virtue:
 Mirror it: for the **most recent live note per channel**, recompute
 `freq = fundamentalFreq × entry.ratio`, bend from the note's **original base MIDI number**,
 send immediately. Dragging the Fundamental field fires `input` events continuously — that
-stream IS the continuous bend; no extra ramp machinery. Progression Solver's root retune on
-Solve rides the same path. Clamp bend at range edges; notes snap true at their next
-re-strike (imminent in this system). ±48 default makes clipping rare in practice
-(fundamental limits 55–880 Hz span 48 semitones total).
+stream IS the continuous bend; no extra ramp machinery for UI drags. Progression Solver's
+root retune on Solve rides the same path. Clamp bend at range edges; notes snap true at
+their next re-strike (imminent in this system). ±48 default makes clipping rare in
+practice (fundamental limits 55–880 Hz span 48 semitones total).
+
+**Addendum (Anchor Morphing):** `handleFundamentalRetune(glideSec)` must accept the glide
+time and, when `glideSec > ~0.08`, emit an interpolated bend RAMP per live channel
+(timestamped sends every ~30ms over the glide; cancel a channel's in-flight ramp on new
+retune or note-on). Programmatic anchor swaps are single calls, not event streams — see
+`AdvancedPlayback/ANCHOR_MORPH_SPEC.md` §7.
 
 ## 4. Hook points (verified against current source)
 
