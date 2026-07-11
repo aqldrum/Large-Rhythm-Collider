@@ -5,7 +5,7 @@
 export const GOLDEN = Math.PI * (3 - Math.sqrt(5));   // golden angle
 const RMIN = 1, GAP = 1;                               // inner radius + per-cardinality spacing
 export const cardColor = c => `hsl(${40 + Math.max(0, Math.min(1, (c - 2) / 22)) * 268} 72% 62%)`;
-export const CHARTED = '#4fd6e0';
+export const CHARTED = '#00ff88';   // "charted / known in the codex" = the site's house accent (--hud-accent)
 
 // systems: [{ c, dense }] → local 3D points [{ x, y, z, col, dense }] (bloom-centre-relative).
 // `scale` = world units per radius step. Colour is precomputed per point (avoids per-frame work).

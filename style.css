@@ -3536,13 +3536,22 @@ body.mobile-mode .collections-panel {
 
 /* ══════════════════════════════════════════════════════════════════════════════════════════════
    COSMOS FLIGHT-VIEW (POC) — additive. Default-hidden; body.cosmos-active swallows the page and
-   reveals the full-canvas flight overlay. House-style vars scoped to #cosmos-view (no site leakage).
+   reveals the full-canvas flight overlay. CHROME uses the SITE house tokens (--hud-*) so the HUD
+   reads as a MODE of the site, not an overlay on top; the cosmos DATA palette (star/bloom/web
+   colours) stays vivid — mirroring how the site pairs neutral panels with a vivid layer palette.
    ══════════════════════════════════════════════════════════════════════════════════════════════ */
 #cosmos-view {
     display: none;
-    /* ported house palette (oracle.css :root) — scoped so the flight CSS + inline styles resolve */
-    --panel: #0d1119; --line: #1e2735; --ink: #e7edf5; --dim: #7c8aa0; --dimmer: #4a5568;
-    --known: #4fd6e0; --new: #f2c14e;
+    /* re-point the ported flight vars at the site's house system (was oracle.css tokens) */
+    --panel: var(--hud-bg);            /* rgba(20,20,20,.9)      — house panel fill */
+    --line: var(--hud-border);         /* rgba(100,100,100,.3)   — house neutral border */
+    --ink: var(--hud-text);            /* #ffffff                — primary text */
+    --dim: var(--hud-text-muted);      /* #cccccc                — secondary text */
+    --dimmer: rgba(255, 255, 255, 0.38);
+    --known: var(--hud-accent);        /* #00ff88                — flight accent now == site accent */
+    --new: var(--layer-d);             /* #f9ca24                — warm "uncharted" data accent */
+    /* labels in the house sans; numbers/readouts stay mono (exactly how the site's panels present data) */
+    --sans: 'Segoe UI', 'Roboto', sans-serif;
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
 }
 /* full swallow: hide every other top-level element (title chrome, panels, modals) while flying */
@@ -3550,26 +3559,48 @@ body.cosmos-active { overflow: hidden; }
 body.cosmos-active > *:not(#cosmos-view):not(script) { display: none !important; }
 body.cosmos-active #cosmos-view {
     display: block; position: fixed; inset: 0; z-index: 510;
-    background: radial-gradient(circle at 50% 42%, #0a1018, #05070b 78%);
+    background: radial-gradient(circle at 50% 42%, #0a0f0d, #000 78%);   /* neutral-black space, faint green cast */
 }
 #cosmos-canvas { width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
-#cosmos-hud { position: absolute; left: 14px; top: 12px; font-family: var(--mono); font-size: 11px; color: var(--dim); pointer-events: none; }
+
+/* HUD status line — muted house text, mono numerals (accent green comes from var(--known) in the markup) */
+#cosmos-hud { position: absolute; left: 16px; top: 14px; font-family: var(--mono); font-size: 11px; color: var(--dim); pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
 #cosmos-hud b { color: var(--ink); }
-#cosmos-view .detail3 { position: absolute; right: 14px; bottom: 14px; width: 250px; background: rgba(10,14,20,.9); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-family: var(--mono); font-size: 11px; color: var(--dim); display: none; }
-#cosmos-view .detail3 .big { font-size: 15px; margin-bottom: 6px; }
-#cosmos-view .detail3 .r { display: flex; justify-content: space-between; padding: 2px 0; }
-#cosmos-view .detail3 .r b { color: var(--ink); }
-#cosmos-view #tooltip { position: fixed; pointer-events: none; background: #0c1119; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-family: var(--mono); font-size: 11px; color: var(--ink); z-index: 520; display: none; }
-#cosmos-view #tooltip .t-l { font-size: 13px; color: var(--known); }
+
+/* shared house-panel chrome for the floating flight surfaces (detail / tooltip / filter / exit handle) */
+#cosmos-view .detail3,
+#cosmos-view #tooltip,
+#cosmos-view #flight-filter,
+#lrc-div {
+    background: var(--hud-bg); border: 1px solid var(--hud-border); border-radius: var(--border-radius);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 2px 10px rgba(0,0,0,.3);
+}
+/* detail panel — a house .panel: uppercase-ish mono identity line, sans labels, mono values */
+#cosmos-view .detail3 { position: absolute; right: 16px; bottom: 16px; width: 250px; display: none; padding: 12px 14px; font-family: var(--sans); font-size: 12px; color: var(--dim); }
+#cosmos-view .detail3 .big { font-family: var(--mono); font-size: 14px; font-weight: 600; letter-spacing: .5px; margin-bottom: 8px; }
+#cosmos-view .detail3 .r { display: flex; justify-content: space-between; padding: 3px 0; }
+#cosmos-view .detail3 .r span { color: var(--dim); }
+#cosmos-view .detail3 .r b { color: var(--ink); font-family: var(--mono); font-weight: 600; }
+
+/* tooltip — same house chrome, compact */
+#cosmos-view #tooltip { position: fixed; pointer-events: none; z-index: 520; display: none; padding: 7px 10px; font-family: var(--sans); font-size: 11px; color: var(--ink); }
+#cosmos-view #tooltip .t-l { font-family: var(--mono); font-size: 12px; color: var(--known); }
 #cosmos-view #tooltip .t-d { color: var(--dim); }
-#cosmos-view #flight-filter { position: absolute; left: 14px; bottom: 14px; display: none; gap: 8px; align-items: center; font-family: var(--mono); font-size: 11px; color: var(--dim); background: rgba(10,14,20,.82); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
-#cosmos-view #flight-filter b { color: var(--known); min-width: 44px; text-align: center; }
-#cosmos-view #flight-filter input[type=range] { width: 88px; accent-color: var(--known); cursor: pointer; }
-#cosmos-view #flight-filter input[type=number] { width: 52px; background: var(--panel); border: 1px solid var(--known); color: var(--ink); font-family: var(--mono); font-size: 11px; border-radius: 5px; padding: 2px 4px; }
-/* the minimized "LRC div" — the exit handle (bottom-centre, clear of filter/detail) */
-#lrc-div { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 18px; background: rgba(13,17,25,.92); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; user-select: none; z-index: 520; transition: border-color .15s ease, color .15s ease; }
-#lrc-div:hover { border-color: var(--known); }
-#lrc-div .lrc-div-mark { font-family: var(--mono); font-size: 13px; letter-spacing: .04em; color: var(--known); }
-#lrc-div .lrc-div-sub { font-family: var(--mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; color: var(--dimmer); }
-/* title-bar entry icon accent (reuses .reset-btn box) */
-#cosmos-enter-btn { color: #4fd6e0; }
+
+/* cardinality filter — house panel strip */
+#cosmos-view #flight-filter { position: absolute; left: 16px; bottom: 16px; display: none; gap: 8px; align-items: center; padding: 6px 12px; font-family: var(--sans); font-size: 11px; color: var(--dim); }
+#cosmos-view #flight-filter b { color: var(--known); min-width: 44px; text-align: center; font-family: var(--mono); }
+#cosmos-view #flight-filter input[type=range] { width: 88px; accent-color: var(--hud-accent); cursor: pointer; }
+#cosmos-view #flight-filter input[type=number] { width: 52px; background: rgba(0,0,0,.4); border: 1px solid var(--hud-accent); color: var(--ink); font-family: var(--mono); font-size: 11px; border-radius: 5px; padding: 2px 4px; }
+
+/* the minimized "LRC div" exit handle = a COLLAPSED HOUSE PANEL (the site's own minimize/expand metaphor):
+   uppercase green title + a muted sub + an expand glyph, so entering flight reads as "the whole site
+   collapsed into one panel — expand it to return." */
+#lrc-div { position: absolute; left: 50%; transform: translateX(-50%); bottom: 16px; display: flex; align-items: center; gap: 10px; padding: 8px 14px; cursor: pointer; user-select: none; z-index: 520; transition: all var(--transition-speed); }
+#lrc-div:hover { border-color: var(--hud-accent); background: rgba(40,40,40,.92); }
+#lrc-div .lrc-div-mark { font-family: var(--sans); font-size: 12px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; color: var(--hud-accent); }
+#lrc-div .lrc-div-sub { font-family: var(--sans); font-size: 10px; letter-spacing: .5px; color: var(--hud-text-muted); }
+#lrc-div::after { content: "\2922"; font-size: 14px; line-height: 1; color: var(--hud-text); border: 1px solid var(--hud-border); border-radius: 4px; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; }
+
+/* title-bar entry icon — plain house .reset-btn (grey → green-on-hover); the ✦ carries the accent */
+#cosmos-enter-btn .cosmos-star { color: var(--hud-accent); }

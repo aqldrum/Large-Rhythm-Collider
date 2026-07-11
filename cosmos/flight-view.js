@@ -651,22 +651,22 @@ function showDetail(sel) {
     const tag = mtagOfKey(sel.key), members = tag && mtagGrids && mtagGrids.get(tag);
     const mw = tag && activeWebs.get(tag), on = !!mw;
     const webBtn = (members && members.length)
-      ? `<button class="web-btn" data-tag="${tag}" data-g="${sel.grid}" style="width:100%;margin-top:8px;background:#171a2a;border:1px solid ${on ? '#ff6ec7' : '#3a4a7a'};color:${on ? '#ff6ec7' : '#9fb0e0'};font-family:var(--mono);font-size:11px;padding:6px;border-radius:6px;cursor:pointer">◈ ${on ? 'clear' : 'trace'} mother-scale network ${tag} · ${members.length} grids${slotLbl(mw)}</button>`
+      ? `<button class="web-btn" data-tag="${tag}" data-g="${sel.grid}" style="width:100%;margin-top:8px;background:rgba(0,0,0,.3);border:1px solid ${on ? '#ff6ec7' : 'var(--line)'};color:${on ? '#ff6ec7' : 'var(--dim)'};font-family:var(--sans);font-size:11px;padding:6px;border-radius:var(--border-radius);cursor:pointer">◈ ${on ? 'clear' : 'trace'} mother-scale network ${tag} · ${members.length} grids${slotLbl(mw)}</button>`
       : '';
     // MN motifs scanned live from the node's layer tuple (any cardinality): triples first (richer / rarer
     // by larger base-LCM), then Root Doubles. Each chip toggles its "hyperlane" family web.
     const motifs = sel.layers ? [...rhythmTriples(sel.layers).sort((a, b) => b.base - a.base),
                                  ...rhythmDoubles(sel.layers).sort((a, b) => b.base - a.base)].slice(0, MN_CHIP_MAX) : [];
     const typeCol = { CT: '#8dff6e', IT: '#6ecbff', RDCP: '#ffd86e', RD: '#c58bff' };
-    const chip = m => { const id = 'mn:' + m.key, mnw = activeWebs.get(id), mon = !!mnw, c = typeCol[m.kind] || '#9fb0e0';
-      return `<button class="mn-btn" data-id="${id}" data-base="${m.base}" data-g="${sel.grid}" title="${m.kind} · base ${m.base} → family = multiples of ${m.base}" style="display:inline-block;margin:3px 3px 0 0;padding:3px 7px;background:${mon ? '#26304a' : '#141826'};border:1px solid ${mon ? c : '#2c3550'};color:${c};font-family:var(--mono);font-size:10px;border-radius:5px;cursor:pointer">${m.kind === 'RD' ? 'RD ' : ''}${m.key.replace(/^(CT|IT|RDCP):/, '$1 ')}${slotLbl(mnw)}</button>`; };
+    const chip = m => { const id = 'mn:' + m.key, mnw = activeWebs.get(id), mon = !!mnw, c = typeCol[m.kind] || 'var(--dim)';
+      return `<button class="mn-btn" data-id="${id}" data-base="${m.base}" data-g="${sel.grid}" title="${m.kind} · base ${m.base} → family = multiples of ${m.base}" style="display:inline-block;margin:3px 3px 0 0;padding:3px 7px;background:${mon ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.3)'};border:1px solid ${mon ? c : 'var(--line)'};color:${c};font-family:var(--mono);font-size:10px;border-radius:5px;cursor:pointer">${m.kind === 'RD' ? 'RD ' : ''}${m.key.replace(/^(CT|IT|RDCP):/, '$1 ')}${slotLbl(mnw)}</button>`; };
     const mnBlock = motifs.length
       ? `<div style="margin-top:8px;color:var(--dimmer);font-size:10px">master-network hyperlanes</div><div>${motifs.map(chip).join('')}</div>`
       : '';
     // apply-to-engine affordance: ≤4-layer rhythms load into the LRC engine; >4-layer nodes are inspect-only
     const applyBlock = sel.layers
       ? (sel.layers.length <= 4
-          ? `<button class="apply-btn" style="width:100%;margin-top:8px;background:${sel._applied ? '#10202e' : '#12233a'};border:1px solid ${sel._applied ? 'var(--known)' : '#3a6a9a'};color:var(--known);font-family:var(--mono);font-size:11px;padding:7px;border-radius:6px;cursor:pointer">${sel._applied ? '✓ loaded into engine' : '▶ load into engine'}</button>`
+          ? `<button class="apply-btn" style="width:100%;margin-top:8px;background:${sel._applied ? 'rgba(0,255,136,.18)' : 'rgba(0,255,136,.08)'};border:1px solid var(--known);color:var(--known);font-family:var(--sans);font-weight:500;font-size:11px;padding:7px;border-radius:var(--border-radius);cursor:pointer">${sel._applied ? '✓ loaded into engine' : '▶ load into engine'}</button>`
           : `<div style="margin-top:8px;padding:7px;border:1px dashed var(--dimmer);border-radius:6px;color:var(--dimmer);font-size:10px;text-align:center">${sel.layers.length}+ layers — not playable in engine</div>`)
       : '';
     detailEl.innerHTML =
