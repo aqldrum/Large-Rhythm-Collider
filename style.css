@@ -3602,6 +3602,9 @@ body.cosmos-active #cosmos-view {
 #lrc-div .lrc-div-sub { font-family: var(--sans); font-size: 10px; letter-spacing: .5px; color: var(--hud-text-muted); }
 #lrc-div::after { content: "\2922"; font-size: 14px; line-height: 1; color: var(--hud-text); border: 1px solid var(--hud-border); border-radius: 4px; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; }
 
+/* title-bar controls row — flex so the icon chip and Reset Display button center on the same line
+   (the div was unstyled → inline baseline-alignment left the image chip sitting high) */
+.title-bar-controls { display: flex; align-items: center; gap: 8px; }
 /* title-bar entry button — ICON-ONLY starfield chip, no label (keep the mystery). Strip the .reset-btn
    box so only the cosmos.png shows; source is wide so object-fit cover-crops the centre. */
 #cosmos-enter-btn { display: inline-flex; align-items: center; padding: 0; margin: 0; background: none; border: none; box-shadow: none; }
