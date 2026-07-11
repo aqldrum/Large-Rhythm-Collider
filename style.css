@@ -3602,5 +3602,8 @@ body.cosmos-active #cosmos-view {
 #lrc-div .lrc-div-sub { font-family: var(--sans); font-size: 10px; letter-spacing: .5px; color: var(--hud-text-muted); }
 #lrc-div::after { content: "\2922"; font-size: 14px; line-height: 1; color: var(--hud-text); border: 1px solid var(--hud-border); border-radius: 4px; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; }
 
-/* title-bar entry icon — plain house .reset-btn (grey → green-on-hover); the ✦ carries the accent */
-#cosmos-enter-btn .cosmos-star { color: var(--hud-accent); }
+/* title-bar entry button — plain house .reset-btn (grey → green-on-hover) with a starfield chip icon
+   (cosmos.png cropped to a small rounded box via object-fit; the source is wide so cover-crops the centre) */
+#cosmos-enter-btn { display: inline-flex; align-items: center; gap: 6px; }
+#cosmos-enter-btn .cosmos-icon { width: 20px; height: 14px; object-fit: cover; border-radius: 3px; border: 1px solid var(--hud-border); display: block; flex: none; }
+#cosmos-enter-btn:hover .cosmos-icon { border-color: var(--hud-accent); }
