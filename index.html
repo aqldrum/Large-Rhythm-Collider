@@ -122,6 +122,7 @@
                 </nav>
             </div>
             <div class="title-bar-controls">
+                <button id="cosmos-enter-btn" class="reset-btn" title="Fly the rhythm cosmos — select a rhythm out in space and load it into the engine">✦ Cosmos</button>
                 <button id="reset-display-btn" class="reset-btn">Reset Display</button>
             </div>
         </header>
@@ -593,6 +594,29 @@
         <script src="Playback/AdvancedPlayback/PaintTimeline.js?v=1"></script>
         <script src="Playback/AdvancedPlayback/PaintEngine.js?v=1"></script>
         <script src="Playback/AdvancedPlayback/ProgressionBar.js?v=7"></script>
+
+    <!-- ══ COSMOS FLIGHT-VIEW (POC) — full-swallow overlay, hidden until the title-bar ✦ Cosmos icon ══
+         Purely additive: default-hidden via CSS (#cosmos-view); body.cosmos-active reveals it full-viewport.
+         The element IDs below are REQUIRED — ensureFlight() looks them up by id. -->
+    <div id="cosmos-view">
+        <canvas id="cosmos-canvas"></canvas>
+        <div id="cosmos-hud"></div>
+        <div id="tooltip"></div>
+        <div id="flight-detail" class="detail3"></div>
+        <div id="flight-filter">
+            <span>cardinality</span>
+            <input type="range" id="card-lo" min="1" max="48" value="1" title="min cardinality (double-click to type)">
+            <input type="range" id="card-hi" min="1" max="48" value="48" title="max cardinality (double-click to type)">
+            <b id="card-readout">all</b>
+            <input type="number" id="card-num" style="display:none">
+        </div>
+        <!-- minimized "LRC div": the exit handle. Click to restore the interface + stop all flight compute. -->
+        <div id="lrc-div" title="Return to the Large Rhythm Collider (stops all flight computation)">
+            <span class="lrc-div-mark">◱ LRC</span>
+            <span class="lrc-div-sub">expand to exit</span>
+        </div>
+    </div>
+    <script type="module" src="cosmos/flight-boot.js"></script>
 
 </body>
 </html>
