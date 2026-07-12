@@ -345,7 +345,7 @@ let hover = null, selected = null;
 // shells; makes monster clouds parseable). Elements + a change-guard so the DOM is only touched when needed.
 // The band targets ONLY the currently-focused bloom (cosmos.focusGrid); other blooms render in full. filterGrid
 // tracks which bloom the sliders currently represent, so switching focus resets the band to that bloom's range.
-let loEl = null, hiEl = null, readoutEl = null, filterEl = null, numEl = null, numTarget = null, filterShown = false, filterMax = 0, filterGrid = null;
+let loEl = null, hiEl = null, readoutEl = null, filterEl = null, fillEl = null, bodyEl = null, controlsEl = null, filterShown = false, filterMax = 0, filterGrid = null;
 let cardLo = 1, cardHi = 999;
 const cardVisible = c => c >= cardLo && c <= cardHi;
 // The focused bloom is fetched SHARD-BY-SHARD (same sharding as the abundance solve), so it streams in and
@@ -410,32 +410,20 @@ export function ensureFlight(canvas, hudEl) {
   if (!bound) {
     bound = true;
     tipEl = document.getElementById('tooltip'); detailEl = document.getElementById('flight-detail');
+    bodyEl = document.getElementById('flight-detail-body');
     filterEl = document.getElementById('flight-filter'); loEl = document.getElementById('card-lo');
     hiEl = document.getElementById('card-hi'); readoutEl = document.getElementById('card-readout');
-    numEl = document.getElementById('card-num');
+    fillEl = document.getElementById('card-fill'); controlsEl = document.getElementById('cosmos-controls');
     if (detailEl) detailEl.addEventListener('click', e => {
       const ap = e.target.closest && e.target.closest('.apply-btn'); if (ap) { applyToEngine(selected); return; }
       const ov = e.target.closest && e.target.closest('.ov-btn'); if (ov) { overrideSolve(+ov.dataset.g); return; }
       const wb = e.target.closest && e.target.closest('.web-btn'); if (wb) { toggleWeb(wb.dataset.tag, +wb.dataset.g); showDetail(selected); return; }
       const mn = e.target.closest && e.target.closest('.mn-btn'); if (mn) { toggleMNWeb(mn.dataset.id, +mn.dataset.base, +mn.dataset.g); showDetail(selected); }
     });
-    const onFilter = () => { cardLo = Math.min(+loEl.value, +hiEl.value); cardHi = Math.max(+loEl.value, +hiEl.value); };
+    // cardinality WINDOW: two thumbs on one thin rail — drag either end; the fill bar tracks the [lo,hi] window
+    const onFilter = () => { cardLo = Math.min(+loEl.value, +hiEl.value); cardHi = Math.max(+loEl.value, +hiEl.value); updateFillBar(); };
     const blur = e => e.target.blur();   // hand focus back to the canvas so WASD/arrows fly again without a re-click
     for (const el of [loEl, hiEl]) if (el) { el.addEventListener('input', onFilter); el.addEventListener('pointerup', blur); }
-    // double-click a slider → type a value directly (clamped to that handle's window)
-    const editSlider = tgt => { numTarget = tgt; numEl.min = tgt.min; numEl.max = tgt.max; numEl.value = tgt.value; numEl.style.display = ''; numEl.focus(); numEl.select(); };
-    const commitNum = () => {
-      if (!numEl || numEl.style.display === 'none' || !numTarget) return;
-      let v = Math.round(+numEl.value); if (!Number.isFinite(v)) v = +numTarget.value;
-      numTarget.value = Math.max(+numTarget.min, Math.min(+numTarget.max, v));
-      onFilter(); numEl.style.display = 'none';
-    };
-    if (loEl) loEl.addEventListener('dblclick', () => editSlider(loEl));
-    if (hiEl) hiEl.addEventListener('dblclick', () => editSlider(hiEl));
-    if (numEl) {
-      numEl.addEventListener('keydown', e => { if (e.key === 'Enter') { commitNum(); numEl.blur(); } else if (e.key === 'Escape') { numEl.style.display = 'none'; numEl.blur(); } });
-      numEl.addEventListener('blur', commitNum);
-    }
     // charted lookup: the same codex key index the Oracle/Bloom tab uses. Fire-and-forget — nodes read
     // as "uncharted" until it lands, then flip to charted on the next frame. Module-relative URL so it
     // resolves against cosmos/ regardless of the host document (index.html at site root).
@@ -462,6 +450,7 @@ export function ensureFlight(canvas, hudEl) {
   // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
   placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
   setPlacement(placement);
+  if (controlsEl) controlsEl.textContent = `${placement === 'hilbert' ? 'cube' : 'spine'} · WASD/QE move · space boost · arrows steer · scroll dolly · 1–0 webs`;
   BLOOM_MAX_R = placement === 'hilbert' ? BLOOM_MAX_R_FRAC * CELL : Infinity;   // keep clouds inside their cell
   if (placement === 'hilbert') {
     // 3D-proximity frontier: spawn/evict by cell distance; grids rest at their own cells (no puffs).
@@ -584,7 +573,15 @@ function ringAt(o, color, lw) {
   ctx.globalAlpha = 1; ctx.strokeStyle = color; ctx.lineWidth = lw;
   ctx.beginPath(); ctx.arc(o.x, o.y, Math.max(6, o.r + 5), 0, 7); ctx.stroke();
 }
-// show/size the cardinality band to the FOCUSED bloom only; only touches the DOM on change
+// position the accent fill between the two thumbs (the visible "window" of the dual-range slider)
+function updateFillBar() {
+  if (!fillEl || !loEl) return;
+  const lo = +loEl.min, hi = +loEl.max, span = Math.max(1, hi - lo);
+  const a = (Math.min(cardLo, cardHi) - lo) / span * 100, b = (Math.max(cardLo, cardHi) - lo) / span * 100;
+  fillEl.style.left = a + '%'; fillEl.style.width = Math.max(0, b - a) + '%';
+}
+// show/size the cardinality WINDOW to the FOCUSED bloom only; the slider lives inside the grid info card,
+// so it's a child of #flight-detail and only renders when that card is open (see showDetail). DOM touched on change.
 function updateFilterUI() {
   if (!filterEl) return;
   const fg = cosmos.focusGrid, data = (fg != null && bloomed.has(fg)) ? bloomCache.get(fg) : null;
@@ -592,7 +589,7 @@ function updateFilterUI() {
   if (show !== filterShown) { filterEl.style.display = show ? 'flex' : 'none'; filterShown = show; }
   if (!show) { filterGrid = null; return; }
   const cmin = data.cmin, cmax = data.cmax;
-  if (fg !== filterGrid) {                               // focus moved to a different bloom → reset band to its full range
+  if (fg !== filterGrid) {                               // focus moved to a different bloom → reset window to its full range
     filterGrid = fg; filterMax = cmax;
     loEl.max = hiEl.max = cmax; loEl.value = 1; hiEl.value = cmax; cardLo = 1; cardHi = cmax;
   } else if (cmax !== filterMax) {                       // same bloom still streaming → grow the range, keep a top-parked hi at top
@@ -601,6 +598,7 @@ function updateFilterUI() {
     if (hiAtTop) { hiEl.value = cmax; cardHi = Math.max(cardLo, cmax); }
   }
   readoutEl.textContent = (cardLo <= cmin && cardHi >= cmax) ? 'all' : (cardLo === cardHi ? `${cardLo}` : `${cardLo}–${cardHi}`);
+  updateFillBar();
 }
 // APPLY-TO-ENGINE: load a bloom node's rhythm into the live LRC engine via the same path Collections uses.
 // The engine has exactly layer-a..d, so only ≤4-layer nodes are applyable; >4-layer nodes stay inspect-only
@@ -669,7 +667,7 @@ function showDetail(sel) {
           ? `<button class="apply-btn" style="width:100%;margin-top:8px;background:${sel._applied ? 'rgba(0,255,136,.18)' : 'rgba(0,255,136,.08)'};border:1px solid var(--known);color:var(--known);font-family:var(--sans);font-weight:500;font-size:11px;padding:7px;border-radius:var(--border-radius);cursor:pointer">${sel._applied ? '✓ loaded into engine' : '▶ load into engine'}</button>`
           : `<div style="margin-top:8px;padding:7px;border:1px dashed var(--dimmer);border-radius:6px;color:var(--dimmer);font-size:10px;text-align:center">${sel.layers.length}+ layers — not playable in engine</div>`)
       : '';
-    detailEl.innerHTML =
+    bodyEl.innerHTML =
       `<div class="big" style="color:${col}">${sel.layers ? sel.layers.join(' : ') : sel.c + '-tone'}</div>` +
       `<div class="r"><span>cardinality</span><b>${sel.c}-tone</b></div>` +
       `<div class="r"><span>fundamental</span><b>${sel.fund}</b></div>` +
@@ -681,7 +679,7 @@ function showDetail(sel) {
   } else {
     const z = cosmos.zones.get(sel.grid), fi = factorInfo(sel.grid);
     if (z && z.monster) {              // combinatorial black hole — identified, solve gated behind an override
-      detailEl.innerHTML =
+      bodyEl.innerHTML =
         `<div class="big" style="color:#ff7869">grid ${sel.grid.toLocaleString()}</div>` +
         `<div class="r"><span>factors</span><b>${factorString(sel.grid)}</b></div>` +
         `<div class="r"><span>divisors</span><b>${z.divisors ?? fi.divisors}</b></div>` +
@@ -691,7 +689,7 @@ function showDetail(sel) {
       return;
     }
     if (z && z.unsolvable) {           // beyond the live solve cap — be honest, don't imply "1 kept"
-      detailEl.innerHTML =
+      bodyEl.innerHTML =
         `<div class="big">grid ${sel.grid.toLocaleString()}</div>` +
         `<div class="r"><span>factors</span><b>${factorString(sel.grid)}</b></div>` +
         `<div class="r"><span>primes · divisors</span><b>${fi.primes} · ${fi.divisors}</b></div>` +
@@ -701,7 +699,7 @@ function showDetail(sel) {
     }
     const ab = z ? z.abundance : (sel.z ? sel.z.abundance : 0), state = z ? z.state : 'evicted';
     const sun = z && z.parentGrid !== z.grid ? z.parentGrid.toLocaleString() : '—';
-    detailEl.innerHTML =
+    bodyEl.innerHTML =
       `<div class="big">grid ${sel.grid.toLocaleString()}</div>` +
       `<div class="r"><span>abundance</span><b>${(ab || 0).toLocaleString()} kept</b></div>` +
       `<div class="r"><span>factors</span><b>${factorString(sel.grid)}</b></div>` +
@@ -886,7 +884,8 @@ function loop() {
     for (const g of bloomCache.keys()) if (!cosmos.zones.has(g)) bloomCache.delete(g);   // drop evicted blooms
     if (selected && selected.kind === 'star') showDetail(selected);   // refresh live abundance/state as it solves
   }
-  const errHud = pool.errors || ev.errors ? ` · <span style="color:#e88">err ${pool.errors + ev.errors}</span>` : '';
+  // top HUD is deliberately minimal: grid, active blooms, active webs — nothing else (solve stats live in the
+  // console heartbeat; flight controls live bottom-left in #cosmos-controls).
   const focusHud = bloomed.size ? ` · <span style="color:var(--known)">◉ ${bloomed.size} bloom${bloomed.size > 1 ? 's' : ''}</span>` : '';
   // web slot legend: numbered chips (1-9,0) tinted by web colour, dim when that slot is toggled off
   let webHud = '';
@@ -896,8 +895,7 @@ function loop() {
     for (let s = 0; s < WEB_MAX; s++) { const w = bySlot.get(s); if (!w) continue; chips += `<span style="color:${w.color};opacity:${w.visible === false ? 0.35 : 1};font-weight:bold">${s === 9 ? '0' : s + 1}</span>`; }
     webHud = ` · ◈ ${chips}`;
   }
-  const agentHud = swarm && swarm.agents.length ? ` · <span style="color:#ff9a6e">▣ ${swarm.agents.length} ships · ${swarm.blooms} blooms · ${swarm.crashes} crashes</span>` : '';
-  hud.innerHTML = `grid <b>${cam.anchor.toLocaleString()}</b> · <b>${st.solved}</b> solved · ${st.solving} solving · ${st.pending} pending · ${st.inFlight} tasks${errHud}${focusHud}${webHud}${agentHud} · <span style="color:var(--dimmer)">${placement === 'hilbert' ? 'cube' : 'spine'} · WASD/QE · space boost · arrows steer · scroll dolly · 1-0 webs</span>`;
+  hud.innerHTML = `grid <b>${cam.anchor.toLocaleString()}</b>${focusHud}${webHud}`;
 }
 
 function resize() {
