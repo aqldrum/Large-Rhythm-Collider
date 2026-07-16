@@ -627,10 +627,23 @@
                 <div id="cosmos-help-live" class="help-body"></div>
             </div>
         </div>
-        <!-- minimized "LRC div": the exit handle (lower-left). Click to restore the interface + stop all flight compute. -->
-        <div id="lrc-div" title="Return to the Large Rhythm Collider (stops all flight computation)">
-            <span class="lrc-div-mark">◱ LRC</span>
-            <span class="lrc-div-sub">expand to exit</span>
+        <!-- minimized "LRC div" → the cockpit (lower-left). Click the head to toggle the cockpit open
+             (Linear Plot + transport for whatever rhythm is sounding); double-click the head to exit
+             flight (stops all flight computation + the cosmos-audio transport). -->
+        <div id="lrc-div">
+            <div id="lrc-head" class="lrc-head" title="Click: toggle cockpit · Double-click: exit flight">
+                <span class="lrc-div-mark">◱ LRC</span>
+                <span class="lrc-div-sub">select a rhythm to hear it</span>
+            </div>
+            <div id="lrc-cockpit-body" class="lrc-cockpit-body">
+                <canvas id="lrc-plot" width="260" height="36"></canvas>
+                <div class="lrc-transport">
+                    <button id="lrc-mute-btn" title="Mute">🔊</button>
+                    <span class="lrc-tempo-cap">tempo</span>
+                    <input type="range" id="lrc-tempo-slider" min="0.5" max="6" step="0.1" value="2.0" aria-label="tempo (seconds per cycle)">
+                    <b id="lrc-tempo-readout">2.0s</b>
+                </div>
+            </div>
         </div>
     </div>
     <script type="module" src="cosmos/flight-boot.js"></script>

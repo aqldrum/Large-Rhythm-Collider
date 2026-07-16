@@ -3625,14 +3625,31 @@ body.cosmos-active #cosmos-view {
 #cosmos-help-panel .help-kv b { color: var(--ink); font-family: var(--mono); font-weight: 600; white-space: nowrap; }
 #cosmos-help-panel .help-note { margin-top: 6px; font-size: 10px; color: var(--hud-text-muted); opacity: .7; }
 
-/* the minimized "LRC div" exit handle = a COLLAPSED HOUSE PANEL (the site's own minimize/expand metaphor):
-   uppercase green title + a muted sub + an expand glyph, so entering flight reads as "the whole site
-   collapsed into one panel — expand it to return." Sits lower-left. */
-#lrc-div { position: absolute; left: 16px; bottom: 16px; display: flex; align-items: center; gap: 10px; padding: 8px 14px; cursor: pointer; user-select: none; z-index: 520; transition: all var(--transition-speed); }
+/* the minimized "LRC div" = the cockpit (the site's own minimize/expand metaphor): collapsed, it's a
+   house panel (uppercase green title + a muted sub + a `+` expand glyph); expanded (.open), it reveals
+   the Linear Plot + transport strip for whatever rhythm cosmos-audio is sounding. Sits lower-left.
+   Interaction lives on .lrc-head (the title row) so it never fights the transport controls below it:
+   single-click toggles .open, double-click exits flight (see flight-view.js's `bound` wiring). */
+#lrc-div { position: absolute; left: 16px; bottom: 16px; width: 260px; padding: 8px 14px; user-select: none; z-index: 520; transition: all var(--transition-speed); }
 #lrc-div:hover { border-color: var(--hud-accent); background: rgba(40,40,40,.92); }
+.lrc-head { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 #lrc-div .lrc-div-mark { font-family: var(--sans); font-size: 12px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; color: var(--hud-accent); }
-#lrc-div .lrc-div-sub { font-family: var(--sans); font-size: 10px; letter-spacing: .5px; color: var(--hud-text-muted); }
-#lrc-div::after { content: "\2922"; font-size: 14px; line-height: 1; color: var(--hud-text); border: 1px solid var(--hud-border); border-radius: 4px; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; }
+#lrc-div .lrc-div-sub { flex: 1; font-family: var(--sans); font-size: 10px; letter-spacing: .5px; color: var(--hud-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lrc-head::after { content: "+"; font-size: 14px; line-height: 1; color: var(--hud-text); border: 1px solid var(--hud-border); border-radius: 4px; width: 22px; height: 22px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+#lrc-div.open .lrc-head::after { content: "\2212"; }   /* − */
+
+/* cockpit body: Linear Plot (onset ticks + sweeping playhead) + a compact transport strip. Hidden until
+   a rhythm is selected (auto-expand) or the handle is clicked open. */
+#lrc-div .lrc-cockpit-body { display: none; }
+#lrc-div.open .lrc-cockpit-body { display: block; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hud-border); }
+#lrc-plot { display: block; width: 100%; height: 36px; }
+.lrc-transport { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-family: var(--sans); font-size: 10px; color: var(--dim); }
+.lrc-transport #lrc-mute-btn { flex: 0 0 auto; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; padding: 0; font-size: 11px; line-height: 1; background: transparent; border: 1px solid var(--hud-border); border-radius: 4px; color: var(--hud-text); cursor: pointer; transition: all var(--transition-speed); }
+.lrc-transport #lrc-mute-btn:hover { border-color: var(--hud-accent); }
+.lrc-transport #lrc-mute-btn.muted { color: var(--hud-accent); border-color: var(--hud-accent); }
+.lrc-transport .lrc-tempo-cap { text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; }
+.lrc-transport input[type=range] { flex: 1; accent-color: var(--hud-accent); }
+.lrc-transport b { color: var(--known); min-width: 32px; text-align: right; font-family: var(--mono); }
 
 /* title-bar controls row — flex so the icon chip and Reset Display button center on the same line
    (the div was unstyled → inline baseline-alignment left the image chip sitting high) */

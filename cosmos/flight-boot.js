@@ -4,6 +4,7 @@
 // the full-canvas #cosmos-view. It never touches the engine modules (LRCModule/LRCSearch/LRCHudController).
 import { ensureFlight, stopFlight } from './flight-view.js';
 import { M } from './mode.js';
+import { initAudio, resumeAudio } from './cosmos-audio.js';
 
 // ENTER: swallow the page and start flying. Add the class FIRST so the overlay/canvas have layout before
 // ensureFlight()'s resize() reads clientWidth/Height (the class change forces a synchronous reflow on read).
@@ -14,6 +15,7 @@ function enterCosmos() {
   document.body.classList.add('cosmos-active');   // CSS: hide title bar + panels, show #cosmos-view full-viewport
   M.mode = 'flight';
   ensureFlight(canvas, hud);
+  initAudio(); resumeAudio();   // user-gesture unlock for the cosmos-audio transport (autoplay policy)
 }
 
 // EXIT: expand the minimized #lrc-div → restore the interface AND terminate every flight worker (no
@@ -27,12 +29,12 @@ function exitCosmos() {
 window.enterCosmos = enterCosmos;   // exposed for console / future callers
 window.exitCosmos = exitCosmos;
 
-// Wire the icon + exit handle once (idempotent — safe if this ever runs twice).
+// Wire the icon once (idempotent — safe if this ever runs twice). #lrc-div's own interaction (cockpit
+// toggle / double-click exit) is wired by flight-view.js, which owns the overlay DOM + the loop + the
+// lead voice state — see its `bound` one-time setup.
 function wire() {
   const icon = document.getElementById('cosmos-enter-btn');
   if (icon && !icon._cosmosWired) { icon._cosmosWired = true; icon.addEventListener('click', enterCosmos); }
-  const lrcDiv = document.getElementById('lrc-div');
-  if (lrcDiv && !lrcDiv._cosmosWired) { lrcDiv._cosmosWired = true; lrcDiv.addEventListener('click', exitCosmos); }
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
 else wire();
