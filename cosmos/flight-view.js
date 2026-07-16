@@ -345,7 +345,7 @@ let hover = null, selected = null;
 // shells; makes monster clouds parseable). Elements + a change-guard so the DOM is only touched when needed.
 // The band targets ONLY the currently-focused bloom (cosmos.focusGrid); other blooms render in full. filterGrid
 // tracks which bloom the sliders currently represent, so switching focus resets the band to that bloom's range.
-let loEl = null, hiEl = null, readoutEl = null, filterEl = null, fillEl = null, bodyEl = null, controlsEl = null, filterShown = false, filterMax = 0, filterGrid = null;
+let loEl = null, hiEl = null, readoutEl = null, filterEl = null, fillEl = null, bodyEl = null, controlsEl = null, liveEl = null, helpPanelEl = null, filterShown = false, filterMax = 0, filterGrid = null;
 let cardLo = 1, cardHi = 999;
 const cardVisible = c => c >= cardLo && c <= cardHi;
 // The focused bloom is fetched SHARD-BY-SHARD (same sharding as the abundance solve), so it streams in and
@@ -413,7 +413,11 @@ export function ensureFlight(canvas, hudEl) {
     bodyEl = document.getElementById('flight-detail-body');
     filterEl = document.getElementById('flight-filter'); loEl = document.getElementById('card-lo');
     hiEl = document.getElementById('card-hi'); readoutEl = document.getElementById('card-readout');
-    fillEl = document.getElementById('card-fill'); controlsEl = document.getElementById('cosmos-controls');
+    fillEl = document.getElementById('card-fill');
+    controlsEl = document.getElementById('cosmos-help-controls'); liveEl = document.getElementById('cosmos-help-live');
+    helpPanelEl = document.getElementById('cosmos-help-panel');
+    const helpBtn = document.getElementById('cosmos-help-btn');
+    if (helpBtn && helpPanelEl) helpBtn.addEventListener('click', () => helpPanelEl.classList.toggle('open'));
     if (detailEl) detailEl.addEventListener('click', e => {
       const ap = e.target.closest && e.target.closest('.apply-btn'); if (ap) { applyToEngine(selected); return; }
       const ov = e.target.closest && e.target.closest('.ov-btn'); if (ov) { overrideSolve(+ov.dataset.g); return; }
@@ -450,7 +454,12 @@ export function ensureFlight(canvas, hudEl) {
   // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
   placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
   setPlacement(placement);
-  if (controlsEl) controlsEl.textContent = `${placement === 'hilbert' ? 'cube' : 'spine'} · WASD/QE move · space boost · arrows steer · scroll dolly · 1–0 webs`;
+  if (controlsEl) {
+    const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['arrows', 'steer'], ['scroll', 'dolly'],
+                  ['click star', 'bloom'], ['click node', 'inspect / apply'], ['right-click', 'collapse'], ['1–0', 'toggle webs']];
+    controlsEl.innerHTML = rows.map(([k, v]) => `<div class="help-kv"><span>${k}</span><b>${v}</b></div>`).join('') +
+      `<div class="help-note">${placement === 'hilbert' ? 'cube' : 'spine'} placement</div>`;
+  }
   BLOOM_MAX_R = placement === 'hilbert' ? BLOOM_MAX_R_FRAC * CELL : Infinity;   // keep clouds inside their cell
   if (placement === 'hilbert') {
     // 3D-proximity frontier: spawn/evict by cell distance; grids rest at their own cells (no puffs).
@@ -884,8 +893,8 @@ function loop() {
     for (const g of bloomCache.keys()) if (!cosmos.zones.has(g)) bloomCache.delete(g);   // drop evicted blooms
     if (selected && selected.kind === 'star') showDetail(selected);   // refresh live abundance/state as it solves
   }
-  // top HUD is deliberately minimal: grid, active blooms, active webs — nothing else (solve stats live in the
-  // console heartbeat; flight controls live bottom-left in #cosmos-controls).
+  // top HUD is deliberately minimal: grid, active blooms, active webs — nothing else. Solve stats + flight
+  // controls live in the top-right help popup (#cosmos-help-panel); full solve detail is in the console heartbeat.
   const focusHud = bloomed.size ? ` · <span style="color:var(--known)">◉ ${bloomed.size} bloom${bloomed.size > 1 ? 's' : ''}</span>` : '';
   // web slot legend: numbered chips (1-9,0) tinted by web colour, dim when that slot is toggled off
   let webHud = '';
@@ -896,6 +905,15 @@ function loop() {
     webHud = ` · ◈ ${chips}`;
   }
   hud.innerHTML = `grid <b>${cam.anchor.toLocaleString()}</b>${focusHud}${webHud}`;
+  // live solve queue → the help popup (only while open, so it's free when closed)
+  if (helpPanelEl && liveEl && helpPanelEl.classList.contains('open')) {
+    const errRow = (pool.errors || ev.errors) ? `<div class="help-kv"><span>errors</span><b style="color:#e88">${pool.errors + ev.errors}</b></div>` : '';
+    liveEl.innerHTML =
+      `<div class="help-kv"><span>solved</span><b>${st.solved}</b></div>` +
+      `<div class="help-kv"><span>solving</span><b>${st.solving}</b></div>` +
+      `<div class="help-kv"><span>pending</span><b>${st.pending}</b></div>` +
+      `<div class="help-kv"><span>tasks</span><b>${st.inFlight}/${pool.size}</b></div>` + errRow;
+  }
 }
 
 function resize() {

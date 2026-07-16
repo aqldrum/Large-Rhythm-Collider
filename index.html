@@ -615,9 +615,19 @@
                 <b id="card-readout">all</b>
             </div>
         </div>
-        <!-- flight controls hint — bottom-left (where the filter panel used to sit) -->
-        <div id="cosmos-controls"></div>
-        <!-- minimized "LRC div": the exit handle. Click to restore the interface + stop all flight compute. -->
+        <!-- help button (top-right) → toggles an info popup: flight controls + live solve queue (more to come) -->
+        <button id="cosmos-help-btn" title="Controls &amp; status" aria-label="Controls and status">?</button>
+        <div id="cosmos-help-panel">
+            <div class="help-sec">
+                <div class="help-h">Controls</div>
+                <div id="cosmos-help-controls" class="help-body"></div>
+            </div>
+            <div class="help-sec">
+                <div class="help-h">Solve queue</div>
+                <div id="cosmos-help-live" class="help-body"></div>
+            </div>
+        </div>
+        <!-- minimized "LRC div": the exit handle (lower-left). Click to restore the interface + stop all flight compute. -->
         <div id="lrc-div" title="Return to the Large Rhythm Collider (stops all flight computation)">
             <span class="lrc-div-mark">◱ LRC</span>
             <span class="lrc-div-sub">expand to exit</span>
