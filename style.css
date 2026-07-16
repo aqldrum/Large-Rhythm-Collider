@@ -3643,6 +3643,11 @@ body.cosmos-active #cosmos-view {
 #lrc-div .lrc-cockpit-body { display: none; }
 #lrc-div.open .lrc-cockpit-body { display: block; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hud-border); }
 #lrc-plot { display: block; width: 100%; height: 36px; }
+/* Chord Walk readout: current chord + the song's loop as a compact strip (current highlighted) + tonality */
+.lrc-chord-readout { margin-top: 6px; font-family: var(--mono); font-size: 10px; color: var(--dim); white-space: nowrap; overflow-x: auto; }
+.lrc-chord-readout .cur { color: var(--known); }
+.lrc-chord-readout .strip { margin: 0 6px; color: var(--hud-text-muted); }
+.lrc-chord-readout .tonality { color: var(--hud-text-muted); }
 .lrc-transport { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-family: var(--sans); font-size: 10px; color: var(--dim); }
 .lrc-transport #lrc-mute-btn { flex: 0 0 auto; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; padding: 0; font-size: 11px; line-height: 1; background: transparent; border: 1px solid var(--hud-border); border-radius: 4px; color: var(--hud-text); cursor: pointer; transition: all var(--transition-speed); }
 .lrc-transport #lrc-mute-btn:hover { border-color: var(--hud-accent); }

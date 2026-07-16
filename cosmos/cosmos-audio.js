@@ -4,7 +4,7 @@
 // HARD RULE: fully separate from the site's playback engine. Do not import Core Interface/
 // LRCModule.js, LRCSearch.js, Playback/* (AudioEngine/Scheduler/Partitions), Tone.js, or MIDIOut.
 // The only shared code is the pure scale math below.
-import { normalizeLayers, lcmAll } from './oracle-core.js';
+import { normalizeLayers, lcmAll, decimalToFraction } from './oracle-core.js';
 
 const ROOT_HZ = 220;             // Phase 0: one root for every voice (per-star root is a later phase)
 const LOOKAHEAD_MS = 25;         // scheduler tick cadence
@@ -12,6 +12,8 @@ const SCHEDULE_AHEAD = 0.1;      // seconds — schedule any note landing within
 const MAX_LIVE_OSC = 48;         // defensive cap so a pathological dense grid can't runaway
 const ATTACK = 0.008, DECAY = 0.22;   // soft short envelope so a busy melody (option A) doesn't smear
 const NOTE_PEAK = 0.32;          // per-note envelope peak (kept modest — dense grids stack many notes)
+const CYCLES_PER_CHORD = 2;      // Chord Walk: how many transport cycles each chord in the song holds
+const DUCK = 0.25;               // -12dB — out-of-chord onsets duck, they never get skipped
 
 // One cycle of the rhythm as an ordered list of {t, ratio}: t = onset time as a fraction of the
 // cycle in [0,1); ratio = folded pitch ratio in [1,2) (1/1 = root). Mirrors oracle-core.deriveScale's
@@ -47,6 +49,11 @@ let lead = null;                  // { notes, grid, cardinality, node } | null
 let schedIdx = 0, schedCycle = 0; // scheduler's cursor into lead.notes / current cycle number
 let currentOctaveLift = 0;        // applies to NEWLY scheduled notes only (spec: don't repitch in flight)
 
+// ── Chord Walk tint (Part B): dumb consumer of a Song from chord-walk.js — never solves, just masks ──
+let song = null;                  // { frame, vocabularySize, transient, cycle } | null
+let allChords = null;             // [...song.transient, ...song.cycle], cached alongside `song`
+let noteMasks = null;             // noteMasks[chordIdx][noteIdx] = true if lead.notes[noteIdx] is in that chord
+
 export function initAudio() {
   if (audioCtx && audioCtx.state !== 'closed') return;   // idempotent; also tolerates re-init after stopAudio()
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -69,6 +76,46 @@ export function setLead(voice) {
   lead = voice || null;
   if (lead) resyncSchedulePointer();
   else if (audioCtx) distGainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.05);
+  recomputeMasks();   // note fractions are lead-dependent — a new lead needs fresh masks if a song is active
+}
+
+// song = a Song from chord-walk.js's solveStarSong(), or null to clear (Phase 0 behavior: all notes full).
+export function setSong(newSong) {
+  song = newSong || null;
+  allChords = song ? [...song.transient, ...song.cycle] : null;
+  recomputeMasks();
+}
+
+// → { symbol, cycleIndex } | null — cycleIndex indexes into [...song.transient, ...song.cycle] (for a
+// cockpit strip renderer); null before the transport starts or when no song is active.
+export function currentChord() {
+  if (!song || !audioCtx || transportStart == null) return null;
+  const n = Math.floor((audioCtx.currentTime - transportStart) / tempoT);
+  const idx = chordIndexForCycle(n);
+  const chord = idx >= 0 ? allChords[idx] : null;
+  return chord ? { symbol: chord.symbol, cycleIndex: idx } : null;
+}
+
+// Transport cycle number n -> index into `allChords`. Chord step s = floor(n/CYCLES_PER_CHORD): the
+// intro (transient) plays once, then the cycle loops forever — a pure function of n (tempo/resync-safe).
+function chordIndexForCycle(n) {
+  if (!song) return -1;
+  const s = Math.floor(n / CYCLES_PER_CHORD);
+  const tLen = song.transient.length, cLen = song.cycle.length;
+  if (s < tLen) return s;
+  return cLen ? tLen + ((s - tLen) % cLen) : (tLen ? tLen - 1 : -1);
+}
+
+// Per-chord in-lead-tone-row masks, precomputed once per (song, lead) pair (doc: "computed once").
+// A note's fraction is the SAME decimalToFraction computation deriveScale used, so it matches a chord's
+// windowFractions exactly when that gap-ratio is one of the star's own scale tones.
+function recomputeMasks() {
+  if (!song || !lead) { noteMasks = null; return; }
+  const noteFractions = lead.notes.map(n => decimalToFraction(n.ratio));
+  noteMasks = allChords.map(chord => {
+    const maskSet = new Set(chord.windowFractions);
+    return noteFractions.map(f => maskSet.has(f));
+  });
 }
 
 // Called each frame from the flight loop for the lead star. pan in [-1,1], gain in [0,1].
@@ -107,6 +154,7 @@ export function stopAudio() {
   if (schedulerTimer) { clearInterval(schedulerTimer); schedulerTimer = null; }
   if (liveOscs) { for (const osc of liveOscs) { try { osc.stop(0); } catch {} try { osc.disconnect(); } catch {} } liveOscs.clear(); }
   lead = null; schedIdx = 0; schedCycle = 0; transportStart = null;
+  song = null; allChords = null; noteMasks = null;
   if (audioCtx) { try { audioCtx.close(); } catch {} }
   audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; liveOscs = null;
 }
@@ -129,19 +177,24 @@ function schedulerTick() {
     const note = lead.notes[schedIdx];
     const time = transportStart + schedCycle * tempoT + note.t * tempoT;
     if (time > horizon) break;
-    scheduleNote(note, time);
+    scheduleNote(note, time, schedIdx, schedCycle);
     schedIdx++;
     if (schedIdx >= lead.notes.length) { schedIdx = 0; schedCycle++; }
   }
 }
 
-function scheduleNote(note, time) {
+function scheduleNote(note, time, noteIdx, cycleN) {
   if (liveOscs.size >= MAX_LIVE_OSC) return;
   const freq = ROOT_HZ * note.ratio * (2 ** currentOctaveLift);
   const osc = audioCtx.createOscillator(); osc.type = 'triangle'; osc.frequency.value = freq;
   const env = audioCtx.createGain();
+  // Chord Walk tint: in-chord onsets play full, out-of-chord onsets duck — the rhythm is sacrosanct,
+  // no onset is ever skipped, harmony only tints it. No song → always full (Phase 0 behavior).
+  const chordIdx = song ? chordIndexForCycle(cycleN) : -1;
+  const inChord = chordIdx < 0 || !noteMasks ? true : noteMasks[chordIdx][noteIdx];
+  const peak = NOTE_PEAK * (inChord ? 1 : DUCK);
   env.gain.setValueAtTime(0, time);
-  env.gain.linearRampToValueAtTime(NOTE_PEAK, time + ATTACK);
+  env.gain.linearRampToValueAtTime(peak, time + ATTACK);
   env.gain.exponentialRampToValueAtTime(0.001, time + ATTACK + DECAY);
   osc.connect(env); env.connect(pannerNode);
   osc.start(time); osc.stop(time + ATTACK + DECAY + 0.02);

@@ -13,7 +13,9 @@ import { rhythmTriples, rhythmDoubles } from './cosmos/mn-core.js';
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTempo, setMuted, transportPhase, stopAudio } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTempo, setMuted, transportPhase, setSong, currentChord, stopAudio } from './cosmos-audio.js';
+// Chord Walk (Part B): gives the lead voice a signature chord loop — tints the melody, never gates it.
+import { solveStarSong } from './chord-walk.js';
 
 const STAR_SCALE = 4, NEAR = 5;
 // ══ FLIGHT / LOD KNOBS ═══════════════════════════════════════════════════════════════════════
@@ -353,9 +355,9 @@ let hover = null, selected = null;
 // Cosmos-audio cockpit: the lead voice currently sounding (node's own tuning, from cosmos-audio.deriveVoice)
 // + the DOM refs for the collapsible #lrc-div cockpit (Linear Plot + transport strip). `leadVoice.node.grid`
 // is the star whose live screen projection drives spatialization each frame (see the `loop()` proj block).
-let leadVoice = null, muted = false;
+let leadVoice = null, leadSong = null, muted = false;
 let lrcDivEl = null, lrcHeadEl = null, cockpitPlotEl = null, cockpitPlotCtx = null;
-let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null;
+let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, chordReadoutEl = null;
 // Cardinality band filter: only nodes with cardinality in [cardLo, cardHi] render + hit-test (isolate radial
 // shells; makes monster clouds parseable). Elements + a change-guard so the DOM is only touched when needed.
 // The band targets ONLY the currently-focused bloom (cosmos.focusGrid); other blooms render in full. filterGrid
@@ -463,6 +465,7 @@ export function ensureFlight(canvas, hudEl) {
     cockpitPlotEl = document.getElementById('lrc-plot'); cockpitPlotCtx = cockpitPlotEl && cockpitPlotEl.getContext('2d');
     muteBtnEl = document.getElementById('lrc-mute-btn');
     tempoSliderEl = document.getElementById('lrc-tempo-slider'); tempoReadoutEl = document.getElementById('lrc-tempo-readout');
+    chordReadoutEl = document.getElementById('lrc-chord-readout');
     if (lrcHeadEl) {
       let clickTimer = null;   // debounce: a dblclick fires two clicks — let the pending single-click resolve
       lrcHeadEl.addEventListener('click', () => {                 // toggles cockpit; ignored while a dblclick is landing
@@ -528,7 +531,7 @@ export function stopFlight() {
   bloomed.clear(); bloomCache.clear(); bloomPlanning.clear(); bloomInFlight = 0;
   activeWebs.clear(); webColorN = 0;
   selected = null; hover = null;
-  leadVoice = null; stopAudio();             // kill the cosmos-audio transport, mirroring the worker teardown
+  leadVoice = null; leadSong = null; stopAudio();   // kill the cosmos-audio transport, mirroring the worker teardown
   if (ctx && cv) { const dpr = window.devicePixelRatio || 1; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H); }
 }
 
@@ -779,6 +782,18 @@ function drawCockpitPlot() {
   cockpitPlotCtx.beginPath(); cockpitPlotCtx.moveTo(ph * w, 0); cockpitPlotCtx.lineTo(ph * w, h); cockpitPlotCtx.stroke();
 }
 
+// Chord Walk readout: current chord symbol + the song's loop as a compact strip, current highlighted,
+// plus the frame's tonality. No song (silent star, or one with no playable triad) → blank, no claim made.
+function drawChordReadout() {
+  if (!chordReadoutEl || !lrcDivEl || !lrcDivEl.classList.contains('open')) return;
+  if (!leadSong) { chordReadoutEl.innerHTML = ''; return; }
+  const cur = currentChord();
+  const curCycleIdx = cur ? cur.cycleIndex - leadSong.transient.length : -1;   // -1 while the one-time intro plays
+  const strip = leadSong.cycle.map((c, i) => i === curCycleIdx ? `<b class="cur">${c.symbol}</b>` : c.symbol).join(' · ');
+  const tonality = Math.round(leadSong.frame.strength * 100);
+  chordReadoutEl.innerHTML = `♪ <b>${cur ? cur.symbol : '—'}</b> <span class="strip">${strip}</span> <span class="tonality">${tonality}%</span>`;
+}
+
 function loop() {
   if (!started) return;                     // torn down by stopFlight() → break the rAF chain (no background frames)
   requestAnimationFrame(loop);
@@ -828,7 +843,7 @@ function loop() {
 
   // cosmos-audio: drive the lead voice's spatialization from its star's live projection this frame.
   if (leadVoice) {
-    if (!cosmos.zones.has(leadVoice.node.grid)) { setLead(null); leadVoice = null; }   // evicted → clear the lead
+    if (!cosmos.zones.has(leadVoice.node.grid)) { setLead(null); leadVoice = null; setSong(null); leadSong = null; }   // evicted → clear the lead
     else {
       const lp = proj.get(leadVoice.node.grid);
       if (lp) setSpatial(clampN((cx - lp.s.x) / cx, -1, 1), distGain(lp.s.z), distOctave(lp.s.z));   // screen-right → pan right (Avery: was backwards)
@@ -836,6 +851,7 @@ function loop() {
     }
   }
   drawCockpitPlot();
+  drawChordReadout();
 
   // black-hole blots: a screen disk per bloom (from its projected centre) that occludes farther stars behind it
   const blots = [];
@@ -1021,6 +1037,7 @@ function bindControls() {
       cosmos.setFocus(hover.grid); selected = hover;   // focus the bloom you're interacting with (the filter targets it)
       leadVoice = { ...deriveVoice(hover.layers), node: hover };   // node click = "make it sound" (stars don't set a lead)
       setLead(leadVoice); openCockpit();
+      leadSong = solveStarSong(hover.layers); setSong(leadSong);   // null-safe: no song → plain Phase 0 instrument
     } else {
       selected = null;
     }

@@ -410,7 +410,9 @@
     if (root) root.ProgressionSolver = {
         parseProgression, parseChordSymbol, resolveChordIntervals, buildRatioRows,
         optimize, analyzePerChord, solve, noteToHz, parseNoteName, pitchClassName,
-        NOTE_BASE
+        NOTE_BASE,
+        // whitelisted for cosmos/chord-walk.js (Part A) — additive only, zero logic changes above.
+        pairDeviation, scoreTonesWithBatch, chordWindowFractions, minCircularDistance, mod1200
     };
     if (typeof module !== 'undefined' && module.exports) module.exports = root ? root.ProgressionSolver : null;
 })(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : null));
