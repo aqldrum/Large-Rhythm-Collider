@@ -664,6 +664,26 @@ class MIDIOut {
         this._scheduleStragglerSweep(matches.map(e => ({ chIdx: e.chIdx, note: e.note })));
     }
 
+    // Force-release every live drum note across all partition layers. Used on a tempo
+    // change, where each layer's note-offs were queued (via _scheduleNoteOff) at
+    // old-tempo offsets and would otherwise hang or land at the wrong time once the
+    // transport re-anchors. Same mechanics as releasePartitionLayerNotes, no layer filter.
+    releaseAllPartitionNotes() {
+        if (!this.enabled || !this.output) return;
+        const now = performance.now();
+        const matches = this.liveNotes.filter(e => e.kind === 'drum' && !e.__off);
+        if (!matches.length) return;
+
+        matches.forEach(entry => {
+            if (entry.timer) clearTimeout(entry.timer);
+            this._sendNoteOff(entry.chIdx, entry.note, now);
+            entry.__off = true;
+            this._pruneEntry(entry);
+        });
+
+        this._scheduleStragglerSweep(matches.map(e => ({ chIdx: e.chIdx, note: e.note })));
+    }
+
     // ====================================
     // UI
     // ====================================
