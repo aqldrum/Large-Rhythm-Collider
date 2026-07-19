@@ -42,12 +42,19 @@ let audioCtx = null, pannerNode = null, distGainNode = null, muteGainNode = null
 let liveOscs = null;              // Set of live OscillatorNodes (capacity-capped)
 let schedulerTimer = null;
 
-// ── shared transport ──
-let tempoT = 2.0;                 // seconds per cycle
-let transportStart = null;        // audioCtx time of cycle 0 (n=0)
+// ── shared transport ── universal clock = a fixed TICK RATE (ticks/sec), not a fixed cycle duration.
+// A "tick" is one ONSET of whichever star is currently the lead (lead.notes.length ticks = one full
+// cycle) — NOT one grid-step: `grid` is the LCM of the layers and can be tens of thousands even for a
+// modest rhythm, which made cycles hours long when ticks were grid-steps (that's why the chord clock
+// looked frozen/disconnected). Using the onset count instead pins the average note rate to ticksPerSec
+// regardless of grid size, while note.t fractions still preserve the exact (uneven) onset spacing within
+// the cycle — only the overall pace changes, not the rhythm's internal proportions.
+let ticksPerSec = 10;              // default: 10 ticks/sec (~100ms/tick) — slow enough to actually listen
+let transportStart = null;        // audioCtx time at which the absolute tick counter reads 0
 let lead = null;                  // { notes, grid, cardinality, node } | null
 let schedIdx = 0, schedCycle = 0; // scheduler's cursor into lead.notes / current cycle number
 let currentOctaveLift = 0;        // applies to NEWLY scheduled notes only (spec: don't repitch in flight)
+const absoluteTicks = now => (now - transportStart) * ticksPerSec;   // monotonic tick count since transport start
 
 // ── Chord Walk tint (Part B): dumb consumer of a Song from chord-walk.js — never solves, just masks ──
 let song = null;                  // { frame, vocabularySize, transient, cycle } | null
@@ -89,8 +96,8 @@ export function setSong(newSong) {
 // → { symbol, cycleIndex } | null — cycleIndex indexes into [...song.transient, ...song.cycle] (for a
 // cockpit strip renderer); null before the transport starts or when no song is active.
 export function currentChord() {
-  if (!song || !audioCtx || transportStart == null) return null;
-  const n = Math.floor((audioCtx.currentTime - transportStart) / tempoT);
+  if (!song || !audioCtx || transportStart == null || !lead) return null;
+  const n = Math.floor(absoluteTicks(audioCtx.currentTime) / lead.notes.length);
   const idx = chordIndexForCycle(n);
   const chord = idx >= 0 ? allChords[idx] : null;
   return chord ? { symbol: chord.symbol, cycleIndex: idx } : null;
@@ -127,14 +134,15 @@ export function setSpatial(pan, gain, octaveLift) {
   currentOctaveLift = octaveLift;
 }
 
-// Seconds per cycle. Re-anchors the transport epoch so the CURRENT phase is preserved under the new
-// period (a tempo change glides the cycle speed rather than jumping the playhead).
-export function setTempo(T) {
-  if (!audioCtx) { tempoT = T; return; }
+// Ticks per second (the universal clock's rate). Re-anchors the transport epoch so the CURRENT
+// absolute tick count is preserved under the new rate (a rate change glides pace rather than jumping
+// the playhead — past ticks don't retroactively speed up or slow down).
+export function setTickRate(rate) {
+  if (!audioCtx) { ticksPerSec = rate; return; }
   const now = audioCtx.currentTime;
-  const cyclesElapsed = (now - transportStart) / tempoT;
-  tempoT = T;
-  transportStart = now - cyclesElapsed * tempoT;
+  const ticksSoFar = absoluteTicks(now);
+  ticksPerSec = rate;
+  transportStart = now - ticksSoFar / ticksPerSec;
   if (lead) resyncSchedulePointer();
 }
 
@@ -143,10 +151,11 @@ export function setMuted(bool) {
   muteGainNode.gain.setTargetAtTime(bool ? 0 : 1, audioCtx.currentTime, 0.02);
 }
 
-// 0..1 position within the current cycle, for the cockpit playhead. 0 before the transport starts.
+// 0..1 position within the current lead's cycle, for the cockpit playhead. 0 before the transport
+// starts or when there's no lead (a cycle is only meaningful relative to some star's grid).
 export function transportPhase() {
-  if (!audioCtx || transportStart == null) return 0;
-  const phase = ((audioCtx.currentTime - transportStart) / tempoT) % 1;
+  if (!audioCtx || transportStart == null || !lead) return 0;
+  const phase = (absoluteTicks(audioCtx.currentTime) / lead.notes.length) % 1;
   return phase < 0 ? phase + 1 : phase;
 }
 
@@ -160,12 +169,12 @@ export function stopAudio() {
 }
 
 // Jump the scheduler's cursor to the next upcoming note at the current transport phase (used when a
-// lead is (re)set or the tempo changes) so playback picks up NOW instead of restarting the cycle.
+// lead is (re)set or the tick rate changes) so playback picks up NOW instead of restarting the cycle.
 function resyncSchedulePointer() {
   if (!audioCtx || !lead || !lead.notes.length) { schedIdx = 0; schedCycle = 0; return; }
-  const elapsed = audioCtx.currentTime - transportStart;
-  const cycleNow = Math.floor(elapsed / tempoT);
-  const phase = elapsed / tempoT - cycleNow;
+  const ticks = absoluteTicks(audioCtx.currentTime);
+  const cycleNow = Math.floor(ticks / lead.notes.length);
+  const phase = ticks / lead.notes.length - cycleNow;
   const idx = lead.notes.findIndex(n => n.t >= phase);
   if (idx === -1) { schedIdx = 0; schedCycle = cycleNow + 1; } else { schedIdx = idx; schedCycle = cycleNow; }
 }
@@ -175,7 +184,9 @@ function schedulerTick() {
   const horizon = audioCtx.currentTime + SCHEDULE_AHEAD;
   while (true) {
     const note = lead.notes[schedIdx];
-    const time = transportStart + schedCycle * tempoT + note.t * tempoT;
+    const cycleTicks = lead.notes.length;
+    const noteTicks = schedCycle * cycleTicks + note.t * cycleTicks;
+    const time = transportStart + noteTicks / ticksPerSec;
     if (time > horizon) break;
     scheduleNote(note, time, schedIdx, schedCycle);
     schedIdx++;

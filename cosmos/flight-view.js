@@ -13,7 +13,7 @@ import { rhythmTriples, rhythmDoubles } from './cosmos/mn-core.js';
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTempo, setMuted, transportPhase, setSong, currentChord, stopAudio } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, setSong, currentChord, stopAudio } from './cosmos-audio.js';
 // Chord Walk (Part B): gives the lead voice a signature chord loop — tints the melody, never gates it.
 import { solveStarSong } from './chord-walk.js';
 
@@ -476,8 +476,8 @@ export function ensureFlight(canvas, hudEl) {
     }
     if (muteBtnEl) muteBtnEl.addEventListener('click', toggleMute);
     if (tempoSliderEl) tempoSliderEl.addEventListener('input', () => {
-      const T = +tempoSliderEl.value; setTempo(T);
-      if (tempoReadoutEl) tempoReadoutEl.textContent = T.toFixed(1) + 's';
+      const rate = +tempoSliderEl.value; setTickRate(rate);
+      if (tempoReadoutEl) tempoReadoutEl.textContent = rate + '/s';
     });
     bindControls();
   }
