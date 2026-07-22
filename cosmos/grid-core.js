@@ -79,9 +79,14 @@ export function gridShardCount(G, A, belowIn) {
 // ── Full Sky (cosmos/FULL_SKY_HANDOFF.md) — the degree pool, piggybacked on the abundance solve ──
 // Global frame: degree 0 = 1/1, degrees d ∈ [0,12) at d·100 cents. Snap a tone's cents to its nearest
 // degree (dev = signed cents distance, |dev| ≤ 50 by construction of "nearest").
-export function nearestDegree(cents) {
-  let d = Math.round(cents / 100);
-  const dev = cents - d * 100;
+// Sky Root handoff B2: generalized with an optional anchorCents (default 0, today's 1/1-anchored
+// behavior, bit-for-bit — see assert-fullsky.mjs's B2 guard). Degree d of a frame anchored at
+// anchorCents sits at `anchorCents + 100·d` (mod 1200); dev is still computed from the UNWRAPPED
+// nearest multiple before wrapping into [0,12), same as the anchor-0 case always did.
+export function nearestDegree(cents, anchorCents = 0) {
+  const rel = cents - anchorCents;
+  let d = Math.round(rel / 100);
+  const dev = rel - d * 100;
   d = ((d % 12) + 12) % 12;
   return { d, dev };
 }
@@ -98,17 +103,39 @@ export function poolFromRatios(ratios, pool = new Array(12).fill(null), toneCoun
   return { pool, toneCount };
 }
 
-// Kept count AND the shard's degree pool in ONE pass over shardGroups (no second enumeration): one
-// representative per ratioSet group (they share ratios) folds into the shard-wide pool.
+// Sky Root handoff B1: anchor-independent tone lists. `poolFromRatios` keeps only the min-|dev| tone
+// PER DEGREE under the 1/1 anchor and discards the rest — a tone that lost its slot under that anchor
+// may be the winner under a solved root's anchor. Avery's rule: no tone is ever dropped from
+// contention. So alongside the folded pool we ALSO carry every kept tone, deduped by quantized cents
+// (0.5¢ bins — finer than any dev/gain law cares about, just collapses true duplicates/near-duplicates
+// across representatives) — first occurrence per bin wins (shardGroups' enumeration order runs
+// smaller/simpler layer combos first, so "first" and "simplest" coincide in practice).
+export const TONE_BIN_CENTS = 0.5;
+const toneBin = cents => Math.round(cents / TONE_BIN_CENTS);
+export function tonesFromRatios(ratios, tones = [], seenBins = new Set()) {
+  for (const r of ratios) {
+    const bin = toneBin(r.cents);
+    if (seenBins.has(bin)) continue;
+    seenBins.add(bin);
+    tones.push({ f: r.fraction, c: r.cents });
+  }
+  return { tones, seenBins };
+}
+
+// Kept count, the shard's degree pool, AND its anchor-independent tone list in ONE pass over
+// shardGroups (no second enumeration): one representative per ratioSet group (they share ratios)
+// folds into the shard-wide pool and tone list alike.
 export function gridShardSolve(G, A, belowIn) {
   const below = belowIn || divisorsFast(G).filter(d => d >= 2 && d < A);
   const pool = new Array(12).fill(null), toneCount = new Array(12).fill(0);
+  const tones = [], seenBins = new Set();
   let count = 0;
   for (const g of shardGroups(G, A, below)) {
     count += g.length > 1 ? 2 : 1;
     poolFromRatios(g[0].ratios, pool, toneCount);
+    tonesFromRatios(g[0].ratios, tones, seenBins);
   }
-  return { count, pool, toneCount };
+  return { count, pool, toneCount, tones };
 }
 
 // The tuning SYSTEMS of one shard — one entry per group — for the near-star bloom. The representative

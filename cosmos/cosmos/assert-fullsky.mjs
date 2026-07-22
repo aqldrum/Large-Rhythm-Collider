@@ -1,10 +1,11 @@
 // assert-fullsky.mjs — proofs for the Full Sky redesign (see ../FULL_SKY_HANDOFF.md). One guard file,
 // grown milestone by milestone (M1 pool plumbing, M2 sky-walk.js, M3 the bed, M4 lead integration).
 import { readFileSync } from 'fs';
-import { gridShardSolve, shardKeysOf, gridShardSystems, divisorsFast, nearestDegree, poolFromRatios } from '../grid-core.js';
+import { gridShardSolve, shardKeysOf, gridShardSystems, divisorsFast, nearestDegree, poolFromRatios, TONE_BIN_CENTS } from '../grid-core.js';
 import { deriveScale } from '../oracle-core.js';
-import { TRIADS, START_CHORD_ID, GAIN_CEILING_CENTS, vlParsimony, gainForDev, coverage, chooseNextChord, pushTabu, chordStepIndex } from '../sky-walk.js';
-import { CHORD_TICKS, TABU_K, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord } from '../cosmos-audio.js';
+import { TRIADS, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, chooseNextChord, candidateCosts, pushTabu, chordStepIndex } from '../sky-walk.js';
+import { CHORD_TICKS, TABU_K, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_HYSTERESIS, hashId, bedDegreesFor, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, shouldSwapRoot, voiceToneChanged } from '../cosmos-audio.js';
+import { poolFromTones, solveRoots, scoreRootAt } from '../sky-root.js';
 import { ratioToCents } from '../oracle-core.js';
 
 let PASS = true;
@@ -21,19 +22,23 @@ const sampleGrids = [...new Set([2640, 7920, 1092, 1650, 552, 15840, ...idx.grid
 const N = 25;
 const testGrids = Array.from({ length: N }, (_, i) => sampleGrids[Math.floor(i * sampleGrids.length / N)]);
 
-// worker-path pool: gridShardSolve per shard, merged with the SAME min-|dev|/sum-toneCount rule the
-// runtime's mergeSkyPool uses (reimplemented locally — cosmos-runtime.js isn't Node-importable standalone
-// here, but the rule is a two-line fold; this checks grid-core's shard math end-to-end either way).
+// worker-path pool (+ tones, Sky Root B1): gridShardSolve per shard, merged with the SAME
+// min-|dev|/sum-toneCount/0.5¢-bin-dedupe rules cosmos-runtime.js's mergeSkyPool/mergeSkyTones use
+// (reimplemented locally — cosmos-runtime.js isn't Node-importable standalone here, but the rules are
+// tiny folds; this checks grid-core's shard math end-to-end either way, and reuses ONE gridShardSolve
+// call per shard for both pool and tones — no doubled computation).
 function workerPathPool(G) {
   const pool = new Array(12).fill(null), toneCount = new Array(12).fill(0);
+  const tones = [], seenBins = new Set();
   for (const A of shardKeysOf(G)) {
     const r = gridShardSolve(G, A);
     for (let d = 0; d < 12; d++) {
       if (r.pool[d] && (!pool[d] || Math.abs(r.pool[d].dev) < Math.abs(pool[d].dev))) pool[d] = r.pool[d];
       toneCount[d] += r.toneCount[d];
     }
+    for (const t of r.tones) { const bin = Math.round(t.c / TONE_BIN_CENTS); if (seenBins.has(bin)) continue; seenBins.add(bin); tones.push(t); }
   }
-  return { pool, toneCount };
+  return { pool, toneCount, tones };
 }
 
 // brute-force pool: union every shard's gridShardSystems() representatives (a DIFFERENT enumeration
@@ -264,6 +269,243 @@ for (const layers of leadCorpus) {
 }
 check('leadNoteInChord agrees with an independent reference across real leads × all 24 triads', maskAgreeFail === 0, `${maskAgreeFail}/${maskChecks} mismatches`);
 check('genuine in-chord/out-of-chord mix seen (not degenerate always-on/off)', anyIn > 0 && anyOut > 0, `${anyIn} lead×chord pairs had ≥1 in-chord note, ${anyOut} had ≥1 out-of-chord note`);
+
+// ══ Sky Root handoff, Feature A — normalized field term ═════════════════════════════════════════
+console.log('\n── Feature A: normalized field term ──');
+
+const findT = sym => TRIADS.find(t => t.symbol === sym);
+const chI = findT('I'), chIii = findT('iii'), chBVI = findT('bVI'), chMax = findT('bVII'), chMin = findT('IV');
+// tabu out every OTHER triad → the candidate set is exactly {iii, bVI, bVII, IV}, so max/min come from
+// these four directly — reproduces Avery's real overlay numbers (2026-07-21 session) exactly, no filler.
+const onlyFour = new Set([chIii.id, chBVI.id, chMax.id, chMin.id]);
+const tabuAllButFour = TRIADS.map(t => t.id).filter(id => !onlyFour.has(id));   // includes chI.id — current is always tabu
+const workedCov = t => t.id === chIii.id ? 0.64 : t.id === chBVI.id ? 0.81 : t.id === chMax.id ? 0.82 : t.id === chMin.id ? 0.54 : 0;
+
+console.log('\n  Worked example (current I; candidates iii/bVI/bVII/IV at cov .64/.81/.82/.54)');
+const r1 = candidateCosts(chI.id, tabuAllButFour, workedCov, { lambdaField: 1 });
+const iii1 = r1.find(r => r.id === chIii.id), bvi1 = r1.find(r => r.id === chBVI.id);
+check('vlParsimony(I, iii) === 1 (P or L — the known-cheap move)', iii1.parsimony === 1, `got ${iii1.parsimony}`);
+check('vlParsimony(I, bVI) === 2', bvi1.parsimony === 2, `got ${bvi1.parsimony}`);
+check('λ=1 fieldCost(iii) ≈ 0.643 (= (.82-.64)/.28)', Math.abs(iii1.fieldCost - 0.642857) < 1e-4, `got ${iii1.fieldCost.toFixed(6)}`);
+check('λ=1 fieldCost(bVI) ≈ 0.036 (= (.82-.81)/.28)', Math.abs(bvi1.fieldCost - 0.035714) < 1e-4, `got ${bvi1.fieldCost.toFixed(6)}`);
+
+const at = lambda => { const r = candidateCosts(chI.id, tabuAllButFour, workedCov, { lambdaField: lambda });
+  return { iii: r.find(x => x.id === chIii.id), bvi: r.find(x => x.id === chBVI.id) }; };
+check('λ=1.5: iii (cheaper parsimony) still wins over bVI', at(1.5).iii.cost < at(1.5).bvi.cost,
+  `iii ${at(1.5).iii.cost.toFixed(3)} vs bVI ${at(1.5).bvi.cost.toFixed(3)}`);
+check('λ=2.0 (production default): bVI overtakes iii — field term overrules a cost-1 parsimony move',
+  at(2.0).bvi.cost < at(2.0).iii.cost, `iii ${at(2.0).iii.cost.toFixed(3)} vs bVI ${at(2.0).bvi.cost.toFixed(3)}`);
+
+console.log('\n  Full-span property (spread ≥ EPS_SPREAD)');
+const r2 = candidateCosts(chI.id, tabuAllButFour, workedCov, { lambdaField: 2 });
+check('spread .28 ≥ EPS_SPREAD .15 → field costs span the FULL [0, λ]',
+  Math.abs(r2.find(x => x.id === chMax.id).fieldCost - 0) < 1e-9 && Math.abs(r2.find(x => x.id === chMin.id).fieldCost - 2) < 1e-9,
+  `max-cov candidate fieldCost=${r2.find(x => x.id === chMax.id).fieldCost}, min-cov candidate fieldCost=${r2.find(x => x.id === chMin.id).fieldCost}`);
+
+console.log('\n  Narrow-spread fade (spread < EPS_SPREAD)');
+const chA = findT('V'), chB = findT('bII');   // two arbitrary distinct triads, spread .05 < EPS_SPREAD .15
+const tabuAB = TRIADS.map(t => t.id).filter(id => id !== chA.id && id !== chB.id);   // includes chI.id — current is always tabu
+const narrowCov = t => t.id === chA.id ? 0.60 : t.id === chB.id ? 0.55 : 0;
+const r3 = candidateCosts(chI.id, tabuAB, narrowCov, { lambdaField: 2 });
+const bMin = r3.find(x => x.id === chB.id);   // the min-coverage candidate — would get fieldCost=λ if spread were used raw
+const expectedFaded = 2 * 0.05 / EPS_SPREAD;   // EPS_SPREAD floor, NOT the tiny real spread
+check('spread .05 < EPS_SPREAD .15 → fieldCost fades (uses EPS_SPREAD floor, does not blow up to λ)',
+  Math.abs(bMin.fieldCost - expectedFaded) < 1e-6 && bMin.fieldCost < 2, `got ${bMin.fieldCost.toFixed(4)}, expected ${expectedFaded.toFixed(4)}, λ=2`);
+
+console.log('\n  Deep-dust / flat-field fallback');
+const flatTabu = pushTabu([], chI.id, 3);
+const flatNext = chooseNextChord(chI.id, flatTabu, () => 0.5, { lambdaField: 2 });   // uniform coverage → fieldCost≡0 for all
+check('flat field (uniform coverage) → walk reduces to pure parsimony (P/L, cost 1)', vlParsimony(chI, flatNext) === 1, `next=${flatNext.symbol} cost=${vlParsimony(chI, flatNext)}`);
+
+console.log('\n  chooseNextChord ⟺ candidateCosts agreement (across real fields)');
+const realPoolsA = testGrids.slice(0, 5).map(G => ({ pool: workerPathPool(G).pool, weight: 1 }));
+const realPoolsB = testGrids.slice(-5).map(G => ({ pool: workerPathPool(G).pool, weight: 1 }));
+let agreeFail = 0, agreeChecks = 0;
+for (const stars of [realPoolsA, realPoolsB]) {
+  let current = START_CHORD_ID, tabu = pushTabu([], current, 3);
+  for (let step = 0; step < 10; step++) {
+    agreeChecks++;
+    const cov = t => coverage(t, stars);
+    const chosen = chooseNextChord(current, tabu, cov, { lambdaField: 2 });
+    const ranked = candidateCosts(current, tabu, cov, { lambdaField: 2 }).sort((a, b) => a.cost - b.cost || a.id - b.id);
+    if (chosen.id !== ranked[0].id) agreeFail++;
+    current = chosen.id; pushTabu(tabu, current, 3);
+  }
+}
+check('chooseNextChord always agrees with candidateCosts\' argmin (same ranking, no drift)', agreeFail === 0, `${agreeFail}/${agreeChecks} mismatches`);
+
+check('EPS_SPREAD is a small positive knob', EPS_SPREAD > 0 && EPS_SPREAD < 1, `EPS_SPREAD=${EPS_SPREAD}`);
+
+// ══ Sky Root handoff, B1 — anchor-independent tone lists ═══════════════════════════════════════
+console.log('\n── B1: anchor-independent tone lists ──');
+
+// sky-root.js's poolFromTones (B2), anchor 0, folds a tones[] list ({f,c}) into a 12-slot pool with
+// the same min-|dev| rule poolFromRatios uses — this proves B1's payload is a superset that loses
+// (almost) nothing: folding it back at the trivial anchor must reproduce today's worker pool, modulo
+// one known, bounded, inaudible edge case — two DISTINCT real tones landing in the SAME 0.5¢ dedup
+// bin (rare: their cents differ by < TONE_BIN_CENTS, so their |dev| for any one degree differs by the
+// same tiny amount). The dedup criterion (simplest/first per bin) is necessarily anchor-independent,
+// while the reference pool's criterion (min |dev|) is anchor-dependent — the two CAN disagree by
+// construction on a bin collision, but only ever by < TONE_BIN_CENTS of dev, which is inaudible next
+// to GAIN_CEILING_CENTS (45¢). A same-fraction/same-dev match is exact; a different-fraction match is
+// only accepted when it's a genuine bin collision (cents within TONE_BIN_CENTS) — anything looser is
+// a real failure.
+let toneFoldMismatch = 0, toneFoldBinCollision = 0, toneZeroMissing = 0, toneCentsRangeFail = 0, toneDedupeFail = 0, toneWorst = null;
+for (const G of testGrids) {
+  const { pool: refPool, tones } = workerPathPool(G);
+  const foldedPool = poolFromTones(tones, 0);
+  for (let d = 0; d < 12; d++) {
+    const fp = foldedPool[d], rp = refPool[d];
+    if (fp === null && rp === null) continue;
+    if (fp && rp && fp.fraction === rp.fraction && Math.abs(fp.dev - rp.dev) < 1e-6) continue;   // exact match
+    if (fp && rp && Math.abs(fp.cents - rp.cents) <= TONE_BIN_CENTS) { toneFoldBinCollision++; continue; }   // known bounded edge case
+    toneFoldMismatch++; if (!toneWorst) toneWorst = { G, d, fp, rp };
+  }
+  if (!tones.some(t => t.c === 0)) toneZeroMissing++;                       // the 1/1 tone is always present
+  for (const t of tones) if (t.c < 0 || t.c >= 1200) toneCentsRangeFail++;
+  const seen2 = new Set(); let deduped2 = 0;
+  for (const t of tones) { const bin = Math.round(t.c / TONE_BIN_CENTS); if (seen2.has(bin)) continue; seen2.add(bin); deduped2++; }
+  if (deduped2 !== tones.length) toneDedupeFail++;                          // re-deduping an already-deduped list changes nothing
+}
+check(`tones (folded at anchor 0) reproduce the worker's pool across ${testGrids.length} real grids`,
+  toneFoldMismatch === 0, toneWorst ? `e.g. grid ${toneWorst.G} degree ${toneWorst.d}: ${JSON.stringify(toneWorst.fp)} vs ${JSON.stringify(toneWorst.rp)}` : `${toneFoldBinCollision} known bin-collision edge case(s), all bounded < ${TONE_BIN_CENTS}¢`);
+check('the 1/1 tone (cents === 0) is present in every grid\'s tone list', toneZeroMissing === 0, `${toneZeroMissing}/${testGrids.length} missing`);
+check('every tone\'s cents ∈ [0, 1200)', toneCentsRangeFail === 0, `${toneCentsRangeFail} out of range`);
+check('dedupe is idempotent (re-deduping an already-deduped tone list changes nothing)', toneDedupeFail === 0, `${toneDedupeFail}/${testGrids.length} grids changed`);
+
+// nearestDegree's anchor generalization: anchor 0 must reproduce the pre-B2 anchor-0 formula bit-for-bit.
+let anchorZeroDrift = 0;
+for (let c = 0; c < 1200; c += 7) {
+  const a = nearestDegree(c), b = nearestDegree(c, 0);
+  if (a.d !== b.d || a.dev !== b.dev) anchorZeroDrift++;
+}
+check('nearestDegree(cents) === nearestDegree(cents, 0) (default anchor is bit-for-bit today\'s behavior)', anchorZeroDrift === 0, `${anchorZeroDrift} mismatches`);
+
+// ══ Sky Root handoff, B2 — the root solve (sky-root.js) ═════════════════════════════════════════
+console.log('\n── B2: the root solve (sky-root.js) ──');
+
+// A field where every star's tones sit at EXACT 12TET positions (dev=0 at anchor 0 for all 12
+// degrees) — '1/1' is the only denominator-1 fraction among them, so it's the unique simplest root.
+const exact12TET = Array.from({ length: 12 }, (_, d) => ({ f: d === 0 ? '1/1' : `${d + 2}/${d + 3}`, c: d * 100 }));
+const identityField = [{ tones: exact12TET, weight: 1 }, { tones: exact12TET, weight: 0.5 }];
+const identityLadder = solveRoots(identityField);
+check('identity: exact-12TET field → ladder has one row per distinct tone (12)', identityLadder.length === 12, `got ${identityLadder.length}`);
+check('identity: every candidate scores exactly 1 (all 12 degrees dev=0 under any of these anchors)',
+  identityLadder.every(r => Math.abs(r.score - 1) < 1e-9), `scores: ${identityLadder.map(r => r.score.toFixed(3)).join(',')}`);
+check('identity: 1/1 (denominator 1, the unique simplest fraction) wins the score tie',
+  identityLadder[0].fraction === '1/1' && identityLadder[0].cents === 0, `winner: ${JSON.stringify(identityLadder[0])}`);
+
+// shift-invariance: the SAME field uniformly shifted +37¢ (mod 1200) — the tone that WAS '1/1' (now at
+// 37¢) must win, and score exactly what 1/1 scored before (the field's internal structure is unchanged).
+const shifted12TET = exact12TET.map(t => ({ f: t.f, c: (t.c + 37 + 1200) % 1200 }));
+const shiftedField = [{ tones: shifted12TET, weight: 1 }, { tones: shifted12TET, weight: 0.5 }];
+const shiftedLadder = solveRoots(shiftedField);
+check('shift-invariance: the +37¢ tone (was 1/1) wins after a uniform +37¢ shift',
+  shiftedLadder[0].fraction === '1/1' && Math.abs(shiftedLadder[0].cents - 37) < 1e-9, `winner: ${JSON.stringify(shiftedLadder[0])}`);
+check('shift-invariance: it scores exactly what 1/1 scored pre-shift', Math.abs(shiftedLadder[0].score - identityLadder[0].score) < 1e-9,
+  `${shiftedLadder[0].score} vs ${identityLadder[0].score}`);
+
+// determinism: repeated calls on the same field/opts → byte-identical ladder
+check('solveRoots is deterministic (same field → identical ladder)', JSON.stringify(solveRoots(identityField)) === JSON.stringify(solveRoots(identityField)));
+
+// empty field → empty ladder (caller keeps 1/1 default)
+check('solveRoots([]) → empty ladder', Array.isArray(solveRoots([])) && solveRoots([]).length === 0);
+check('solveRoots(field-with-no-tones) → empty ladder', solveRoots([{ tones: [], weight: 1 }]).length === 0);
+
+// ladder sorted, on a REAL asymmetric field (real grids, not the synthetic exact-12TET one): score
+// non-increasing throughout, and any exact score ties are broken by strictly non-decreasing fraction
+// complexity (denominator, then numerator) — a real regression guard, not just "it doesn't crash".
+console.log('\n  Ladder ordering (real field)');
+const realField = testGrids.slice(0, 6).map(G => ({ tones: workerPathPool(G).tones, weight: 1 }));
+const realLadder = solveRoots(realField);
+let scoreOrderFail = 0, tieBreakFail = 0;
+const fracKey = f => { const [n, d] = f.split('/').map(Number); return [d, n]; };
+for (let i = 1; i < realLadder.length; i++) {
+  if (realLadder[i].score > realLadder[i - 1].score + 1e-12) scoreOrderFail++;
+  if (Math.abs(realLadder[i].score - realLadder[i - 1].score) < 1e-12) {
+    const [pd, pn] = fracKey(realLadder[i - 1].fraction), [cd, cn] = fracKey(realLadder[i].fraction);
+    if (cd < pd || (cd === pd && cn < pn)) tieBreakFail++;
+  }
+}
+check(`ladder score is non-increasing (${realLadder.length} candidates from a real field)`, scoreOrderFail === 0, `${scoreOrderFail} inversions`);
+check('exact-score ties break by simplest fraction (denominator, then numerator)', tieBreakFail === 0, `${tieBreakFail} tie-break violations`);
+check('every ladder row has the {fraction,cents,score,perDegree} shape', realLadder.every(r => typeof r.fraction === 'string' && typeof r.cents === 'number' && typeof r.score === 'number' && Array.isArray(r.perDegree) && r.perDegree.length === 12));
+
+// degreeTemplate: restricting to a subset must not change perDegree (same fold either way), only score
+console.log('\n  degreeTemplate parameter');
+const triadTemplate = [0, 4, 7];
+const templatedLadder = solveRoots(realField, { degreeTemplate: triadTemplate });
+let perDegreeDriftFail = 0, templateScoreFail = 0;
+const byCents = new Map(templatedLadder.map(r => [r.cents, r]));
+for (const row of realLadder) {
+  const tRow = byCents.get(row.cents); if (!tRow) continue;
+  if (JSON.stringify(tRow.perDegree) !== JSON.stringify(row.perDegree)) perDegreeDriftFail++;
+  const expected = triadTemplate.reduce((s, d) => s + row.perDegree[d], 0) / triadTemplate.length;
+  if (Math.abs(tRow.score - expected) > 1e-9) templateScoreFail++;
+}
+check('degreeTemplate restricts SCORE to the template subset without changing perDegree', perDegreeDriftFail === 0, `${perDegreeDriftFail} drifted`);
+check('degreeTemplate score === mean(perDegree over the template)', templateScoreFail === 0, `${templateScoreFail} mismatches`);
+
+// scoreRootAt: solveRoots' internal per-candidate scoring is exactly scoreRootAt — no drift between the
+// two entry points (B3 needs scoreRootAt standalone, to re-score the INCUMBENT root, which may not be
+// one of the field's own candidate tones — e.g. the star that contributed it fell out of ROOT_RADIUS).
+console.log('\n  scoreRootAt (standalone re-scoring, B3\'s incumbent-rescore path)');
+let scoreDriftFail = 0;
+for (const row of realLadder) {
+  const { score } = scoreRootAt(row.cents, realField);
+  if (Math.abs(score - row.score) > 1e-9) scoreDriftFail++;
+}
+check('scoreRootAt(cents, field) agrees with solveRoots\' own per-candidate score', scoreDriftFail === 0, `${scoreDriftFail}/${realLadder.length} mismatches`);
+const arbitraryScore = scoreRootAt(37, realField);   // a cents value that is NOT one of the field's candidates
+check('scoreRootAt works for an arbitrary (non-candidate) anchor — {score,perDegree} shape',
+  typeof arbitraryScore.score === 'number' && arbitraryScore.score >= 0 && arbitraryScore.score <= 1 && arbitraryScore.perDegree.length === 12);
+check('scoreRootAt on an empty/no-weight field → score 0', scoreRootAt(0, []).score === 0 && scoreRootAt(0, [{ tones: [{ f: '1/1', c: 0 }], weight: 0 }]).score === 0);
+
+// ══ Sky Root handoff, B3 — integration (headless, mock field) ══════════════════════════════════
+console.log('\n── B3: integration ──');
+
+// shouldSwapRoot: the pure swap decision (maybeSwapRoot's stateful wrapper only ever calls this from
+// stepSkyWalk's chord-changed branch — see cosmos-audio.js — so "swap only at a chord boundary" is a
+// structural guarantee, not separately unit-testable here; this exercises the decision itself).
+console.log('\n  shouldSwapRoot (hysteresis + fallback)');
+const mockLadder = top => [{ fraction: '3/2', cents: 702, score: top }, { fraction: '5/4', cents: 386, score: top - 0.3 }];
+check('exactly at the hysteresis threshold → no swap (incumbent keeps its seat on ties)',
+  shouldSwapRoot(mockLadder(0.55), 0.5, 0.10) === null);
+check('just above the hysteresis threshold → swaps to the pending winner',
+  shouldSwapRoot(mockLadder(0.5501), 0.5, 0.10)?.fraction === '3/2');
+check('below the hysteresis threshold → no swap', shouldSwapRoot(mockLadder(0.54), 0.5, 0.10) === null);
+check('custom hysteresis param overrides the default (looser margin swaps more easily)',
+  shouldSwapRoot(mockLadder(0.52), 0.5, 0.02)?.fraction === '3/2' && shouldSwapRoot(mockLadder(0.52), 0.5, ROOT_HYSTERESIS) === null);
+check('zero incumbent score → any positive pending score swaps (nothing to lose by leaving)',
+  shouldSwapRoot(mockLadder(0.01), 0, 0.10)?.fraction === '3/2');
+check('empty ladder → null (fallback to the incumbent, which stays 1/1 if nothing has ever solved)',
+  shouldSwapRoot([], 0.5) === null && shouldSwapRoot(null, 0.5) === null);
+
+// bedDegreesFor under a NON-ZERO anchor: fold a real grid's tones at anchor 386¢ (not the trivial
+// anchor-0 case M3 already covers) and confirm the same mask-silence invariants hold on the re-anchored
+// pool — proving the re-anchor → bedDegreesFor pipeline, not just each half in isolation.
+console.log('\n  bedDegreesFor under non-zero anchors');
+let anchoredSubsetFail = 0, anchoredCoverageFail = 0, anchoredSamples = 0;
+for (const G of testGrids.slice(0, 8)) {
+  const { tones } = workerPathPool(G);
+  const anchoredPool = poolFromTones(tones, 386);   // an arbitrary real (5/4-ish) anchor, not 0
+  for (const chord of TRIADS) {
+    anchoredSamples++;
+    const got = bedDegreesFor(chord.id, anchoredPool);
+    if (!got.every(d => chord.semitones.includes(d))) anchoredSubsetFail++;
+    if (!got.every(d => anchoredPool[d] !== null)) anchoredCoverageFail++;
+  }
+}
+check('bedDegreesFor(chord, pool) ⊆ chord.semitones under a non-zero anchor', anchoredSubsetFail === 0, `${anchoredSubsetFail}/${anchoredSamples}`);
+check('every returned degree has a real pool entry under a non-zero anchor (no substitution)', anchoredCoverageFail === 0, `${anchoredCoverageFail}/${anchoredSamples}`);
+
+// voiceToneChanged: the pure recreate-on-mismatch decision (Sky Root's voice-identity gotcha).
+console.log('\n  voiceToneChanged (voice-identity gotcha, pure decision)');
+const mockPool = new Array(12).fill(null); mockPool[4] = { fraction: '5/4', cents: 386, dev: 3 };
+check('same fraction at that degree → no change (voice keeps sounding)', voiceToneChanged('5/4', mockPool, 4) === false);
+check('different fraction at that degree (root swap remapped it) → changed, recreate', voiceToneChanged('81/64', mockPool, 4) === true);
+check('no slot at that degree → not "changed" (nothing to compare against)', voiceToneChanged('5/4', mockPool, 7) === false);
+check('null pool → not "changed"', voiceToneChanged('5/4', null, 4) === false);
 
 console.log(`\n${PASS ? '✓✓✓ FULL SKY PASSES' : '✗ FULL SKY FAILED'}`);
 process.exit(PASS ? 0 : 1);

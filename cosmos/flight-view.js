@@ -13,9 +13,11 @@ import { rhythmTriples, rhythmDoubles } from './cosmos/mn-core.js';
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks } from './cosmos-audio.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
+// Sky Root handoff (cosmos/SKY_ROOT_HANDOFF_2026-07-22.md): anchor-independent root solve, Feature B.
+import { solveRoots, scoreRootAt, poolFromTones } from './sky-root.js';
 
 const STAR_SCALE = 4, NEAR = 5;
 // ══ FLIGHT / LOD KNOBS ═══════════════════════════════════════════════════════════════════════
@@ -120,6 +122,18 @@ const AUDIBLE_MARGIN = 4;     // hysteresis: a currently-audible star stays audi
                                // bed voices constantly — part of the "flight cuts the bed" fix).
 const distCutoff = z => mapRange(z, FOG_NEAR, FOG_FAR, 8000, 600);   // near→open, far→muffled lowpass (Hz)
 let audibleIds = new Set();   // previous frame's audible-set membership, for the hysteresis above
+
+// Sky Root handoff, Feature B3: camera/gather-side knobs (flight-view owns camera state — root-state
+// knobs ROOT_HYSTERESIS/ROOT_TOP_K live in cosmos-audio.js's SKY KNOBS, same split as AUDIBLE_N above).
+const ROOT_RADIUS = 1400;        // world units — a true-3D-distance gather radius around the camera, NOT
+                                  // the view-depth-sorted audible set (the root must not change on turning
+                                  // your head). Start ≈ hilbert's FOG_NEAR; Avery tunes by ear/eye.
+const SETTLE_SPEED = 5;          // world units/sec below which the camera counts as "stopped"
+const SETTLE_TICKS = 30;         // ticks (universal clock) speed must stay under SETTLE_SPEED before solving
+const ROOT_RESOLVE_MIN_TICKS = 297;   // rate limit: at most one solve this often (coprime with CHORD_TICKS=256)
+let camSpeed = 0;                // this frame's actual world-space translation speed (units/sec) — stepControls sets it
+let settleSinceTick = null;      // tick count when speed first dropped below SETTLE_SPEED, or null (moving)
+let lastRootResolveTick = -Infinity;   // tick of the last proposed solve (rate limit)
 
 // ── number theory (frontier validity + solve cost proxy) ──
 function factorInfo(n) {
@@ -501,7 +515,7 @@ export function ensureFlight(canvas, hudEl) {
   // Module-relative Worker URL: `new Worker(relative)` resolves against the DOCUMENT (index.html at root),
   // which breaks under the full-swallow — resolve against this module so it lands on cosmos/cosmos/. The
   // ?v= busts the hard Web-Worker cache — bump it AND the worker's ../grid-core.js?v= on worker edits.
-  pool = new Pool(new URL('./cosmos/abundance-worker.js?v=3', import.meta.url), poolSize);
+  pool = new Pool(new URL('./cosmos/abundance-worker.js?v=4', import.meta.url), poolSize);
   // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
   placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
   setPlacement(placement);
@@ -605,6 +619,9 @@ function stepControls(dt) {
   if (keys['a']) mv = [mv[0] - r[0] * step, mv[1] - r[1] * step, mv[2] - r[2] * step];
   if (keys['e']) mv = [mv[0] + u[0] * step, mv[1] + u[1] * step, mv[2] + u[2] * step];
   if (keys['q']) mv = [mv[0] - u[0] * step, mv[1] - u[1] * step, mv[2] - u[2] * step];
+  // Sky Root B3: actual world-space translation speed this frame (turning alone doesn't count — the
+  // root gather is position-only, "must not change when the player turns their head").
+  camSpeed = dt > 0 ? Math.hypot(mv[0], mv[1], mv[2]) / dt : 0;
   translateCam(mv);
 }
 
@@ -799,10 +816,12 @@ function drawCockpitPlot() {
 }
 
 // Full Sky readout (M4): the GLOBAL walk's current chord — one sky-wide progression, not a per-star
-// song strip. Shows regardless of whether a star is clicked (the bed plays from cosmos entry).
+// song strip. Shows regardless of whether a star is clicked (the bed plays from cosmos entry). Sky
+// Root B3: Roman numerals are relative to the solved root, so the root fraction sits beside them —
+// "I" beside "1/1" reads as the v1 default; once a swap lands, the root fraction itself changes.
 function drawChordReadout() {
   if (!chordReadoutEl || !lrcDivEl || !lrcDivEl.classList.contains('open')) return;
-  chordReadoutEl.innerHTML = `♪ <b class="cur">${currentSkyChord().symbol}</b>`;
+  chordReadoutEl.innerHTML = `♪ <b>${currentSkyRoot().fraction}</b> <b class="cur">${currentSkyChord().symbol}</b>`;
 }
 
 // ── Full Sky DEBUG OVERLAY (dev-only, ?skyDebug=1) ──────────────────────────────────────────────
@@ -840,11 +859,18 @@ function renderSkyDebug(now) {
   skyDebugLast = now;
   const s = debugSkyState();
   const lines = [];
-  lines.push(`FULL SKY DEBUG   root ${s.rootHz}Hz fixed (v1, no drift)`);
+  lines.push(`FULL SKY DEBUG   root ${s.root.fraction} (${s.root.cents}¢, ${s.root.hz}Hz)${s.rootPending ? '  [solve pending]' : ''}`);
+  const settleState = settleSinceTick === null ? 'moving' : `settled ${(Math.max(0, (currentTicks() - settleSinceTick))).toFixed(0)}/${SETTLE_TICKS} ticks`;
+  lines.push(`  ${settleState}, camSpeed ${camSpeed.toFixed(1)}u/s (settle<${SETTLE_SPEED})`);
+  if (s.rootLadder.length) lines.push(`  ladder (top ${s.rootLadder.length})  ${s.rootLadder.map(r => `${r.fraction}:${r.score.toFixed(2)}`).join('  ')}`);
   lines.push(`chord  ${s.chord.symbol}  degrees [${s.chord.semitones.join(',')}]`);
   lines.push(`trail  ${s.tabu.map(c => c.symbol).join(' → ')}`);
   const covSorted = [...s.coverageByTriad].sort((a, b) => b.coverage - a.coverage);
   lines.push(`coverage (best→worst)  ${covSorted.map(c => `${c.symbol}:${c.coverage.toFixed(2)}`).join('  ')}`);
+  if (s.candidateCosts.length) {   // Sky Root Feature A: why the walk picked what it's about to pick
+    lines.push(`candidates (cost = parsimony + field, best→worst, top 6)`);
+    lines.push('  ' + s.candidateCosts.slice(0, 6).map(c => `${c.symbol}:${c.cost.toFixed(2)}(${c.parsimony}+${c.fieldCost.toFixed(2)})`).join('  '));
+  }
   lines.push(`\naudible ${s.audibleCount} star(s), ${s.stars.reduce((n, st) => n + st.voiced.length, 0)} voice(s) sounding`);
   for (const st of s.stars.sort((a, b) => b.gain - a.gain)) {
     lines.push(`\n#${st.id}  pan${st.pan.toFixed(2)} gain${st.gain.toFixed(2)} oct+${st.octave} lpf${st.cutoff}Hz`);
@@ -928,10 +954,43 @@ function loop() {
   const skyFresh = skyWindow.filter(c => !audibleIds.has(c.z.grid));
   const skyChosen = [...skyKept, ...skyFresh].slice(0, AUDIBLE_N);
   audibleIds = new Set(skyChosen.map(c => c.z.grid));
-  setField(skyChosen.map(({ z, s }) => ({
-    id: z.grid, pool: z.skyPool,
-    pan: clampN((cx - s.x) / cx, -1, 1), gain: distGain(s.z), octave: distOctave(s.z), cutoff: distCutoff(s.z),
-  })));
+
+  // Sky Root handoff B3: settle trigger — solve when camera speed has stayed below SETTLE_SPEED for
+  // SETTLE_TICKS (ticks = the universal clock, read via cosmos-audio's currentTicks so "settled" means
+  // the same thing regardless of tempo), rate-limited to at most one solve per ROOT_RESOLVE_MIN_TICKS.
+  // The gather set is a world-space RADIUS around the camera (rpOf is already camera-relative, so its
+  // length IS true 3D distance) — NOT the view-depth-sorted proj/audible set above, so the root never
+  // changes just because you turned to look somewhere else. Solving here is rare + main-thread-cheap
+  // (a few thousand gainForDev evals) — never done per frame.
+  const ticks = currentTicks();
+  if (camSpeed < SETTLE_SPEED) { if (settleSinceTick === null) settleSinceTick = ticks; }
+  else settleSinceTick = null;
+  const settled = settleSinceTick !== null && (ticks - settleSinceTick) >= SETTLE_TICKS;
+  if (settled && (ticks - lastRootResolveTick) >= ROOT_RESOLVE_MIN_TICKS) {
+    lastRootResolveTick = ticks;
+    const rootField = [];
+    for (const z of cosmos.zones.values()) {
+      if (!z.skyTones || !z.skyTones.length) continue;
+      const rp = rpOf.get(z.grid); if (!rp) continue;
+      const d = Math.hypot(rp[0], rp[1], rp[2]);
+      if (d > ROOT_RADIUS) continue;
+      rootField.push({ tones: z.skyTones, weight: distGain(d) });
+    }
+    const ladder = solveRoots(rootField);
+    const incumbentScore = scoreRootAt(currentSkyRoot().cents, rootField).score;
+    proposeRoot({ ladder, incumbentScore });
+  }
+
+  // Re-anchored playback: each zone lazily caches its re-folded pool at the CURRENT solved root,
+  // invalidated by rootKey (a swap is rare — most frames every chosen zone's cache just hits).
+  const root = currentSkyRoot();
+  setField(skyChosen.map(({ z, s }) => {
+    if (!z.skyPoolAt || z.skyPoolAt.rootKey !== root.rootKey) z.skyPoolAt = { rootKey: root.rootKey, pool: poolFromTones(z.skyTones || [], root.cents) };
+    return {
+      id: z.grid, pool: z.skyPoolAt.pool,
+      pan: clampN((cx - s.x) / cx, -1, 1), gain: distGain(s.z), octave: distOctave(s.z), cutoff: distCutoff(s.z),
+    };
+  }));
   drawCockpitPlot();
   drawChordReadout();
   renderSkyDebug(now);

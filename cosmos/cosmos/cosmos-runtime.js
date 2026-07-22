@@ -26,6 +26,22 @@ function mergeSkyPool(z, pool, toneCount) {
   }
 }
 
+// Sky Root handoff B1: the anchor-independent SUPERSET alongside the folded pool (no tone is ever
+// dropped from contention — a tone that lost its degree slot under the 1/1 anchor may be the winner
+// under a solved root's anchor). Same 0.5¢-bin dedupe as the worker's within-shard fold (grid-core.js's
+// TONE_BIN_CENTS), just applied ACROSS shards too. z._skyToneBins is bookkeeping only (like z._bloom);
+// eviction (zones.delete) drops both fields free.
+const TONE_BIN_CENTS = 0.5;
+function mergeSkyTones(z, tones) {
+  if (!z.skyTones) { z.skyTones = []; z._skyToneBins = new Set(); }
+  for (const t of tones) {
+    const bin = Math.round(t.c / TONE_BIN_CENTS);
+    if (z._skyToneBins.has(bin)) continue;
+    z._skyToneBins.add(bin);
+    z.skyTones.push(t);
+  }
+}
+
 export class Cosmos {
   // solve(grid)->abundance (kept count), cost(grid)->relative solve time, isValid(grid)->bool
   // Two solve modes:
@@ -134,6 +150,7 @@ export class Cosmos {
     if (this.zones.get(z.grid) !== z) return;                 // evicted mid-solve
     z.shardsDone++; z.partial += (r && r.count || 0);
     if (r && r.pool) mergeSkyPool(z, r.pool, r.toneCount);     // Full Sky: piggybacked on the abundance solve
+    if (r && r.tones) mergeSkyTones(z, r.tones);               // Sky Root B1: anchor-independent tone superset
     z.size = Math.max(0.15, Math.log2(z.partial + 1) * 0.5);   // progressive glow as bites land
     if (z.shardsDone >= z.shardsTotal) this._finishZone(z, z.partial);
   }

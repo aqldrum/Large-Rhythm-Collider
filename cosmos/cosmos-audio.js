@@ -7,7 +7,7 @@
 import { normalizeLayers, lcmAll, ratioToCents } from './oracle-core.js';
 import { nearestDegree } from './grid-core.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): the global progression + its one gain law. Pure, no DOM.
-import { TRIADS, START_CHORD_ID, chooseNextChord, pushTabu, chordStepIndex, coverage as skyCoverage, gainForDev } from './sky-walk.js';
+import { TRIADS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, coverage as skyCoverage, gainForDev } from './sky-walk.js';
 
 const ROOT_HZ = 220;             // Phase 0: one root for every voice (per-star root is a later phase)
 const LOOKAHEAD_MS = 25;         // scheduler tick cadence
@@ -33,6 +33,11 @@ const REATTACK_PERIODS = [45, 56, 64, 81, 100];   // ticks; mutually near-coprim
                                   // a polyrhythm, not a synchronized pad — REATTACK_PERIODS[hash(id)%n]
 const REVERB_WET = 0.3;          // shared send level
 const REVERB_SECONDS = 4, REVERB_DECAY = 3;   // procedural impulse: exp-decaying noise burst, no assets
+// Sky Root handoff B3: root-state knobs (ROOT_RADIUS/SETTLE_SPEED/SETTLE_TICKS/ROOT_RESOLVE_MIN_TICKS
+// are camera/gather-side — flight-view.js owns camera state, so they live in ITS knob block).
+const ROOT_HYSTERESIS = 0.10;    // relative margin the pending root must beat the incumbent's CURRENT
+                                 // score by to swap — incumbent keeps its seat on ties (no thrash).
+const ROOT_TOP_K = 8;            // how much of the ranked ladder the debug overlay shows
 
 // One cycle of the rhythm as an ordered list of {t, ratio}: t = onset time as a fraction of the
 // cycle in [0,1); ratio = folded pitch ratio in [1,2) (1/1 = root). Mirrors oracle-core.deriveScale's
@@ -84,6 +89,14 @@ let leadMaskChordId = -1;         // which skyChordId leadMask was computed agai
 // ── Full Sky: the global chord walk (online, stateful — not precomputed) + the ambient bed ──
 let skyChordId = START_CHORD_ID, skyTabu = null, skyStep = -1;   // walk state; skyStep=-1 = not yet observed
 let currentField = [];            // last setField() items — also the input to coverage()
+// Sky Root handoff B3: the solved harmonic frame's anchor. Default/fallback is always 1/1 (v1's fixed
+// root) — flight-view.js proposes a ladder (from a world-space gather, not the audible/proj set) once
+// settled somewhere; the swap is atomic at the NEXT chord boundary, never mid-chord. rootKey is an
+// opaque version counter (not the cents value — floats are a bad cache key) zones use to invalidate
+// their re-folded z.skyPoolAt cache.
+let skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }, rootKeyCounter = 0;
+let pendingRoot = null;            // { ladder, incumbentScore } | null — proposed, consumed at the next chord boundary
+let lastRootLadder = [];           // most recent solve's full ladder, kept for the debug overlay (survives consumption)
 let lastSyncedChordId = null;     // so syncBedDegrees only re-swells CONTINUING voices on an actual change
 let bedStars = new Map();         // id (a star's grid) -> { filter, panner, gainNode, oscMap, octave, pool, reattachStep }
 let bedOscCount = 0;
@@ -102,6 +115,7 @@ export function initAudio() {
   reverbWet = audioCtx.createGain(); reverbWet.gain.value = REVERB_WET;
   bedBus.connect(reverbConv); reverbConv.connect(reverbWet); reverbWet.connect(muteGainNode);
   skyChordId = START_CHORD_ID; skyTabu = pushTabu([], skyChordId, TABU_K); skyStep = -1; lastSyncedChordId = null;
+  skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; pendingRoot = null; lastRootLadder = [];
   bedStars = new Map(); bedOscCount = 0; currentField = [];
   transportStart = audioCtx.currentTime;   // one shared clock starts here; lead swaps ride the same phase
   liveOscs = new Set();
@@ -165,7 +179,7 @@ export function setSpatial(pan, gain, octaveLift) {
 // -> star's StereoPanner -> star's distance GainNode -> bedBus (dry -> master, wet -> shared reverb).
 // The pure scheduling-decision helpers below (hashId/bedDegreesFor/reattachStepFor) are exported
 // alongside the SKY KNOBS so a headless guard can verify the bed's decisions without a real AudioContext.
-export { CHORD_TICKS, TABU_K, LAMBDA_FIELD, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW };
+export { CHORD_TICKS, TABU_K, LAMBDA_FIELD, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_HYSTERESIS, ROOT_TOP_K };
 const currentChordSemitones = () => TRIADS[skyChordId].semitones;
 
 // small deterministic integer hash (Avery: REATTACK_PERIODS[hash(grid) % n] — a plain mod would
@@ -248,7 +262,10 @@ function createVoice(bs, degree, now) {
   osc.connect(env); env.connect(bs.filter);
   osc.start(now);
   bedOscCount++;
-  const v = { osc, env, degree, dev: slot.dev };
+  // Sky Root B3: stamp the voice with its slot's fraction (voice-identity gotcha — voices key by
+  // degree only, and a root swap can re-map the same degree to a DIFFERENT tone; syncBedDegrees
+  // compares this against the current pool to detect that and release+recreate).
+  const v = { osc, env, degree, dev: slot.dev, fraction: slot.fraction };
   bs.oscMap.set(degree, v);
   swellEnvelope(env.gain, BED_PEAK * gainForDev(slot.dev), now);
   return v;
@@ -277,13 +294,33 @@ function releaseVoice(bs, v, now, immediate) {
 // every frame (from setField) so newly-landed pool coverage and newly-audible stars pick up promptly;
 // only re-swells a CONTINUING voice when the chord itself just changed (lastSyncedChordId guard) — a
 // bare pool/field refresh must never re-trigger every voice's envelope every frame.
+// Sky Root B3 voice-identity gotcha, pure decision part: a root swap re-folds a star's pool at the new
+// anchor, and the SAME degree can now map to a DIFFERENT tone (createVoice bakes frequency at birth —
+// it never retunes in place). True when the pool's CURRENT slot for this degree is a real tone whose
+// fraction disagrees with the voice's stamped one. Exported so a headless guard can verify the
+// decision without a live AudioContext.
+export function voiceToneChanged(voiceFraction, pool, degree) {
+  const slot = pool && pool[degree];
+  return !!(slot && slot.fraction !== voiceFraction);
+}
+
+// Reconcile every bed star's voices against the CURRENT chord's 3 degrees ∩ its pool coverage. Called
+// every frame (from setField) so newly-landed pool coverage and newly-audible stars pick up promptly;
+// only re-swells a CONTINUING voice when the chord itself just changed (lastSyncedChordId guard) — a
+// bare pool/field refresh must never re-trigger every voice's envelope every frame. On a tone-changed
+// mismatch, release (normal BED_RELEASE fade) and let the loop's own "no voice at this degree" branch
+// recreate it — the overlapping release+attack IS the crossfade (should sound like weather, not a
+// cut), never an immediate cut.
 function syncBedDegrees(now) {
   const chordChanged = lastSyncedChordId !== skyChordId;
   lastSyncedChordId = skyChordId;
   for (const bs of bedStars.values()) {
     if (!bs.pool) continue;
     const desired = new Set(bedDegreesFor(skyChordId, bs.pool));
-    for (const v of [...bs.oscMap.values()]) if (!desired.has(v.degree)) releaseVoice(bs, v, now, false);
+    for (const v of [...bs.oscMap.values()]) {
+      if (!desired.has(v.degree)) { releaseVoice(bs, v, now, false); continue; }
+      if (voiceToneChanged(v.fraction, bs.pool, v.degree)) releaseVoice(bs, v, now, false);
+    }
     for (const d of desired) {
       const v = bs.oscMap.get(d);
       if (!v) createVoice(bs, d, now);
@@ -318,6 +355,51 @@ function stepSkyWalk(ticks) {
   const audibleStars = currentField.map(it => ({ pool: it.pool, weight: it.gain }));
   const next = chooseNextChord(skyChordId, skyTabu, t => skyCoverage(t, audibleStars), { lambdaField: LAMBDA_FIELD });
   skyChordId = next.id; pushTabu(skyTabu, skyChordId, TABU_K);
+  maybeSwapRoot();   // Sky Root B3: pending → atomic swap, ONLY at a chord boundary (never mid-chord)
+}
+
+// Sky Root B3: flight-view.js proposes a freshly solved ladder + the incumbent's re-scored CURRENT
+// score (both computed against the same world-space gather — see SKY_ROOT_HANDOFF_2026-07-22.md's
+// "gather set ≠ audible set"). Only stashed here; the swap itself waits for the next chord boundary.
+export function proposeRoot(proposal) {
+  pendingRoot = proposal;
+  if (proposal && proposal.ladder) lastRootLadder = proposal.ladder;
+}
+
+// Pure swap decision (no module state) — a headless guard can verify this without a live audio
+// transport: does a pending ladder beat the incumbent's CURRENT score by the RELATIVE margin
+// `hysteresis`? Incumbent keeps its seat on ties, so the frame never thrashes between two near-equal
+// roots. Empty ladder → null (keep the incumbent — the 1/1 default's fallback IS just "never swap").
+export function shouldSwapRoot(ladder, incumbentScore, hysteresis = ROOT_HYSTERESIS) {
+  if (!ladder || !ladder.length) return null;
+  const top = ladder[0];
+  return top.score > incumbentScore * (1 + hysteresis) ? top : null;
+}
+
+// Consume the pending proposal (one-shot — a stale proposal never re-applies). Only ever called from
+// stepSkyWalk's chord-changed branch above — the swap is atomic AT a chord boundary by construction
+// (there is no other call site). Chord id/tabu/step are untouched: the walk doesn't reset, the frame
+// just moved under it.
+function maybeSwapRoot() {
+  if (!pendingRoot) return;
+  const { ladder, incumbentScore } = pendingRoot; pendingRoot = null;
+  const winner = shouldSwapRoot(ladder, incumbentScore);
+  if (winner) { rootKeyCounter++; skyRoot = { fraction: winner.fraction, cents: winner.cents, rootKey: rootKeyCounter }; }
+}
+
+// → { fraction, cents, rootKey } — the sky's current solved root (default/fallback '1/1' @ 0¢).
+// rootKey is an opaque version counter zones use to invalidate their re-folded z.skyPoolAt cache —
+// NOT the cents value (a bad cache key: floats, and a future modulation hop could revisit the same
+// cents exactly). ROOT_HZ(220) · 2^(cents/1200) is the effective root frequency — 1/1 itself never moves.
+export function currentSkyRoot() {
+  return { ...skyRoot };
+}
+
+// Pure read of the universal tick clock — flight-view.js uses this (not audioCtx directly) to track
+// settle-duration/rate-limit the root solve in the SAME tick units CHORD_TICKS/ROOT_RESOLVE_MIN_TICKS
+// use, so a tempo change doesn't skew what "settled" means. 0 before the transport starts.
+export function currentTicks() {
+  return audioCtx && transportStart != null ? absoluteTicks(audioCtx.currentTime) : 0;
 }
 
 // → { symbol, semitones } — the sky's current chord, for the cockpit readout (M4) and lead masking.
@@ -342,11 +424,29 @@ export function debugSkyState() {
       envGain: Math.round(v.env.gain.value * 1000) / 1000, freqHz: Math.round(v.osc.frequency.value),
     })),
   }));
+  // Sky Root handoff Feature A: the SAME ranking chooseNextChord used for its last step, against the
+  // CURRENT live field — what the overlay needs to show *why* the walk is about to move where it's about
+  // to move (parsimony + normalized field cost, not just raw coverage).
+  const candidates = (skyTabu || []).length
+    ? candidateCosts(skyChordId, skyTabu, t => skyCoverage(t, audibleStars), { lambdaField: LAMBDA_FIELD })
+        .map(c => ({ ...c, coverage: Math.round(c.coverage * 1000) / 1000, parsimony: Math.round(c.parsimony * 1000) / 1000,
+          fieldCost: Math.round(c.fieldCost * 1000) / 1000, cost: Math.round(c.cost * 1000) / 1000 }))
+        .sort((a, b) => a.cost - b.cost)
+    : [];
+  // Sky Root B3: the live root (fraction/cents/effective Hz) + the most recent solve's top-ROOT_TOP_K
+  // ladder — replaces the old "root 220Hz fixed (v1, no drift)" overlay line now that it actually moves.
+  const root = { fraction: skyRoot.fraction, cents: Math.round(skyRoot.cents * 10) / 10,
+    hz: Math.round(ROOT_HZ * 2 ** (skyRoot.cents / 1200) * 10) / 10 };
+  const ladderTopK = lastRootLadder.slice(0, ROOT_TOP_K).map(r => ({ fraction: r.fraction, cents: Math.round(r.cents * 10) / 10, score: Math.round(r.score * 1000) / 1000 }));
   return {
-    rootHz: ROOT_HZ,   // v1: fixed, one root for the whole sky — see FULL_SKY_HANDOFF.md "no per-star roots, no drift"
+    rootHz: ROOT_HZ,   // 1/1's fixed fundamental — the root solve only ever picks a RATIO relative to this
+    root,
+    rootLadder: ladderTopK,
+    rootPending: !!pendingRoot,
     chord: { id: skyChordId, symbol: TRIADS[skyChordId].symbol, semitones: currentChordSemitones() },
     tabu: (skyTabu || []).map(id => ({ id, symbol: TRIADS[id].symbol })),
     coverageByTriad: TRIADS.map(t => ({ id: t.id, symbol: t.symbol, coverage: Math.round(skyCoverage(t, audibleStars) * 1000) / 1000 })),
+    candidateCosts: candidates,
     audibleCount: currentField.length,
     stars,
   };
@@ -405,6 +505,7 @@ export function stopAudio() {
   if (audioCtx) { for (const bs of bedStars.values()) teardownBedStar(bs, audioCtx.currentTime); for (const bs of dyingStars) teardownBedStar(bs, audioCtx.currentTime); }
   bedStars = new Map(); dyingStars = []; bedOscCount = 0; currentField = [];
   skyChordId = START_CHORD_ID; skyTabu = null; skyStep = -1; lastSyncedChordId = null;
+  skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; pendingRoot = null; lastRootLadder = [];
   lead = null; schedIdx = 0; schedCycle = 0; transportStart = null;
   leadMask = null; leadMaskChordId = -1;
   if (audioCtx) { try { audioCtx.close(); } catch {} }
