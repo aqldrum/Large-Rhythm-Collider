@@ -13,9 +13,9 @@ import { rhythmTriples, rhythmDoubles } from './cosmos/mn-core.js';
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, setSong, currentChord, stopAudio } from './cosmos-audio.js';
-// Chord Walk (Part B): gives the lead voice a signature chord loop — tints the melody, never gates it.
-import { solveStarSong } from './chord-walk.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio } from './cosmos-audio.js';
+// Full Sky (cosmos/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
+// path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
 
 const STAR_SCALE = 4, NEAR = 5;
 // ══ FLIGHT / LOD KNOBS ═══════════════════════════════════════════════════════════════════════
@@ -110,6 +110,16 @@ const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const mapRange = (v, a, b, c, d) => clampN((v - a) / (b - a), 0, 1) * (d - c) + c;
 const distGain = z => clampN(mapRange(z, FOG_NEAR, FOG_FAR, 1, 0.15), 0.05, 1);   // near→loud, far→quiet
 const distOctave = z => Math.min(2, Math.floor(mapRange(z, FOG_NEAR, FOG_FAR, 0, 2.99)));   // near→0, far→+1/+2
+// Full Sky (cosmos/FULL_SKY_HANDOFF.md): the ambient bed's audible-set selection. AUDIBLE_N here
+// pairs with cosmos-audio.js's own SKY KNOBS block (CHORD_TICKS/TABU_K/LAMBDA_FIELD/etc — audio-side
+// knobs live there; this is the camera/projection-side knob for WHICH zones feed the bed).
+const AUDIBLE_N = 10;         // nearest zones (by view depth) with a non-empty skyPool feed the bed
+const AUDIBLE_MARGIN = 4;     // hysteresis: a currently-audible star stays audible until it falls outside
+                               // AUDIBLE_N+this — without it, a star sitting near the Nth-nearest boundary
+                               // flickers in/out of the field every frame while flying (churns cosmos-audio's
+                               // bed voices constantly — part of the "flight cuts the bed" fix).
+const distCutoff = z => mapRange(z, FOG_NEAR, FOG_FAR, 8000, 600);   // near→open, far→muffled lowpass (Hz)
+let audibleIds = new Set();   // previous frame's audible-set membership, for the hysteresis above
 
 // ── number theory (frontier validity + solve cost proxy) ──
 function factorInfo(n) {
@@ -355,7 +365,7 @@ let hover = null, selected = null;
 // Cosmos-audio cockpit: the lead voice currently sounding (node's own tuning, from cosmos-audio.deriveVoice)
 // + the DOM refs for the collapsible #lrc-div cockpit (Linear Plot + transport strip). `leadVoice.node.grid`
 // is the star whose live screen projection drives spatialization each frame (see the `loop()` proj block).
-let leadVoice = null, leadSong = null, muted = false;
+let leadVoice = null, muted = false;
 let lrcDivEl = null, lrcHeadEl = null, cockpitPlotEl = null, cockpitPlotCtx = null;
 let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, chordReadoutEl = null;
 // Cardinality band filter: only nodes with cardinality in [cardLo, cardHi] render + hit-test (isolate radial
@@ -479,6 +489,10 @@ export function ensureFlight(canvas, hudEl) {
       const rate = +tempoSliderEl.value; setTickRate(rate);
       if (tempoReadoutEl) tempoReadoutEl.textContent = rate + '/s';
     });
+    // Full Sky debug overlay: seeded once from ?skyDebug=1 (so a bookmarked link opens straight into
+    // it); the C key (bindControls, below) is the primary toggle from here on. Seeding this per-session
+    // instead would stomp a manual C-toggle every time you exit/re-enter cosmos.
+    skyDebugOn = new URLSearchParams(location.search).get('skyDebug') === '1';
     bindControls();
   }
   // ── PER-SESSION engine: fresh worker pool + cosmos on every entry; stopFlight() tears both down on exit ──
@@ -487,10 +501,11 @@ export function ensureFlight(canvas, hudEl) {
   // Module-relative Worker URL: `new Worker(relative)` resolves against the DOCUMENT (index.html at root),
   // which breaks under the full-swallow — resolve against this module so it lands on cosmos/cosmos/. The
   // ?v= busts the hard Web-Worker cache — bump it AND the worker's ../grid-core.js?v= on worker edits.
-  pool = new Pool(new URL('./cosmos/abundance-worker.js?v=2', import.meta.url), poolSize);
+  pool = new Pool(new URL('./cosmos/abundance-worker.js?v=3', import.meta.url), poolSize);
   // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
   placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
   setPlacement(placement);
+  if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none';
   if (controlsEl) {
     const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['arrows', 'steer'], ['scroll', 'dolly'],
                   ['click star', 'bloom'], ['click node', 'inspect / apply'], ['right-click', 'collapse'], ['1–0', 'toggle webs']];
@@ -531,7 +546,8 @@ export function stopFlight() {
   bloomed.clear(); bloomCache.clear(); bloomPlanning.clear(); bloomInFlight = 0;
   activeWebs.clear(); webColorN = 0;
   selected = null; hover = null;
-  leadVoice = null; leadSong = null; stopAudio();   // kill the cosmos-audio transport, mirroring the worker teardown
+  leadVoice = null; stopAudio(); audibleIds = new Set();   // kill the cosmos-audio transport, mirroring the worker teardown
+  if (skyDebugEl) skyDebugEl.style.display = 'none';   // dev overlay — hide, don't destroy (cheap to reuse on re-entry)
   if (ctx && cv) { const dpr = window.devicePixelRatio || 1; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H); }
 }
 
@@ -782,16 +798,63 @@ function drawCockpitPlot() {
   cockpitPlotCtx.beginPath(); cockpitPlotCtx.moveTo(ph * w, 0); cockpitPlotCtx.lineTo(ph * w, h); cockpitPlotCtx.stroke();
 }
 
-// Chord Walk readout: current chord symbol + the song's loop as a compact strip, current highlighted,
-// plus the frame's tonality. No song (silent star, or one with no playable triad) → blank, no claim made.
+// Full Sky readout (M4): the GLOBAL walk's current chord — one sky-wide progression, not a per-star
+// song strip. Shows regardless of whether a star is clicked (the bed plays from cosmos entry).
 function drawChordReadout() {
   if (!chordReadoutEl || !lrcDivEl || !lrcDivEl.classList.contains('open')) return;
-  if (!leadSong) { chordReadoutEl.innerHTML = ''; return; }
-  const cur = currentChord();
-  const curCycleIdx = cur ? cur.cycleIndex - leadSong.transient.length : -1;   // -1 while the one-time intro plays
-  const strip = leadSong.cycle.map((c, i) => i === curCycleIdx ? `<b class="cur">${c.symbol}</b>` : c.symbol).join(' · ');
-  const tonality = Math.round(leadSong.frame.strength * 100);
-  chordReadoutEl.innerHTML = `♪ <b>${cur ? cur.symbol : '—'}</b> <span class="strip">${strip}</span> <span class="tonality">${tonality}%</span>`;
+  chordReadoutEl.innerHTML = `♪ <b class="cur">${currentSkyChord().symbol}</b>`;
+}
+
+// ── Full Sky DEBUG OVERLAY (dev-only, ?skyDebug=1) ──────────────────────────────────────────────
+// Live readout for iterating on the progression/root-selection work (Avery, 2026-07-22 listening
+// session): nearby tones (each audible star's FULL degree pool, not just what's voiced), what actually
+// got selected for the bed + its live envelope gain, cents/dev tuning info, and coverage() per
+// candidate triad (to see directly whether the field term is differentiating by location, rather than
+// guessing from the ear). Self-contained DOM (no index.html/style.css changes) — a plain floating panel,
+// built once and updated on a throttle so it doesn't thrash the DOM every rAF frame. Not part of the
+// product UI; see cosmos/FULL_SKY_HANDOFF.md and the state doc for where this might go next (Avery:
+// "maybe it can evolve into a semi-gamified thing users can play with").
+let skyDebugOn = false, skyDebugEl = null, skyDebugLast = 0;
+const SKY_DEBUG_MS = 200;   // DOM update cadence
+
+function ensureSkyDebugPanel() {
+  if (skyDebugEl) return;
+  skyDebugEl = document.createElement('div');
+  skyDebugEl.id = 'sky-debug-panel';
+  skyDebugEl.style.cssText = 'position:fixed;top:12px;right:12px;width:340px;max-height:82vh;overflow-y:auto;' +
+    'background:rgba(8,10,16,.9);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:10px 12px;' +
+    'font:10.5px/1.55 var(--mono,ui-monospace,monospace);color:#cfe3ff;white-space:pre-wrap;z-index:700;pointer-events:none;';
+  // MUST land inside #cosmos-view, not document.body: `body.cosmos-active > *:not(#cosmos-view)` hides
+  // every other top-level child with !important during the full-swallow (style.css) — a body-level
+  // panel silently never shows while flying. #cosmos-view has no transform/filter, so position:fixed
+  // descendants still anchor to the viewport exactly as if they were body-level.
+  const host = document.getElementById('cosmos-view') || document.body;
+  host.appendChild(skyDebugEl);
+}
+
+const fmtDev = d => (d > 0 ? '+' : '') + d.toFixed(1) + '¢';
+function renderSkyDebug(now) {
+  if (!skyDebugOn) return;
+  ensureSkyDebugPanel();
+  if (now - skyDebugLast < SKY_DEBUG_MS) return;
+  skyDebugLast = now;
+  const s = debugSkyState();
+  const lines = [];
+  lines.push(`FULL SKY DEBUG   root ${s.rootHz}Hz fixed (v1, no drift)`);
+  lines.push(`chord  ${s.chord.symbol}  degrees [${s.chord.semitones.join(',')}]`);
+  lines.push(`trail  ${s.tabu.map(c => c.symbol).join(' → ')}`);
+  const covSorted = [...s.coverageByTriad].sort((a, b) => b.coverage - a.coverage);
+  lines.push(`coverage (best→worst)  ${covSorted.map(c => `${c.symbol}:${c.coverage.toFixed(2)}`).join('  ')}`);
+  lines.push(`\naudible ${s.audibleCount} star(s), ${s.stars.reduce((n, st) => n + st.voiced.length, 0)} voice(s) sounding`);
+  for (const st of s.stars.sort((a, b) => b.gain - a.gain)) {
+    lines.push(`\n#${st.id}  pan${st.pan.toFixed(2)} gain${st.gain.toFixed(2)} oct+${st.octave} lpf${st.cutoff}Hz`);
+    const poolLine = st.pool.map((slot, d) => slot ? `${d}:${slot.fraction}${fmtDev(slot.dev)}` : `${d}:-`).join(' ');
+    lines.push(`  pool  ${poolLine}`);
+    if (st.voiced.length) {
+      for (const v of st.voiced) lines.push(`  ▶ deg${v.degree} dev${fmtDev(v.dev)} gainLaw${v.gainLaw} env${v.envGain} ${v.freqHz}Hz`);
+    } else lines.push(`  ▶ (silent — no chord degree covered)`);
+  }
+  skyDebugEl.textContent = lines.join('\n');
 }
 
 function loop() {
@@ -843,15 +906,35 @@ function loop() {
 
   // cosmos-audio: drive the lead voice's spatialization from its star's live projection this frame.
   if (leadVoice) {
-    if (!cosmos.zones.has(leadVoice.node.grid)) { setLead(null); leadVoice = null; setSong(null); leadSong = null; }   // evicted → clear the lead
+    if (!cosmos.zones.has(leadVoice.node.grid)) { setLead(null); leadVoice = null; }   // evicted → clear the lead
     else {
       const lp = proj.get(leadVoice.node.grid);
       if (lp) setSpatial(clampN((cx - lp.s.x) / cx, -1, 1), distGain(lp.s.z), distOctave(lp.s.z));   // screen-right → pan right (Avery: was backwards)
       else setSpatial(0, 0, 0);   // flew out of view (still loaded) → silence via gain 0, don't crash
     }
   }
+  // Full Sky: the ambient bed's audible set — EVERY solved zone with a degree pool is eligible (not
+  // just bloomed/clicked stars, see cosmos/FULL_SKY_HANDOFF.md), nearest AUDIBLE_N by view depth wins.
+  // No lead required — this is the un-gated bed, live from cosmos entry (flight-boot.js's unlock).
+  // Hysteresis (AUDIBLE_MARGIN): pick from the wider N+margin window, but a star already in the field
+  // keeps its seat over that same window — only genuinely falling further behind drops it. Plain
+  // nearest-N-every-frame flickered stars near the boundary in/out constantly while flying, which
+  // cosmos-audio.js heard as the bed cutting out (each flicker = a full voice release/re-attack cycle).
+  const skyCandidates = [];
+  for (const { z, s } of proj.values()) if (z.skyPool) skyCandidates.push({ z, s });
+  skyCandidates.sort((a, b) => a.s.z - b.s.z);
+  const skyWindow = skyCandidates.slice(0, AUDIBLE_N + AUDIBLE_MARGIN);
+  const skyKept = skyWindow.filter(c => audibleIds.has(c.z.grid));
+  const skyFresh = skyWindow.filter(c => !audibleIds.has(c.z.grid));
+  const skyChosen = [...skyKept, ...skyFresh].slice(0, AUDIBLE_N);
+  audibleIds = new Set(skyChosen.map(c => c.z.grid));
+  setField(skyChosen.map(({ z, s }) => ({
+    id: z.grid, pool: z.skyPool,
+    pan: clampN((cx - s.x) / cx, -1, 1), gain: distGain(s.z), octave: distOctave(s.z), cutoff: distCutoff(s.z),
+  })));
   drawCockpitPlot();
   drawChordReadout();
+  renderSkyDebug(now);
 
   // black-hole blots: a screen disk per bloom (from its projected centre) that occludes farther stars behind it
   const blots = [];
@@ -1036,8 +1119,7 @@ function bindControls() {
     } else if (hover && hover.kind === 'node') {
       cosmos.setFocus(hover.grid); selected = hover;   // focus the bloom you're interacting with (the filter targets it)
       leadVoice = { ...deriveVoice(hover.layers), node: hover };   // node click = "make it sound" (stars don't set a lead)
-      setLead(leadVoice); openCockpit();
-      leadSong = solveStarSong(hover.layers); setSong(leadSong);   // null-safe: no song → plain Phase 0 instrument
+      setLead(leadVoice); openCockpit();   // M4: no per-star song solve — the global sky chord tints it (cosmos-audio.js)
     } else {
       selected = null;
     }
@@ -1070,6 +1152,7 @@ function bindControls() {
     if (firstPress && /^[0-9]$/.test(k)) { toggleSlot(k === '0' ? 9 : +k - 1); if (selected) showDetail(selected); }   // 1-9,0 → hide/show web slots
     if (firstPress && k === 'b' && swarm) { if (swarm.agents.length) swarm.clear(); else swarm.spawn(AGENT_COUNT, cam.anchor); }   // B → toggle Collider-Battle ships
     if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)
+    if (firstPress && k === 'c') { skyDebugOn = !skyDebugOn; if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none'; }   // C → toggle the Full Sky debug overlay (dev)
     if (k.startsWith('arrow') || k === ' ') e.preventDefault();   // don't scroll the page
   });
   window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
