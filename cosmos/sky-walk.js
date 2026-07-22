@@ -24,6 +24,12 @@ export const START_CHORD_ID = 0;   // I major — the frame's anchor triad (root
 
 const DEFAULTS = { tabuK: 3, lambdaField: 2.0 };
 export const GAIN_CEILING_CENTS = 45;   // full at 0¢, ~half-power ~20¢, 0 by here — the ONE playability law
+// Sky Root handoff Feature A: floor under the candidate set's raw coverage spread (maxCov-minCov) when
+// normalizing the field term. Without it, a near-flat field (deep dust) would divide by ~0 and blow the
+// field term up to dominate parsimony for no real reason — instead the term fades toward 0 as spread
+// shrinks, and pure voice-leading parsimony (the hexatonic personality) takes back over. See the handoff's
+// "hexatonic lock" proof for why the un-normalized version was field-blind after its first step.
+export const EPS_SPREAD = 0.15;
 
 // Min-over-6-bijections voice-leading cost between two triads' semitone sets — pure circular-semitone
 // parsimony, no JI/beta term (unlike chord-walk's vlCost): on an exact 12TET frame there's no JI
@@ -65,21 +71,47 @@ export function coverage(triad, audibleStars) {
   return wSum > 0 ? num / wSum : 0;
 }
 
-// The online walk step: argmin over non-tabu triads of vlParsimony(current,next) + lambdaField·(1 −
-// fieldCoverage(next)). `tabu` already contains the current chord's id (FIFO, caller-maintained, same
-// convention as chord-walk.js) so this never returns the current chord — the walk always moves.
-// fieldCoverage: (triad) => number in [0,1], typically `next => coverage(next, audibleStars)`.
-// Deterministic tie-break: TRIADS is ascending-id order and strict `<` keeps the first (lowest-id) best.
-export function chooseNextChord(currentId, tabu, fieldCoverage, opts = {}) {
+// Two-pass candidate ranking shared by chooseNextChord (picks the argmin) and candidateCosts (the debug
+// overlay, so it shows exactly the numbers the walk actually used — never a re-derived approximation):
+// 1. Gather the non-tabu candidates with their raw fieldCoverage.
+// 2. Normalize OVER THAT CANDIDATE SET: maxCov/minCov/spread = maxCov−minCov, fieldCost(next) =
+//    λ·(maxCov−cov(next))/max(spread, EPS_SPREAD). When spread ≥ EPS_SPREAD, field costs span the full
+//    [0, λ] — λ literally means "perfect local alignment is worth λ semitones of extra voice-leading
+//    motion." When spread < EPS_SPREAD (deep dust / flat field), the term fades toward 0 and pure
+//    parsimony takes back over (dividing by the real tiny spread instead would blow the term up for no
+//    reason — the opposite of "sparser region → vaguer").
+function rankCandidates(currentId, tabu, fieldCoverage, opts = {}) {
   const lambda = opts.lambdaField ?? DEFAULTS.lambdaField;
   const current = TRIADS[currentId];
+  const raw = [];
+  for (const next of TRIADS) if (!tabu.includes(next.id)) raw.push({ triad: next, coverage: fieldCoverage(next) });
+  let maxCov = -Infinity, minCov = Infinity;
+  for (const r of raw) { if (r.coverage > maxCov) maxCov = r.coverage; if (r.coverage < minCov) minCov = r.coverage; }
+  const denom = Math.max(maxCov - minCov, EPS_SPREAD);
+  return raw.map(({ triad, coverage }) => {
+    const parsimony = vlParsimony(current, triad);
+    const fieldCost = lambda * (maxCov - coverage) / denom;
+    return { id: triad.id, symbol: triad.symbol, coverage, parsimony, fieldCost, cost: parsimony + fieldCost };
+  });
+}
+
+// The online walk step: argmin over non-tabu triads of the ranked cost (vlParsimony + normalized field
+// term). `tabu` already contains the current chord's id (FIFO, caller-maintained, same convention as
+// chord-walk.js) so this never returns the current chord — the walk always moves. fieldCoverage: (triad)
+// => number in [0,1], typically `next => coverage(next, audibleStars)`. Deterministic tie-break: TRIADS
+// (and so `raw`) is ascending-id order and strict `<` keeps the first (lowest-id) best.
+export function chooseNextChord(currentId, tabu, fieldCoverage, opts = {}) {
+  const ranked = rankCandidates(currentId, tabu, fieldCoverage, opts);
   let best = null, bestCost = Infinity;
-  for (const next of TRIADS) {
-    if (tabu.includes(next.id)) continue;
-    const cost = vlParsimony(current, next) + lambda * (1 - fieldCoverage(next));
-    if (cost < bestCost) { bestCost = cost; best = next; }
-  }
-  return best;   // 24 triads, tabuK=3 ⇒ ≤4 excluded — never null in practice
+  for (const r of ranked) if (r.cost < bestCost) { bestCost = r.cost; best = r; }
+  return best ? TRIADS[best.id] : null;   // 24 triads, tabuK=3 ⇒ ≤4 excluded — never null in practice
+}
+
+// Every non-tabu candidate's cost breakdown (id, symbol, raw coverage, parsimony, normalized fieldCost,
+// total cost) — the debug overlay's "why did the walk choose this" readout. Pure, same ranking
+// chooseNextChord uses internally, so the overlay can never show numbers that disagree with the real walk.
+export function candidateCosts(currentId, tabu, fieldCoverage, opts = {}) {
+  return rankCandidates(currentId, tabu, fieldCoverage, opts);
 }
 
 // Push `id` into a FIFO tabu list, capped at `k` (chord-walk.js's exact tabu-shift pattern).
