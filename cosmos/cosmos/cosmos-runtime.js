@@ -14,6 +14,18 @@ import { reparent, stepAttractor, backboneHash, len, sub, absolutePos, scale, sl
 // spins on the clock. SLOT radius grows with grid-distance to the sun (near hug, far orbit wide).
 const PUFF = { omega: 0.25, base: 26, step: 1.6, spanCap: 30, k: 3, damping: 3.4 };
 
+// Full Sky (cosmos/FULL_SKY_HANDOFF.md): fold one shard's 12-slot degree pool into the zone's running
+// pool — per degree keep the min |dev| tone, sum toneCount. Lives on the zone (z.skyPool/z.skyToneCount)
+// like z._bloom, so eviction (zones.delete) drops it for free. A star is audible as soon as its FIRST
+// shard pool lands (progressive, no waiting for the full solve).
+function mergeSkyPool(z, pool, toneCount) {
+  if (!z.skyPool) { z.skyPool = new Array(12).fill(null); z.skyToneCount = new Array(12).fill(0); }
+  for (let d = 0; d < 12; d++) {
+    if (pool[d] && (!z.skyPool[d] || Math.abs(pool[d].dev) < Math.abs(z.skyPool[d].dev))) z.skyPool[d] = pool[d];
+    z.skyToneCount[d] += toneCount[d] || 0;
+  }
+}
+
 export class Cosmos {
   // solve(grid)->abundance (kept count), cost(grid)->relative solve time, isValid(grid)->bool
   // Two solve modes:
@@ -121,6 +133,7 @@ export class Cosmos {
     if (r && r.error) this.events.errors++;
     if (this.zones.get(z.grid) !== z) return;                 // evicted mid-solve
     z.shardsDone++; z.partial += (r && r.count || 0);
+    if (r && r.pool) mergeSkyPool(z, r.pool, r.toneCount);     // Full Sky: piggybacked on the abundance solve
     z.size = Math.max(0.15, Math.log2(z.partial + 1) * 0.5);   // progressive glow as bites land
     if (z.shardsDone >= z.shardsTotal) this._finishZone(z, z.partial);
   }

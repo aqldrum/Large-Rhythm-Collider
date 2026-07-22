@@ -76,6 +76,41 @@ export function gridShardCount(G, A, belowIn) {
   return kept;
 }
 
+// ── Full Sky (cosmos/FULL_SKY_HANDOFF.md) — the degree pool, piggybacked on the abundance solve ──
+// Global frame: degree 0 = 1/1, degrees d ∈ [0,12) at d·100 cents. Snap a tone's cents to its nearest
+// degree (dev = signed cents distance, |dev| ≤ 50 by construction of "nearest").
+export function nearestDegree(cents) {
+  let d = Math.round(cents / 100);
+  const dev = cents - d * 100;
+  d = ((d % 12) + 12) % 12;
+  return { d, dev };
+}
+
+// Fold a deriveScale() ratios[] array into a 12-slot degree pool: pool[d] = the best-tuned (min |dev|)
+// {fraction, cents, dev} at degree d, or null; toneCount[d] = how many tones sit within 45¢ of d (chorus
+// depth). 1/1 always lands at degree 0 dev 0 (it's the ratio=1 tone from the fundamental gap).
+export function poolFromRatios(ratios, pool = new Array(12).fill(null), toneCount = new Array(12).fill(0)) {
+  for (const r of ratios) {
+    const { d, dev } = nearestDegree(r.cents);
+    if (Math.abs(dev) <= 45) toneCount[d]++;
+    if (!pool[d] || Math.abs(dev) < Math.abs(pool[d].dev)) pool[d] = { fraction: r.fraction, cents: r.cents, dev };
+  }
+  return { pool, toneCount };
+}
+
+// Kept count AND the shard's degree pool in ONE pass over shardGroups (no second enumeration): one
+// representative per ratioSet group (they share ratios) folds into the shard-wide pool.
+export function gridShardSolve(G, A, belowIn) {
+  const below = belowIn || divisorsFast(G).filter(d => d >= 2 && d < A);
+  const pool = new Array(12).fill(null), toneCount = new Array(12).fill(0);
+  let count = 0;
+  for (const g of shardGroups(G, A, below)) {
+    count += g.length > 1 ? 2 : 1;
+    poolFromRatios(g[0].ratios, pool, toneCount);
+  }
+  return { count, pool, toneCount };
+}
+
 // The tuning SYSTEMS of one shard — one entry per group — for the near-star bloom. The representative
 // is the EFFICIENT (min layer-sum) instance of the group, matching keep-two's `eff`, so its `key`/
 // `layers` are the codex identity used for charted lookups and the click-to-inspect detail panel.
