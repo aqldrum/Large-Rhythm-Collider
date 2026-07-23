@@ -638,6 +638,13 @@
             <div id="lrc-cockpit-body" class="lrc-cockpit-body">
                 <canvas id="lrc-plot" width="260" height="36"></canvas>
                 <div id="lrc-chord-readout" class="lrc-chord-readout"></div>
+                <label class="lrc-audio-mode-row" for="lrc-audio-mode">
+                    <span>audio</span>
+                    <select id="lrc-audio-mode" aria-label="Cosmos audio mode">
+                        <option value="ambient-chords" selected>Ambient chords</option>
+                        <option value="culled-grid-rows">Culled grid rows · 3D</option>
+                    </select>
+                </label>
                 <div class="lrc-transport">
                     <button id="lrc-mute-btn" title="Mute">🔊</button>
                     <span class="lrc-tempo-cap">ticks/s</span>

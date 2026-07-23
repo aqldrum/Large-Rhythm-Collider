@@ -13,7 +13,9 @@ import { rhythmTriples, rhythmDoubles } from './cosmos/mn-core.js';
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, setAudioMode, currentAudioMode, setGridSpatialField, setGridListenerPose } from './cosmos-audio.js';
+import { AUDIO_MODES, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
+import { ProgramWorkerPool } from './program-worker-pool.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
 // Sky Root handoff (cosmos/SKY_ROOT_HANDOFF_2026-07-22.md): anchor-independent root solve, Feature B.
@@ -122,6 +124,18 @@ const AUDIBLE_MARGIN = 4;     // hysteresis: a currently-audible star stays audi
                                // bed voices constantly — part of the "flight cuts the bed" fix).
 const distCutoff = z => mapRange(z, FOG_NEAR, FOG_FAR, 8000, 600);   // near→open, far→muffled lowpass (Hz)
 let audibleIds = new Set();   // previous frame's audible-set membership, for the hysteresis above
+
+// Cull2 grid-row mode: true-3D, head-turn-independent movement field. Only this nearest prewarm set
+// is allowed to touch the dedicated audio compiler; the thousands of other loaded zones remain pure
+// visual/number-theory state. The consonance window is intentionally one constant ready for a UI knob.
+const ROW_COMPILE_WORKERS = 1;
+const rowDistanceGain = d => clampN(mapRange(d, 0, ROW_RADIUS, 0.9, 0.06), 0.04, 0.9);
+const rowDistanceCutoff = d => mapRange(d, 0, ROW_RADIUS, 9000, 900);
+let rowActiveIds = new Set();
+let rowPrewarmIds = new Set();
+let rowCompiler = null;
+let rowGeneration = 0;
+let rowSelectionKey = '';
 
 // Sky Root handoff, Feature B3: camera/gather-side knobs (flight-view owns camera state — root-state
 // knobs ROOT_HYSTERESIS/ROOT_TOP_K live in cosmos-audio.js's SKY KNOBS, same split as AUDIBLE_N above).
@@ -381,7 +395,7 @@ let hover = null, selected = null;
 // is the star whose live screen projection drives spatialization each frame (see the `loop()` proj block).
 let leadVoice = null, muted = false;
 let lrcDivEl = null, lrcHeadEl = null, cockpitPlotEl = null, cockpitPlotCtx = null;
-let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, chordReadoutEl = null;
+let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, chordReadoutEl = null, audioModeEl = null;
 // Cardinality band filter: only nodes with cardinality in [cardLo, cardHi] render + hit-test (isolate radial
 // shells; makes monster clouds parseable). Elements + a change-guard so the DOM is only touched when needed.
 // The band targets ONLY the currently-focused bloom (cosmos.focusGrid); other blooms render in full. filterGrid
@@ -490,6 +504,7 @@ export function ensureFlight(canvas, hudEl) {
     muteBtnEl = document.getElementById('lrc-mute-btn');
     tempoSliderEl = document.getElementById('lrc-tempo-slider'); tempoReadoutEl = document.getElementById('lrc-tempo-readout');
     chordReadoutEl = document.getElementById('lrc-chord-readout');
+    audioModeEl = document.getElementById('lrc-audio-mode');
     if (lrcHeadEl) {
       let clickTimer = null;   // debounce: a dblclick fires two clicks — let the pending single-click resolve
       lrcHeadEl.addEventListener('click', () => {                 // toggles cockpit; ignored while a dblclick is landing
@@ -503,6 +518,7 @@ export function ensureFlight(canvas, hudEl) {
       const rate = +tempoSliderEl.value; setTickRate(rate);
       if (tempoReadoutEl) tempoReadoutEl.textContent = rate + '/s';
     });
+    if (audioModeEl) audioModeEl.addEventListener('change', () => changeAudioMode(audioModeEl.value));
     // Full Sky debug overlay: seeded once from ?skyDebug=1 (so a bookmarked link opens straight into
     // it); the C key (bindControls, below) is the primary toggle from here on. Seeding this per-session
     // instead would stomp a manual C-toggle every time you exit/re-enter cosmos.
@@ -516,6 +532,10 @@ export function ensureFlight(canvas, hudEl) {
   // which breaks under the full-swallow — resolve against this module so it lands on cosmos/cosmos/. The
   // ?v= busts the hard Web-Worker cache — bump it AND the worker's ../grid-core.js?v= on worker edits.
   pool = new Pool(new URL('./cosmos/abundance-worker.js?v=5', import.meta.url), poolSize);
+  rowCompiler = new ProgramWorkerPool(new URL('./cosmos/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
+  rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
+  if (audioModeEl) audioModeEl.value = AUDIO_MODES.AMBIENT_CHORDS;
+  changeAudioMode(AUDIO_MODES.AMBIENT_CHORDS);
   // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
   placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
   setPlacement(placement);
@@ -556,11 +576,12 @@ export function stopFlight() {
   if (!started && !pool) return;
   started = false;
   if (pool) { for (const w of pool.all()) w.terminate(); pool = null; }   // kill the whole pool — no lingering solve
+  if (rowCompiler) { rowCompiler.terminate(); rowCompiler = null; }
   cosmos = null;
   bloomed.clear(); bloomCache.clear(); bloomPlanning.clear(); bloomInFlight = 0;
   activeWebs.clear(); webColorN = 0;
   selected = null; hover = null;
-  leadVoice = null; stopAudio(); audibleIds = new Set();   // kill the cosmos-audio transport, mirroring the worker teardown
+  leadVoice = null; stopAudio(); audibleIds = new Set(); rowActiveIds = new Set(); rowPrewarmIds = new Set();   // kill the cosmos-audio transport, mirroring the worker teardown
   if (skyDebugEl) skyDebugEl.style.display = 'none';   // dev overlay — hide, don't destroy (cheap to reuse on re-entry)
   if (ctx && cv) { const dpr = window.devicePixelRatio || 1; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H); }
 }
@@ -697,7 +718,7 @@ function applyToEngine(node) {
 function overrideSolve(g) {
   if (!cosmos) return;
   cosmos.forceSolve(g);                                  // runtime re-plans with force → real abundance
-  const z = cosmos.zones.get(g); if (z) delete z._bloom; // fresh grow
+  const z = cosmos.zones.get(g); if (z) { delete z._bloom; delete z._rowAudio; } // fresh solve/program generation
   bloomed.add(g); cosmos.setFocus(g); ensureFocusBloom(z);
   selected = { kind: 'star', grid: g }; showDetail(selected);
 }
@@ -791,6 +812,106 @@ function showDetail(sel) {
 
 function openCockpit() { if (lrcDivEl) lrcDivEl.classList.add('open'); }
 
+function changeAudioMode(mode) {
+  const next = setAudioMode(mode);
+  if (audioModeEl && audioModeEl.value !== next) audioModeEl.value = next;
+  rowGeneration++;
+  rowSelectionKey = '';
+  rowActiveIds = new Set();
+  rowPrewarmIds = new Set();
+  rowCompiler?.cancelQueuedExcept(new Set());
+  if (next === AUDIO_MODES.AMBIENT_CHORDS) setGridSpatialField([]);
+}
+
+function requestRowProgram(candidate, root, chord, selectionKey, validRequestKeys) {
+  const { z, distance } = candidate;
+  if (!rowCompiler) return;
+  if (!z._rowAudio) z._rowAudio = { program: null, programSelectionKey: '', requestKey: '', state: 'ownership-ready', compileMs: 0 };
+  const state = z._rowAudio;
+  if (state.programSelectionKey === selectionKey) return;
+  const requestKey = `${rowGeneration}:${z.grid}:${selectionKey}`;
+  validRequestKeys.add(requestKey);
+  if (state.requestKey === requestKey && state.state === 'program-compiling') return;
+  state.requestKey = requestKey;
+  state.state = 'program-compiling';
+  const selectedFractions = selectedOwnerFractions(z.ratioOwners, root.cents, chord.semitones, ROW_CONSONANCE_CENTS);
+  const zoneIdentity = z;
+  rowCompiler.request({
+    grid: z.grid,
+    ratioOwners: z.ratioOwners,
+    abundance: z.abundance,
+    selectedFractions,
+    selectionKey,
+    generation: rowGeneration,
+    reflect: true,
+    repeatCull: true,
+  }, { key: requestKey, priority: distance }).then(reply => {
+    if (reply.cancelled) {
+      if (zoneIdentity._rowAudio?.requestKey === requestKey) {
+        zoneIdentity._rowAudio.requestKey = '';
+        zoneIdentity._rowAudio.state = zoneIdentity._rowAudio.program ? 'program-ready' : 'ownership-ready';
+      }
+      return;
+    }
+    // Every mutable boundary is checked: session, eviction/recreation identity, mode, harmonic
+    // generation, and superseding request. A late worker reply can never enter live playback.
+    if (!started || !cosmos || cosmos.zones.get(z.grid) !== zoneIdentity || currentAudioMode() !== AUDIO_MODES.CULLED_GRID_ROWS ||
+        rowGeneration !== reply.result.generation || rowSelectionKey !== reply.result.selectionKey || zoneIdentity._rowAudio?.requestKey !== requestKey) return;
+    zoneIdentity._rowAudio.program = reply.result;
+    zoneIdentity._rowAudio.programSelectionKey = selectionKey;
+    zoneIdentity._rowAudio.requestKey = '';
+    zoneIdentity._rowAudio.state = 'program-ready';
+    zoneIdentity._rowAudio.compileMs = reply.compileMs;
+  }).catch(error => {
+    if (zoneIdentity._rowAudio?.requestKey !== requestKey) return;
+    zoneIdentity._rowAudio.requestKey = '';
+    zoneIdentity._rowAudio.state = zoneIdentity._rowAudio.program ? 'program-ready' : 'compile-error';
+    zoneIdentity._rowAudio.error = error.message;
+  });
+}
+
+function updateGridRowField(placed, basis) {
+  if (currentAudioMode() !== AUDIO_MODES.CULLED_GRID_ROWS) {
+    rowActiveIds = new Set(); rowPrewarmIds = new Set();
+    rowCompiler?.cancelQueuedExcept(new Set());
+    setGridSpatialField([]);
+    return;
+  }
+  setGridListenerPose(basis.d, basis.u);
+  const root = currentSkyRoot(), chord = currentSkyChord();
+  const selectionKey = harmonicSelectionKey(root.rootKey, chord.id, ROW_CONSONANCE_CENTS);
+  if (selectionKey !== rowSelectionKey) {
+    rowSelectionKey = selectionKey;
+    rowGeneration++;
+    rowCompiler?.cancelQueuedExcept(new Set());
+  }
+  const candidates = [];
+  for (const [grid, position] of placed) {
+    const z = cosmos.zones.get(grid);
+    if (!audioCompileEligibility(z).eligible) continue;
+    const distance = Math.hypot(position[0], position[1], position[2]);
+    candidates.push({ id: grid, z, position, distance, ready: !!z._rowAudio?.program });
+  }
+  let selection = chooseSpatialRows(candidates, rowActiveIds);
+  rowPrewarmIds = new Set(selection.prewarm.map(candidate => candidate.id));
+  const validRequestKeys = new Set();
+  for (const candidate of selection.prewarm) requestRowProgram(candidate, root, chord, selectionKey, validRequestKeys);
+  rowCompiler?.cancelQueuedExcept(validRequestKeys);
+
+  // A completed older program stays active while its current-chord replacement compiles. This is
+  // what keeps flight and chord changes from punching holes in the scheduler.
+  for (const candidate of candidates) candidate.ready = !!candidate.z._rowAudio?.program;
+  selection = chooseSpatialRows(candidates, rowActiveIds);
+  rowActiveIds = new Set(selection.active.map(candidate => candidate.id));
+  setGridSpatialField(selection.active.map(candidate => ({
+    id: candidate.id,
+    program: candidate.z._rowAudio.program,
+    position: candidate.position,
+    gain: rowDistanceGain(candidate.distance),
+    cutoff: rowDistanceCutoff(candidate.distance),
+  })));
+}
+
 // Master mute only — the transport keeps ticking (playhead keeps sweeping, notes keep scheduling) so
 // unmuting resumes in sync rather than restarting the cycle. Shared by the cockpit button and the M key.
 function toggleMute() {
@@ -859,16 +980,22 @@ function renderSkyDebug(now) {
   skyDebugLast = now;
   const s = debugSkyState();
   const lines = [];
-  lines.push(`FULL SKY DEBUG   root ${s.root.fraction} (${s.root.cents}¢, ${s.root.hz}Hz)${s.rootPending ? '  [solve pending]' : ''}`);
+  lines.push(`FULL SKY DEBUG   mode ${s.audioMode}   root ${s.root.fraction} (${s.root.cents}¢, ${s.root.hz}Hz)${s.rootPending ? '  [solve pending]' : ''}`);
   const settleState = settleSinceTick === null ? 'moving' : `settled ${(Math.max(0, (currentTicks() - settleSinceTick))).toFixed(0)}/${SETTLE_TICKS} ticks`;
   lines.push(`  ${settleState}, camSpeed ${camSpeed.toFixed(1)}u/s (settle<${SETTLE_SPEED})`);
   if (s.rootLadder.length) lines.push(`  ladder (top ${s.rootLadder.length})  ${s.rootLadder.map(r => `${r.fraction}:${r.score.toFixed(2)}`).join('  ')}`);
   lines.push(`chord  ${s.chord.symbol}  degrees [${s.chord.semitones.join(',')}]`);
   lines.push(`trail  ${s.tabu.map(c => c.symbol).join(' → ')}`);
+  if (s.gridRows) {
+    const compiler = rowCompiler?.snapshot() || { queued: 0, compiling: 0, completed: 0, cancelled: 0, errors: 0 };
+    lines.push(`rows   ${s.gridRows.activeStars}/${ROW_ACTIVE_STARS} active · ${rowPrewarmIds.size}/${ROW_PREWARM_STARS} warm · ${s.gridRows.voices}/${s.gridRows.budget} voices · ${s.gridRows.budgetMisses} misses`);
+    lines.push(`worker q${compiler.queued} c${compiler.compiling} done${compiler.completed} cancel${compiler.cancelled} err${compiler.errors} last${compiler.lastCompileMs?.toFixed?.(1) || 0}ms`);
+    for (const star of s.gridRows.stars) lines.push(`  #${star.id} ${star.events} ticks · ${star.selectedRatios} ratios · ${star.voices} voices${star.pendingKey ? ' [swap pending]' : ''}`);
+  }
   const fmtRatioCounts = ratios => ratios.length
     ? ratios.map(r => `${r.fraction}${r.count > 1 ? `×${r.count}` : ''}`).join(' ')
     : '—';
-  lines.push(`\nSELECTED RATIO TONES  (audible-star pools; ON = live bed voices)`);
+  lines.push(`\nSELECTED RATIO TONES  (${s.audioMode === AUDIO_MODES.CULLED_GRID_ROWS ? 'active grid-star programs; ON = live A–D voices' : 'audible-star pools; ON = live bed voices'})`);
   lines.push(`deg  chord  selected                         ON`);
   for (const row of s.selectedRatioTones) {
     const head = `${String(row.degree).padStart(2)}     ${row.inChord ? '●' : '·'}    `;
@@ -934,9 +1061,10 @@ function loop() {
   const deforming = placement === 'hilbert' && bubbles.length > 0;   // cube-only local deformation
 
   // project all zones once (deforming out of bloom bubbles); keep the world-relative rp for bloom offsets
-  const proj = new Map();
+  const proj = new Map(), placed = new Map();
   for (const z of cosmos.zones.values()) {
     const rp = deforming ? deform(rpOf.get(z.grid), z.grid, bubbles) : rpOf.get(z.grid);
+    placed.set(z.grid, rp);
     const s = toScreen(rp, basis);
     if (s) proj.set(z.grid, { z, s, rp });
   }
@@ -1002,6 +1130,7 @@ function loop() {
       pan: clampN((cx - s.x) / cx, -1, 1), gain: distGain(s.z), octave: distOctave(s.z), cutoff: distCutoff(s.z),
     };
   }));
+  updateGridRowField(placed, basis);
   drawCockpitPlot();
   drawChordReadout();
   renderSkyDebug(now);

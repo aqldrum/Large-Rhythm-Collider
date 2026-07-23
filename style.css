@@ -3648,6 +3648,9 @@ body.cosmos-active #cosmos-view {
 .lrc-chord-readout .cur { color: var(--known); }
 .lrc-chord-readout .strip { margin: 0 6px; color: var(--hud-text-muted); }
 .lrc-chord-readout .tonality { color: var(--hud-text-muted); }
+.lrc-audio-mode-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font: 10px var(--sans); color: var(--dim); text-transform: uppercase; letter-spacing: .5px; }
+.lrc-audio-mode-row select { min-width: 0; flex: 1; padding: 3px 5px; border: 1px solid var(--hud-border); border-radius: 4px; background: rgba(8,10,16,.88); color: var(--hud-text); font: 10px var(--sans); text-transform: none; letter-spacing: 0; }
+.lrc-audio-mode-row select:focus { outline: 1px solid var(--hud-accent); border-color: var(--hud-accent); }
 .lrc-transport { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-family: var(--sans); font-size: 10px; color: var(--dim); }
 .lrc-transport #lrc-mute-btn { flex: 0 0 auto; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; padding: 0; font-size: 11px; line-height: 1; background: transparent; border: 1px solid var(--hud-border); border-radius: 4px; color: var(--hud-text); cursor: pointer; transition: all var(--transition-speed); }
 .lrc-transport #lrc-mute-btn:hover { border-color: var(--hud-accent); }

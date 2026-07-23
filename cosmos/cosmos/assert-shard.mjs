@@ -133,6 +133,7 @@ const gatedZone = gated.zones.get(gatedGrid);
 check('monster plan emits no ratio owners or shard work before Solve anyway',
   gatedZone?.monster === true && gatedZone.ratioOwners == null && shardBeforeForce === 0);
 gated.forceSolve(gatedGrid);
+const forcedGeneration = gatedZone.solveGeneration;
 for (let t = 0; t < 500; t++) {
   gated.tick(1 / 60); await flush();
   if (gatedZone.state === 'solved' && !gatedZone.monster) break;
@@ -140,6 +141,8 @@ for (let t = 0; t < 500; t++) {
 check('forceSolve clears the gate and finalizes ratio owners through normal shards',
   gatedZone.state === 'solved' && gatedZone.force === true && gatedZone.ratioOwners?.length > 0 && gatedZone.shardsDone === gatedZone.shardsTotal,
   `${gatedZone.ratioOwners?.length || 0} ratio owners`);
+check('forceSolve advances the zone generation used to reject stale shard/audio work', forcedGeneration > 0 && gatedZone.solveGeneration === forcedGeneration,
+  `generation ${forcedGeneration}`);
 
 console.log(`\n${PASS ? '✓✓✓ DISTRIBUTED SOLVE PASSES — sharded, progressive, non-blocking, exact' : '✗ DISTRIBUTED SOLVE FAILED'}`);
 process.exit(PASS ? 0 : 1);

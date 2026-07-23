@@ -87,7 +87,7 @@ export class Cosmos {
   _makeZone(grid) {
     // provisional: self-parented at its own spine point with a tiny deterministic scatter
     const h = backboneHash(grid), hl = len(h) || 1;
-    return { grid, state: 'pending', abundance: 0, size: 0, slotDir: slotDirection(grid),
+    return { grid, state: 'pending', abundance: 0, size: 0, solveGeneration: 0, slotDir: slotDirection(grid),
              parentGrid: grid, off: scale(h, 0.02 / hl), vel: [0, 0, 0], bornAt: this.clock };
   }
 
@@ -133,20 +133,21 @@ export class Cosmos {
                       || a.z.grid - b.z.grid);
     for (const w of items) {
       if (this.inFlightSet.size >= this.poolSize) break;
-      const z = w.z, tid = ++this._tid; this.inFlightSet.add(tid);
+      const z = w.z, tid = ++this._tid, generation = z.solveGeneration; this.inFlightSet.add(tid);
       if (w.op === 'plan') {
         z.state = 'planning';
-        this.dispatch({ op: 'plan', grid: z.grid, force: z.force }).then(r => this._onPlan(z, r, tid)).catch(() => this._failTask(z, tid));
+        this.dispatch({ op: 'plan', grid: z.grid, force: z.force }).then(r => this._onPlan(z, r, tid, generation)).catch(() => this._failTask(z, tid, generation));
       } else {
         z.dispatchIdx++;
-        this.dispatch({ op: 'shard', grid: z.grid, A: w.A }).then(r => this._onShard(z, r, tid)).catch(() => this._onShard(z, { count: 0 }, tid));
+        this.dispatch({ op: 'shard', grid: z.grid, A: w.A }).then(r => this._onShard(z, r, tid, generation)).catch(() => this._onShard(z, { count: 0 }, tid, generation));
       }
     }
   }
 
-  _onPlan(z, r, tid) {
+  _onPlan(z, r, tid, generation = z.solveGeneration) {
     this.inFlightSet.delete(tid); this.events.plans++;
     if (this.zones.get(z.grid) !== z) return;                 // evicted while planning
+    if (z.solveGeneration !== generation) return;             // superseded force solve / generation
     if (r && r.monster) { z.monster = true; z.divisors = r.divisors; z.cost = r.cost; this._finishMonster(z); return; }   // combinatorial black hole — identified, not auto-solved (override forces it)
     if (!r || r.error || !r.shards) { if (r && r.error) this.events.errors++; z.unsolvable = true; if (r) z.divisors = r.divisors; this._finishZone(z, 1); return; }
     if (r.tooLarge) { z.unsolvable = true; z.divisors = r.divisors; this._finishZone(z, 1); return; }   // beyond MAX_SHARDS/MAXLAYER_CAP → faint frontier dust, not truly solved (abundance 1 is a fallback, not a real count)
@@ -154,10 +155,11 @@ export class Cosmos {
     if (z.shardsTotal === 0) this._finishZone(z, 0); else z.state = 'solving';
   }
 
-  _onShard(z, r, tid) {
+  _onShard(z, r, tid, generation = z.solveGeneration) {
     this.inFlightSet.delete(tid); this.events.shards++;
     if (r && r.error) this.events.errors++;
     if (this.zones.get(z.grid) !== z) return;                 // evicted mid-solve
+    if (z.solveGeneration !== generation) return;             // superseded force solve / generation
     z.shardsDone++; z.partial += (r && r.count || 0);
     if (r && r.pool) mergeSkyPool(z, r.pool, r.toneCount);     // Full Sky: piggybacked on the abundance solve
     if (r && r.tones) mergeSkyTones(z, r.tones);               // Sky Root B1: anchor-independent tone superset
@@ -173,7 +175,10 @@ export class Cosmos {
     this.events.solves.push({ grid: z.grid, doneAt: this.clock });
   }
 
-  _failTask(z, tid) { this.inFlightSet.delete(tid); if (this.zones.get(z.grid) === z) this._finishZone(z, 1); }
+  _failTask(z, tid, generation = z.solveGeneration) {
+    this.inFlightSet.delete(tid);
+    if (this.zones.get(z.grid) === z && z.solveGeneration === generation) this._finishZone(z, 1);
+  }
 
   // A monster is pre-identified (cost proxy over the worker's MONSTER_COST) and NOT solved — it just renders big
   // so the eye finds it, while workers keep flowing the cheap field. abundance is unknown until forceSolve().
@@ -187,6 +192,7 @@ export class Cosmos {
   // the cost gate (worker sees {force:true}) and it flows through the normal shard-solve path.
   forceSolve(grid) {
     const z = this.zones.get(grid); if (!z) return;
+    z.solveGeneration = (z.solveGeneration || 0) + 1;
     z.monster = false; z.unsolvable = false; z.force = true;
     z.state = 'pending'; z.abundance = 0; z.size = 0;
     z.plan = undefined; z.shardsTotal = 0; z.dispatchIdx = 0; z.shardsDone = 0; z.partial = 0;

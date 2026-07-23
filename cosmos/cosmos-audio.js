@@ -8,6 +8,8 @@ import { normalizeLayers, lcmAll, ratioToCents } from './oracle-core.js';
 import { nearestDegree } from './grid-core.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): the global progression + its one gain law. Pure, no DOM.
 import { TRIADS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, coverage as skyCoverage, gainForDev } from './sky-walk.js';
+import { AUDIO_MODES } from './cosmos-grid-audio-core.js';
+import { SpatialGridRowPlayer } from './spatial-grid-row-player.js';
 
 const ROOT_HZ = 220;             // Phase 0: one root for every voice (per-star root is a later phase)
 const LOOKAHEAD_MS = 25;         // scheduler tick cadence
@@ -62,9 +64,11 @@ export function deriveVoice(rawLayers) {
 }
 
 // ── audio graph: osc -> per-note envelope -> shared panner -> shared distance-gain -> shared mute-gain -> out ──
-let audioCtx = null, pannerNode = null, distGainNode = null, muteGainNode = null;
+let audioCtx = null, pannerNode = null, distGainNode = null, muteGainNode = null, ambientModeGain = null;
 let liveOscs = null;              // Set of live OscillatorNodes (capacity-capped)
 let schedulerTimer = null;
+let audioMode = AUDIO_MODES.AMBIENT_CHORDS;
+let gridRowPlayer = null;
 
 // ── shared transport ── universal clock = a fixed TICK RATE (ticks/sec), not a fixed cycle duration.
 // A "tick" is one ONSET of whichever star is currently the lead (lead.notes.length ticks = one full
@@ -108,12 +112,15 @@ export function initAudio() {
   pannerNode = audioCtx.createStereoPanner();
   distGainNode = audioCtx.createGain(); distGainNode.gain.value = 0;
   muteGainNode = audioCtx.createGain(); muteGainNode.gain.value = 1;
-  pannerNode.connect(distGainNode); distGainNode.connect(muteGainNode); muteGainNode.connect(audioCtx.destination);
+  ambientModeGain = audioCtx.createGain(); ambientModeGain.gain.value = 1;
+  pannerNode.connect(distGainNode); distGainNode.connect(ambientModeGain); ambientModeGain.connect(muteGainNode); muteGainNode.connect(audioCtx.destination);
   // Full Sky bed bus: dry sum -> master, plus a shared send through a procedural reverb (no assets).
-  bedBus = audioCtx.createGain(); bedBus.gain.value = 1; bedBus.connect(muteGainNode);
+  bedBus = audioCtx.createGain(); bedBus.gain.value = 1; bedBus.connect(ambientModeGain);
   reverbConv = audioCtx.createConvolver(); reverbConv.buffer = makeImpulse(audioCtx);
   reverbWet = audioCtx.createGain(); reverbWet.gain.value = REVERB_WET;
-  bedBus.connect(reverbConv); reverbConv.connect(reverbWet); reverbWet.connect(muteGainNode);
+  bedBus.connect(reverbConv); reverbConv.connect(reverbWet); reverbWet.connect(ambientModeGain);
+  gridRowPlayer = new SpatialGridRowPlayer(audioCtx, muteGainNode);
+  audioMode = AUDIO_MODES.AMBIENT_CHORDS;
   skyChordId = START_CHORD_ID; skyTabu = pushTabu([], skyChordId, TABU_K); skyStep = -1; lastSyncedChordId = null;
   skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; pendingRoot = null; lastRootLadder = [];
   bedStars = new Map(); bedOscCount = 0; currentField = [];
@@ -123,6 +130,34 @@ export function initAudio() {
   schedulerTimer = setInterval(schedulerTick, LOOKAHEAD_MS);
   // No click gating (Avery, planning session): the bed is audible from here — cosmos entry + unlock —
   // with zero stars clicked, as soon as flight-view starts feeding it setField() each frame.
+}
+
+export function currentAudioMode() { return audioMode; }
+
+export function setAudioMode(mode) {
+  const next = Object.values(AUDIO_MODES).includes(mode) ? mode : AUDIO_MODES.AMBIENT_CHORDS;
+  audioMode = next;
+  if (!audioCtx) return audioMode;
+  const now = audioCtx.currentTime;
+  const ambient = next === AUDIO_MODES.AMBIENT_CHORDS;
+  ambientModeGain.gain.cancelScheduledValues(now);
+  ambientModeGain.gain.setValueAtTime(Math.max(0, ambientModeGain.gain.value), now);
+  ambientModeGain.gain.linearRampToValueAtTime(ambient ? 1 : 0, now + 0.35);
+  gridRowPlayer?.setEnabled(!ambient);
+  if (!ambient) {
+    for (const [id, bs] of bedStars) { bedStars.delete(id); dropBedStar(bs, now); }
+  }
+  return audioMode;
+}
+
+export function setGridSpatialField(items) {
+  if (!audioCtx || !gridRowPlayer) return;
+  gridRowPlayer.setField(items || [], currentTicks());
+}
+
+export function setGridListenerPose(forward, up) {
+  if (!audioCtx || !gridRowPlayer) return;
+  gridRowPlayer.setListenerPose(forward, up);
 }
 
 // Procedurally generated impulse response for the bed's shared reverb send: an exponentially decaying
@@ -235,6 +270,39 @@ export function selectedRatioToneRows(chordId, stars) {
       const ac = ratios.get(a.fraction)?.cents, bc = ratios.get(b.fraction)?.cents;
       return (ac ?? Infinity) - (bc ?? Infinity) || a.fraction.localeCompare(b.fraction);
     }),
+  }));
+}
+
+// Culled-grid counterpart to selectedRatioToneRows. Each active star contributes the folded ratios
+// selected into ITS immutable worker-built program; ON is counted from that star's live canonical
+// A–D voices. Degrees are measured in the current solved-root frame, matching the compiler mask.
+export function selectedGridRatioToneRows(chordId, rootCents, stars) {
+  const chordDegrees = new Set(TRIADS[chordId]?.semitones || []);
+  const selected = Array.from({ length: 12 }, () => new Map());
+  const sounding = Array.from({ length: 12 }, () => new Map());
+  const bump = (map, fraction, extra = {}) => {
+    const row = map.get(fraction);
+    if (row) row.count++;
+    else map.set(fraction, { fraction, count: 1, ...extra });
+  };
+  for (const star of stars || []) {
+    const tones = new Map();
+    for (const tone of star.selectedTones || []) {
+      const { d, dev } = nearestDegree(tone.cents, rootCents);
+      tones.set(tone.fraction, { ...tone, degree: d, dev });
+      bump(selected[d], tone.fraction, { cents: tone.cents, dev });
+    }
+    for (const voice of star.voiced || []) {
+      const tone = tones.get(voice.fraction); if (!tone) continue;
+      bump(sounding[tone.degree], voice.fraction, { cents: tone.cents, dev: tone.dev });
+    }
+  }
+  const order = (a, b) => (a.cents ?? Infinity) - (b.cents ?? Infinity) || a.fraction.localeCompare(b.fraction);
+  return selected.map((ratios, degree) => ({
+    degree,
+    inChord: chordDegrees.has(degree),
+    selected: [...ratios.values()].sort(order),
+    sounding: [...sounding[degree].values()].sort(order),
   }));
 }
 
@@ -477,7 +545,10 @@ export function debugSkyState() {
   const root = { fraction: skyRoot.fraction, cents: Math.round(skyRoot.cents * 10) / 10,
     hz: Math.round(ROOT_HZ * 2 ** (skyRoot.cents / 1200) * 10) / 10 };
   const ladderTopK = lastRootLadder.slice(0, ROOT_TOP_K).map(r => ({ fraction: r.fraction, cents: Math.round(r.cents * 10) / 10, score: Math.round(r.score * 1000) / 1000 }));
+  const gridRows = gridRowPlayer?.debugState() || null;
   return {
+    audioMode,
+    gridRows,
     rootHz: ROOT_HZ,   // 1/1's fixed fundamental — the root solve only ever picks a RATIO relative to this
     root,
     rootLadder: ladderTopK,
@@ -486,7 +557,9 @@ export function debugSkyState() {
     tabu: (skyTabu || []).map(id => ({ id, symbol: TRIADS[id].symbol })),
     coverageByTriad: TRIADS.map(t => ({ id: t.id, symbol: t.symbol, coverage: Math.round(skyCoverage(t, audibleStars) * 1000) / 1000 })),
     candidateCosts: candidates,
-    selectedRatioTones: selectedRatioToneRows(skyChordId, stars),
+    selectedRatioTones: audioMode === AUDIO_MODES.CULLED_GRID_ROWS
+      ? selectedGridRatioToneRows(skyChordId, skyRoot.cents, gridRows?.stars)
+      : selectedRatioToneRows(skyChordId, stars),
     audibleCount: currentField.length,
     stars,
   };
@@ -500,6 +573,12 @@ export function setField(items) {
   if (!audioCtx) return;
   const now = audioCtx.currentTime;
   currentField = items;
+  // The chord walk still reads currentField in culled-row mode, but the dormant chord-bed engine
+  // must not keep 30 inaudible oscillators alive beside the row budget.
+  if (audioMode !== AUDIO_MODES.AMBIENT_CHORDS) {
+    for (const [id, bs] of bedStars) { bedStars.delete(id); dropBedStar(bs, now); }
+    return;
+  }
   const seen = new Set();
   for (const item of items) {
     seen.add(item.id);
@@ -543,6 +622,7 @@ export function stopAudio() {
   if (schedulerTimer) { clearInterval(schedulerTimer); schedulerTimer = null; }
   if (liveOscs) { for (const osc of liveOscs) { try { osc.stop(0); } catch {} try { osc.disconnect(); } catch {} } liveOscs.clear(); }
   if (audioCtx) { for (const bs of bedStars.values()) teardownBedStar(bs, audioCtx.currentTime); for (const bs of dyingStars) teardownBedStar(bs, audioCtx.currentTime); }
+  gridRowPlayer?.destroy(); gridRowPlayer = null;
   bedStars = new Map(); dyingStars = []; bedOscCount = 0; currentField = [];
   skyChordId = START_CHORD_ID; skyTabu = null; skyStep = -1; lastSyncedChordId = null;
   skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; pendingRoot = null; lastRootLadder = [];
@@ -550,7 +630,8 @@ export function stopAudio() {
   leadMask = null; leadMaskChordId = -1;
   if (audioCtx) { try { audioCtx.close(); } catch {} }
   audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; liveOscs = null;
-  bedBus = null; reverbConv = null; reverbWet = null;
+  ambientModeGain = null; bedBus = null; reverbConv = null; reverbWet = null;
+  audioMode = AUDIO_MODES.AMBIENT_CHORDS;
 }
 
 // Jump the scheduler's cursor to the next upcoming note at the current transport phase (used when a
@@ -568,8 +649,10 @@ function schedulerTick() {
   if (!audioCtx) return;
   const now = audioCtx.currentTime, ticks = absoluteTicks(now);
   stepSkyWalk(ticks);          // the sky's own chord clock — independent of any lead (no click gating)
-  pumpReattacks(now, ticks);
+  if (audioMode === AUDIO_MODES.AMBIENT_CHORDS) pumpReattacks(now, ticks);
+  gridRowPlayer?.tick(now, now + SCHEDULE_AHEAD, transportStart, ticksPerSec);
   ensureLeadMask(false);       // cheap cache-check; recomputes only right after stepSkyWalk changed the chord
+  if (audioMode !== AUDIO_MODES.AMBIENT_CHORDS) return;
   if (!lead || !lead.notes.length) return;
   const horizon = audioCtx.currentTime + SCHEDULE_AHEAD;
   while (true) {
