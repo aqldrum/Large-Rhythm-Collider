@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { gridShardSolve, shardKeysOf, gridShardSystems, divisorsFast, nearestDegree, poolFromRatios, TONE_BIN_CENTS } from '../grid-core.js';
 import { deriveScale } from '../oracle-core.js';
 import { TRIADS, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, chooseNextChord, candidateCosts, pushTabu, chordStepIndex } from '../sky-walk.js';
-import { CHORD_TICKS, TABU_K, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_HYSTERESIS, hashId, bedDegreesFor, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, shouldSwapRoot, voiceToneChanged } from '../cosmos-audio.js';
+import { CHORD_TICKS, TABU_K, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_HYSTERESIS, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, shouldSwapRoot, voiceToneChanged } from '../cosmos-audio.js';
 import { poolFromTones, solveRoots, scoreRootAt } from '../sky-root.js';
 import { ratioToCents } from '../oracle-core.js';
 
@@ -192,6 +192,25 @@ check('every returned degree has an actual pool entry (no substitution)', covera
 console.log(`  (${silentTotal}/${samples} chord×grid pairs had ≥1 silent degree — sparsity is expected/intended)`);
 check('bedDegreesFor(chord, null pool) → []', bedDegreesFor(0, null).length === 0);
 check('bedDegreesFor(chord, empty pool) → []', bedDegreesFor(0, new Array(12).fill(null)).length === 0);
+
+// Debug ratio-tone table: selected means present in an audible star's re-anchored pool; ON means an
+// actual live bed voice. Keep these independent so an oscillator-budget miss is visible rather than
+// falsely reported as playing just because its degree belongs to the current chord.
+console.log('\n  Selected-ratio debug table');
+const tablePoolA = new Array(12).fill(null), tablePoolB = new Array(12).fill(null);
+tablePoolA[0] = { fraction: '1/1', cents: 0, dev: 0 };
+tablePoolA[4] = { fraction: '5/4', cents: 386.31, dev: -13.69 };
+tablePoolB[0] = { fraction: '1/1', cents: 0, dev: 0 };
+tablePoolB[4] = { fraction: '81/64', cents: 407.82, dev: 7.82 };
+const ratioRows = selectedRatioToneRows(START_CHORD_ID, [
+  { pool: tablePoolA, voiced: [{ degree: 0, fraction: '1/1' }] },
+  { pool: tablePoolB, voiced: [{ degree: 4, fraction: '81/64' }] },
+]);
+check('ratio table always has one row per chromatic degree', ratioRows.length === 12 && ratioRows.every((r, d) => r.degree === d));
+check('equal selected ratios aggregate with a per-star count', ratioRows[0].selected.length === 1 && ratioRows[0].selected[0].fraction === '1/1' && ratioRows[0].selected[0].count === 2);
+check('distinct selected ratios remain individually visible', ratioRows[4].selected.map(r => r.fraction).join(',') === '5/4,81/64');
+check('ON column reports actual voices, not every selected chord tone', ratioRows[0].sounding[0].count === 1 && ratioRows[4].sounding.length === 1 && ratioRows[4].sounding[0].fraction === '81/64');
+check('chord marker follows the current triad degrees', ratioRows.filter(r => r.inChord).map(r => r.degree).join(',') === TRIADS[START_CHORD_ID].semitones.join(','));
 
 // reattach periods: deterministic per (id, ticks); steps advance exactly at period multiples; spread
 // isn't degenerate (not every sampled grid lands on the same period bucket).

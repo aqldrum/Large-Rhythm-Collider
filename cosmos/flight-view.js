@@ -515,7 +515,7 @@ export function ensureFlight(canvas, hudEl) {
   // Module-relative Worker URL: `new Worker(relative)` resolves against the DOCUMENT (index.html at root),
   // which breaks under the full-swallow — resolve against this module so it lands on cosmos/cosmos/. The
   // ?v= busts the hard Web-Worker cache — bump it AND the worker's ../grid-core.js?v= on worker edits.
-  pool = new Pool(new URL('./cosmos/abundance-worker.js?v=4', import.meta.url), poolSize);
+  pool = new Pool(new URL('./cosmos/abundance-worker.js?v=5', import.meta.url), poolSize);
   // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
   placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
   setPlacement(placement);
@@ -840,7 +840,7 @@ function ensureSkyDebugPanel() {
   if (skyDebugEl) return;
   skyDebugEl = document.createElement('div');
   skyDebugEl.id = 'sky-debug-panel';
-  skyDebugEl.style.cssText = 'position:fixed;top:12px;right:12px;width:340px;max-height:82vh;overflow-y:auto;' +
+  skyDebugEl.style.cssText = 'position:fixed;top:12px;right:12px;width:min(460px,calc(100vw - 48px));max-height:82vh;overflow-y:auto;' +
     'background:rgba(8,10,16,.9);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:10px 12px;' +
     'font:10.5px/1.55 var(--mono,ui-monospace,monospace);color:#cfe3ff;white-space:pre-wrap;z-index:700;pointer-events:none;';
   // MUST land inside #cosmos-view, not document.body: `body.cosmos-active > *:not(#cosmos-view)` hides
@@ -865,6 +865,17 @@ function renderSkyDebug(now) {
   if (s.rootLadder.length) lines.push(`  ladder (top ${s.rootLadder.length})  ${s.rootLadder.map(r => `${r.fraction}:${r.score.toFixed(2)}`).join('  ')}`);
   lines.push(`chord  ${s.chord.symbol}  degrees [${s.chord.semitones.join(',')}]`);
   lines.push(`trail  ${s.tabu.map(c => c.symbol).join(' → ')}`);
+  const fmtRatioCounts = ratios => ratios.length
+    ? ratios.map(r => `${r.fraction}${r.count > 1 ? `×${r.count}` : ''}`).join(' ')
+    : '—';
+  lines.push(`\nSELECTED RATIO TONES  (audible-star pools; ON = live bed voices)`);
+  lines.push(`deg  chord  selected                         ON`);
+  for (const row of s.selectedRatioTones) {
+    const head = `${String(row.degree).padStart(2)}     ${row.inChord ? '●' : '·'}    `;
+    const selected = fmtRatioCounts(row.selected);
+    const on = fmtRatioCounts(row.sounding);
+    lines.push(`${head}${selected.padEnd(32)} ${on}`);
+  }
   const covSorted = [...s.coverageByTriad].sort((a, b) => b.coverage - a.coverage);
   lines.push(`coverage (best→worst)  ${covSorted.map(c => `${c.symbol}:${c.coverage.toFixed(2)}`).join('  ')}`);
   if (s.candidateCosts.length) {   // Sky Root Feature A: why the walk picked what it's about to pick

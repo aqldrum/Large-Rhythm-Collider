@@ -9,6 +9,7 @@
 // Coordinate-agnostic generation stays in the injected solve(); positions/precision live here.
 import { computeDistricts } from './gg-core.js';
 import { reparent, stepAttractor, backboneHash, len, sub, absolutePos, scale, slotDirection, rotateY } from './spine.js';
+import { mergeRatioOwners } from '../grid-core.js';
 
 // district puff: each zone springs to a deterministic 3D slot around its sun; the whole puff
 // spins on the clock. SLOT radius grows with grid-distance to the sun (near hug, far orbit wide).
@@ -40,6 +41,15 @@ function mergeSkyTones(z, tones) {
     z._skyToneBins.add(bin);
     z.skyTones.push(t);
   }
+}
+
+// Monster-grid playback ownership arrives progressively with the existing abundance shards. Each
+// shard has already reduced to its lowest-layer-sum candidate per folded ratio; this second fold
+// makes that choice global across the star without ever retaining its thousands of keep-2 rhythms.
+function mergeStarRatioOwners(z, ratioOwners) {
+  if (!z._ratioOwnerMap) z._ratioOwnerMap = new Map();
+  mergeRatioOwners(z._ratioOwnerMap, ratioOwners);
+  z.ratioOwners = [...z._ratioOwnerMap.values()].sort((a, b) => a.cents - b.cents || a.fraction.localeCompare(b.fraction));
 }
 
 export class Cosmos {
@@ -151,6 +161,7 @@ export class Cosmos {
     z.shardsDone++; z.partial += (r && r.count || 0);
     if (r && r.pool) mergeSkyPool(z, r.pool, r.toneCount);     // Full Sky: piggybacked on the abundance solve
     if (r && r.tones) mergeSkyTones(z, r.tones);               // Sky Root B1: anchor-independent tone superset
+    if (r && r.ratioOwners) mergeStarRatioOwners(z, r.ratioOwners); // canonical rhythm owner per folded ratio
     z.size = Math.max(0.15, Math.log2(z.partial + 1) * 0.5);   // progressive glow as bites land
     if (z.shardsDone >= z.shardsTotal) this._finishZone(z, z.partial);
   }
@@ -179,6 +190,7 @@ export class Cosmos {
     z.monster = false; z.unsolvable = false; z.force = true;
     z.state = 'pending'; z.abundance = 0; z.size = 0;
     z.plan = undefined; z.shardsTotal = 0; z.dispatchIdx = 0; z.shardsDone = 0; z.partial = 0;
+    z.ratioOwners = undefined; z._ratioOwnerMap = undefined;
   }
 
   _completeSolves() {

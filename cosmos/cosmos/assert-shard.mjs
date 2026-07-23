@@ -5,7 +5,7 @@
 //  (4) DETERMINISTIC + CORRECT-VS-GG: same park → identical cosmos; parents == batch Grid-Gravity.
 import { Cosmos } from './cosmos-runtime.js';
 import { computeDistricts } from './gg-core.js';
-import { gridResults, shardKeysOf, gridShardCount, divisorsFast } from '../grid-core.js';
+import { gridResults, shardKeysOf, gridShardSolve, divisorsFast, mergeRatioOwners } from '../grid-core.js';
 import { absolutePos } from './spine.js';
 
 let PASS = true;
@@ -19,7 +19,8 @@ const MAX_SHARDS = 260;
 function dispatch(p) {
   if (p.op === 'plan') { const k = shardKeysOf(p.grid); return Promise.resolve(k.length > MAX_SHARDS ? { tooLarge: true } : { shards: k }); }
   const below = divisorsFast(p.grid).filter(x => x >= 2 && x < p.A);
-  return Promise.resolve({ count: gridShardCount(p.grid, p.A, below) });
+  const { count, ratioOwners } = gridShardSolve(p.grid, p.A, below);
+  return Promise.resolve({ count, ratioOwners });
 }
 const flush = () => new Promise(r => setTimeout(r, 0));   // drain the microtask queue between ticks
 let LOG = null;                                            // when set, records the grid of each dispatch
@@ -58,6 +59,23 @@ let abErr = 0, worst = null;
 for (const z of c.zones.values()) { if (z.state !== 'solved') continue; const w = whole(z.grid); if (z.abundance !== w) { abErr++; if (!worst) worst = { grid: z.grid, got: z.abundance, want: w }; } }
 check('sharded live abundance equals whole-grid keptCount for every zone', abErr === 0, worst ? `e.g. grid ${worst.grid}: ${worst.got} vs ${worst.want}` : `${c.stats().solved} zones`);
 
+// Ratio owners use the same two-stage reduction as the browser worker/runtime: local minimum in each
+// shard, then global minimum as replies arrive (arrival order must not matter).
+let ownerErr = 0, ownerMissing = 0;
+for (const z of c.zones.values()) {
+  if (z.state !== 'solved') continue;
+  const expected = new Map();
+  for (const A of shardKeysOf(z.grid)) mergeRatioOwners(expected, gridShardSolve(z.grid, A).ratioOwners);
+  const actual = new Map((z.ratioOwners || []).map(owner => [owner.fraction, owner]));
+  if (actual.size !== expected.size) ownerMissing++;
+  for (const [fraction, owner] of expected) {
+    const got = actual.get(fraction);
+    if (!got || got.key !== owner.key || got.layerSum !== owner.layerSum) ownerErr++;
+  }
+}
+check('shard replies reduce to the exact global lowest-layer-sum owner for every ratio',
+  ownerErr === 0 && ownerMissing === 0, `${ownerErr} wrong owners · ${ownerMissing} grids with missing ratios`);
+
 // (2) progressive: partial abundance only ever grew
 check('partial abundance is monotone (progressive bloom-in, never regresses)', monoOk);
 
@@ -93,6 +111,35 @@ errCosmos.setCamera(600);
 for (let t = 0; t < 3000; t++) { errCosmos.tick(1 / 60); await flush(); const s = errCosmos.stats(); if (s.total > 0 && s.solved === s.total) break; }
 const es = errCosmos.stats();
 check('every zone still reaches solved despite ~1/7 worker errors (no stall)', es.total > 0 && es.solved === es.total, `${es.solved}/${es.total} solved, ${errCosmos.events.errors} errors logged`);
+
+// (6) monster audio-data gate — a pre-identified monster must not dispatch any owner-producing shard
+// until the explicit forceSolve() opt-in. After force, it uses the ordinary shard path and lands with
+// finalized ratio owners. The future audio compiler should key exclusively off that finalized state.
+console.log('\n[6] Monster ratio-owner gate');
+const gatedGrid = 60;
+let forced = false, shardBeforeForce = 0;
+const gatedDispatch = p => {
+  if (p.op === 'plan' && !p.force) return Promise.resolve({ monster: true, divisors: 12, cost: 2e9 });
+  if (p.op === 'plan') { forced = true; return Promise.resolve({ shards: shardKeysOf(p.grid), divisors: 12 }); }
+  if (!forced) shardBeforeForce++;
+  const { count, ratioOwners } = gridShardSolve(p.grid, p.A);
+  return Promise.resolve({ count, ratioOwners });
+};
+const gated = new Cosmos({ poolSize: 2, isValid: () => true, dispatch: gatedDispatch,
+  neighbors: () => [gatedGrid], cellDist: () => 0, puffs: false, compete: false });
+gated.setCamera(gatedGrid);
+for (let t = 0; t < 8; t++) { gated.tick(1 / 60); await flush(); }
+const gatedZone = gated.zones.get(gatedGrid);
+check('monster plan emits no ratio owners or shard work before Solve anyway',
+  gatedZone?.monster === true && gatedZone.ratioOwners == null && shardBeforeForce === 0);
+gated.forceSolve(gatedGrid);
+for (let t = 0; t < 500; t++) {
+  gated.tick(1 / 60); await flush();
+  if (gatedZone.state === 'solved' && !gatedZone.monster) break;
+}
+check('forceSolve clears the gate and finalizes ratio owners through normal shards',
+  gatedZone.state === 'solved' && gatedZone.force === true && gatedZone.ratioOwners?.length > 0 && gatedZone.shardsDone === gatedZone.shardsTotal,
+  `${gatedZone.ratioOwners?.length || 0} ratio owners`);
 
 console.log(`\n${PASS ? '✓✓✓ DISTRIBUTED SOLVE PASSES — sharded, progressive, non-blocking, exact' : '✗ DISTRIBUTED SOLVE FAILED'}`);
 process.exit(PASS ? 0 : 1);

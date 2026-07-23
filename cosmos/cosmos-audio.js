@@ -199,6 +199,45 @@ export function bedDegreesFor(chordId, pool) {
   return TRIADS[chordId].semitones.filter(d => pool && pool[d]);
 }
 
+// Debug-table model for the chromatic material the bed is ACTUALLY holding right now. There is no
+// single global 12-tone winner: each audible star contributes its own best ratio per degree from its
+// re-anchored pool. Aggregate equal ratios so the overlay stays readable, but keep selectedCount and
+// soundingCount separate — a selected chord tone may still be absent from the live osc set when the
+// defensive oscillator budget is full. `stars` uses debugSkyState's plain-data shape, so this remains
+// pure/headless-testable and the overlay never has to infer playback state from chord membership.
+export function selectedRatioToneRows(chordId, stars) {
+  const chordDegrees = new Set(TRIADS[chordId]?.semitones || []);
+  const selected = Array.from({ length: 12 }, () => new Map());
+  const sounding = Array.from({ length: 12 }, () => new Map());
+  const bump = (map, fraction, extra = {}) => {
+    const row = map.get(fraction);
+    if (row) row.count++;
+    else map.set(fraction, { fraction, count: 1, ...extra });
+  };
+
+  for (const star of stars || []) {
+    for (let d = 0; d < 12; d++) {
+      const slot = star.pool && star.pool[d];
+      if (slot) bump(selected[d], slot.fraction, { cents: slot.cents, dev: slot.dev });
+    }
+    for (const voice of star.voiced || []) {
+      if (!Number.isInteger(voice.degree) || voice.degree < 0 || voice.degree >= 12 || !voice.fraction) continue;
+      bump(sounding[voice.degree], voice.fraction);
+    }
+  }
+
+  const byCentsThenFraction = (a, b) => (a.cents ?? Infinity) - (b.cents ?? Infinity) || a.fraction.localeCompare(b.fraction);
+  return selected.map((ratios, degree) => ({
+    degree,
+    inChord: chordDegrees.has(degree),
+    selected: [...ratios.values()].sort(byCentsThenFraction),
+    sounding: [...sounding[degree].values()].sort((a, b) => {
+      const ac = ratios.get(a.fraction)?.cents, bc = ratios.get(b.fraction)?.cents;
+      return (ac ?? Infinity) - (bc ?? Infinity) || a.fraction.localeCompare(b.fraction);
+    }),
+  }));
+}
+
 // Which REATTACK_PERIODS-relative step a star is on at a given absolute tick count — pure floor
 // division off a per-star period (chosen via hashId), same resync-safe shape as chordStepIndex.
 export function reattachStepFor(id, ticks) {
@@ -420,7 +459,7 @@ export function debugSkyState() {
     cutoff: Math.round(bs.filter.frequency.value),
     pool: bs.pool,
     voiced: [...bs.oscMap.values()].map(v => ({
-      degree: v.degree, dev: Math.round(v.dev * 10) / 10, gainLaw: Math.round(gainForDev(v.dev) * 100) / 100,
+      degree: v.degree, fraction: v.fraction, dev: Math.round(v.dev * 10) / 10, gainLaw: Math.round(gainForDev(v.dev) * 100) / 100,
       envGain: Math.round(v.env.gain.value * 1000) / 1000, freqHz: Math.round(v.osc.frequency.value),
     })),
   }));
@@ -447,6 +486,7 @@ export function debugSkyState() {
     tabu: (skyTabu || []).map(id => ({ id, symbol: TRIADS[id].symbol })),
     coverageByTriad: TRIADS.map(t => ({ id: t.id, symbol: t.symbol, coverage: Math.round(skyCoverage(t, audibleStars) * 1000) / 1000 })),
     candidateCosts: candidates,
+    selectedRatioTones: selectedRatioToneRows(skyChordId, stars),
     audibleCount: currentField.length,
     stars,
   };

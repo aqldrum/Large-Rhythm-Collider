@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cull2 Audio Reflection Lab</title>
+  <style>
+    :root { color-scheme: dark; --bg:#080a10; --panel:#101522; --line:#293247; --text:#dbe8ff; --dim:#8190aa; --green:#6dffbc; --blue:#77b7ff; --red:#ff8296; --amber:#ffd277; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:radial-gradient(circle at 15% 0,#162038 0,#080a10 42%); color:var(--text); font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    main { width:min(1500px,calc(100% - 32px)); margin:28px auto 70px; }
+    h1 { margin:0; font:600 clamp(22px,4vw,38px)/1.1 system-ui,sans-serif; letter-spacing:-.03em; }
+    h2 { margin:28px 0 10px; font:600 15px/1.2 system-ui,sans-serif; }
+    .collapsible-heading { margin-bottom:10px; }
+    .collapse-trigger { display:block; width:100%; padding:0; border:0; border-radius:0; background:transparent; color:inherit; font:inherit; text-align:left; }
+    .collapse-trigger::before { content:'▾'; display:inline-block; width:18px; color:var(--dim); }
+    .collapse-trigger[aria-expanded=false]::before { content:'▸'; }
+    p { max-width:900px; color:var(--dim); }
+    [hidden] { display:none !important; }
+    .tabs { display:flex; gap:8px; margin-top:20px; }
+    .tab[aria-selected=true] { color:var(--green); border-color:var(--green); background:rgba(56,220,151,.1); }
+    .controls,.summary,.panel { border:1px solid var(--line); background:rgba(16,21,34,.92); border-radius:12px; }
+    .controls { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:14px; margin-top:20px; }
+    input[type=text] { width:min(460px,100%); padding:10px 12px; border:1px solid #41506d; border-radius:8px; background:#070a11; color:var(--text); font:600 17px/1 monospace; }
+    .grid-input { width:180px; padding:10px 12px; border:1px solid #41506d; border-radius:8px; background:#070a11; color:var(--text); font:600 17px/1 monospace; }
+    button { padding:10px 16px; border:1px solid #4e6388; border-radius:8px; background:#1a2841; color:var(--text); cursor:pointer; }
+    label.toggle { display:flex; align-items:center; gap:8px; color:var(--dim); }
+    #error { color:var(--red); width:100%; min-height:1em; }
+    .summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:1px; overflow:hidden; margin-top:14px; }
+    .metric { padding:12px 14px; background:#0c111c; }
+    .metric span,.metric small,td small { display:block; color:var(--dim); font-size:10px; margin-top:3px; }
+    .metric b { font-size:16px; }
+    .checks { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:7px; padding:10px 14px; }
+    .badge { display:inline-block; padding:2px 7px; border:1px solid currentColor; border-radius:999px; font-size:10px; white-space:nowrap; }
+    .badge.ok,.badge.survivor { color:var(--green); } .badge.bad,.badge.hold { color:var(--red); } .badge.reflection { color:var(--blue); } .badge.structural { color:var(--amber); }
+    .legend { display:flex; flex-wrap:wrap; gap:12px; color:var(--dim); font-size:11px; margin:8px 0; }
+    .tape { display:flex; min-height:70px; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#070a11; }
+    .tape-event { min-width:34px; padding:7px 4px; border-right:1px solid #20283a; display:flex; flex-direction:column; justify-content:space-between; text-align:center; }
+    .tape-event span,.tape-event small { color:var(--dim); font-size:9px; } .tape-event b { font-size:11px; }
+    .tape-event.survivor { background:rgba(56,220,151,.16); } .tape-event.reflection { background:rgba(64,139,255,.2); } .tape-event.hold { background:repeating-linear-gradient(135deg,rgba(255,74,102,.08),rgba(255,74,102,.08) 5px,transparent 5px,transparent 10px); opacity:.68; }
+    .tape-event.off { background:repeating-linear-gradient(45deg,rgba(255,210,119,.12),rgba(255,210,119,.12) 5px,transparent 5px,transparent 10px); opacity:.7; }
+    .tape-event.repeat-hold { background:repeating-linear-gradient(90deg,rgba(197,139,255,.15),rgba(197,139,255,.15) 4px,transparent 4px,transparent 9px); opacity:.78; }
+    .scale-selector { margin-top:14px; padding:14px; border:1px solid var(--line); background:rgba(16,21,34,.92); border-radius:12px; }
+    .scale-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
+    .scale-head h2 { margin:0; }
+    .scale-actions { display:flex; gap:7px; }
+    .scale-actions button { padding:6px 10px; font-size:11px; }
+    .scale-notes { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+    .scale-note { min-width:92px; padding:8px 10px; text-align:left; background:#090d16; border-color:#35425a; color:var(--dim); }
+    .scale-note b,.scale-note small { display:block; } .scale-note small { margin-top:3px; font-size:9px; }
+    .scale-note.selected { background:rgba(56,220,151,.13); border-color:var(--green); color:var(--green); }
+    .audio-controls { display:flex; flex-wrap:wrap; align-items:end; gap:12px; margin-top:14px; padding:14px; border:1px solid var(--line); background:rgba(16,21,34,.92); border-radius:12px; }
+    .audio-controls label { display:grid; gap:5px; color:var(--dim); font-size:10px; }
+    .audio-controls input[type=range] { width:150px; }
+    .audio-controls input[type=number],.audio-controls select { height:34px; border:1px solid #41506d; border-radius:7px; background:#070a11; color:var(--text); padding:4px 8px; }
+    #audio-play.playing { color:var(--red); border-color:var(--red); background:rgba(255,74,102,.1); }
+    #audio-status { color:var(--dim); align-self:center; }
+    .panel { overflow:auto; }
+    table { width:100%; border-collapse:collapse; min-width:900px; }
+    th { position:sticky; top:0; z-index:1; background:#151c2b; color:#a9bad5; text-align:left; font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
+    th,td { padding:9px 10px; border-bottom:1px solid #20283a; vertical-align:top; }
+    tr.hold td { color:#9b8190; } tr.reflection td { background:rgba(64,139,255,.035); }
+    code { color:#bcd3ff; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Cull2 Audio Reflection Lab</h1>
+  <p>Enter a 2–4 layer rhythm. The base pass matches <code>Pathways._applyCull2</code>: z-sections are bounded by arrivals at coincident nodes, and a later section is culled when all of its gap values already exist in the accumulated vocabulary. Reflection restores every surviving first-half gap event at its exact palindromic event in the back half, with the back-half event’s real layer ownership.</p>
+  <div class="tabs" role="tablist" aria-label="Cull2 input mode">
+    <button id="rhythm-tab" class="tab" type="button" role="tab" aria-selected="true" aria-controls="rhythm-controls">Rhythm mode</button>
+    <button id="grid-tab" class="tab" type="button" role="tab" aria-selected="false" aria-controls="grid-controls">Grid mode</button>
+  </div>
+  <div id="rhythm-controls" class="controls" role="tabpanel" aria-labelledby="rhythm-tab">
+    <input id="rhythm-input" type="text" value="20 : 15 : 8 : 6" aria-label="Rhythm layers" spellcheck="false">
+    <button id="run" type="button">Build readout</button>
+  </div>
+  <div id="grid-controls" class="controls" role="tabpanel" aria-labelledby="grid-tab" hidden>
+    <input id="grid-input" class="grid-input" type="number" min="2" step="1" value="120" aria-label="Grid value">
+    <button id="run-grid" type="button">Build grid readout</button>
+    <span>Each folded ratio is assigned to its lowest-layer-sum rhythm; only those representatives are Cull2-processed, reflected, and overlaid on canonical voices A–D.</span>
+  </div>
+  <div class="controls">
+    <label class="toggle"><input id="reflection-toggle" type="checkbox" checked> keep palindromic reflection</label>
+    <label class="toggle"><input id="repeat-cull-toggle" type="checkbox" checked> hold repeated gap per layer</label>
+    <div id="error" role="alert"></div>
+  </div>
+  <section class="collapsible-section">
+    <h2 class="collapsible-heading"><button class="collapse-trigger" type="button" aria-expanded="true" aria-controls="summary">Program summary</button></h2>
+    <div id="summary" class="summary collapsible-body"></div>
+  </section>
+
+  <section class="collapsible-section">
+    <h2 class="collapsible-heading"><button class="collapse-trigger" type="button" aria-expanded="true" aria-controls="audio-controls">Audition transport</button></h2>
+    <div id="audio-controls" class="audio-controls collapsible-body">
+      <button id="audio-play" type="button">▶ Play culled program</button>
+      <label>ticks per second <input id="audio-rate" type="range" min="0" max="100" step="1" value="15"><b id="audio-rate-value">15 ticks/s</b></label>
+      <label>root Hz <input id="audio-root" type="number" min="20" max="880" step="1" value="110"></label>
+      <label>waveform <select id="audio-wave"><option>sine</option><option>triangle</option><option>sawtooth</option><option>square</option></select></label>
+      <label>level <input id="audio-level" type="range" min="0" max="0.8" step="0.01" value="0.38"></label>
+      <span id="audio-status">stopped · per-layer legato</span>
+    </div>
+  </section>
+
+  <section class="scale-selector collapsible-section">
+    <h2 class="collapsible-heading"><button class="collapse-trigger" type="button" aria-expanded="true" aria-controls="scale-selector-body">Scale Selector</button></h2>
+    <div id="scale-selector-body" class="collapsible-body">
+      <div class="scale-head">
+        <p style="margin:4px 0 0">Toggle octave-folded ratios to simulate the generative system’s harmonic selection.</p>
+        <div class="scale-actions"><button id="select-all" type="button">All on</button><button id="select-none" type="button">All off</button></div>
+      </div>
+      <div id="scale-notes" class="scale-notes"></div>
+    </div>
+  </section>
+
+  <section class="collapsible-section">
+    <h2 class="collapsible-heading"><button class="collapse-trigger" type="button" aria-expanded="true" aria-controls="cycle-tape-body">Cycle tape</button></h2>
+    <div id="cycle-tape-body" class="collapsible-body">
+      <div class="legend"><span>green = base cull2 survivor</span><span>blue = restored reflection</span><span>red hatch = structural hold</span><span>purple bars = same-layer repeated-gap hold</span><span>amber hatch = selector off</span></div>
+      <div id="tape" class="tape"></div>
+    </div>
+  </section>
+
+  <div id="rhythm-readouts">
+    <section class="collapsible-section">
+      <h2 class="collapsible-heading"><button class="collapse-trigger" type="button" aria-expanded="true" aria-controls="z-segment-body">Z-segment readout</button></h2>
+      <div id="z-segment-body" class="panel collapsible-body"><table>
+        <thead><tr><th>segment</th><th>event range</th><th>cull2 state</th><th>gap vocabulary</th><th>folded ratios</th><th>reflected partition</th></tr></thead>
+        <tbody id="segment-body"></tbody>
+      </table></div>
+    </section>
+
+    <section class="collapsible-section">
+      <h2 class="collapsible-heading"><button class="collapse-trigger" type="button" aria-expanded="true" aria-controls="onset-program-body">Onset / hold program</button></h2>
+      <div id="onset-program-body" class="panel collapsible-body"><table>
+        <thead><tr><th># / phase</th><th>tick / half</th><th>source layers</th><th>gap</th><th>ratio</th><th>z</th><th>mirror / layers</th><th>audio action</th></tr></thead>
+        <tbody id="event-body"></tbody>
+      </table></div>
+    </section>
+  </div>
+
+  <div id="grid-readouts" hidden>
+    <section class="collapsible-section">
+      <h2 class="collapsible-heading"><button class="collapse-trigger" type="button" aria-expanded="true" aria-controls="grid-rhythms-body">Ratio-owner rhythms</button></h2>
+      <div id="grid-rhythms-body" class="panel collapsible-body"><table>
+        <thead><tr><th>rhythm</th><th>ownership / cardinality</th><th>source onsets</th><th>Cull2 survivors</th><th>reflection</th><th>selected layer attacks</th></tr></thead>
+        <tbody id="grid-rhythm-body"></tbody>
+      </table></div>
+    </section>
+
+    <section class="collapsible-section">
+      <h2 class="collapsible-heading"><button class="collapse-trigger" type="button" aria-expanded="true" aria-controls="grid-program-body">Canonical A–D composite program</button></h2>
+      <div id="grid-program-body" class="collapsible-body">
+        <p>When several rhythms offer different pitches to the same layer at one tick, the pitch with the most source-rhythm support wins. Ties prefer the lower register. Losing candidates remain visible here.</p>
+        <div class="panel"><table>
+          <thead><tr><th># / phase</th><th>grid tick</th><th>canonical layer</th><th>chosen tone</th><th>action</th><th>support</th><th>other candidates</th><th>source rhythms</th></tr></thead>
+          <tbody id="grid-event-body"></tbody>
+        </table></div>
+      </div>
+    </section>
+  </div>
+</main>
+<script type="module" src="./cull2-audio-test.js?v=6"></script>
+</body>
+</html>

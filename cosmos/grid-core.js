@@ -122,6 +122,27 @@ export function tonesFromRatios(ratios, tones = [], seenBins = new Set()) {
   return { tones, seenBins };
 }
 
+// Ratio-owner reduction for monster-grid playback. Ownership is GLOBAL across a grid but reduced in
+// two bounded stages: each shard returns its best efficient rhythm per folded ratio, then the client
+// applies this same comparator across shard replies. Dense keep-2 partners never contend because they
+// have the same ratio set as their efficient partner and an equal-or-higher layer sum.
+export function compareRatioOwners(a, b) {
+  if (a.layerSum !== b.layerSum) return a.layerSum - b.layerSum;
+  if (a.layers.length !== b.layers.length) return a.layers.length - b.layers.length;
+  for (let i = 0; i < Math.min(a.layers.length, b.layers.length); i++) {
+    if (a.layers[i] !== b.layers[i]) return a.layers[i] - b.layers[i];
+  }
+  return a.key.localeCompare(b.key);
+}
+
+export function mergeRatioOwners(ownerMap, candidates) {
+  for (const candidate of candidates || []) {
+    const current = ownerMap.get(candidate.fraction);
+    if (!current || compareRatioOwners(candidate, current) < 0) ownerMap.set(candidate.fraction, candidate);
+  }
+  return ownerMap;
+}
+
 // Kept count, the shard's degree pool, AND its anchor-independent tone list in ONE pass over
 // shardGroups (no second enumeration): one representative per ratioSet group (they share ratios)
 // folds into the shard-wide pool and tone list alike.
@@ -129,13 +150,74 @@ export function gridShardSolve(G, A, belowIn) {
   const below = belowIn || divisorsFast(G).filter(d => d >= 2 && d < A);
   const pool = new Array(12).fill(null), toneCount = new Array(12).fill(0);
   const tones = [], seenBins = new Set();
-  let count = 0;
-  for (const g of shardGroups(G, A, below)) {
+  const ratioOwnerMap = new Map();
+  const groups = shardGroups(G, A, below);
+  let count = 0, validCount = 0;
+  for (const g of groups) {
     count += g.length > 1 ? 2 : 1;
-    poolFromRatios(g[0].ratios, pool, toneCount);
-    tonesFromRatios(g[0].ratios, tones, seenBins);
+    validCount += g.length;
+    let efficient = g[0];
+    for (const system of g) {
+      const candidate = { layerSum: system.layerSum, layers: system.layers, key: system.key };
+      const current = { layerSum: efficient.layerSum, layers: efficient.layers, key: efficient.key };
+      if (compareRatioOwners(candidate, current) < 0) efficient = system;
+    }
+    poolFromRatios(efficient.ratios, pool, toneCount);
+    tonesFromRatios(efficient.ratios, tones, seenBins);
+    mergeRatioOwners(ratioOwnerMap, efficient.ratios.map(ratio => ({
+      fraction: ratio.fraction,
+      ratio: ratio.ratio,
+      cents: ratio.cents,
+      key: efficient.key,
+      layers: efficient.layers,
+      layerSum: efficient.layerSum,
+      cardinality: efficient.cardinality,
+      fundamental: efficient.fundamental,
+      shard: A,
+    })));
   }
-  return { count, pool, toneCount, tones };
+  return {
+    count,
+    validCount,
+    systemCount: groups.length,
+    pool,
+    toneCount,
+    tones,
+    ratioOwners: [...ratioOwnerMap.values()].sort((a, b) => a.cents - b.cents || a.fraction.localeCompare(b.fraction)),
+  };
+}
+
+// Headless/worker-local whole-grid reducer used by the Cull2 lab. Production flight performs the
+// same fold progressively in cosmos-runtime as independent shard replies arrive from its worker
+// pool; this sequential helper exists so one dedicated lab worker can share the exact contract.
+export function gridRatioOwnerSolve(G, { maxShards = 260, maxLayerCap = 3_000_000 } = {}) {
+  const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
+  const shards = shardKeysOf(G);
+  const maxLayer = shards.length ? shards.at(-1) : 0;
+  if (shards.length > maxShards || maxLayer > maxLayerCap) {
+    return { grid: G, tooLarge: true, divisorCount: shards.length + 2, ratioOwners: [], keptCount: 0, validCount: 0, tuningSystems: 0, ms: 0 };
+  }
+  const ratioOwnerMap = new Map();
+  let keptCount = 0, validCount = 0, tuningSystems = 0;
+  const divisors = divisorsFast(G);
+  for (const A of shards) {
+    const below = divisors.filter(d => d >= 2 && d < A);
+    const result = gridShardSolve(G, A, below);
+    keptCount += result.count;
+    validCount += result.validCount;
+    tuningSystems += result.systemCount;
+    mergeRatioOwners(ratioOwnerMap, result.ratioOwners);
+  }
+  return {
+    grid: G,
+    divisorCount: shards.length + 2,
+    shardCount: shards.length,
+    keptCount,
+    validCount,
+    tuningSystems,
+    ratioOwners: [...ratioOwnerMap.values()].sort((a, b) => a.cents - b.cents || a.fraction.localeCompare(b.fraction)),
+    ms: (typeof performance !== 'undefined' ? performance.now() : 0) - t0,
+  };
 }
 
 // The tuning SYSTEMS of one shard — one entry per group — for the near-star bloom. The representative
