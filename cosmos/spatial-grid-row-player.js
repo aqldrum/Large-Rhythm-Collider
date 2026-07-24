@@ -2,12 +2,14 @@
 // It never enumerates rhythms or performs Cull2. Each star owns one persistent 3D panner and swaps
 // immutable A–D program decks on a short shared tick boundary.
 import { ROW_SWITCH_TICKS } from './cosmos-grid-audio-core.js';
+import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP } from './spatial-audio-frame.js';
 
 const LAYERS = new Set(['A', 'B', 'C', 'D']);
 const ROOT_HZ = 110;
 const CROSSFADE = 0.35;
 const VOICE_RELEASE = 0.07;
 const MAX_ROW_OSC = 64; // 8 stars × A–D, with one transient crossfade deck per star.
+const VISUAL_ATTACK_SECONDS = 0.7;
 
 function setParam(param, value, now, smoothing = 0.04) {
   if (!param) return;
@@ -33,6 +35,7 @@ export class SpatialGridRowPlayer {
     this.stars = new Map();
     this.logicalVoiceCount = 0;
     this.stats = { budgetMisses: 0, installs: 0, entries: 0, exits: 0 };
+    this.setListenerPose(AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP);
   }
 
   setEnabled(enabled) {
@@ -73,7 +76,11 @@ export class SpatialGridRowPlayer {
     panner.connect(gain);
     gain.connect(this.master);
     this.stats.entries++;
-    return { id, filter, panner, gain, currentDeck: null, retiringDecks: [], pending: null, active: true, removeAt: Infinity };
+    return {
+      id, filter, panner, gain,
+      currentDeck: null, retiringDecks: [], pending: null,
+      active: true, removeAt: Infinity, visualAttacks: [], visualLives: [],
+    };
   }
 
   setField(items, absoluteTick) {
@@ -216,9 +223,18 @@ export class SpatialGridRowPlayer {
     env.gain.exponentialRampToValueAtTime(0.075, when + 0.14);
     osc.connect(env);
     env.connect(deck.gain);
-    const voice = { osc, env, layer: action.layer, fraction: action.fraction, rawFraction: action.rawFraction, ratio: action.rawRatio };
+    const voice = {
+      osc, env, layer: action.layer, fraction: action.fraction,
+      rawFraction: action.rawFraction, ratio: action.rawRatio, startTime: when,
+    };
     deck.voices.set(action.layer, voice);
     deck.oscillators.add(osc);
+    const star = this.stars.get(deck.program.grid);
+    if (star) {
+      voice.visualLife = { startTime: when, endTime: Infinity };
+      star.visualLives.push(voice.visualLife);
+      star.visualAttacks.push({ when, strength: seeded ? 0.45 : 1 });
+    }
     this.logicalVoiceCount++;
     osc.start(when);
     osc.onended = () => {
@@ -233,6 +249,7 @@ export class SpatialGridRowPlayer {
     if (!voice) return;
     deck.voices.delete(layer);
     this.logicalVoiceCount = Math.max(0, this.logicalVoiceCount - 1);
+    if (voice.visualLife) voice.visualLife.endTime = Math.min(voice.visualLife.endTime, when + release);
     try {
       voice.env.gain.cancelScheduledValues(when);
       voice.env.gain.setValueAtTime(Math.max(0.0001, voice.env.gain.value), when);
@@ -283,6 +300,29 @@ export class SpatialGridRowPlayer {
         };
       }),
     };
+  }
+
+  // Lightweight animation-frame projection. This exposes only already-scheduled WebAudio state;
+  // it does not enumerate programs or feed anything back into playback. A sustained aura means at
+  // least one canonical A–D voice is live, while `pulse` peaks on a real scheduled tone attack.
+  visualState() {
+    if (!this.enabled) return [];
+    const now = this.ctx.currentTime;
+    const out = [];
+    for (const star of this.stars.values()) {
+      star.visualAttacks = star.visualAttacks.filter(attack => attack.when >= now - VISUAL_ATTACK_SECONDS);
+      star.visualLives = star.visualLives.filter(life => life.endTime > now);
+      const voices = star.visualLives.reduce((count, life) => count + (life.startTime <= now ? 1 : 0), 0);
+      if (!voices) continue;
+      let pulse = 0;
+      for (const attack of star.visualAttacks) {
+        const age = now - attack.when;
+        if (age < 0 || age > VISUAL_ATTACK_SECONDS) continue;
+        pulse = Math.max(pulse, attack.strength * Math.pow(1 - age / VISUAL_ATTACK_SECONDS, 2));
+      }
+      out.push({ id: star.id, voices, pulse });
+    }
+    return out;
   }
 
   destroy() {

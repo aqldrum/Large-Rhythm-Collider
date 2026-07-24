@@ -88,3 +88,91 @@ In rough order, cheapest/lowest-risk first:
 
 Nothing above is implemented. Guards/build order stay exactly as landed in `9cd9234`/`3290977` until
 the reviewer session concludes.
+
+## 2026-07-24 follow-up
+
+The debug ratio readout now uses a real wrapping table, and the lead-mask anchor gap above is fixed:
+lead membership is measured relative to `skyRoot.cents`, and the mask cache invalidates on either a
+chord id or root key change.
+
+The chord walk's normalized field weight is now exposed in the cockpit as **local tuning**, from
+0–8 with a default of 2. Its unit is deliberately musical: the best available local-tuning advantage
+may justify up to that many semitones of extra voice-leading motion. This is the chord-selection knob
+that can increasingly overrule parsimony as seventh and extended-chord vocabularies arrive.
+
+Root reselection itself remains a separate open policy. Do not make the local-tuning knob double as
+a modulation timer. The next root pass should combine normalized ladder position with progression
+exhaustion, minimum root dwell, and recent-root history; the old absolute 10% incumbent hurdle can
+then become only a small anti-noise margin rather than the whole modulation mechanism.
+
+## Root-selection and progression policy to implement next
+
+This is the agreed direction after the 2026-07-24 review. It is deliberately more complete than
+lowering `ROOT_HYSTERESIS`: changing that constant alone would make roots less sticky, but would not
+create phrases, control return behavior, or give future chord extensions a tuning-driven reason to
+spend additional voice-leading motion.
+
+### 1. Keep chord travel and root timing separate
+
+Within the current root, choose chords with the existing normalized local-field term:
+
+`chordCost = voiceLeadingCost + localTuningStrength × normalizedTuningPenalty`
+
+The cockpit's **local tuning** control is `0–8`, default `2`. Its unit is semitones of voice-leading
+cost: at 4, a perfect local-tuning advantage may justify four extra semitones of motion. It controls
+which harmonic destination wins; it does not decide when a key change is due.
+
+### 2. Make the chord metric cardinality-aware
+
+When sevenths and extensions arrive, do not compare raw summed voice motion across different chord
+sizes. Use mean motion per continuing voice, plus an explicit small birth/death penalty for added or
+removed voices. Local tuning coverage already averages across requested chord degrees, so it remains
+comparable across triads, sevenths, and extensions. This lets a highly tuned extended chord win for a
+clear musical reason instead of either being permanently over-penalized or receiving a free pass.
+
+### 3. Normalize root fitness inside the current ladder
+
+Absolute root scores saturate in rich fields. Convert each root's score to a relative ladder fitness
+using the current candidate spread, with an epsilon floor like Feature A. A flat ladder therefore
+fades toward "keep the incumbent," while a genuinely differentiated field uses the available range.
+Retain exact scores for diagnostics; normalized fitness is the selection signal.
+
+The present 10% relative incumbent hurdle becomes a small 1–2% anti-noise margin, not the modulation
+engine. Exact ties still keep the incumbent.
+
+### 4. Two explicit modulation triggers
+
+1. **Geographic trigger:** after the player settles and the minimum root dwell has elapsed, a clearly
+   better normalized candidate may replace the incumbent. This makes travel discover local harmony.
+2. **Phrase-exhaustion trigger:** track the deterministic chord-walk state `(chordId, tabu contents)`
+   under the current `rootKey`. Repeating a state means the local progression has entered its cycle.
+   Once minimum dwell is satisfied, that repetition makes a modulation due even if geography has not
+   changed. This is the documented "exhaust a progression in place → move down the root ladder" idea.
+
+`ROOT_RESOLVE_MIN_TICKS` continues to rate-limit field solves. A separate minimum dwell measured in
+chord boundaries prevents a root from changing again before the new phrase has had time to speak.
+
+### 5. Select a musical destination, not merely ladder row 2
+
+From the normalized top band, exclude the incumbent, a short recent-root tabu list, and candidates
+whose cents position is effectively identical to the incumbent. Rank the remaining roots by:
+
+- normalized whole-field root fitness;
+- tuning strength of the arrival chord under that root (`perDegree` already carries this);
+- a root-motion/tension term, initially preferring a moderate nearby modulation rather than either
+  a sub-cent relabeling or an arbitrary maximum leap;
+- deterministic fraction/cents tie-breaks.
+
+The local-tuning knob weights the tuning-goal terms here too, but still does not control the trigger
+clock. A later coprime tension meta-clock can vary the preferred root-motion distance without changing
+the rest of the policy.
+
+### 6. Land the change atomically and make it inspectable
+
+Park the chosen root as pending and apply it at a chord boundary. Keep the chord id, move the frame
+beneath it, re-anchor bed/lead/grid-row selection, reset phrase-state tracking, and push the old/new
+roots through the recent-root history. Normal release/attack overlap remains the audible crossfade.
+
+Full Sky Debug should show: incumbent ladder rank and exact score, ladder spread/normalized fitness,
+chords since the last root change, exhaustion state, proposed destination, and trigger reason
+(`geography` or `exhaustion`). This makes every modulation explainable before tuning it by ear.

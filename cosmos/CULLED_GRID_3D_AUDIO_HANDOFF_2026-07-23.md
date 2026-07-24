@@ -22,7 +22,9 @@ This pass adds a production-shaped `culled-grid-rows` Cosmos audio mode while pr
 - `cosmos-grid-audio-core.js` is the pure compiler/projection layer. It applies the chord/root consonance gate and emits compact row programs.
 - `cull2-program-worker.js` performs compilation away from the main/playback path.
 - `program-worker-pool.js` owns worker queueing, cancellation, cache/lifecycle checks, and debug counters.
-- `spatial-grid-row-player.js` owns the WebAudio graph and scheduling. Each active star has an HRTF `PannerNode`; listener position and orientation follow the camera, including sources behind, above, and below the player.
+- `spatial-grid-row-player.js` owns the WebAudio graph and scheduling. Each active star has an HRTF `PannerNode`, including sources behind, above, and below the player.
+- `spatial-audio-frame.js` converts Flight's `+Z`-forward camera basis into WebAudio's fixed right-handed listener frame (`+X` right, `+Y` up, `-Z` forward). Camera movement and rotation update source positions in that frame without changing program selection.
+- `grid-row-aura.js` owns the canvas-only live-voice aura. A translucent sphere marks sustained canonical voices and a brighter shell marks audio-time attacks; bloomed stars intentionally omit it pending a separate bloom visual design.
 - `cosmos-audio.js` keeps the ambient bed intact, crossfades between modes, and projects both audio modes into Sky Debug.
 - `flight-view.js` chooses/prewarms nearby programs, rejects stale replies, updates 3D listener/source state, and renders the debug telemetry.
 
@@ -55,10 +57,18 @@ A stress compile of cached grid 16,380 ownership produced 349 owners, 64 chord-s
 - Tune the 8/12 star budgets and 1,400-unit radius against abundant but non-monster grids.
 - Tune distance gain, low-pass response, row timbres, tick rate, swap quantum, and crossfade duration.
 - Validate listener orientation and vertical/behind localization over headphones.
+- Add rear-source visual indicators so an omnidirectional active field remains inspectable without turning around.
 
 ## Full Sky regression speed
 
-`assert-fullsky.mjs` is now the slow end-of-turn check. Its M1 and B1 sections re-enumerate overlapping expensive real-grid/shard material. A good next step is to cache each grid's worker-path, brute-force, and tone results once per run and reuse them across guard sections. A quick/default corpus plus an explicit `--stress` full corpus could help too, but the default should retain representative real abundant grids and must not silently reduce regression coverage.
+Resolved on 2026-07-24. The former default corpus was effectively a stress corpus: it included grids 46,200 and 46,800, and M1 intentionally enumerated every grid twice through independent worker and brute-force paths before printing a result. Later M3/A/B1/B2/B3 sections then re-enumerated overlapping worker-path material.
+
+`assert-fullsky.mjs` now caches pure per-grid fixtures for the duration of a run, prints its corpus and per-grid M1 timings, and has two explicit lanes:
+
+- `node cosmos/cosmos/assert-fullsky.mjs` — quick/default, 8 representative real grids including abundant 1,092 and 1,650; 0.59 seconds on this machine.
+- `node cosmos/cosmos/assert-fullsky.mjs --stress` — expanded 30-grid corpus retaining the former sampled coverage; 158.82 seconds on this machine.
+
+Both lanes pass. In the stress run, grid 46,200 alone took 28.89 seconds on the worker path and 29.87 seconds on the independent brute-force path, confirming that M1's proof workload—not WebAudio or a deadlock—was the bottleneck.
 
 ## Files added or materially changed
 
@@ -66,6 +76,8 @@ A stress compile of cached grid 16,380 ownership produced 349 owners, 64 chord-s
 - `cosmos/cosmos/cull2-program-worker.js`
 - `cosmos/program-worker-pool.js`
 - `cosmos/spatial-grid-row-player.js`
+- `cosmos/spatial-audio-frame.js`
+- `cosmos/grid-row-aura.js`
 - `cosmos/cosmos-audio.js`
 - `cosmos/flight-view.js`
 - `cosmos/cosmos/cosmos-runtime.js`

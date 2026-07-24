@@ -13,9 +13,11 @@ import { rhythmTriples, rhythmDoubles } from './cosmos/mn-core.js';
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, setAudioMode, currentAudioMode, setGridSpatialField, setGridListenerPose } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, setAudioMode, currentAudioMode, setGridSpatialField, gridRowVisualState, setTuningStrength } from './cosmos-audio.js';
 import { AUDIO_MODES, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
+import { toAudioListenerPosition } from './spatial-audio-frame.js';
+import { drawGridRowAura } from './grid-row-aura.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
 // Sky Root handoff (cosmos/SKY_ROOT_HANDOFF_2026-07-22.md): anchor-independent root solve, Feature B.
@@ -396,6 +398,7 @@ let hover = null, selected = null;
 let leadVoice = null, muted = false;
 let lrcDivEl = null, lrcHeadEl = null, cockpitPlotEl = null, cockpitPlotCtx = null;
 let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, chordReadoutEl = null, audioModeEl = null;
+let tuningSliderEl = null, tuningReadoutEl = null;
 // Cardinality band filter: only nodes with cardinality in [cardLo, cardHi] render + hit-test (isolate radial
 // shells; makes monster clouds parseable). Elements + a change-guard so the DOM is only touched when needed.
 // The band targets ONLY the currently-focused bloom (cosmos.focusGrid); other blooms render in full. filterGrid
@@ -505,6 +508,8 @@ export function ensureFlight(canvas, hudEl) {
     tempoSliderEl = document.getElementById('lrc-tempo-slider'); tempoReadoutEl = document.getElementById('lrc-tempo-readout');
     chordReadoutEl = document.getElementById('lrc-chord-readout');
     audioModeEl = document.getElementById('lrc-audio-mode');
+    tuningSliderEl = document.getElementById('lrc-tuning-slider');
+    tuningReadoutEl = document.getElementById('lrc-tuning-readout');
     if (lrcHeadEl) {
       let clickTimer = null;   // debounce: a dblclick fires two clicks — let the pending single-click resolve
       lrcHeadEl.addEventListener('click', () => {                 // toggles cockpit; ignored while a dblclick is landing
@@ -519,6 +524,10 @@ export function ensureFlight(canvas, hudEl) {
       if (tempoReadoutEl) tempoReadoutEl.textContent = rate + '/s';
     });
     if (audioModeEl) audioModeEl.addEventListener('change', () => changeAudioMode(audioModeEl.value));
+    if (tuningSliderEl) tuningSliderEl.addEventListener('input', () => {
+      const strength = setTuningStrength(tuningSliderEl.value);
+      if (tuningReadoutEl) tuningReadoutEl.textContent = strength.toFixed(2).replace(/0$/, '') + ' st';
+    });
     // Full Sky debug overlay: seeded once from ?skyDebug=1 (so a bookmarked link opens straight into
     // it); the C key (bindControls, below) is the primary toggle from here on. Seeding this per-session
     // instead would stomp a manual C-toggle every time you exit/re-enter cosmos.
@@ -535,6 +544,7 @@ export function ensureFlight(canvas, hudEl) {
   rowCompiler = new ProgramWorkerPool(new URL('./cosmos/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
   rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
   if (audioModeEl) audioModeEl.value = AUDIO_MODES.AMBIENT_CHORDS;
+  if (tuningSliderEl) setTuningStrength(tuningSliderEl.value);
   changeAudioMode(AUDIO_MODES.AMBIENT_CHORDS);
   // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
   placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
@@ -877,7 +887,6 @@ function updateGridRowField(placed, basis) {
     setGridSpatialField([]);
     return;
   }
-  setGridListenerPose(basis.d, basis.u);
   const root = currentSkyRoot(), chord = currentSkyChord();
   const selectionKey = harmonicSelectionKey(root.rootKey, chord.id, ROW_CONSONANCE_CENTS);
   if (selectionKey !== rowSelectionKey) {
@@ -906,7 +915,7 @@ function updateGridRowField(placed, basis) {
   setGridSpatialField(selection.active.map(candidate => ({
     id: candidate.id,
     program: candidate.z._rowAudio.program,
-    position: candidate.position,
+    position: toAudioListenerPosition(candidate.position, basis),
     gain: rowDistanceGain(candidate.distance),
     cutoff: rowDistanceCutoff(candidate.distance),
   })));
@@ -950,8 +959,8 @@ function drawChordReadout() {
 // session): nearby tones (each audible star's FULL degree pool, not just what's voiced), what actually
 // got selected for the bed + its live envelope gain, cents/dev tuning info, and coverage() per
 // candidate triad (to see directly whether the field term is differentiating by location, rather than
-// guessing from the ear). Self-contained DOM (no index.html/style.css changes) — a plain floating panel,
-// built once and updated on a throttle so it doesn't thrash the DOM every rAF frame. Not part of the
+// guessing from the ear). Built once and updated on a throttle so it doesn't thrash the DOM every rAF
+// frame. The dense ratio readout uses a real table; the surrounding diagnostics remain preformatted.
 // product UI; see cosmos/FULL_SKY_HANDOFF.md and the state doc for where this might go next (Avery:
 // "maybe it can evolve into a semi-gamified thing users can play with").
 let skyDebugOn = false, skyDebugEl = null, skyDebugLast = 0;
@@ -961,9 +970,9 @@ function ensureSkyDebugPanel() {
   if (skyDebugEl) return;
   skyDebugEl = document.createElement('div');
   skyDebugEl.id = 'sky-debug-panel';
-  skyDebugEl.style.cssText = 'position:fixed;top:12px;right:12px;width:min(460px,calc(100vw - 48px));max-height:82vh;overflow-y:auto;' +
+  skyDebugEl.style.cssText = 'position:fixed;top:12px;right:12px;width:min(680px,calc(100vw - 48px));max-height:82vh;overflow:auto;' +
     'background:rgba(8,10,16,.9);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:10px 12px;' +
-    'font:10.5px/1.55 var(--mono,ui-monospace,monospace);color:#cfe3ff;white-space:pre-wrap;z-index:700;pointer-events:none;';
+    'font:10.5px/1.55 var(--mono,ui-monospace,monospace);color:#cfe3ff;z-index:700;pointer-events:none;';
   // MUST land inside #cosmos-view, not document.body: `body.cosmos-active > *:not(#cosmos-view)` hides
   // every other top-level child with !important during the full-swallow (style.css) — a body-level
   // panel silently never shows while flying. #cosmos-view has no transform/filter, so position:fixed
@@ -973,6 +982,45 @@ function ensureSkyDebugPanel() {
 }
 
 const fmtDev = d => (d > 0 ? '+' : '') + d.toFixed(1) + '¢';
+
+function appendRatioTokens(cell, ratios) {
+  if (!ratios.length) { cell.textContent = '—'; return; }
+  const wrap = document.createElement('span');
+  wrap.className = 'sky-ratio-tokens';
+  for (const ratio of ratios) {
+    const token = document.createElement('span');
+    token.className = 'sky-ratio-token';
+    token.textContent = `${ratio.fraction}${ratio.count > 1 ? `×${ratio.count}` : ''}`;
+    wrap.appendChild(token);
+  }
+  cell.appendChild(wrap);
+}
+
+function makeRatioToneTable(rows, context) {
+  const section = document.createElement('section');
+  section.className = 'sky-ratio-section';
+  const heading = document.createElement('div');
+  heading.className = 'sky-ratio-heading';
+  heading.textContent = `SELECTED RATIO TONES  (${context})`;
+  section.appendChild(heading);
+  const table = document.createElement('table');
+  table.className = 'sky-ratio-table';
+  const header = table.createTHead().insertRow();
+  for (const label of ['deg', 'chord', 'selected', 'ON']) {
+    const th = document.createElement('th'); th.scope = 'col'; th.textContent = label; header.appendChild(th);
+  }
+  const tbody = table.createTBody();
+  for (const row of rows) {
+    const tr = tbody.insertRow();
+    const degree = tr.insertCell(); degree.textContent = row.degree;
+    const chord = tr.insertCell(); chord.textContent = row.inChord ? '●' : '·';
+    appendRatioTokens(tr.insertCell(), row.selected);
+    appendRatioTokens(tr.insertCell(), row.sounding);
+  }
+  section.appendChild(table);
+  return section;
+}
+
 function renderSkyDebug(now) {
   if (!skyDebugOn) return;
   ensureSkyDebugPanel();
@@ -980,7 +1028,7 @@ function renderSkyDebug(now) {
   skyDebugLast = now;
   const s = debugSkyState();
   const lines = [];
-  lines.push(`FULL SKY DEBUG   mode ${s.audioMode}   root ${s.root.fraction} (${s.root.cents}¢, ${s.root.hz}Hz)${s.rootPending ? '  [solve pending]' : ''}`);
+  lines.push(`FULL SKY DEBUG   mode ${s.audioMode}   tuning ${s.tuningStrength.toFixed(2)}st   root ${s.root.fraction} (${s.root.cents}¢, ${s.root.hz}Hz)${s.rootPending ? '  [solve pending]' : ''}`);
   const settleState = settleSinceTick === null ? 'moving' : `settled ${(Math.max(0, (currentTicks() - settleSinceTick))).toFixed(0)}/${SETTLE_TICKS} ticks`;
   lines.push(`  ${settleState}, camSpeed ${camSpeed.toFixed(1)}u/s (settle<${SETTLE_SPEED})`);
   if (s.rootLadder.length) lines.push(`  ladder (top ${s.rootLadder.length})  ${s.rootLadder.map(r => `${r.fraction}:${r.score.toFixed(2)}`).join('  ')}`);
@@ -992,17 +1040,10 @@ function renderSkyDebug(now) {
     lines.push(`worker q${compiler.queued} c${compiler.compiling} done${compiler.completed} cancel${compiler.cancelled} err${compiler.errors} last${compiler.lastCompileMs?.toFixed?.(1) || 0}ms`);
     for (const star of s.gridRows.stars) lines.push(`  #${star.id} ${star.events} ticks · ${star.selectedRatios} ratios · ${star.voices} voices${star.pendingKey ? ' [swap pending]' : ''}`);
   }
-  const fmtRatioCounts = ratios => ratios.length
-    ? ratios.map(r => `${r.fraction}${r.count > 1 ? `×${r.count}` : ''}`).join(' ')
-    : '—';
-  lines.push(`\nSELECTED RATIO TONES  (${s.audioMode === AUDIO_MODES.CULLED_GRID_ROWS ? 'active grid-star programs; ON = live A–D voices' : 'audible-star pools; ON = live bed voices'})`);
-  lines.push(`deg  chord  selected                         ON`);
-  for (const row of s.selectedRatioTones) {
-    const head = `${String(row.degree).padStart(2)}     ${row.inChord ? '●' : '·'}    `;
-    const selected = fmtRatioCounts(row.selected);
-    const on = fmtRatioCounts(row.sounding);
-    lines.push(`${head}${selected.padEnd(32)} ${on}`);
-  }
+  const ratioTableAt = lines.length;
+  const ratioContext = s.audioMode === AUDIO_MODES.CULLED_GRID_ROWS
+    ? 'active grid-star programs; ON = live A–D voices'
+    : 'audible-star pools; ON = live bed voices';
   const covSorted = [...s.coverageByTriad].sort((a, b) => b.coverage - a.coverage);
   lines.push(`coverage (best→worst)  ${covSorted.map(c => `${c.symbol}:${c.coverage.toFixed(2)}`).join('  ')}`);
   if (s.candidateCosts.length) {   // Sky Root Feature A: why the walk picked what it's about to pick
@@ -1018,7 +1059,17 @@ function renderSkyDebug(now) {
       for (const v of st.voiced) lines.push(`  ▶ deg${v.degree} dev${fmtDev(v.dev)} gainLaw${v.gainLaw} env${v.envGain} ${v.freqHz}Hz`);
     } else lines.push(`  ▶ (silent — no chord degree covered)`);
   }
-  skyDebugEl.textContent = lines.join('\n');
+  const fragment = document.createDocumentFragment();
+  const before = document.createElement('div');
+  before.className = 'sky-debug-text';
+  before.textContent = lines.slice(0, ratioTableAt).join('\n');
+  fragment.appendChild(before);
+  fragment.appendChild(makeRatioToneTable(s.selectedRatioTones, ratioContext));
+  const after = document.createElement('div');
+  after.className = 'sky-debug-text';
+  after.textContent = lines.slice(ratioTableAt).join('\n');
+  fragment.appendChild(after);
+  skyDebugEl.replaceChildren(fragment);
 }
 
 function loop() {
@@ -1166,6 +1217,7 @@ function loop() {
   let pickNode = null, pickNodeD2 = NODE_HIT * NODE_HIT, pickStar = null, pickStarD2 = Infinity, selPos = null;
 
   // stars, painter's order (far first). A blooming star dissolves into its point cloud (dot alpha ↓).
+  const rowActivity = new Map(gridRowVisualState().map(activity => [activity.id, activity]));
   const order = [...proj.values()].sort((a, b) => b.s.z - a.s.z);
   for (const { z, s } of order) {
     const fog = fogAt(s.z); if (fog <= 0) continue;
@@ -1177,6 +1229,8 @@ function loop() {
     const col = z.monster ? 'rgba(255,120,105,0.92)'           // red giant = combinatorial monster (solve-on-override)
               : z.unsolvable ? 'rgba(150,120,110,0.45)'         // warm-grey = uncharted frontier (beyond cap)
               : (lit ? starColor(z.size) : 'rgba(120,130,150,0.5)');
+    const activity = rowActivity.get(z.grid);
+    if (activity && !bloomed.has(z.grid)) drawGridRowAura(ctx, s, r, fog, activity);
     if (lit && z.size > 2.2) {                                // sun glow
       const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 2.6);
       g.addColorStop(0, col); g.addColorStop(1, 'transparent');

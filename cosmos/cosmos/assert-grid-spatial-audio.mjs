@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { gridRatioOwnerSolve } from '../grid-core.js';
 import { ProgramWorkerPool } from '../program-worker-pool.js';
 import { selectedGridRatioToneRows } from '../cosmos-audio.js';
+import { SpatialGridRowPlayer } from '../spatial-grid-row-player.js';
+import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP, toAudioListenerPosition } from '../spatial-audio-frame.js';
 import {
   AUDIO_MODES, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS,
   audioCompileEligibility, chooseSpatialRows, compileGridAudioProgram,
@@ -95,10 +97,36 @@ check('row-mode ratio chart aggregates each active star program by solved-root d
 check('row-mode ON column counts live canonical voices independently of selection',
   rowChart[4].sounding[0].fraction === '5/4' && rowChart[4].sounding[0].count === 2 && rowChart[0].sounding.length === 0);
 
+console.log('\n  Audio-time visual activity');
+const visualPlayer = Object.create(SpatialGridRowPlayer.prototype);
+visualPlayer.enabled = true;
+visualPlayer.ctx = { currentTime: 10 };
+visualPlayer.stars = new Map([[120, {
+  active: true,
+  visualAttacks: [{ when: 9.9, strength: 1 }, { when: 10.05, strength: 1 }],
+  visualLives: [{ startTime: 9, endTime: 10.12 }, { startTime: 10.05, endTime: Infinity }],
+}]]);
+let visual = visualPlayer.visualState()[0];
+check('aura follows the voice sounding now, not the next lookahead-scheduled voice',
+  visual.voices === 1 && visual.pulse > 0);
+visualPlayer.ctx.currentTime = 10.08;
+visual = visualPlayer.visualState()[0];
+check('aura sees the brief real crossfade overlap once audio-context time reaches it', visual.voices === 2);
+
+console.log('\n  Camera/WebAudio coordinate frame');
+const basis = { r: [1, 0, 0], u: [0, 1, 0], d: [0, 0, 1] };
+check('fixed listener uses WebAudio right-handed defaults',
+  AUDIO_LISTENER_FORWARD.join(',') === '0,0,-1' && AUDIO_LISTENER_UP.join(',') === '0,1,0');
+check('camera-front maps to WebAudio front and screen-right maps to audio +X',
+  toAudioListenerPosition([3, 2, 10], basis).join(',') === '3,2,-10');
+check('a genuinely rear source remains rear rather than being sign-flipped into view',
+  toAudioListenerPosition([-3, 1, -10], basis).join(',') === '-3,1,10');
+
 console.log('\n  Product wiring');
 const audio = readFileSync(new URL('../cosmos-audio.js', import.meta.url), 'utf8');
 const player = readFileSync(new URL('../spatial-grid-row-player.js', import.meta.url), 'utf8');
 const flight = readFileSync(new URL('../flight-view.js', import.meta.url), 'utf8');
+const aura = readFileSync(new URL('../grid-row-aura.js', import.meta.url), 'utf8');
 const worker = readFileSync(new URL('./cull2-program-worker.js', import.meta.url), 'utf8');
 const page = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
 check('compiler is a dedicated worker receiving compact finalized ownership',
@@ -106,9 +134,22 @@ check('compiler is a dedicated worker receiving compact finalized ownership',
 check('main scheduler only schedules precompiled row programs',
   audio.includes('gridRowPlayer?.tick') && !player.includes('buildGridCull2Readout') && !player.includes('ratioOwners'));
 check('3D graph uses one PannerNode per star and listener orientation, not screen pan',
-  player.includes('createPanner()') && player.includes("panningModel = 'HRTF'") && player.includes('setListenerPose'));
+  player.includes('createPanner()') && player.includes("panningModel = 'HRTF'") && player.includes('AUDIO_LISTENER_FORWARD'));
+check('flight aura reads live row voices and attack pulses without entering the worker/compiler path',
+  audio.includes('gridRowVisualState') && player.includes('visualState()') && player.includes('visualAttacks') &&
+  aura.includes('drawGridRowAura') && flight.includes('gridRowVisualState()') && flight.includes("!bloomed.has(z.grid)"));
+check('audio and aura concerns live in dedicated modules rather than the flight renderer',
+  flight.includes("from './spatial-audio-frame.js'") && flight.includes("from './grid-row-aura.js'") &&
+  !flight.includes('function drawGridRowAura'));
+check('dense selected-ratio debug data uses real wrapping cells instead of pad-based text columns',
+  flight.includes("createElement('table')") && flight.includes("className = 'sky-ratio-table'") &&
+  flight.includes("className = 'sky-ratio-tokens'") && !flight.includes('selected.padEnd'));
 check('cockpit exposes both explicit modes with ambient chords as default',
   page.includes('id="lrc-audio-mode"') && page.indexOf('value="ambient-chords" selected') < page.indexOf('value="culled-grid-rows"'));
+check('cockpit exposes the live local-tuning weight in voice-leading semitone units',
+  page.includes('id="lrc-tuning-slider"') && page.includes('id="lrc-tuning-readout"') &&
+  page.indexOf('id="lrc-tempo-slider"') < page.indexOf('id="lrc-tuning-slider"') &&
+  flight.includes('setTuningStrength(tuningSliderEl.value)'));
 check('flight guards every compile with finalized ownership and movement budgets',
   flight.includes('audioCompileEligibility(z)') && flight.includes('chooseSpatialRows(candidates, rowActiveIds)'));
 

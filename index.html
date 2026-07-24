@@ -648,9 +648,14 @@
                 <div class="lrc-transport">
                     <button id="lrc-mute-btn" title="Mute">🔊</button>
                     <span class="lrc-tempo-cap">ticks/s</span>
-                    <input type="range" id="lrc-tempo-slider" min="1" max="30" step="1" value="10" aria-label="universal clock rate (ticks per second)">
+                    <input type="range" id="lrc-tempo-slider" min="1" max="100" step="1" value="10" aria-label="universal clock rate (ticks per second)">
                     <b id="lrc-tempo-readout">10/s</b>
                 </div>
+                <label class="lrc-tuning-row" for="lrc-tuning-slider">
+                    <span>local tuning</span>
+                    <input type="range" id="lrc-tuning-slider" min="0" max="8" step="0.25" value="2" aria-label="local tuning strength in semitones of voice-leading cost">
+                    <b id="lrc-tuning-readout">2.0 st</b>
+                </label>
             </div>
         </div>
     </div>

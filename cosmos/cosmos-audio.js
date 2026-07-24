@@ -26,7 +26,8 @@ const LEAD_MASK_WINDOW = 35;     // cents — a lead onset counts as "in the glo
 // audible-set SELECTION is a camera/projection concern, kept out of this dependency-free audio layer.
 const CHORD_TICKS = 256;         // universal-clock ticks per chord (≈25.6s at the default 10 ticks/s)
 const TABU_K = 3;                // sky-walk tabu length (chord-walk.js's exact convention)
-const LAMBDA_FIELD = 2.0;        // field term weight — tune by ear; must be able to overrule a cost-1 move
+const TUNING_STRENGTH_MAX = 8;
+let LAMBDA_FIELD = 2.0;          // live local-tuning pull, in semitones of voice-leading cost
 const MAX_BED_OSC = 30;          // bed oscillator budget (≤3 tones/star × AUDIBLE_N=10), alongside MAX_LIVE_OSC
 const BED_ATTACK = 1.5, BED_RELEASE = 2.5;   // seconds — long swells, this is half the product
 const BED_PEAK = 0.12;           // per-voice envelope peak (modest — many sustained voices sum)
@@ -89,6 +90,7 @@ const absoluteTicks = now => (now - transportStart) * ticksPerSec;   // monotoni
 // clicked star's own rhythm stays sacrosanct, the sky only tints it.
 let leadMask = null;              // leadMask[noteIdx] = true if lead.notes[noteIdx] is in the CURRENT sky chord
 let leadMaskChordId = -1;         // which skyChordId leadMask was computed against (cache invalidation)
+let leadMaskRootKey = -1;         // root swaps independently invalidate the same mask
 
 // ── Full Sky: the global chord walk (online, stateful — not precomputed) + the ambient bed ──
 let skyChordId = START_CHORD_ID, skyTabu = null, skyStep = -1;   // walk state; skyStep=-1 = not yet observed
@@ -155,9 +157,10 @@ export function setGridSpatialField(items) {
   gridRowPlayer.setField(items || [], currentTicks());
 }
 
-export function setGridListenerPose(forward, up) {
-  if (!audioCtx || !gridRowPlayer) return;
-  gridRowPlayer.setListenerPose(forward, up);
+// Read-only bridge for flight visuals. The audio player remains the authority on whether a row star
+// really has live voices and whether a scheduled attack has reached audio-context time.
+export function gridRowVisualState() {
+  return gridRowPlayer?.visualState() || [];
 }
 
 // Procedurally generated impulse response for the bed's shared reverb send: an exponentially decaying
@@ -186,18 +189,19 @@ export function setLead(voice) {
 
 // Is a lead onset's true JI ratio "in" a given global chord (within LEAD_MASK_WINDOW of one of its 3
 // degrees)? Pure — no lead/audioCtx state — so a headless guard can check mask agreement directly.
-export function leadNoteInChord(ratio, chordId) {
-  const { d, dev } = nearestDegree(ratioToCents(ratio));
+export function leadNoteInChord(ratio, chordId, rootCents = 0) {
+  const { d, dev } = nearestDegree(ratioToCents(ratio), rootCents);
   return TRIADS[chordId].semitones.includes(d) && Math.abs(dev) <= LEAD_MASK_WINDOW;
 }
 
 // Recompute leadMask against the CURRENT global sky chord. Cheap (≤ lead cardinality), so it's called
 // lazily (skyChordId cache-check) rather than threaded through every stepSkyWalk call.
 function ensureLeadMask(force) {
-  if (!lead) { leadMask = null; leadMaskChordId = -1; return; }
-  if (!force && leadMaskChordId === skyChordId) return;
-  leadMask = lead.notes.map(n => leadNoteInChord(n.ratio, skyChordId));
+  if (!lead) { leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1; return; }
+  if (!force && leadMaskChordId === skyChordId && leadMaskRootKey === skyRoot.rootKey) return;
+  leadMask = lead.notes.map(n => leadNoteInChord(n.ratio, skyChordId, skyRoot.cents));
   leadMaskChordId = skyChordId;
+  leadMaskRootKey = skyRoot.rootKey;
 }
 
 // Called each frame from the flight loop for the lead star. pan in [-1,1], gain in [0,1].
@@ -215,6 +219,17 @@ export function setSpatial(pan, gain, octaveLift) {
 // The pure scheduling-decision helpers below (hashId/bedDegreesFor/reattachStepFor) are exported
 // alongside the SKY KNOBS so a headless guard can verify the bed's decisions without a real AudioContext.
 export { CHORD_TICKS, TABU_K, LAMBDA_FIELD, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_HYSTERESIS, ROOT_TOP_K };
+
+// User-facing harmonic-policy control. Because candidate field costs are normalized, this has a
+// stable meaning: the best local tuning advantage can justify up to this many semitones of additional
+// voice-leading motion. Higher values are intentionally ready for sevenths/extensions.
+export function setTuningStrength(value) {
+  const n = Number(value);
+  LAMBDA_FIELD = Math.max(0, Math.min(TUNING_STRENGTH_MAX, Number.isFinite(n) ? n : 2));
+  return LAMBDA_FIELD;
+}
+
+export function currentTuningStrength() { return LAMBDA_FIELD; }
 const currentChordSemitones = () => TRIADS[skyChordId].semitones;
 
 // small deterministic integer hash (Avery: REATTACK_PERIODS[hash(grid) % n] — a plain mod would
@@ -548,6 +563,7 @@ export function debugSkyState() {
   const gridRows = gridRowPlayer?.debugState() || null;
   return {
     audioMode,
+    tuningStrength: LAMBDA_FIELD,
     gridRows,
     rootHz: ROOT_HZ,   // 1/1's fixed fundamental — the root solve only ever picks a RATIO relative to this
     root,
@@ -627,7 +643,7 @@ export function stopAudio() {
   skyChordId = START_CHORD_ID; skyTabu = null; skyStep = -1; lastSyncedChordId = null;
   skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; pendingRoot = null; lastRootLadder = [];
   lead = null; schedIdx = 0; schedCycle = 0; transportStart = null;
-  leadMask = null; leadMaskChordId = -1;
+  leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1;
   if (audioCtx) { try { audioCtx.close(); } catch {} }
   audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; liveOscs = null;
   ambientModeGain = null; bedBus = null; reverbConv = null; reverbWet = null;

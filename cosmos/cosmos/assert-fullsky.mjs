@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { gridShardSolve, shardKeysOf, gridShardSystems, divisorsFast, nearestDegree, poolFromRatios, TONE_BIN_CENTS } from '../grid-core.js';
 import { deriveScale } from '../oracle-core.js';
 import { TRIADS, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, chooseNextChord, candidateCosts, pushTabu, chordStepIndex } from '../sky-walk.js';
-import { CHORD_TICKS, TABU_K, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_HYSTERESIS, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, shouldSwapRoot, voiceToneChanged } from '../cosmos-audio.js';
+import { CHORD_TICKS, TABU_K, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_HYSTERESIS, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, shouldSwapRoot, voiceToneChanged, setTuningStrength, currentTuningStrength } from '../cosmos-audio.js';
 import { poolFromTones, solveRoots, scoreRootAt } from '../sky-root.js';
 import { ratioToCents } from '../oracle-core.js';
 
@@ -16,11 +16,23 @@ console.log('═══ FULL SKY — assertions ═══');
 // ══ M1 — pool plumbing ═══════════════════════════════════════════════════════════════════════
 console.log('\n── M1: pool plumbing ──');
 
-// real grids: a spread of sizes, including the abundant ones the handoff cites (1092, 1650).
+// Default is a quick, explicit real-grid regression corpus. It keeps the abundant handoff examples
+// (1092, 1650), spans shallow through 38-shard material, and finishes quickly enough to remain an
+// end-of-turn guard. --stress retains (and slightly expands) the former 25-grid sampled corpus.
+// Print the mode and exact corpus so a quick run can never be mistaken for stress coverage.
 const idx = JSON.parse(readFileSync(new URL('../data/oracle-index.json', import.meta.url)));
+const quickGrids = [552, 1092, 1650, 2300, 2640, 2700, 4600, 6900];
 const sampleGrids = [...new Set([2640, 7920, 1092, 1650, 552, 15840, ...idx.grid.slice(0, 200)])].filter(g => g >= 2);
-const N = 25;
-const testGrids = Array.from({ length: N }, (_, i) => sampleGrids[Math.floor(i * sampleGrids.length / N)]);
+const sampledStressGrids = Array.from({ length: 25 }, (_, i) => sampleGrids[Math.floor(i * sampleGrids.length / 25)]);
+const stress = process.argv.includes('--stress');
+const testGrids = stress ? [...new Set([...quickGrids, ...sampledStressGrids])] : quickGrids;
+console.log(`  corpus: ${stress ? 'stress' : 'quick/default'} · ${testGrids.length} real grids`);
+console.log(`  grids: ${testGrids.join(', ')}`);
+
+// Later milestone sections intentionally reuse the M1 fixtures. Before this cache, M3/A/B1/B2/B3
+// repeatedly re-enumerated the same real grids even though every helper is pure and deterministic.
+const workerPathCache = new Map();
+const bruteForceCache = new Map();
 
 // worker-path pool (+ tones, Sky Root B1): gridShardSolve per shard, merged with the SAME
 // min-|dev|/sum-toneCount/0.5¢-bin-dedupe rules cosmos-runtime.js's mergeSkyPool/mergeSkyTones use
@@ -28,6 +40,7 @@ const testGrids = Array.from({ length: N }, (_, i) => sampleGrids[Math.floor(i *
 // tiny folds; this checks grid-core's shard math end-to-end either way, and reuses ONE gridShardSolve
 // call per shard for both pool and tones — no doubled computation).
 function workerPathPool(G) {
+  if (workerPathCache.has(G)) return workerPathCache.get(G);
   const pool = new Array(12).fill(null), toneCount = new Array(12).fill(0);
   const tones = [], seenBins = new Set();
   for (const A of shardKeysOf(G)) {
@@ -38,13 +51,16 @@ function workerPathPool(G) {
     }
     for (const t of r.tones) { const bin = Math.round(t.c / TONE_BIN_CENTS); if (seenBins.has(bin)) continue; seenBins.add(bin); tones.push(t); }
   }
-  return { pool, toneCount, tones };
+  const result = { pool, toneCount, tones };
+  workerPathCache.set(G, result);
+  return result;
 }
 
 // brute-force pool: union every shard's gridShardSystems() representatives (a DIFFERENT enumeration
 // path than gridShardSolve's internal shardGroups reuse — re-derives each system's scale independently)
 // and fold them all into one pool in a single pass (no per-shard merge step).
 function bruteForcePool(G) {
+  if (bruteForceCache.has(G)) return bruteForceCache.get(G);
   const pool = new Array(12).fill(null), toneCount = new Array(12).fill(0);
   for (const A of shardKeysOf(G)) {
     for (const sys of gridShardSystems(G, A)) {
@@ -52,12 +68,17 @@ function bruteForcePool(G) {
       poolFromRatios(scale.ratios, pool, toneCount);
     }
   }
-  return { pool, toneCount };
+  const result = { pool, toneCount };
+  bruteForceCache.set(G, result);
+  return result;
 }
 
 let poolMismatch = 0, toneMismatch = 0, zeroDevMissing = 0, shapeFail = 0, worst = null;
 for (const G of testGrids) {
-  const w = workerPathPool(G), b = bruteForcePool(G);
+  const started = performance.now();
+  const w = workerPathPool(G), workerMs = performance.now() - started;
+  const b = bruteForcePool(G), totalMs = performance.now() - started;
+  console.log(`  grid ${G}: worker ${(workerMs / 1000).toFixed(2)}s · brute ${((totalMs - workerMs) / 1000).toFixed(2)}s`);
   for (let d = 0; d < 12; d++) {
     const wp = w.pool[d], bp = b.pool[d];
     const same = (wp === null && bp === null) ||
@@ -90,6 +111,12 @@ check('gainForDev: monotone decreasing in |dev|', gainMonoFail === 0, `${gainMon
 check('gainForDev(0) === 1', gainForDev(0) === 1);
 check(`gainForDev(±${GAIN_CEILING_CENTS}) ≈ 0`, Math.abs(gainForDev(GAIN_CEILING_CENTS)) < 1e-9 && Math.abs(gainForDev(-GAIN_CEILING_CENTS)) < 1e-9);
 check('gainForDev is symmetric in dev sign', [0, 10, 22, 44].every(d => gainForDev(d) === gainForDev(-d)));
+
+console.log('\n  Live local-tuning policy weight');
+check('local tuning strength defaults to 2 semitones of voice-leading cost', currentTuningStrength() === 2);
+check('local tuning strength is continuously adjustable', setTuningStrength(3.25) === 3.25 && currentTuningStrength() === 3.25);
+check('local tuning strength clamps to its supported 0–8 range', setTuningStrength(-1) === 0 && setTuningStrength(99) === 8);
+setTuningStrength(2);
 
 // P/L/R structural check — same neo-Riemannian fact chord-walk.js's guard verified, now against the
 // sky's pure vlParsimony (no beta term to zero out — it never had one): only P and L sit at cost 1
@@ -262,6 +289,10 @@ check('root (ratio=1) is out-of-chord for a triad NOT containing degree 0', lead
 const atWindow = 2 ** (LEAD_MASK_WINDOW / 1200), pastWindow = 2 ** ((LEAD_MASK_WINDOW + 0.5) / 1200);
 check(`ratio exactly ${LEAD_MASK_WINDOW}¢ from degree 0 → in-chord (boundary inclusive)`, leadNoteInChord(atWindow, triadHas0.id) === true);
 check(`ratio just past ${LEAD_MASK_WINDOW}¢ from degree 0 → out-of-chord`, leadNoteInChord(pastWindow, triadHas0.id) === false);
+const triadHas11 = TRIADS.find(t => t.semitones.includes(11));
+const triadHas0Not11 = TRIADS.find(t => t.semitones.includes(0) && !t.semitones.includes(11));
+check('lead mask follows a non-zero root anchor instead of remaining hard-wired to 1/1',
+  leadNoteInChord(1, triadHas11.id, 100) === true && leadNoteInChord(1, triadHas0Not11.id, 100) === false);
 
 // mask agreement: leadNoteInChord must agree with an independent reimplementation built directly from
 // nearestDegree/ratioToCents (the same primitives M1 already verified) — checks the WIRING, not the

@@ -3651,6 +3651,26 @@ body.cosmos-active #cosmos-view {
 .lrc-audio-mode-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font: 10px var(--sans); color: var(--dim); text-transform: uppercase; letter-spacing: .5px; }
 .lrc-audio-mode-row select { min-width: 0; flex: 1; padding: 3px 5px; border: 1px solid var(--hud-border); border-radius: 4px; background: rgba(8,10,16,.88); color: var(--hud-text); font: 10px var(--sans); text-transform: none; letter-spacing: 0; }
 .lrc-audio-mode-row select:focus { outline: 1px solid var(--hud-accent); border-color: var(--hud-accent); }
+.lrc-tuning-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font: 10px var(--sans); color: var(--dim); text-transform: uppercase; letter-spacing: .5px; }
+.lrc-tuning-row span { white-space: nowrap; }
+.lrc-tuning-row input[type=range] { min-width: 0; flex: 1; accent-color: var(--hud-accent); }
+.lrc-tuning-row b { min-width: 42px; color: var(--hud-text); font: 600 10px var(--mono); text-align: right; text-transform: none; letter-spacing: 0; }
+
+/* Full Sky developer readout: real cells keep dense selected-ratio pools from flowing into ON. */
+#sky-debug-panel .sky-debug-text { white-space: pre-wrap; }
+#sky-debug-panel .sky-ratio-section { margin: 8px 0; }
+#sky-debug-panel .sky-ratio-heading { margin-bottom: 3px; color: #dceaff; }
+#sky-debug-panel .sky-ratio-table { width: 100%; border-collapse: collapse; table-layout: auto; }
+#sky-debug-panel .sky-ratio-table th,
+#sky-debug-panel .sky-ratio-table td { padding: 2px 7px; border: 1px solid rgba(255,255,255,.11); text-align: left; vertical-align: top; }
+#sky-debug-panel .sky-ratio-table th { color: #91a9c7; font-weight: 600; white-space: nowrap; }
+#sky-debug-panel .sky-ratio-table th:nth-child(1),
+#sky-debug-panel .sky-ratio-table td:nth-child(1),
+#sky-debug-panel .sky-ratio-table th:nth-child(2),
+#sky-debug-panel .sky-ratio-table td:nth-child(2) { width: 1%; text-align: center; white-space: nowrap; }
+#sky-debug-panel .sky-ratio-table th:nth-child(3) { width: 100%; }
+#sky-debug-panel .sky-ratio-tokens { display: flex; flex-wrap: wrap; gap: 1px 7px; min-width: 0; }
+#sky-debug-panel .sky-ratio-token { white-space: nowrap; }
 .lrc-transport { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-family: var(--sans); font-size: 10px; color: var(--dim); }
 .lrc-transport #lrc-mute-btn { flex: 0 0 auto; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; padding: 0; font-size: 11px; line-height: 1; background: transparent; border: 1px solid var(--hud-border); border-radius: 4px; color: var(--hud-text); cursor: pointer; transition: all var(--transition-speed); }
 .lrc-transport #lrc-mute-btn:hover { border-color: var(--hud-accent); }
