@@ -3,8 +3,8 @@
 import { readFileSync } from 'fs';
 import { gridShardSolve, shardKeysOf, gridShardSystems, divisorsFast, nearestDegree, poolFromRatios, TONE_BIN_CENTS } from '../grid-core.js';
 import { deriveScale } from '../oracle-core.js';
-import { CHORDS, CHORD_QUALITIES, QUALITY_COUNT, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, chooseNextChord, candidateCosts, pushTabu, chordStepIndex } from '../sky-walk.js';
-import { CHORD_TICKS, TABU_K, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState } from '../cosmos-audio.js';
+import { CHORDS, CHORD_QUALITIES, QUALITY_COUNT, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, perDegreeSupport, weakestSupport, chooseNextChord, candidateCosts, pushTabu, chordStepIndex } from '../sky-walk.js';
+import { CHORD_TICKS, TABU_K, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState } from '../cosmos-audio.js';
 import { poolFromTones, solveRoots, scoreRootAt } from '../sky-root.js';
 import { ratioToCents } from '../oracle-core.js';
 
@@ -401,7 +401,9 @@ for (const stars of [realPoolsA, realPoolsB]) {
     agreeChecks++;
     const cov = t => coverage(t, stars);
     const chosen = chooseNextChord(current, tabu, cov, { lambdaField: 2 });
-    const ranked = candidateCosts(current, tabu, cov, { lambdaField: 2 }).sort((a, b) => a.cost - b.cost || a.id - b.id);
+    // Same tie-break the walk documents: cost, then richest, then lowest id.
+    const ranked = candidateCosts(current, tabu, cov, { lambdaField: 2 })
+      .sort((a, b) => a.cost - b.cost || b.cardinality - a.cardinality || a.id - b.id);
     if (chosen.id !== ranked[0].id) agreeFail++;
     current = chosen.id; pushTabu(tabu, current, 3);
   }
@@ -409,6 +411,82 @@ for (const stars of [realPoolsA, realPoolsB]) {
 check('chooseNextChord always agrees with candidateCosts\' argmin (same ranking, no drift)', agreeFail === 0, `${agreeFail}/${agreeChecks} mismatches`);
 
 check('EPS_SPREAD is a small positive knob', EPS_SPREAD > 0 && EPS_SPREAD < 1, `EPS_SPREAD=${EPS_SPREAD}`);
+
+// ══ Chord richness — cardinality-fair field term + earned extension incentive ═══════════════════
+console.log('\n── Chord richness: reaching past the triad ──');
+
+// Why the field term normalizes PER CARDINALITY CLASS. coverage is a MEAN over a chord's degrees, so
+// averaging over more degrees regresses toward the field's mean: measured over 12 real codex locations
+// the coverage spread shrinks monotonically with size (3-note 0.081 → 6-note 0.048) while the class
+// MEANS agree to three decimals. maxCov over the whole vocabulary is therefore always held by a triad,
+// and a 7th used to pay a field cost for being LARGE rather than for being out of tune.
+console.log('\n  Field term is fair across cardinality');
+const chImaj7 = findT('Imaj7'), chIIm7 = findT('IIm7');
+const mixed = new Set([chIii.id, chMin.id, chImaj7.id, chIIm7.id]);   // 2 triads + 2 four-note chords
+const tabuMixed = CHORDS.map(t => t.id).filter(id => !mixed.has(id));   // includes chI.id — current is always tabu
+// Triad class spans .90/.60 (spread .30 ≥ EPS). Four-note class spans .80/.70 — its best is BELOW the
+// best triad, which is exactly the situation the old global normalization punished.
+const mixedCov = t => t.id === chIii.id ? 0.90 : t.id === chMin.id ? 0.60 : t.id === chImaj7.id ? 0.80 : t.id === chIIm7.id ? 0.70 : 0;
+const rMixed = candidateCosts(chI.id, tabuMixed, mixedCov, { lambdaField: 1, richness: 0 });
+const bestTriad = rMixed.find(r => r.id === chIii.id), bestFour = rMixed.find(r => r.id === chImaj7.id);
+check('the best chord of EACH cardinality class pays fieldCost 0',
+  Math.abs(bestTriad.fieldCost) < 1e-9 && Math.abs(bestFour.fieldCost) < 1e-9,
+  `triad ${bestTriad.fieldCost.toFixed(4)}, four-note ${bestFour.fieldCost.toFixed(4)}`);
+check('a 7th is no longer charged for a coverage gap it cannot close by being large',
+  bestFour.fieldCost < 1 * (0.90 - 0.80) / 0.30,
+  `would have paid ${(1 * (0.90 - 0.80) / 0.30).toFixed(4)} under global normalization`);
+check('within a class the spread law is unchanged (worst four-note pays the faded EPS_SPREAD cost)',
+  Math.abs(rMixed.find(r => r.id === chIIm7.id).fieldCost - 1 * 0.10 / EPS_SPREAD) < 1e-9,
+  `got ${rMixed.find(r => r.id === chIIm7.id).fieldCost.toFixed(4)}`);
+// The Feature A worked example above is a triad-only candidate set and still reproduces Avery's
+// overlay numbers exactly — per-class normalization is a strict no-op when one class is present.
+check('single-cardinality candidate set reproduces the pre-existing field law exactly',
+  Math.abs(iii1.fieldCost - 0.642857) < 1e-4 && Math.abs(bvi1.fieldCost - 0.035714) < 1e-4);
+
+console.log('\n  Richness is EARNED by the chord\'s weakest degree');
+const flatSupport = new Array(12).fill(1);
+const noMaj7 = flatSupport.map((g, d) => d === 11 ? 0 : g);           // nothing to sound on at degree 11
+check('perDegreeSupport keeps coverage\'s double sum per degree (perfect star → 1 everywhere)',
+  perDegreeSupport([perfectStar]).every(g => Math.abs(g - 1) < 1e-9));
+check('perDegreeSupport ignores a zero-weight star exactly as coverage does',
+  perDegreeSupport([{ weight: 0, pool: perfectStar.pool }]).every(g => g === 0));
+check('weakestSupport reports the chord\'s least-supported degree, not its mean',
+  weakestSupport(chImaj7, noMaj7) === 0 && weakestSupport(chI, noMaj7) === 1);
+const richAt = (perDegree, richness = 0.5) => candidateCosts(chI.id, tabuMixed, mixedCov, { lambdaField: 1, richness, perDegree });
+check('a fully-supported 7th earns the whole incentive',
+  Math.abs(richAt(flatSupport).find(r => r.id === chImaj7.id).richness - 0.5) < 1e-9);
+check('a 7th whose extension degree has nothing to sound on earns none of it',
+  richAt(noMaj7).find(r => r.id === chImaj7.id).richness === 0);
+check('a triad never earns the incentive at all',
+  richAt(flatSupport).find(r => r.id === chIii.id).richness === 0);
+check('richness 0 reproduces the plain parsimony + field cost',
+  richAt(flatSupport, 0).every(r => Math.abs(r.cost - (r.parsimony + r.fieldCost)) < 1e-9));
+// Saturation: the musical event is LEAVING the triad. A linear (cardinality−3) gives a 13th three times
+// a 7th's discount, and over real codex fields that runs away — even 0.15 put the walk on six-note
+// chords 58% of the time. Every extended chord gets the same earned bonus; the 5th and 6th notes must
+// pay their own way in voice leading and field support.
+const sixNote = CHORDS.find(c => c.cardinality === 6 && c.rootSemitone === 0);
+const tabuSaturate = CHORDS.map(t => t.id).filter(id => id !== chImaj7.id && id !== sixNote.id);
+const rSaturate = candidateCosts(chI.id, tabuSaturate, () => 0.5, { lambdaField: 1, richness: 0.5, perDegree: flatSupport });
+check('the incentive saturates at the first extension (a 6-note chord earns no more than a 7th)',
+  rSaturate.find(r => r.id === sixNote.id).richness === rSaturate.find(r => r.id === chImaj7.id).richness,
+  `6-note ${rSaturate.find(r => r.id === sixNote.id).richness}, 7th ${rSaturate.find(r => r.id === chImaj7.id).richness}`);
+
+console.log('\n  Tie-break no longer structurally prefers the triad');
+// CHORDS is ascending-id with major_triad/minor_triad at quality indices 0 and 1, so a plain lowest-id
+// tie-break handed every exact tie to a triad: the walk could take a 7th only by strictly beating one.
+const chIsus4 = findT('Isus4');
+const tiePair = new Set([chIsus4.id, chImaj7.id]);   // both parsimony 1 from I, both alone in their class
+const tabuTie = CHORDS.map(t => t.id).filter(id => !tiePair.has(id));
+const rTie = candidateCosts(chI.id, tabuTie, () => 0.5, { lambdaField: 2, richness: 0 });
+check('the constructed pair really does tie on cost (same parsimony, same field cost)',
+  Math.abs(rTie[0].cost - rTie[1].cost) < 1e-9 && rTie.every(r => r.parsimony === 1),
+  rTie.map(r => `${r.symbol}=${r.cost.toFixed(3)}`).join(' '));
+check('an exact tie now goes to the richer chord, and the triad no longer wins by id',
+  chooseNextChord(chI.id, tabuTie, () => 0.5, { lambdaField: 2, richness: 0 }).id === chImaj7.id,
+  `chose ${chooseNextChord(chI.id, tabuTie, () => 0.5, { lambdaField: 2, richness: 0 }).symbol}`);
+check('production RICHNESS is a small positive incentive, not a thumb on the scale',
+  RICHNESS > 0 && RICHNESS < 1, `RICHNESS=${RICHNESS}`);
 
 // ══ Sky Root handoff, B1 — anchor-independent tone lists ═══════════════════════════════════════
 console.log('\n── B1: anchor-independent tone lists ──');

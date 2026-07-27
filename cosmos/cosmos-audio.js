@@ -7,7 +7,7 @@
 import { normalizeLayers, lcmAll, ratioToCents } from './oracle-core.js';
 import { nearestDegree } from './grid-core.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): the global progression + its one gain law. Pure, no DOM.
-import { CHORDS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, coverage as skyCoverage, gainForDev } from './sky-walk.js';
+import { CHORDS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, coverage as skyCoverage, perDegreeSupport, gainForDev } from './sky-walk.js';
 import { normalizeRootLadder, resetPhraseTracker, observePhraseBoundary, pushRecentRoot,
   classifyRootDestinations, rankModulationDestinations, decideRootAtBoundary } from './sky-modulation.js';
 import { AUDIO_MODES, RHYTHM_VOICE_WAVEFORM } from './cosmos-grid-audio-core.js';
@@ -30,6 +30,17 @@ const CHORD_TICKS = 256;         // universal-clock ticks per chord (≈25.6s at
 const TABU_K = 3;                // sky-walk tabu length (chord-walk.js's exact convention)
 const TUNING_STRENGTH_MAX = 8;
 let LAMBDA_FIELD = 2.0;          // live local-tuning pull, in semitones of voice-leading cost
+// How far the sky reaches past the triad, in semitones of voice-leading cost — earned, so the walk
+// scales it by the chord's weakest-supported degree: extensions are cheap where the sky is well tuned
+// across all of the chord's degrees and full price where the extra degree has nothing to sound on.
+// Swept over 12 real codex locations × 40 chords (triad / 7th / 9th / 11th-13th share of the walk):
+//   0.00  44% 29% 19%  8%      0.08  11% 50% 28% 11%
+//   0.02  32% 47% 19%  3%      0.12  10% 52% 27% 11%
+//   0.05  20% 50% 25%  5%      0.18   6% 50% 32% 12%
+// It saturates past ~0.12 (leveling the field term leaves triads and 7ths near-tied, so a small nudge
+// moves most of them at once). 0.05 keeps the triad a real home base while making the 7th the sky's
+// common currency; 0 reproduces the previous triad-dominated walk.
+const RICHNESS = 0.05;
 const MAX_BED_OSC = 30;          // bed oscillator budget (≤3 tones/star × AUDIBLE_N=10), alongside MAX_LIVE_OSC
 const BED_ATTACK = 1.5, BED_RELEASE = 2.5;   // seconds — long swells, this is half the product
 const BED_PEAK = 0.12;           // per-voice envelope peak (modest — many sustained voices sum)
@@ -223,7 +234,7 @@ export function setSpatial(pan, gain, octaveLift) {
 // -> star's StereoPanner -> star's distance GainNode -> bedBus (dry -> master, wet -> shared reverb).
 // The pure scheduling-decision helpers below (hashId/bedDegreesFor/reattachStepFor) are exported
 // alongside the SKY KNOBS so a headless guard can verify the bed's decisions without a real AudioContext.
-export { CHORD_TICKS, TABU_K, LAMBDA_FIELD, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_TOP_K };
+export { CHORD_TICKS, TABU_K, LAMBDA_FIELD, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_TOP_K };
 
 // User-facing harmonic-policy control. Because candidate field costs are normalized, this has a
 // stable meaning: the best local tuning advantage can justify up to this many semitones of additional
@@ -480,7 +491,8 @@ function stepSkyWalk(ticks) {
   if (step === skyStep) return;
   skyStep = step;
   const audibleStars = currentField.map(it => ({ pool: it.pool, weight: it.gain }));
-  const next = chooseNextChord(skyChordId, skyTabu, t => skyCoverage(t, audibleStars), { lambdaField: LAMBDA_FIELD });
+  const next = chooseNextChord(skyChordId, skyTabu, t => skyCoverage(t, audibleStars),
+    { lambdaField: LAMBDA_FIELD, richness: RICHNESS, perDegree: perDegreeSupport(audibleStars) });
   skyChordId = next.id; pushTabu(skyTabu, skyChordId, TABU_K);
   rootPhraseTracker = observePhraseBoundary(rootPhraseTracker,
     { rootKey: skyRoot.rootKey, chordId: skyChordId, tabu: skyTabu }).tracker;
@@ -682,9 +694,11 @@ export function debugSkyState() {
   // CURRENT live field — what the overlay needs to show *why* the walk is about to move where it's about
   // to move (parsimony + normalized field cost, not just raw coverage).
   const candidates = (skyTabu || []).length
-    ? candidateCosts(skyChordId, skyTabu, t => skyCoverage(t, audibleStars), { lambdaField: LAMBDA_FIELD })
+    ? candidateCosts(skyChordId, skyTabu, t => skyCoverage(t, audibleStars),
+      { lambdaField: LAMBDA_FIELD, richness: RICHNESS, perDegree: perDegreeSupport(audibleStars) })
         .map(c => ({ ...c, coverage: Math.round(c.coverage * 1000) / 1000, parsimony: Math.round(c.parsimony * 1000) / 1000,
-          fieldCost: Math.round(c.fieldCost * 1000) / 1000, cost: Math.round(c.cost * 1000) / 1000 }))
+          fieldCost: Math.round(c.fieldCost * 1000) / 1000, richness: Math.round(c.richness * 1000) / 1000,
+          weakest: Math.round(c.weakest * 1000) / 1000, cost: Math.round(c.cost * 1000) / 1000 }))
         .sort((a, b) => a.cost - b.cost)
     : [];
   // Sky Root B3: the live root (fraction/cents/effective Hz) + the most recent solve's top-ROOT_TOP_K

@@ -1307,8 +1307,11 @@ function renderSkyDebug(now) {
   const covSorted = [...s.coverageByTriad].sort((a, b) => b.coverage - a.coverage);
   lines.push(`coverage (best→worst)  ${covSorted.map(c => `${c.symbol}:${c.coverage.toFixed(2)}`).join('  ')}`);
   if (s.candidateCosts.length) {   // Sky Root Feature A: why the walk picked what it's about to pick
-    lines.push(`candidates (cost = parsimony + field, best→worst, top 6)`);
-    lines.push('  ' + s.candidateCosts.slice(0, 6).map(c => `${c.symbol}:${c.cost.toFixed(2)}(${c.parsimony}+${c.fieldCost.toFixed(2)})`).join('  '));
+    // fieldCost is normalized within the candidate's own cardinality class; richness is the earned
+    // extension incentive (weakest supported degree × RICHNESS), so it reads as a subtraction.
+    lines.push(`candidates (cost = parsimony + field − richness, best→worst, top 6)`);
+    lines.push('  ' + s.candidateCosts.slice(0, 6).map(c =>
+      `${c.symbol}[${c.cardinality}]:${c.cost.toFixed(2)}(${c.parsimony}+${c.fieldCost.toFixed(2)}${c.richness ? `−${c.richness.toFixed(2)}` : ''})`).join('  '));
   }
   lines.push(`\naudible ${s.audibleCount} star(s), ${s.stars.reduce((n, st) => n + st.voiced.length, 0)} voice(s) sounding`);
   for (const st of s.stars.sort((a, b) => b.gain - a.gain)) {
