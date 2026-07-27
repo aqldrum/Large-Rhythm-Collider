@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { gridShardSolve, shardKeysOf, gridShardSystems, divisorsFast, nearestDegree, poolFromRatios, TONE_BIN_CENTS } from '../grid-core.js';
 import { deriveScale } from '../oracle-core.js';
 import { CHORDS, CHORD_QUALITIES, QUALITY_COUNT, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, perDegreeSupport, weakestSupport, chooseNextChord, candidateCosts, pushTabu, chordStepIndex } from '../sky-walk.js';
-import { CHORD_SECONDS, CHORD_MAX_SECONDS, SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState, scaledRateFor, shouldAdvanceChord } from '../cosmos-audio.js';
+import { CHORD_SECONDS, CHORD_MAX_SECONDS, SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState, scaledRateFor, shouldAdvanceChord, modulationCentsFor, rootGlideSeconds } from '../cosmos-audio.js';
 import { poolFromTones, solveRoots, scoreRootAt } from '../sky-root.js';
 import { ratioToCents } from '../oracle-core.js';
 
@@ -257,6 +257,47 @@ check('no row field at all (ambient mode) means "keep the rate we have", not a r
   scaledRateFor([], 12) === null && scaledRateFor([120], 0) === null);
 check('the derived rate is clamped, so a monster grid cannot demand an unschedulable rate',
   scaledRateFor([5_000_000], 0.5).ticksPerSec <= 8000);
+
+console.log('\n  Modulation: retune the solved root to the fundamental');
+// Off is exactly the previous behaviour: absolute JI against a fixed 1/1, so a root change re-reads the
+// same pitches in a new frame rather than transposing. That is what made root changes recolour.
+check('modulation off shifts nothing, at any root', [0, 100, 386.31, 701.96, 1088].every(c => modulationCentsFor(c, false) === 0));
+check('a root already at the fundamental asks for no shift', modulationCentsFor(0, true) === 0);
+// The shift puts the root on the fundamental's pitch class — verified as a frequency, not as arithmetic.
+const soundsAt = (rootCents, on) => 220 * 2 ** ((rootCents + modulationCentsFor(rootCents, on)) / 1200);
+const pitchClassOf = hz => { let r = hz / 220; while (r >= 2) r /= 2; while (r < 1) r *= 2; return r; };
+check('after modulating, the solved root sounds at the fundamental\'s pitch class',
+  [100, 386.31, 498, 701.96, 884, 1088].every(c => Math.abs(pitchClassOf(soundsAt(c, true)) - 1) < 1e-9),
+  [386.31, 701.96].map(c => `${c}¢ → ${soundsAt(c, true).toFixed(1)}Hz`).join(', '));
+check('without it the same root sounds off the fundamental, which is the whole difference',
+  Math.abs(pitchClassOf(soundsAt(701.96, false)) - 1) > 0.1);
+// Folded to the nearest octave-equivalent: literal "root → exactly 220" would drop the sky by up to a
+// full octave for a high-cents root and leap back on the next modulation.
+check('the shift is folded to the nearer direction, never more than a tritone',
+  [0, 1, 599, 601, 900, 1199].every(c => Math.abs(modulationCentsFor(c, true)) <= 600));
+check('a root just under the octave nudges UP a little, it does not drop nearly an octave',
+  modulationCentsFor(1088, true) > 0 && Math.abs(modulationCentsFor(1088, true) - 112) < 1e-6,
+  `${modulationCentsFor(1088, true).toFixed(0)}¢`);
+// Derived from the current root alone, so repeated modulations cannot accumulate a drift.
+check('the shift is idempotent — re-deriving it never compounds',
+  modulationCentsFor(701.96, true) === modulationCentsFor(701.96, true) &&
+  modulationCentsFor(0, true) === 0);
+
+console.log('\n  Portamento length scales with the grid cycle, not with milliseconds');
+// glideTicks = cycles × grid, seconds = glideTicks / ticksPerSec — so the glide holds its musical
+// proportion when scaled speed changes the rate. Same cycle ⇒ same glide, at any grid.
+check('the same cycle length gives the same glide at wildly different grids/rates',
+  Math.abs(rootGlideSeconds(120, 120 / 12) - rootGlideSeconds(61600, 61600 / 12)) < 1e-9,
+  `${rootGlideSeconds(120, 10).toFixed(2)}s both`);
+check('a quarter-cycle glide at the 12s default cycle is an audible 3s',
+  Math.abs(rootGlideSeconds(2640, 2640 / 12, 0.25) - 3) < 1e-9);
+check('shortening the cycle shortens the glide in proportion',
+  Math.abs(rootGlideSeconds(2640, 2640 / 4, 0.25) - 1) < 1e-9);
+check('a fixed-rate monster grid\'s hour-long cycle cannot buy an hour-long glide',
+  rootGlideSeconds(61600, 10) <= 8, `${rootGlideSeconds(61600, 10).toFixed(1)}s`);
+check('a very short cycle still glides rather than jumping', rootGlideSeconds(120, 4000) >= 0.2);
+check('with no grid cycle to scale against (ambient mode) it falls back to a real glide',
+  rootGlideSeconds(0, 10) > 0 && rootGlideSeconds(120, 0) > 0);
 
 console.log('\n  Chord dwell rule (expose the full quality)');
 const dwell = extra => shouldAdvanceChord({ windowElapsed: false, holding: true, complete: false, heldSeconds: 0, maxSeconds: 100, ...extra });

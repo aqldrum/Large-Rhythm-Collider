@@ -15,7 +15,7 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, setHoldForFullQuality, setAudioMode, currentAudioMode, setGridSpatialField, gridRowVisualState, setTuningStrength, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, setHoldForFullQuality, setModulation, currentModulation, setAudioMode, currentAudioMode, setGridSpatialField, gridRowVisualState, setTuningStrength, setRootPolicyContext } from './cosmos-audio.js';
 import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
@@ -523,6 +523,7 @@ let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, chordReadoutE
 let tuningSliderEl = null, tuningReadoutEl = null;
 let scaledSpeedEl = null, scaledReadoutEl = null, cycleSliderEl = null, cycleReadoutEl = null;
 let fullQualityEl = null, qualityReadoutEl = null;
+let modulationEl = null, modulationReadoutEl = null;
 // Cardinality band filter: only nodes with cardinality in [cardLo, cardHi] render + hit-test (isolate radial
 // shells; makes monster clouds parseable). Elements + a change-guard so the DOM is only touched when needed.
 // The band targets ONLY the currently-focused bloom (cosmos.focusGrid); other blooms render in full. filterGrid
@@ -639,6 +640,7 @@ export function ensureFlight(canvas, hudEl) {
     scaledSpeedEl = document.getElementById('lrc-scaled-speed'); scaledReadoutEl = document.getElementById('lrc-scaled-readout');
     cycleSliderEl = document.getElementById('lrc-cycle-slider'); cycleReadoutEl = document.getElementById('lrc-cycle-readout');
     fullQualityEl = document.getElementById('lrc-full-quality'); qualityReadoutEl = document.getElementById('lrc-quality-readout');
+    modulationEl = document.getElementById('lrc-modulation'); modulationReadoutEl = document.getElementById('lrc-modulation-readout');
     if (lrcHeadEl) {
       let clickTimer = null;   // debounce: a dblclick fires two clicks — let the pending single-click resolve
       lrcHeadEl.addEventListener('click', () => {                 // toggles cockpit; ignored while a dblclick is landing
@@ -657,6 +659,10 @@ export function ensureFlight(canvas, hudEl) {
     if (fullQualityEl) fullQualityEl.addEventListener('change', () => {
       const on = setHoldForFullQuality(fullQualityEl.checked);
       if (qualityReadoutEl) qualityReadoutEl.textContent = on ? 'hold' : 'off';
+    });
+    if (modulationEl) modulationEl.addEventListener('change', () => {
+      setModulation(modulationEl.checked);
+      drawModulationReadout();
     });
     if (audioModeEl) audioModeEl.addEventListener('change', () => changeAudioMode(audioModeEl.value));
     if (tuningSliderEl) tuningSliderEl.addEventListener('input', () => {
@@ -683,7 +689,9 @@ export function ensureFlight(canvas, hudEl) {
   if (tuningSliderEl) setTuningStrength(tuningSliderEl.value);
   setTickRate(tempoSliderEl ? +tempoSliderEl.value : 10, true);
   if (fullQualityEl) setHoldForFullQuality(fullQualityEl.checked);
+  if (modulationEl) setModulation(modulationEl.checked);
   applySpeedControls();
+  drawModulationReadout();
   changeAudioMode(AUDIO_MODES.AMBIENT_CHORDS);
   // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
   placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
@@ -1031,6 +1039,15 @@ function applySpeedControls() {
   if (tempoSliderEl) tempoSliderEl.disabled = scaled;
 }
 
+// The modulation shift follows the solved root and the glide length follows the tick rate, so this
+// readout has to track live state rather than the checkbox that switched it on.
+function drawModulationReadout() {
+  if (!modulationReadoutEl) return;
+  const m = currentModulation();
+  modulationReadoutEl.textContent = m.on
+    ? `${m.cents >= 0 ? '+' : ''}${m.cents.toFixed(0)}¢ · ${m.glideSeconds.toFixed(1)}s glide` : 'off';
+}
+
 function openCockpit() { if (lrcDivEl) lrcDivEl.classList.add('open'); }
 
 function changeAudioMode(mode) {
@@ -1166,6 +1183,7 @@ function drawChordReadout() {
   chordReadoutEl.innerHTML = `♪ <b>${currentSkyRoot().fraction}</b> <b class="cur">${currentSkyChord().symbol}</b>`;
   // The scaled rate is derived from the live field, so its readout has to follow the field, not the
   // control that switched the mode on.
+  drawModulationReadout();
   if (scaledSpeedEl?.checked && scaledReadoutEl) {
     const speed = currentSpeedMode();
     scaledReadoutEl.textContent = speed.medianGrid
@@ -1344,6 +1362,9 @@ function renderSkyDebug(now) {
   lines.push(`clock  ${s.speed.mode === 'scaled'
     ? `SCALED ${Math.round(s.speed.ticksPerSec)} ticks/s from median grid ${s.speed.medianGrid.toLocaleString()} → ${s.speed.cycleSeconds}s/cycle`
     : `fixed ${Math.round(s.speed.ticksPerSec)} ticks/s`}   ·   sky ${s.speed.skySeconds.toFixed(1)}s`);
+  lines.push(`modul  ${s.modulation.on
+    ? `ON  root → fundamental, shift ${s.modulation.cents >= 0 ? '+' : ''}${s.modulation.cents.toFixed(0)}¢, glide ${s.modulation.glideSeconds.toFixed(1)}s`
+    : 'off  (absolute JI against a fixed 1/1 — a root change re-reads, it does not transpose)'}`);
   lines.push(`chord  ${s.chord.symbol}  degrees [${s.chord.semitones.join(',')}]`);
   // Exposure: which of the chord's degrees have actually SOUNDED this window. With the hold on, the
   // chord will not move until this is complete (or the cap fires).

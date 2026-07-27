@@ -91,8 +91,13 @@ function setTriplet(node, prefix, values, now, smoothing = 0.04) {
 }
 
 export class SpatialGridRowPlayer {
-  constructor(context, output) {
+  // rootDetune: the audio layer's shared modulation bus (a ConstantSourceNode carrying CENTS). Summed
+  // into every row oscillator's detune param, so a root modulation glides these voices too — including
+  // the ones born mid-glide, which matters here more than anywhere: a row note is a 140ms gate, so by
+  // the time a glide is half over every voice that existed when it started is already gone.
+  constructor(context, output, rootDetune = null) {
     this.ctx = context;
+    this.rootDetune = rootDetune;
     this.master = context.createGain();
     this.master.gain.value = 0;
     this.master.connect(output);                    // dry path
@@ -382,6 +387,7 @@ export class SpatialGridRowPlayer {
     const env = this.ctx.createGain();
     osc.type = ROW_WAVEFORM;
     osc.frequency.setValueAtTime(Math.min(this.ctx.sampleRate * 0.45, frequencyHz), when);
+    this.rootDetune?.connect(osc.detune);   // shared modulation glide (cents), summed with this pitch
     // Fixed-gate ADSR: the note lasts ROW_GATE regardless of the next onset, then releases into the
     // reverb tail. holdUntil is clamped so a very short tuned ROW_GATE can't invert the automation.
     const sustain = Math.max(0.0001, ROW_SUSTAIN);
@@ -419,6 +425,7 @@ export class SpatialGridRowPlayer {
     osc.start(when);
     osc.stop(endAt + 0.02);   // self-terminating; a same-layer steal reschedules this earlier in _releaseLayer
     osc.onended = () => {
+      try { this.rootDetune?.disconnect(osc.detune); } catch {}
       deck.oscillators.delete(osc);
       if (deck.voices.get(action.layer)?.osc === osc) deck.voices.delete(action.layer);
       // A voice that plays out its full gate ends HERE, not via _releaseLayer — so free its budget slot

@@ -60,6 +60,28 @@ const REATTACK_PERIODS = [4.5, 5.6, 6.4, 8.1, 10];   // SKY-CLOCK seconds; mutua
 // actually sounding, so a cycle lasts SCALED_CYCLE_SECONDS wherever you are. Measured over real grids at
 // a 12s cycle, onset density stays musical the whole way up (grid 120: 12 events, 1.0/s → grid 61600:
 // 92 events, 7.7/s) — bigger grids read as denser chorus, not as a buzz.
+// MODULATION. Every tone in the sky is absolute JI against a fixed 1/1 = ROOT_HZ, so solving a new root
+// only ever RE-READ those same pitches in a new frame — the harmony was reinterpreted but nothing moved,
+// which is why a root change recoloured instead of modulating. Modulation retunes the SOLVED ROOT to the
+// fundamental: shift the whole sky by −rootCents and the new root sits at ROOT_HZ's pitch class, so the
+// key change is heard as one. The shift is derived fresh from the current root every time (never
+// accumulated), so repeated modulations cannot drift the sky off its frame.
+//
+// Folded to the nearest octave-equivalent shift, i.e. into [−600, +600). Literal "root → exactly ROOT_HZ"
+// would drop the sky by up to a full octave for a high-cents root and leap back up on the next
+// modulation; every tone is octave-folded into a register downstream anyway, so the fold keeps the root
+// on ROOT_HZ's pitch class while bounding the move to a tritone.
+const MODULATION_DEFAULT = false;
+// Portamento law is the main LRC page's (Playback/ToneRowPlayback.js handleFundamentalChange):
+// setTargetAtTime, an exponential approach with a TIME CONSTANT. Same curve, applied at a different
+// point — see rootDetune in initAudio for why cosmos cannot retune per-voice the way that page does.
+// Length is a fraction of one GRID CYCLE rather than milliseconds, exactly as Avery asked, so the glide
+// keeps its musical proportion when scaled speed changes the tick rate: glideTicks = cycles × grid, then
+// seconds = glideTicks / ticksPerSec. At the 12s default cycle that is a 3s glide.
+const ROOT_GLIDE_CYCLES = 0.25;
+const ROOT_GLIDE_MIN_SECONDS = 0.2, ROOT_GLIDE_MAX_SECONDS = 8;   // a 103-minute fixed-rate cycle must not
+                                  // buy a 26-minute glide, and a 4s cycle must still be audibly a glide
+const ROOT_GLIDE_SECONDS_DEFAULT = 1.2;   // ambient mode has no grid cycle to scale against
 const SPEED_MODES = Object.freeze({ FIXED: 'fixed', SCALED: 'scaled' });
 const SCALED_CYCLE_DEFAULT = 12;   // seconds per grid cycle — grid 120's cycle at the historical 10 ticks/s
 const SCALED_RATE_MIN = 1, SCALED_RATE_MAX = 8000;   // ticks/s clamp; 8000 covers the largest charted grids
@@ -135,6 +157,9 @@ let chordStartedAt = 0;           // sky-clock seconds the current chord began �
 let holdForFullQuality = false;   // "expose the full quality" — hold a chord until every degree has sounded
 let lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };   // overlay-only snapshot
 let lastChordSeconds = 0;         // how long the PREVIOUS chord actually lasted — the pacing readout
+let modulationOn = MODULATION_DEFAULT;
+let rootDetune = null;            // ConstantSourceNode, offset in CENTS, summed into every oscillator's detune
+let lastModulationCents = 0;      // the shift currently gliding to / settled at (overlay + re-derivation)
 let bedSoundedDegrees = new Set();   // ambient-mode half of the exposure ledger, cleared at each chord change
 let speedMode = SPEED_MODES.FIXED;
 let scaledCycleSeconds = SCALED_CYCLE_DEFAULT;
@@ -171,7 +196,16 @@ export function initAudio() {
   reverbConv = audioCtx.createConvolver(); reverbConv.buffer = makeImpulse(audioCtx);
   reverbWet = audioCtx.createGain(); reverbWet.gain.value = REVERB_WET;
   bedBus.connect(reverbConv); reverbConv.connect(reverbWet); reverbWet.connect(ambientModeGain);
-  gridRowPlayer = new SpatialGridRowPlayer(audioCtx, muteGainNode);
+  // One shared detune bus in CENTS, summed into EVERY oscillator's `detune` param. The main LRC page
+  // retunes each sounding oscillator's frequency directly, which works there because its voices are held.
+  // Cosmos cannot: row voices are a 140ms gate and are constantly reborn, so a per-voice retune would
+  // glide only the handful of notes already dying while every new note jumped straight to the target —
+  // the ensemble would step, not glide. A live control signal instead glides notes that do not exist yet:
+  // an oscillator born mid-modulation reads the bus at its own start and lands exactly on the curve.
+  rootDetune = audioCtx.createConstantSource();
+  rootDetune.offset.value = 0;
+  rootDetune.start();
+  gridRowPlayer = new SpatialGridRowPlayer(audioCtx, muteGainNode, rootDetune);
   audioMode = AUDIO_MODES.AMBIENT_CHORDS;
   skyChordId = START_CHORD_ID; skyTabu = pushTabu([], skyChordId, TABU_K); skyStep = -1; lastSyncedChordId = null;
   skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; lastRootLadder = [];
@@ -182,6 +216,7 @@ export function initAudio() {
   transportStart = audioCtx.currentTime;   // grid clock starts here; lead swaps ride the same phase
   audioEpoch = transportStart;             // sky clock shares the origin but is never re-anchored after this
   chordStartedAt = 0; lastChordSeconds = 0; lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };
+  lastModulationCents = 0;
   scaledMedianGrid = 0;
   liveOscs = new Set();
   schedIdx = 0; schedCycle = 0;
@@ -252,6 +287,51 @@ export function setSpeedMode(mode, cycleSeconds) {
 
 // "Expose the full quality": hold each chord until every one of its degrees has actually sounded.
 export function setHoldForFullQuality(on) { holdForFullQuality = !!on; return holdForFullQuality; }
+
+// Pure: the cent shift that puts a solved root on the fundamental's pitch class, folded to the nearest
+// octave-equivalent so the move is at most a tritone in either direction. Modulation off → 0, which is
+// exactly the previous behaviour (absolute JI against a fixed 1/1). Derived from the CURRENT root alone,
+// so it is idempotent — re-applying it never compounds, and no sequence of modulations can drift.
+export function modulationCentsFor(rootCents, on = true) {
+  if (!on || !Number.isFinite(rootCents)) return 0;
+  let shift = -(((rootCents % 1200) + 1200) % 1200);   // (-1200, 0]
+  if (shift < -600) shift += 1200;                     // fold to the nearer direction: [-600, 600)
+  return shift;
+}
+
+// Pure: portamento length in SECONDS from a length in grid cycles, so the glide keeps its musical
+// proportion at any tick rate. Clamped at both ends — a fixed-rate monster grid's hour-long cycle must
+// not buy an hour-long glide, and a very short cycle must still glide rather than jump.
+export function rootGlideSeconds(medianGrid, ticksPerSecond, cycles = ROOT_GLIDE_CYCLES) {
+  if (!(medianGrid > 0) || !(ticksPerSecond > 0)) return ROOT_GLIDE_SECONDS_DEFAULT;
+  const seconds = (cycles * medianGrid) / ticksPerSecond;   // glideTicks / ticksPerSec
+  return Math.max(ROOT_GLIDE_MIN_SECONDS, Math.min(ROOT_GLIDE_MAX_SECONDS, seconds));
+}
+
+// Glide the shared detune bus to the shift the current root asks for. setTargetAtTime is the main LRC
+// page's law (handleFundamentalChange); its third argument is a TIME CONSTANT, so feeding it a third of
+// the glide length puts the move ~95% home by the time the glide is nominally over.
+function applyRootModulation() {
+  if (!audioCtx || !rootDetune) return;
+  const target = modulationCentsFor(skyRoot.cents, modulationOn);
+  lastModulationCents = target;
+  const now = audioCtx.currentTime;
+  const seconds = rootGlideSeconds(scaledMedianGrid, ticksPerSec);
+  rootDetune.offset.cancelScheduledValues(now);
+  rootDetune.offset.setTargetAtTime(target, now, Math.max(0.01, seconds / 3));
+}
+
+// Retune the solved root to the fundamental, so a root change is heard as a key change rather than as a
+// reinterpretation of the same pitches. Toggling either way glides — turning it off is itself a
+// modulation, back to the absolute frame.
+export function setModulation(on) {
+  modulationOn = !!on;
+  applyRootModulation();
+  return modulationOn;
+}
+export function currentModulation() {
+  return { on: modulationOn, cents: lastModulationCents, glideSeconds: rootGlideSeconds(scaledMedianGrid, ticksPerSec) };
+}
 export function currentSpeedMode() { return { mode: speedMode, cycleSeconds: scaledCycleSeconds, ticksPerSec, medianGrid: scaledMedianGrid }; }
 
 // Read-only bridge for flight visuals. The audio player remains the authority on whether a row star
@@ -477,6 +557,7 @@ function createVoice(bs, degree, now) {
   const slot = bs.pool[degree]; if (!slot) return null;
   const ratio = 2 ** (slot.cents / 1200);
   const osc = audioCtx.createOscillator(); osc.type = 'sine'; osc.frequency.value = ROOT_HZ * ratio * (2 ** bs.octave);
+  rootDetune?.connect(osc.detune);   // shared modulation glide — see initAudio
   const env = audioCtx.createGain(); env.gain.value = 0.0001;
   osc.connect(env); env.connect(bs.filter);
   osc.start(now);
@@ -505,6 +586,7 @@ function releaseVoice(bs, v, now, immediate) {
   } catch {}
   try { v.osc.stop(now + rel + 0.05); } catch {}
   v.osc.onended = () => {
+    try { rootDetune?.disconnect(v.osc.detune); } catch {}
     try { v.osc.disconnect(); } catch {} try { v.env.disconnect(); } catch {}
     if (bs.fadingCount != null) { bs.fadingCount--; if (bs.fadingCount <= 0) finalizeStarChain(bs); }
   };
@@ -689,6 +771,7 @@ function applyRootPolicyAtBoundary() {
     rootKeyCounter++;
     skyRoot = { fraction: winner.fraction, cents: winner.cents, rootKey: rootKeyCounter };
     changed = true;
+    applyRootModulation();   // the whole sky glides to put the new root on the fundamental (if enabled)
     if (wasEstablished) recentSkyRoots = pushRecentRoot(recentSkyRoots, previousRoot);
     lastRootPolicyProposal = { ...lastRootPolicyProposal, incumbent: proposalIncumbentFrom(winner) };
   } else if (!wasEstablished) {
@@ -856,6 +939,7 @@ export function debugSkyState() {
     tuningStrength: LAMBDA_FIELD,
     speed: { ...currentSpeedMode(), skySeconds: currentSkySeconds() },
     chordExposure: { ...lastChordExposure, holding: holdForFullQuality, lastChordSeconds },
+    modulation: currentModulation(),
     gridRows,
     rootHz: ROOT_HZ,   // 1/1's fixed fundamental — the root solve only ever picks a RATIO relative to this
     root,
@@ -939,6 +1023,7 @@ export function stopAudio() {
   rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
   lead = null; schedIdx = 0; schedCycle = 0; transportStart = null; audioEpoch = null;
   chordStartedAt = 0; lastChordSeconds = 0; bedSoundedDegrees = new Set(); scaledMedianGrid = 0;
+  try { rootDetune?.stop(); } catch {} rootDetune = null; lastModulationCents = 0;
   leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1;
   if (audioCtx) { try { audioCtx.close(); } catch {} }
   audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; liveOscs = null;
@@ -983,6 +1068,7 @@ function scheduleNote(note, time, noteIdx) {
   if (liveOscs.size >= MAX_LIVE_OSC) return;
   const freq = ROOT_HZ * note.ratio * (2 ** currentOctaveLift);
   const osc = audioCtx.createOscillator(); osc.type = RHYTHM_VOICE_WAVEFORM; osc.frequency.value = freq;
+  rootDetune?.connect(osc.detune);   // shared modulation glide — see initAudio
   const env = audioCtx.createGain();
   // Full Sky tint: in-(global-)chord onsets play full, out-of-chord onsets duck — the rhythm is
   // sacrosanct, no onset is ever skipped, the sky only tints it (M4 — replaces the per-star Chord Walk).

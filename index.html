@@ -672,6 +672,14 @@
                     <input type="range" id="lrc-cycle-slider" min="2" max="40" step="0.5" value="12" aria-label="seconds per grid cycle in scaled speed mode">
                     <b id="lrc-cycle-readout">12.0 s</b>
                 </label>
+                <!-- Modulation: retune the SOLVED ROOT to the fundamental so a root change is heard as a
+                     key change, not as the same pitches re-read in a new frame. All voices glide (shared
+                     detune bus, the main page's setTargetAtTime law), over a fraction of a grid cycle. -->
+                <label class="lrc-tuning-row" for="lrc-modulation">
+                    <span>modulation</span>
+                    <input type="checkbox" id="lrc-modulation" aria-label="retune each newly solved root to the fundamental">
+                    <b id="lrc-modulation-readout">off</b>
+                </label>
                 <!-- Hold each chord past its window until every one of its degrees has actually sounded,
                      so the full quality is exposed rather than whichever tones the rows happened to reach. -->
                 <label class="lrc-tuning-row" for="lrc-full-quality">
