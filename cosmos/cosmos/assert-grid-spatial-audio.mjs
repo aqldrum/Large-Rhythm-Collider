@@ -40,11 +40,22 @@ check('only all-shards-finalized ownership is compiler eligible',
   audioCompileEligibility({ state: 'solved', monster: false, shardsTotal: 3, shardsDone: 3, ratioOwners: owners }).eligible);
 
 console.log('\n  Movement field budgets');
-const candidates = Array.from({ length: 16 }, (_, i) => ({ id: i + 1, distance: 50 + i * 50, ready: i !== 1 && i !== 3 }));
-const picked = chooseSpatialRows(candidates, new Set([8, 9, 10]));
-check('prewarm is capped at the nearest 12 true-3D candidates', picked.prewarm.length === ROW_PREWARM_STARS && picked.prewarm.at(-1).id === 12);
-check('active field is capped at 8 program-ready stars', picked.active.length === ROW_ACTIVE_STARS && picked.active.every(candidate => candidate.ready));
-check('already-active ready stars retain hysteresis priority inside prewarm', picked.active.slice(0, 3).map(candidate => candidate.id).join(',') === '8,9,10');
+// Sized RELATIVE to the knobs, not to their values: ROW_ACTIVE_STARS/ROW_PREWARM_STARS/ROW_RADIUS are
+// tuned by ear, and a guard that hardcodes today's numbers fails the moment Avery widens the field
+// without anything actually being wrong. Two candidates are held un-ready so the ready-filter is live.
+const candidateCount = ROW_PREWARM_STARS + 4;
+const spacing = ROW_RADIUS / (candidateCount + 1);   // every candidate inside the sphere, strictly ordered
+const candidates = Array.from({ length: candidateCount }, (_, i) => ({ id: i + 1, distance: spacing * (i + 1), ready: i !== 1 && i !== 3 }));
+const heldActive = new Set([8, 9, 10]);
+const picked = chooseSpatialRows(candidates, heldActive);
+check(`prewarm is capped at the nearest ${ROW_PREWARM_STARS} true-3D candidates`,
+  picked.prewarm.length === ROW_PREWARM_STARS && picked.prewarm.at(-1).id === ROW_PREWARM_STARS,
+  `${picked.prewarm.length} of ${candidateCount} candidates`);
+check(`active field is capped at ${ROW_ACTIVE_STARS} program-ready stars`,
+  picked.active.length === Math.min(ROW_ACTIVE_STARS, ROW_PREWARM_STARS - 2) && picked.active.every(candidate => candidate.ready),
+  `${picked.active.length} active`);
+check('already-active ready stars retain hysteresis priority inside prewarm',
+  picked.active.slice(0, 3).map(candidate => candidate.id).join(',') === '8,9,10');
 check('radius excludes candidates outside the spatial sphere', chooseSpatialRows([{ id: 1, distance: ROW_RADIUS + 1, ready: true }]).prewarm.length === 0);
 
 console.log('\n  Dedicated compiler queue');
@@ -167,7 +178,14 @@ check('row-mode ratio chart aggregates each active star program by solved-root d
 check('row-mode ON column counts live canonical voices independently of selection',
   rowChart[4].sounding[0].fraction === '5/4' && rowChart[4].sounding[0].count === 2 && rowChart[0].sounding.length === 0);
 
+const rowPlayerSource = readFileSync(new URL('../spatial-grid-row-player.js', import.meta.url), 'utf8');
+
 console.log('\n  Voice budget accounting');
+// The ceiling must TRACK the field, not assume the field it was written against. A literal 64 (8 stars
+// × A-D × a crossfade deck) silently starved a widened field: attacks stopped being scheduled and the
+// only evidence was stats.budgetMisses.
+check('the voice ceiling is derived from the active-star count, so widening the field cannot starve it',
+  rowPlayerSource.includes('ROW_ACTIVE_STARS * 4 * 2') && !/const MAX_ROW_OSC = \d+;/.test(rowPlayerSource));
 // Short gated voices end via osc.onended, not _releaseLayer — the slot must be freed exactly once on
 // either path or the count leaks to MAX_ROW_OSC and all later attacks are silently dropped.
 const fakeParam = () => ({ value: 0.0001, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, cancelScheduledValues() {}, setTargetAtTime() {} });
@@ -221,8 +239,7 @@ check('the primed tone is the layer\'s last tone at or before the boundary, as a
     const loopTail = program.events.flatMap(event => event.layerActions).filter(action => action.layer === layer).at(-1);
     return tone === (priorInCycle || loopTail).rawFraction;
   }));
-check('the row voice has one envelope shape — no separate softer seed blip',
-  !readFileSync(new URL('../spatial-grid-row-player.js', import.meta.url), 'utf8').includes('ROW_SEED_'));
+check('the row voice has one envelope shape — no separate softer seed blip', !rowPlayerSource.includes('ROW_SEED_'));
 
 console.log('\n  Chord-exposure ledger');
 // "Expose the full quality": the sky holds a chord until every one of its degrees has actually sounded.

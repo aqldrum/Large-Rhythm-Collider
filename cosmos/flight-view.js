@@ -1112,7 +1112,7 @@ function drawModulationReadout() {
   if (!modulationReadoutEl) return;
   const m = currentModulation();
   modulationReadoutEl.textContent = m.on
-    ? `${m.cents >= 0 ? '+' : ''}${m.cents.toFixed(0)}¢ · ${m.glideSeconds.toFixed(1)}s glide` : 'off';
+    ? `${m.cents >= 0 ? '+' : ''}${m.cents.toFixed(0)}¢ · ${m.glideSeconds.toFixed(2)}s glide` : 'off';
 }
 
 function openCockpit() { if (lrcDivEl) lrcDivEl.classList.add('open'); }
@@ -1430,7 +1430,7 @@ function renderSkyDebug(now) {
     ? `SCALED ${Math.round(s.speed.ticksPerSec)} ticks/s from median grid ${s.speed.medianGrid.toLocaleString()} → ${s.speed.cycleSeconds}s/cycle`
     : `fixed ${Math.round(s.speed.ticksPerSec)} ticks/s`}   ·   sky ${s.speed.skySeconds.toFixed(1)}s`);
   lines.push(`modul  ${s.modulation.on
-    ? `ON  root → fundamental, shift ${s.modulation.cents >= 0 ? '+' : ''}${s.modulation.cents.toFixed(0)}¢, glide ${s.modulation.glideSeconds.toFixed(1)}s`
+    ? `ON  root → fundamental, shift ${s.modulation.cents >= 0 ? '+' : ''}${s.modulation.cents.toFixed(0)}¢, glide ${s.modulation.glideSeconds.toFixed(2)}s (${s.modulation.onsetTicks.toFixed(0)} ticks/onset)`
     : 'off  (absolute JI against a fixed 1/1 — a root change re-reads, it does not transpose)'}`);
   lines.push(`chord  ${s.chord.symbol}  degrees [${s.chord.semitones.join(',')}]`);
   // Exposure: which of the chord's degrees have actually SOUNDED this window. With the hold on, the

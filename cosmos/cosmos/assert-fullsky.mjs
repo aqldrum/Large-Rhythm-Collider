@@ -283,21 +283,28 @@ check('the shift is idempotent — re-deriving it never compounds',
   modulationCentsFor(701.96, true) === modulationCentsFor(701.96, true) &&
   modulationCentsFor(0, true) === 0);
 
-console.log('\n  Portamento length scales with the grid cycle, not with milliseconds');
-// glideTicks = cycles × grid, seconds = glideTicks / ticksPerSec — so the glide holds its musical
-// proportion when scaled speed changes the rate. Same cycle ⇒ same glide, at any grid.
-check('the same cycle length gives the same glide at wildly different grids/rates',
-  Math.abs(rootGlideSeconds(120, 120 / 12) - rootGlideSeconds(61600, 61600 / 12)) < 1e-9,
-  `${rootGlideSeconds(120, 10).toFixed(2)}s both`);
-check('a quarter-cycle glide at the 12s default cycle is an audible 3s',
-  Math.abs(rootGlideSeconds(2640, 2640 / 12, 0.25) - 3) < 1e-9);
-check('shortening the cycle shortens the glide in proportion',
-  Math.abs(rootGlideSeconds(2640, 2640 / 4, 0.25) - 1) < 1e-9);
-check('a fixed-rate monster grid\'s hour-long cycle cannot buy an hour-long glide',
-  rootGlideSeconds(61600, 10) <= 8, `${rootGlideSeconds(61600, 10).toFixed(1)}s`);
-check('a very short cycle still glides rather than jumping', rootGlideSeconds(120, 4000) >= 0.2);
-check('with no grid cycle to scale against (ambient mode) it falls back to a real glide',
-  rootGlideSeconds(0, 10) > 0 && rootGlideSeconds(120, 0) > 0);
+console.log('\n  Portamento length is measured in ONSETS, converted through the grid clock');
+// glideTicks = onsets × mean onset gap, seconds = glideTicks / ticksPerSec. Ticks not milliseconds, so
+// it holds proportion when scaled speed changes the rate — but onsets not CYCLES, because event counts
+// per cycle run 10 (grid 120) to 92 (grid 61600), so a fraction of a cycle meant wildly different
+// musical lengths at the same wall time. A row voice is a 140ms pluck: the ear counts steps, not cycles.
+const gapTicks = (grid, events) => grid / events;   // a program's mean ticks between composite onsets
+check('a glide spans the requested number of onsets, whatever the grid',
+  Math.abs(rootGlideSeconds(gapTicks(120, 12), 120 / 12, 3) - 3 * (12 / 12)) < 1e-9 &&
+  Math.abs(rootGlideSeconds(gapTicks(61600, 92), 61600 / 12, 3) - 3 * (12 / 92)) < 1e-9,
+  `grid 120 → ${rootGlideSeconds(gapTicks(120, 12), 10, 3).toFixed(2)}s, grid 61600 → ${rootGlideSeconds(gapTicks(61600, 92), 61600 / 12, 3).toFixed(2)}s — both 3 onsets`);
+// The old cycle-based unit did NOT do this: a quarter cycle is 3s at both grids, but 3 onsets at one
+// and 23 at the other. That difference is the whole reason for the change.
+check('the same seconds would have meant very different onset counts under the old cycle unit',
+  Math.abs(0.25 * 12 - 3) < 1e-9 && Math.round(0.25 * 92) === 23);
+check('raising the tick rate shortens the glide in proportion (it is measured in ticks)',
+  Math.abs(rootGlideSeconds(165, 220, 3) - 2 * rootGlideSeconds(165, 440, 3)) < 1e-9);
+check('a fixed-rate monster grid (67s between onsets) cannot buy a minutes-long glide',
+  rootGlideSeconds(gapTicks(61600, 92), 10, 3) <= 4, `${rootGlideSeconds(gapTicks(61600, 92), 10, 3).toFixed(1)}s`);
+check('the densest scaled grid still glides rather than jumping',
+  rootGlideSeconds(gapTicks(61600, 92), 61600 / 4, 3) >= 0.15);
+check('with no onsets to scale against (ambient mode) it falls back to a real glide',
+  rootGlideSeconds(0, 10) > 0 && rootGlideSeconds(165, 0) > 0);
 
 console.log('\n  Chord dwell rule (expose the full quality)');
 const dwell = extra => shouldAdvanceChord({ windowElapsed: false, holding: true, complete: false, heldSeconds: 0, maxSeconds: 100, ...extra });

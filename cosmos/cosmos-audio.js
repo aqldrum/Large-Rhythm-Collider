@@ -75,13 +75,18 @@ const MODULATION_DEFAULT = false;
 // Portamento law is the main LRC page's (Playback/ToneRowPlayback.js handleFundamentalChange):
 // setTargetAtTime, an exponential approach with a TIME CONSTANT. Same curve, applied at a different
 // point — see rootDetune in initAudio for why cosmos cannot retune per-voice the way that page does.
-// Length is a fraction of one GRID CYCLE rather than milliseconds, exactly as Avery asked, so the glide
-// keeps its musical proportion when scaled speed changes the tick rate: glideTicks = cycles × grid, then
-// seconds = glideTicks / ticksPerSec. At the 12s default cycle that is a 3s glide.
-const ROOT_GLIDE_CYCLES = 0.25;
-const ROOT_GLIDE_MIN_SECONDS = 0.2, ROOT_GLIDE_MAX_SECONDS = 8;   // a 103-minute fixed-rate cycle must not
-                                  // buy a 26-minute glide, and a 4s cycle must still be audibly a glide
-const ROOT_GLIDE_SECONDS_DEFAULT = 1.2;   // ambient mode has no grid cycle to scale against
+//
+// Length is measured in ONSETS, converted through the grid clock: glideTicks = onsets × the field's mean
+// onset gap in ticks, then seconds = glideTicks / ticksPerSec. Ticks, not milliseconds, so the glide
+// keeps its proportion when scaled speed changes the rate — but onsets rather than a fraction of a CYCLE,
+// because cycles are not comparable across grids. Real event counts per cycle run 10 (grid 120) to 92
+// (grid 61600), so a quarter-cycle glide spanned 3 onsets down low and 23 up high: identical seconds,
+// wildly different musical length. Onsets is also what the ear is actually counting here — a row voice is
+// a 140ms pluck, so a glide is heard as a STAIRCASE, and the number of steps is the number of onsets.
+const ROOT_GLIDE_ONSETS = 3;
+const ROOT_GLIDE_MIN_SECONDS = 0.15, ROOT_GLIDE_MAX_SECONDS = 4;   // a fixed-rate monster grid can put 67s
+                                  // between onsets; a dense one can put 130ms. Both must still be a glide.
+const ROOT_GLIDE_SECONDS_DEFAULT = 1;   // ambient mode has no onsets to scale against
 const SPEED_MODES = Object.freeze({ FIXED: 'fixed', SCALED: 'scaled' });
 const SCALED_CYCLE_DEFAULT = 12;   // seconds per grid cycle — grid 120's cycle at the historical 10 ticks/s
 const SCALED_RATE_MIN = 1, SCALED_RATE_MAX = 8000;   // ticks/s clamp; 8000 covers the largest charted grids
@@ -165,6 +170,7 @@ let speedMode = SPEED_MODES.FIXED;
 let scaledCycleSeconds = SCALED_CYCLE_DEFAULT;
 let fixedTickRate = 10;           // the raw ticks/s the tempo slider last asked for — restored on leaving scaled mode
 let scaledMedianGrid = 0;         // most recent median sounding grid (overlay + rate derivation)
+let fieldOnsetTicks = 0;          // median ticks between composite onsets across the field (glide length)
 let currentField = [];            // last setField() items — also the input to coverage()
 // The solved harmonic frame starts on a PROVISIONAL 1/1 so playback has a deterministic anchor before
 // the first geographic solve. The first valid solve establishes it (possibly retaining 1/1) at a chord
@@ -217,7 +223,7 @@ export function initAudio() {
   audioEpoch = transportStart;             // sky clock shares the origin but is never re-anchored after this
   chordStartedAt = 0; lastChordSeconds = 0; lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };
   lastModulationCents = 0;
-  scaledMedianGrid = 0;
+  scaledMedianGrid = 0; fieldOnsetTicks = 0;
   liveOscs = new Set();
   schedIdx = 0; schedCycle = 0;
   schedulerTimer = setInterval(schedulerTick, LOOKAHEAD_MS);
@@ -245,8 +251,26 @@ export function setAudioMode(mode) {
 
 export function setGridSpatialField(items) {
   if (!audioCtx || !gridRowPlayer) return;
-  applyScaledRate(items);          // before setField: the boundary tick it stamps must use the new rate
+  noteFieldStats(items);           // always — the glide scales to the field even in fixed-rate mode
+  applyScaledRate();               // before setField: the boundary tick it stamps must use the new rate
   gridRowPlayer.setField(items || [], currentTicks());
+}
+
+// What the sounding field looks like, independent of speed mode: its median grid (scaled speed's input)
+// and its median onset gap in ticks (the portamento's input). Median on both, for the same reason — the
+// active set spans orders of magnitude and one distant monster must not drag the sky's pace or its glide.
+function noteFieldStats(items) {
+  const grids = [], gaps = [];
+  for (const item of items || []) {
+    const grid = item.program?.grid, events = item.program?.events?.length;
+    if (!Number.isFinite(grid)) continue;
+    grids.push(grid);
+    if (events > 0) gaps.push(grid / events);   // mean ticks between this star's composite onsets
+  }
+  if (!grids.length) return;
+  grids.sort((a, b) => a - b); gaps.sort((a, b) => a - b);
+  scaledMedianGrid = grids[grids.length >> 1];
+  fieldOnsetTicks = gaps.length ? gaps[gaps.length >> 1] : 0;
 }
 
 // Scaled speed: hold one grid cycle at scaledCycleSeconds by deriving ticks/s from the MEDIAN grid
@@ -264,11 +288,10 @@ export function scaledRateFor(grids, cycleSeconds) {
   return { medianGrid, ticksPerSec: Math.max(SCALED_RATE_MIN, Math.min(SCALED_RATE_MAX, medianGrid / cycleSeconds)) };
 }
 
-function applyScaledRate(items) {
+function applyScaledRate() {
   if (speedMode !== SPEED_MODES.SCALED) return;
-  const derived = scaledRateFor((items || []).map(item => item.program?.grid), scaledCycleSeconds);
+  const derived = scaledRateFor([scaledMedianGrid], scaledCycleSeconds);
   if (!derived) return;
-  scaledMedianGrid = derived.medianGrid;
   if (Math.abs(derived.ticksPerSec - ticksPerSec) / Math.max(derived.ticksPerSec, ticksPerSec) > SCALED_RATE_HYSTERESIS) {
     setTickRate(derived.ticksPerSec);
   }
@@ -299,12 +322,13 @@ export function modulationCentsFor(rootCents, on = true) {
   return shift;
 }
 
-// Pure: portamento length in SECONDS from a length in grid cycles, so the glide keeps its musical
-// proportion at any tick rate. Clamped at both ends — a fixed-rate monster grid's hour-long cycle must
-// not buy an hour-long glide, and a very short cycle must still glide rather than jump.
-export function rootGlideSeconds(medianGrid, ticksPerSecond, cycles = ROOT_GLIDE_CYCLES) {
-  if (!(medianGrid > 0) || !(ticksPerSecond > 0)) return ROOT_GLIDE_SECONDS_DEFAULT;
-  const seconds = (cycles * medianGrid) / ticksPerSecond;   // glideTicks / ticksPerSec
+// Pure: portamento length in SECONDS from a length in ONSETS, so the glide spans the same number of
+// notes at any grid or tick rate. onsetTicks = the field's mean ticks between composite onsets.
+// Clamped at both ends — a fixed-rate monster grid can put 67s between onsets and a dense scaled one
+// 130ms, and both still have to read as a glide rather than a drift or a jump.
+export function rootGlideSeconds(onsetTicks, ticksPerSecond, onsets = ROOT_GLIDE_ONSETS) {
+  if (!(onsetTicks > 0) || !(ticksPerSecond > 0)) return ROOT_GLIDE_SECONDS_DEFAULT;
+  const seconds = (onsets * onsetTicks) / ticksPerSecond;   // glideTicks / ticksPerSec
   return Math.max(ROOT_GLIDE_MIN_SECONDS, Math.min(ROOT_GLIDE_MAX_SECONDS, seconds));
 }
 
@@ -316,7 +340,7 @@ function applyRootModulation() {
   const target = modulationCentsFor(skyRoot.cents, modulationOn);
   lastModulationCents = target;
   const now = audioCtx.currentTime;
-  const seconds = rootGlideSeconds(scaledMedianGrid, ticksPerSec);
+  const seconds = rootGlideSeconds(fieldOnsetTicks, ticksPerSec);
   rootDetune.offset.cancelScheduledValues(now);
   rootDetune.offset.setTargetAtTime(target, now, Math.max(0.01, seconds / 3));
 }
@@ -330,7 +354,7 @@ export function setModulation(on) {
   return modulationOn;
 }
 export function currentModulation() {
-  return { on: modulationOn, cents: lastModulationCents, glideSeconds: rootGlideSeconds(scaledMedianGrid, ticksPerSec) };
+  return { on: modulationOn, cents: lastModulationCents, glideSeconds: rootGlideSeconds(fieldOnsetTicks, ticksPerSec), onsetTicks: fieldOnsetTicks };
 }
 export function currentSpeedMode() { return { mode: speedMode, cycleSeconds: scaledCycleSeconds, ticksPerSec, medianGrid: scaledMedianGrid }; }
 
@@ -1022,7 +1046,7 @@ export function stopAudio() {
   rootEstablished = false; rootPhraseTracker = null; recentSkyRoots = []; lastRootPolicyProposal = null;
   rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
   lead = null; schedIdx = 0; schedCycle = 0; transportStart = null; audioEpoch = null;
-  chordStartedAt = 0; lastChordSeconds = 0; bedSoundedDegrees = new Set(); scaledMedianGrid = 0;
+  chordStartedAt = 0; lastChordSeconds = 0; bedSoundedDegrees = new Set(); scaledMedianGrid = 0; fieldOnsetTicks = 0;
   try { rootDetune?.stop(); } catch {} rootDetune = null; lastModulationCents = 0;
   leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1;
   if (audioCtx) { try { audioCtx.close(); } catch {} }

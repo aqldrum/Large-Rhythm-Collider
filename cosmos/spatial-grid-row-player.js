@@ -2,7 +2,7 @@
 // It never enumerates rhythms or performs Cull2. Each star owns one persistent 3D panner and swaps
 // immutable A–D program decks on a short shared tick boundary.
 import {
-  CULLED_ROW_MAX_VOICES_PER_TONE, ROW_SWITCH_TICKS,
+  CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_SWITCH_TICKS,
 } from './cosmos-grid-audio-core.js';
 import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP } from './spatial-audio-frame.js';
 
@@ -12,7 +12,12 @@ export const CULLED_ROW_MAX_OCTAVES = 3;
 export const CULLED_ROW_MAX_HZ = CULLED_ROW_FUNDAMENTAL_HZ * (2 ** CULLED_ROW_MAX_OCTAVES);
 const CROSSFADE = 0.35;
 const VOICE_RELEASE = 0.07;
-const MAX_ROW_OSC = 64; // 8 stars × A–D, with one transient crossfade deck per star.
+// DERIVED, not a literal: the active-star count is tuned by ear, and a hardcoded ceiling silently
+// starves it the moment the field widens — attacks just stop being scheduled and turn up only as
+// stats.budgetMisses. Active stars × A–D, doubled for one transient crossfade deck per star. (At the
+// historical 8 active stars this is exactly the 64 it replaces.) It stays a real cap: the typical
+// concurrent count is far lower, since a row voice only lives ROW_GATE + release.
+const MAX_ROW_OSC = ROW_ACTIVE_STARS * 4 * 2;
 const VISUAL_ATTACK_SECONDS = 0.7;
 
 // ══ ROW VOICE TUNABLES ════════════════════════════════════════════════════════════════════════
@@ -30,7 +35,7 @@ const ROW_GATE = 0.14;              // note length from attack start to release 
 const ROW_RELEASE = 0.09;           // exponential release into the reverb tail (no click)
 // Shared reverb send — rows only (the ambient bed owns its own reverb). Pre-delay keeps dry attacks
 // crisp; the wet-side highpass stops dense grids piling into low-end mud; damping darkens the tail.
-const ROW_REVERB_SECONDS = 10;     // impulse length — the apparent "size" of the space
+const ROW_REVERB_SECONDS = 3;     // impulse length — the apparent "size" of the space
 const ROW_REVERB_DECAY = 3.2;       // impulse decay exponent (higher = faster tail)
 const ROW_REVERB_DAMPING = 0.12;    // one-pole lowpass on the impulse noise (lower = darker/smoother)
 const ROW_REVERB_WET = 0.56;        // wet send level — the dry/wet balance is this mode's "sustain" control
