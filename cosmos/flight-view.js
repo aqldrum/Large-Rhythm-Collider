@@ -16,7 +16,7 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, setHoldForFullQuality, setModulation, currentModulation, setAudioMode, currentAudioMode, setGridSpatialField, gridRowVisualState, setTuningStrength, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, setHoldForFullQuality, setModulation, currentModulation, setMidiOut, setAudioMode, currentAudioMode, setGridSpatialField, gridRowVisualState, setTuningStrength, setRootPolicyContext } from './cosmos-audio.js';
 import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
@@ -529,6 +529,7 @@ let tuningSliderEl = null, tuningReadoutEl = null;
 let scaledSpeedEl = null, scaledReadoutEl = null, cycleSliderEl = null, cycleReadoutEl = null;
 let fullQualityEl = null, qualityReadoutEl = null;
 let modulationEl = null, modulationReadoutEl = null;
+let midiOutEl = null, midiReadoutEl = null;
 // Cardinality band filter: only nodes with cardinality in [cardLo, cardHi] render + hit-test (isolate radial
 // shells; makes monster clouds parseable). Elements + a change-guard so the DOM is only touched when needed.
 // The band targets ONLY the currently-focused bloom (cosmos.focusGrid); other blooms render in full. filterGrid
@@ -646,6 +647,7 @@ export function ensureFlight(canvas, hudEl) {
     cycleSliderEl = document.getElementById('lrc-cycle-slider'); cycleReadoutEl = document.getElementById('lrc-cycle-readout');
     fullQualityEl = document.getElementById('lrc-full-quality'); qualityReadoutEl = document.getElementById('lrc-quality-readout');
     modulationEl = document.getElementById('lrc-modulation'); modulationReadoutEl = document.getElementById('lrc-modulation-readout');
+    midiOutEl = document.getElementById('lrc-midi-out'); midiReadoutEl = document.getElementById('lrc-midi-readout');
     if (lrcHeadEl) {
       let clickTimer = null;   // debounce: a dblclick fires two clicks — let the pending single-click resolve
       lrcHeadEl.addEventListener('click', () => {                 // toggles cockpit; ignored while a dblclick is landing
@@ -668,6 +670,14 @@ export function ensureFlight(canvas, hudEl) {
     if (modulationEl) modulationEl.addEventListener('change', () => {
       setModulation(modulationEl.checked);
       drawModulationReadout();
+    });
+    // Web MIDI permission needs the user gesture, and the port name is only known after it resolves —
+    // so the readout reports the real outcome (or why it failed) rather than assuming success.
+    if (midiOutEl) midiOutEl.addEventListener('change', async () => {
+      if (midiReadoutEl) midiReadoutEl.textContent = midiOutEl.checked ? '…' : 'off';
+      const result = await setMidiOut(midiOutEl.checked);
+      if (!result.ok) { midiOutEl.checked = false; if (midiReadoutEl) midiReadoutEl.textContent = result.reason; return; }
+      if (midiReadoutEl) midiReadoutEl.textContent = result.port ? `MPE → ${result.port}` : 'off';
     });
     if (audioModeEl) audioModeEl.addEventListener('change', () => changeAudioMode(audioModeEl.value));
     if (tuningSliderEl) tuningSliderEl.addEventListener('input', () => {
@@ -1429,6 +1439,7 @@ function renderSkyDebug(now) {
   lines.push(`clock  ${s.speed.mode === 'scaled'
     ? `SCALED ${Math.round(s.speed.ticksPerSec)} ticks/s from median grid ${s.speed.medianGrid.toLocaleString()} → ${s.speed.cycleSeconds}s/cycle`
     : `fixed ${Math.round(s.speed.ticksPerSec)} ticks/s`}   ·   sky ${s.speed.skySeconds.toFixed(1)}s`);
+  if (s.midi?.enabled) lines.push(`midi   MPE → ${s.midi.port} · ${s.midi.notes} notes · ${s.midi.live} live ch · ${s.midi.steals} steals · ${s.midi.dropped} dropped`);
   lines.push(`modul  ${s.modulation.on
     ? `ON  root → fundamental, shift ${s.modulation.cents >= 0 ? '+' : ''}${s.modulation.cents.toFixed(0)}¢, glide ${s.modulation.glideSeconds.toFixed(2)}s (${s.modulation.onsetTicks.toFixed(0)} ticks/onset)`
     : 'off  (absolute JI against a fixed 1/1 — a root change re-reads, it does not transpose)'}`);

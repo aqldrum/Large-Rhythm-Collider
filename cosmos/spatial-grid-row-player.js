@@ -35,10 +35,10 @@ const ROW_GATE = 0.14;              // note length from attack start to release 
 const ROW_RELEASE = 0.09;           // exponential release into the reverb tail (no click)
 // Shared reverb send — rows only (the ambient bed owns its own reverb). Pre-delay keeps dry attacks
 // crisp; the wet-side highpass stops dense grids piling into low-end mud; damping darkens the tail.
-const ROW_REVERB_SECONDS = 3;     // impulse length — the apparent "size" of the space
+const ROW_REVERB_SECONDS = 5;     // impulse length — the apparent "size" of the space
 const ROW_REVERB_DECAY = 3.2;       // impulse decay exponent (higher = faster tail)
 const ROW_REVERB_DAMPING = 0.12;    // one-pole lowpass on the impulse noise (lower = darker/smoother)
-const ROW_REVERB_WET = 0.56;        // wet send level — the dry/wet balance is this mode's "sustain" control
+const ROW_REVERB_WET = 0.35;        // wet send level — the dry/wet balance is this mode's "sustain" control
 const ROW_REVERB_PREDELAY = 0.03;   // seconds of pre-delay — separates the dry attack from the wash
 const ROW_REVERB_HIGHPASS_HZ = 200; // wet-only low-end roll-off so the tail doesn't accumulate rumble
 
@@ -100,9 +100,13 @@ export class SpatialGridRowPlayer {
   // into every row oscillator's detune param, so a root modulation glides these voices too — including
   // the ones born mid-glide, which matters here more than anywhere: a row note is a 140ms gate, so by
   // the time a glide is half over every voice that existed when it started is already gone.
-  constructor(context, output, rootDetune = null) {
+  // midiBridge: optional { note(hz, whenAudio, seconds, gain) } mirror to a DAW. The player stays
+  // harmony-blind here too — it reports pitch, time, length and loudness, and the audio layer folds in
+  // the modulation offset, which is the one harmonic fact it does not own.
+  constructor(context, output, rootDetune = null, midiBridge = null) {
     this.ctx = context;
     this.rootDetune = rootDetune;
+    this.midiBridge = midiBridge;
     this.master = context.createGain();
     this.master.gain.value = 0;
     this.master.connect(output);                    // dry path
@@ -424,6 +428,7 @@ export class SpatialGridRowPlayer {
       star.visualLives.push(voice.visualLife);
       star.visualAttacks.push({ when, strength: 1, ownerKey });
     }
+    this.midiBridge?.note(frequencyHz, when, endAt - when, this.stars.get(deck.program.grid)?.gain.gain.value ?? 1);
     const soundedCents = deck.centsByFraction?.get(action.fraction);
     if (Number.isFinite(soundedCents)) this.soundedTones.set(action.fraction, { cents: soundedCents, when });
     this.logicalVoiceCount++;

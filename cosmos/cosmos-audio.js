@@ -12,6 +12,7 @@ import { normalizeRootLadder, resetPhraseTracker, observePhraseBoundary, pushRec
   classifyRootDestinations, rankModulationDestinations, decideRootAtBoundary } from './sky-modulation.js';
 import { AUDIO_MODES, RHYTHM_VOICE_WAVEFORM, ownerChordMatch } from './cosmos-grid-audio-core.js';
 import { SpatialGridRowPlayer } from './spatial-grid-row-player.js';
+import { CosmosMidiOut } from './cosmos-midi-out.js';
 
 const ROOT_HZ = 220;             // Phase 0: one root for every voice (per-star root is a later phase)
 const LOOKAHEAD_MS = 25;         // scheduler tick cadence
@@ -165,6 +166,12 @@ let lastChordSeconds = 0;         // how long the PREVIOUS chord actually lasted
 let modulationOn = MODULATION_DEFAULT;
 let rootDetune = null;            // ConstantSourceNode, offset in CENTS, summed into every oscillator's detune
 let lastModulationCents = 0;      // the shift currently gliding to / settled at (overlay + re-derivation)
+// The detune bus is a live signal, so nothing downstream can READ where a glide is partway through.
+// Recording the curve's parameters lets modulationCentsAt() reproduce it exactly — which is what the
+// MIDI mirror needs, since a note scheduled inside the lookahead has to be spelled at the pitch it will
+// actually sound at, not at the glide's start or its destination.
+let modulationGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
+let cosmosMidi = null;
 let bedSoundedDegrees = new Set();   // ambient-mode half of the exposure ledger, cleared at each chord change
 let speedMode = SPEED_MODES.FIXED;
 let scaledCycleSeconds = SCALED_CYCLE_DEFAULT;
@@ -211,7 +218,13 @@ export function initAudio() {
   rootDetune = audioCtx.createConstantSource();
   rootDetune.offset.value = 0;
   rootDetune.start();
-  gridRowPlayer = new SpatialGridRowPlayer(audioCtx, muteGainNode, rootDetune);
+  cosmosMidi = new CosmosMidiOut(audioCtx);
+  // The row player stays harmony-blind: it hands over pitch, time, length and loudness, and this bridge
+  // supplies the one harmonic fact it does not own — where the modulation glide is at that instant.
+  const midiBridge = {
+    note: (hz, when, seconds, gain) => cosmosMidi?.note(hz, when, seconds, { cents: modulationCentsAt(when), gain }),
+  };
+  gridRowPlayer = new SpatialGridRowPlayer(audioCtx, muteGainNode, rootDetune, midiBridge);
   audioMode = AUDIO_MODES.AMBIENT_CHORDS;
   skyChordId = START_CHORD_ID; skyTabu = pushTabu([], skyChordId, TABU_K); skyStep = -1; lastSyncedChordId = null;
   skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; lastRootLadder = [];
@@ -222,7 +235,7 @@ export function initAudio() {
   transportStart = audioCtx.currentTime;   // grid clock starts here; lead swaps ride the same phase
   audioEpoch = transportStart;             // sky clock shares the origin but is never re-anchored after this
   chordStartedAt = 0; lastChordSeconds = 0; lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };
-  lastModulationCents = 0;
+  lastModulationCents = 0; modulationGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   scaledMedianGrid = 0; fieldOnsetTicks = 0;
   liveOscs = new Set();
   schedIdx = 0; schedCycle = 0;
@@ -308,6 +321,15 @@ export function setSpeedMode(mode, cycleSeconds) {
   return { mode: speedMode, cycleSeconds: scaledCycleSeconds, ticksPerSec, medianGrid: scaledMedianGrid };
 }
 
+// MIDI Out. Off by default; enabling asks for Web MIDI access and picks the IAC/loopMIDI bus if one is
+// there. Async because requestMIDIAccess is — the caller gets {ok, port} or {ok:false, reason} to show.
+export async function setMidiOut(on) {
+  if (!cosmosMidi) return { ok: false, reason: 'audio not started' };
+  if (!on) { cosmosMidi.disable(); return { ok: true, port: null }; }
+  return cosmosMidi.enable();
+}
+export function midiOutState() { return cosmosMidi?.debugState() || { enabled: false, supported: false }; }
+
 // "Expose the full quality": hold each chord until every one of its degrees has actually sounded.
 export function setHoldForFullQuality(on) { holdForFullQuality = !!on; return holdForFullQuality; }
 
@@ -341,8 +363,21 @@ function applyRootModulation() {
   lastModulationCents = target;
   const now = audioCtx.currentTime;
   const seconds = rootGlideSeconds(fieldOnsetTicks, ticksPerSec);
+  const timeConstant = Math.max(0.01, seconds / 3);
+  modulationGlide = { from: modulationCentsAt(now), to: target, at: now, timeConstant };
   rootDetune.offset.cancelScheduledValues(now);
-  rootDetune.offset.setTargetAtTime(target, now, Math.max(0.01, seconds / 3));
+  rootDetune.offset.setTargetAtTime(target, now, timeConstant);
+  // Tones already sounding must bend too — a row note is over before the glide is, but a bed voice
+  // would otherwise sit at its old pitch for seconds while the browser glided underneath it.
+  cosmosMidi?.retune(elapsed => modulationCentsAt(now + elapsed), seconds);
+}
+
+// The exact value of the detune bus at an audio time, reproducing setTargetAtTime's exponential
+// approach: v(t) = to + (from − to)·e^(−(t−t0)/τ). Pure given the recorded curve.
+export function modulationCentsAt(audioTime) {
+  const { from, to, at, timeConstant } = modulationGlide;
+  if (!Number.isFinite(audioTime) || audioTime <= at) return from;
+  return to + (from - to) * Math.exp(-(audioTime - at) / Math.max(1e-6, timeConstant));
 }
 
 // Retune the solved root to the fundamental, so a root change is heard as a key change rather than as a
@@ -590,6 +625,7 @@ function createVoice(bs, degree, now) {
   // degree only, and a root swap can re-map the same degree to a DIFFERENT tone; syncBedDegrees
   // compares this against the current pool to detect that and release+recreate).
   const v = { osc, env, degree, dev: slot.dev, fraction: slot.fraction };
+  v.midi = cosmosMidi?.noteOn(osc.frequency.value, now, { cents: modulationCentsAt(now), gain: bs.gainNode.gain.value });
   bs.oscMap.set(degree, v);
   bedSoundedDegrees.add(degree);   // exposure ledger: the bed sounds BY degree, so this is already the answer
   swellEnvelope(env.gain, BED_PEAK * gainForDev(slot.dev), now);
@@ -598,6 +634,7 @@ function createVoice(bs, degree, now) {
 
 function releaseVoice(bs, v, now, immediate) {
   bs.oscMap.delete(v.degree);
+  if (v.midi) cosmosMidi?.noteOff(v.midi, now);
   // Free the budget NOW, not when the ~2.5s fade-out actually finishes — otherwise a burst of churn
   // (several stars releasing at once while flying) starves incoming voices of MAX_BED_OSC headroom
   // for the whole release tail, which read as "the bed gets quieter while moving" (part of the same bug).
@@ -964,6 +1001,7 @@ export function debugSkyState() {
     speed: { ...currentSpeedMode(), skySeconds: currentSkySeconds() },
     chordExposure: { ...lastChordExposure, holding: holdForFullQuality, lastChordSeconds },
     modulation: currentModulation(),
+    midi: midiOutState(),
     gridRows,
     rootHz: ROOT_HZ,   // 1/1's fixed fundamental — the root solve only ever picks a RATIO relative to this
     root,
@@ -1039,6 +1077,7 @@ export function stopAudio() {
   if (schedulerTimer) { clearInterval(schedulerTimer); schedulerTimer = null; }
   if (liveOscs) { for (const osc of liveOscs) { try { osc.stop(0); } catch {} try { osc.disconnect(); } catch {} } liveOscs.clear(); }
   if (audioCtx) { for (const bs of bedStars.values()) teardownBedStar(bs, audioCtx.currentTime); for (const bs of dyingStars) teardownBedStar(bs, audioCtx.currentTime); }
+  cosmosMidi?.disable(); cosmosMidi = null;
   gridRowPlayer?.destroy(); gridRowPlayer = null;
   bedStars = new Map(); dyingStars = []; bedOscCount = 0; currentField = [];
   skyChordId = START_CHORD_ID; skyTabu = null; skyStep = -1; lastSyncedChordId = null;
@@ -1102,6 +1141,7 @@ function scheduleNote(note, time, noteIdx) {
   env.gain.linearRampToValueAtTime(peak, time + ATTACK);
   env.gain.exponentialRampToValueAtTime(0.001, time + ATTACK + DECAY);
   osc.connect(env); env.connect(pannerNode);
+  cosmosMidi?.note(freq, time, ATTACK + DECAY, { cents: modulationCentsAt(time), gain: peak / NOTE_PEAK });
   osc.start(time); osc.stop(time + ATTACK + DECAY + 0.02);
   liveOscs.add(osc);
   osc.onended = () => { liveOscs.delete(osc); try { osc.disconnect(); } catch {} try { env.disconnect(); } catch {} };
