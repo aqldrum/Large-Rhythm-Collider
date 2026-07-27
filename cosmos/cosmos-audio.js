@@ -134,6 +134,7 @@ let skyChordId = START_CHORD_ID, skyTabu = null, skyStep = -1;   // walk state; 
 let chordStartedAt = 0;           // sky-clock seconds the current chord began — the dwell/exposure origin
 let holdForFullQuality = false;   // "expose the full quality" — hold a chord until every degree has sounded
 let lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };   // overlay-only snapshot
+let lastChordSeconds = 0;         // how long the PREVIOUS chord actually lasted — the pacing readout
 let bedSoundedDegrees = new Set();   // ambient-mode half of the exposure ledger, cleared at each chord change
 let speedMode = SPEED_MODES.FIXED;
 let scaledCycleSeconds = SCALED_CYCLE_DEFAULT;
@@ -180,7 +181,7 @@ export function initAudio() {
   bedStars = new Map(); bedOscCount = 0; currentField = [];
   transportStart = audioCtx.currentTime;   // grid clock starts here; lead swaps ride the same phase
   audioEpoch = transportStart;             // sky clock shares the origin but is never re-anchored after this
-  chordStartedAt = 0; lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };
+  chordStartedAt = 0; lastChordSeconds = 0; lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };
   scaledMedianGrid = 0;
   liveOscs = new Set();
   schedIdx = 0; schedCycle = 0;
@@ -591,13 +592,20 @@ function chordExposure(nowSeconds) {
     complete: missing.length === 0, heldSeconds: nowSeconds - chordStartedAt };
 }
 
-// Pure dwell rule, exported so a headless guard can verify it without a live AudioContext. The chord
-// window is a MINIMUM once the hold is on: elapsing it is necessary but no longer sufficient. A chord
-// that has exposed its full quality moves on at its next boundary; one that has not keeps holding until
-// it does, or until the cap rescues a degree the local field simply cannot voice.
+// Pure dwell rule, exported so a headless guard can verify it without a live AudioContext.
+//
+// With the hold on, the fixed window stops governing entirely and EXPOSURE becomes the clock: the chord
+// moves the moment its full quality has first been heard. A chord then lasts exactly as long as it takes
+// to say itself — a triad whose three degrees land quickly is brief, a 13th waiting on its last degree
+// dwells — instead of every chord occupying the same 25.6s box. (Holding a fully-exposed chord until the
+// next window boundary was just dead air after the point had been made.)
+//
+// Because voice leading is parsimonious, consecutive chords share most of their degrees, and the shared
+// ones are usually already sounding when the chord arrives. In practice the hold therefore waits on
+// precisely the degrees that make the new chord DIFFERENT — which is the musically useful reading of
+// "expose the quality". The cap still rescues a degree the local field simply cannot voice.
 export function shouldAdvanceChord({ windowElapsed, holding, complete, heldSeconds, maxSeconds = CHORD_MAX_SECONDS }) {
-  if (!windowElapsed) return false;
-  if (!holding) return true;
+  if (!holding) return !!windowElapsed;
   return !!complete || heldSeconds >= maxSeconds;
 }
 
@@ -607,11 +615,9 @@ export function shouldAdvanceChord({ windowElapsed, holding, complete, heldSecon
 // history replay; if the clock jumps far ahead — e.g. a backgrounded tab — the walk just takes one hop
 // and re-anchors, same "don't retroactively replay" spirit as setTickRate).
 //
-// With holdForFullQuality the window becomes a MINIMUM, not a fixed period: the chord holds past its
-// boundary until every one of its degrees has sounded, so the full quality is exposed rather than
-// whichever of its tones the local rows happened to reach. CHORD_MAX_SECONDS caps the hold — a degree
-// the field cannot voice at all must not stall the walk. skyStep re-anchors to the CURRENT step on
-// release, so a long hold never replays the windows it spanned.
+// With holdForFullQuality the window stops governing and exposure becomes the clock — see
+// shouldAdvanceChord. skyStep still re-anchors to the CURRENT step on every advance, so a chord that
+// spanned several windows never replays them, and turning the hold back off resumes cleanly from here.
 function stepSkyWalk(seconds) {
   const step = chordStepIndex(seconds, CHORD_SECONDS);
   if (skyStep < 0) { skyStep = step; chordStartedAt = seconds; return; }
@@ -619,6 +625,7 @@ function stepSkyWalk(seconds) {
   lastChordExposure = exposure;
   if (!shouldAdvanceChord({ windowElapsed: step !== skyStep, holding: holdForFullQuality, ...exposure })) return;
   skyStep = step;
+  lastChordSeconds = seconds - chordStartedAt;
   chordStartedAt = seconds;
   bedSoundedDegrees = new Set();
   const audibleStars = currentField.map(it => ({ pool: it.pool, weight: it.gain }));
@@ -848,7 +855,7 @@ export function debugSkyState() {
     audioMode,
     tuningStrength: LAMBDA_FIELD,
     speed: { ...currentSpeedMode(), skySeconds: currentSkySeconds() },
-    chordExposure: { ...lastChordExposure, holding: holdForFullQuality },
+    chordExposure: { ...lastChordExposure, holding: holdForFullQuality, lastChordSeconds },
     gridRows,
     rootHz: ROOT_HZ,   // 1/1's fixed fundamental — the root solve only ever picks a RATIO relative to this
     root,
@@ -931,7 +938,7 @@ export function stopAudio() {
   rootEstablished = false; rootPhraseTracker = null; recentSkyRoots = []; lastRootPolicyProposal = null;
   rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
   lead = null; schedIdx = 0; schedCycle = 0; transportStart = null; audioEpoch = null;
-  chordStartedAt = 0; bedSoundedDegrees = new Set(); scaledMedianGrid = 0;
+  chordStartedAt = 0; lastChordSeconds = 0; bedSoundedDegrees = new Set(); scaledMedianGrid = 0;
   leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1;
   if (audioCtx) { try { audioCtx.close(); } catch {} }
   audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; liveOscs = null;

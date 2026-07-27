@@ -1339,7 +1339,8 @@ function renderSkyDebug(now) {
   if (exposure) {
     const missing = exposure.degrees.filter(d => !exposure.sounded.includes(d));
     lines.push(`quality  ${exposure.holding ? 'HOLD' : 'free'}  sounded [${exposure.sounded.join(',')}]` +
-      `${missing.length ? `  waiting on [${missing.join(',')}]` : '  ✓ full quality exposed'}  held ${exposure.heldSeconds.toFixed(1)}s`);
+      `${missing.length ? `  waiting on [${missing.join(',')}]` : '  ✓ full quality exposed'}` +
+      `  held ${exposure.heldSeconds.toFixed(1)}s · last chord ${exposure.lastChordSeconds.toFixed(1)}s`);
   }
   lines.push(`trail  ${s.tabu.map(c => c.symbol).join(' → ')}`);
   if (s.gridRows) {

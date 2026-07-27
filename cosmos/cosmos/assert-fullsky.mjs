@@ -259,15 +259,21 @@ check('the derived rate is clamped, so a monster grid cannot demand an unschedul
   scaledRateFor([5_000_000], 0.5).ticksPerSec <= 8000);
 
 console.log('\n  Chord dwell rule (expose the full quality)');
-const dwell = extra => shouldAdvanceChord({ windowElapsed: true, holding: true, complete: false, heldSeconds: 0, maxSeconds: 100, ...extra });
-check('the chord window is still necessary — nothing advances before it elapses',
-  !dwell({ windowElapsed: false, complete: true }) && !shouldAdvanceChord({ windowElapsed: false, holding: false }));
-check('with the hold off the window alone advances the walk, exactly as before',
-  shouldAdvanceChord({ windowElapsed: true, holding: false, complete: false, heldSeconds: 0 }));
-check('with the hold on an unexposed chord keeps holding past its window', !dwell({}));
-check('a chord that has exposed every degree advances at its window', dwell({ complete: true }));
+const dwell = extra => shouldAdvanceChord({ windowElapsed: false, holding: true, complete: false, heldSeconds: 0, maxSeconds: 100, ...extra });
+check('with the hold OFF the fixed window alone governs, exactly as before',
+  shouldAdvanceChord({ windowElapsed: true, holding: false, complete: false, heldSeconds: 0 }) &&
+  !shouldAdvanceChord({ windowElapsed: false, holding: false, complete: true, heldSeconds: 999 }));
+// With the hold on, exposure IS the clock: the chord moves the moment its quality has been heard,
+// rather than sitting out the rest of a window that has already made its point.
+check('with the hold on a fully-exposed chord advances immediately, without waiting for the window',
+  dwell({ complete: true, windowElapsed: false }));
+check('with the hold on an unexposed chord holds even once its window has elapsed',
+  !dwell({ complete: false, windowElapsed: true }));
 check('the cap releases a chord whose degree the local field simply cannot voice',
   dwell({ complete: false, heldSeconds: 100 }) && dwell({ complete: false, heldSeconds: 250 }));
+check('under the hold the window neither advances nor blocks — only exposure and the cap decide',
+  dwell({ complete: true, windowElapsed: true }) === dwell({ complete: true, windowElapsed: false }) &&
+  dwell({ complete: false, windowElapsed: true }) === dwell({ complete: false, windowElapsed: false }));
 
 // ══ M3 — the bed ═════════════════════════════════════════════════════════════════════════════
 console.log('\n── M3: the bed ──');
