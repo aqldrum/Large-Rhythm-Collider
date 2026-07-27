@@ -28,8 +28,6 @@ const ROW_SUSTAIN = 0.05;           // held level across the gate
 const ROW_PEAK = 0.16;              // envelope peak for a real scheduled attack
 const ROW_GATE = 0.14;              // note length from attack start to release start — DECOUPLED from onsets
 const ROW_RELEASE = 0.09;           // exponential release into the reverb tail (no click)
-const ROW_SEED_PEAK = 0.10;         // softer peak for a program-swap seed blip
-const ROW_SEED_ATTACK = 0.05;       // gentler attack for a seed blip
 // Shared reverb send — rows only (the ambient bed owns its own reverb). Pre-delay keeps dry attacks
 // crisp; the wet-side highpass stops dense grids piling into low-end mud; damping darkens the tail.
 const ROW_REVERB_SECONDS = 10;     // impulse length — the apparent "size" of the space
@@ -227,7 +225,16 @@ export class SpatialGridRowPlayer {
     if (deck.cursorEvent < 0) { deck.cursorEvent = 0; deck.cursorCycle++; }
   }
 
-  _seedDeck(deck, absoluteTick, when) {
+  // A program swap is SILENT: it only restores the repeat-cull memory a deck that had been running
+  // since the loop start would already hold. It must NOT sound the tones it restores.
+  //
+  // Under the old legato voicing a swap had to re-articulate every held tone or the sustain vanished.
+  // Under fixed-gate short notes nothing is held — a pre-boundary voice is long over — so a sounding
+  // seed invents up to four simultaneous notes per star, all quantized to the same ROW_SWITCH_TICKS
+  // boundary, all drawn from the same loop tail. Under flight churn (a star install per entry) that
+  // stacked into a ~20-note chord repeating on the switch grid, swamping the real polyrhythm with the
+  // same chord over and over. Deck installs are now inaudible; onsets resume at the next real event.
+  _seedDeck(deck, absoluteTick) {
     const events = deck.program.events;
     if (!events.length) return;
     const cycleTick = ((absoluteTick % deck.program.grid) + deck.program.grid) % deck.program.grid;
@@ -239,10 +246,7 @@ export class SpatialGridRowPlayer {
       if (event.tick >= cycleTick) break;
       for (const action of event.layerActions) latest.set(action.layer, action);
     }
-    for (const action of latest.values()) {
-      deck.lastToneByLayer.set(action.layer, action.rawFraction);   // seed the hold memory at the boundary
-      this._startVoice(deck, action, when, true);
-    }
+    for (const action of latest.values()) deck.lastToneByLayer.set(action.layer, action.rawFraction);
   }
 
   _activatePending(star, switchTime) {
@@ -265,8 +269,7 @@ export class SpatialGridRowPlayer {
     }
     star.currentDeck = deck;
     star.pending = null;
-    // Install the new deck as current before seeding so equal-distance crossfade voices yield to it.
-    this._seedDeck(deck, pending.boundaryTick, switchTime);
+    this._seedDeck(deck, pending.boundaryTick);
     this.stats.installs++;
   }
 
@@ -352,7 +355,7 @@ export class SpatialGridRowPlayer {
           // notes marks a loop-constant layer as all-hold and it never sounds again after its seed blip.)
           if (deck.program.repeatCull && deck.lastToneByLayer.get(action.layer) === action.rawFraction) continue;
           deck.lastToneByLayer.set(action.layer, action.rawFraction);
-          this._startVoice(deck, action, Math.max(now, when), false);
+          this._startVoice(deck, action, Math.max(now, when));
         }
       }
       deck.cursorEvent++;
@@ -360,7 +363,7 @@ export class SpatialGridRowPlayer {
     }
   }
 
-  _startVoice(deck, action, when, seeded) {
+  _startVoice(deck, action, when) {
     const frequencyHz = culledGridRowFrequency(action.rawRatio);
     if (frequencyHz === null) return;
     this._releaseLayer(deck, action.layer, when, VOICE_RELEASE);
@@ -372,14 +375,12 @@ export class SpatialGridRowPlayer {
     osc.frequency.setValueAtTime(Math.min(this.ctx.sampleRate * 0.45, frequencyHz), when);
     // Fixed-gate ADSR: the note lasts ROW_GATE regardless of the next onset, then releases into the
     // reverb tail. holdUntil is clamped so a very short tuned ROW_GATE can't invert the automation.
-    const peak = seeded ? ROW_SEED_PEAK : ROW_PEAK;
-    const attack = seeded ? ROW_SEED_ATTACK : ROW_ATTACK;
     const sustain = Math.max(0.0001, ROW_SUSTAIN);
-    const holdUntil = when + Math.max(ROW_GATE, attack + ROW_DECAY);
+    const holdUntil = when + Math.max(ROW_GATE, ROW_ATTACK + ROW_DECAY);
     const endAt = holdUntil + ROW_RELEASE;
     env.gain.setValueAtTime(0.0001, when);
-    env.gain.linearRampToValueAtTime(peak, when + attack);
-    env.gain.exponentialRampToValueAtTime(sustain, when + attack + ROW_DECAY);
+    env.gain.linearRampToValueAtTime(ROW_PEAK, when + ROW_ATTACK);
+    env.gain.exponentialRampToValueAtTime(sustain, when + ROW_ATTACK + ROW_DECAY);
     env.gain.setValueAtTime(sustain, holdUntil);
     env.gain.exponentialRampToValueAtTime(0.0001, endAt);
     osc.connect(env);
@@ -401,7 +402,7 @@ export class SpatialGridRowPlayer {
       const ownerKey = deck.ownerKeyByFraction?.get(action.fraction) ?? null;
       voice.visualLife = { startTime: when, endTime: endAt, ownerKey };
       star.visualLives.push(voice.visualLife);
-      star.visualAttacks.push({ when, strength: seeded ? 0.45 : 1, ownerKey });
+      star.visualAttacks.push({ when, strength: 1, ownerKey });
     }
     this.logicalVoiceCount++;
     osc.start(when);

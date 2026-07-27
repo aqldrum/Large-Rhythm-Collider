@@ -196,6 +196,34 @@ check('a same-layer steal keeps exactly one live slot', budgetPlayer.logicalVoic
 stolenOsc.onended();
 check('a stolen voice does not double-free when its oscillator later ends', budgetPlayer.logicalVoiceCount === 1);
 
+console.log('\n  Silent program swap');
+// A deck install must be INAUDIBLE. Under fixed-gate short notes nothing is held across a boundary, so
+// a sounding seed would invent one note per canonical layer per star, all landing on the same
+// ROW_SWITCH_TICKS boundary and all drawn from the same loop tail — under flight churn (an install per
+// star entry) that stacked into a ~20-note chord repeating on the switch grid, burying the polyrhythm.
+// The seed may only restore the repeat-cull memory a deck running since the loop start would hold.
+const swapPlayer = Object.create(SpatialGridRowPlayer.prototype);
+swapPlayer.ctx = fakeCtx();
+swapPlayer.logicalVoiceCount = 0;
+swapPlayer.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0 };
+swapPlayer.stars = new Map();
+swapPlayer._claimToneVoice = () => true;
+const swapDeck = { program, voices: new Map(), oscillators: new Set(), lastToneByLayer: new Map(), ownerKeyByFraction: new Map() };
+swapPlayer._seedDeck(swapDeck, 3 * program.grid + Math.floor(program.grid / 2));
+check('a program swap starts no voices and consumes no budget',
+  swapDeck.oscillators.size === 0 && swapDeck.voices.size === 0 && swapPlayer.logicalVoiceCount === 0);
+check('a program swap still primes the repeat-cull memory for every canonical layer the loop uses',
+  swapDeck.lastToneByLayer.size === new Set(program.events.flatMap(event => event.layerActions).map(action => action.layer)).size);
+check('the primed tone is the layer\'s last tone at or before the boundary, as a running deck would hold',
+  [...swapDeck.lastToneByLayer].every(([layer, tone]) => {
+    const priorInCycle = program.events.filter(event => event.tick < Math.floor(program.grid / 2))
+      .flatMap(event => event.layerActions).filter(action => action.layer === layer).at(-1);
+    const loopTail = program.events.flatMap(event => event.layerActions).filter(action => action.layer === layer).at(-1);
+    return tone === (priorInCycle || loopTail).rawFraction;
+  }));
+check('the row voice has one envelope shape — no separate softer seed blip',
+  !readFileSync(new URL('../spatial-grid-row-player.js', import.meta.url), 'utf8').includes('ROW_SEED_'));
+
 console.log('\n  Audio-time visual activity');
 const visualPlayer = Object.create(SpatialGridRowPlayer.prototype);
 visualPlayer.enabled = true;
