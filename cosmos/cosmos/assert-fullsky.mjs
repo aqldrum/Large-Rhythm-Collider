@@ -3,8 +3,8 @@
 import { readFileSync } from 'fs';
 import { gridShardSolve, shardKeysOf, gridShardSystems, divisorsFast, nearestDegree, poolFromRatios, TONE_BIN_CENTS } from '../grid-core.js';
 import { deriveScale } from '../oracle-core.js';
-import { CHORDS, CHORD_QUALITIES, QUALITY_COUNT, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, chooseNextChord, candidateCosts, pushTabu, chordStepIndex } from '../sky-walk.js';
-import { CHORD_TICKS, TABU_K, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState } from '../cosmos-audio.js';
+import { CHORDS, CHORD_QUALITIES, QUALITY_COUNT, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, perDegreeSupport, weakestSupport, chooseNextChord, candidateCosts, pushTabu, chordStepIndex } from '../sky-walk.js';
+import { CHORD_SECONDS, CHORD_MAX_SECONDS, SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState, scaledRateFor, shouldAdvanceChord } from '../cosmos-audio.js';
 import { poolFromTones, solveRoots, scoreRootAt } from '../sky-root.js';
 import { ratioToCents } from '../oracle-core.js';
 
@@ -219,7 +219,61 @@ check('coverage: an unweighted (gain 0) star never contributes', coverage(triad,
 console.log('\n  Chord-clock helper');
 let clockFail = 0;
 for (const ticks of [0, 1, 255, 256, 257, 5000, 65535]) if (chordStepIndex(ticks, 256) !== Math.floor(ticks / 256)) clockFail++;
-check('chordStepIndex is a pure floor(ticks/chordTicks)', clockFail === 0, `${clockFail} mismatches`);
+check('chordStepIndex is a pure floor(elapsed/window)', clockFail === 0, `${clockFail} mismatches`);
+
+// ── TWO CLOCKS ──────────────────────────────────────────────────────────────────────────────────
+// The grid clock (ticks) scales with playback speed so a row program's `grid`-tick loop can be made to
+// last a fixed wall duration at any grid. The sky clock (seconds) must NOT: a chord window, a pad's
+// breath and the root solve's settle are listening durations. Every seconds constant below is its old
+// tick value over the historical 10 ticks/s default, so the two clocks agree exactly at that rate.
+console.log('\n  Two clocks: sky constants are rate-independent seconds');
+check('CHORD_SECONDS is the old 256-tick window at the historical 10 ticks/s', CHORD_SECONDS === 256 / 10);
+check('REATTACK_PERIODS are the old tick periods at that same rate',
+  REATTACK_PERIODS.join(',') === [45, 56, 64, 81, 100].map(t => t / 10).join(','));
+check('the full-quality hold is capped so an unvoiceable degree cannot stall the walk',
+  CHORD_MAX_SECONDS > CHORD_SECONDS && Number.isFinite(CHORD_MAX_SECONDS), `${CHORD_MAX_SECONDS}s`);
+// A rate change must not move the sky clock. currentSkySeconds reads a fixed epoch; currentTicks does not.
+check('speed mode is an explicit two-value enum with a scaled cycle default',
+  SPEED_MODES.FIXED === 'fixed' && SPEED_MODES.SCALED === 'scaled' && SCALED_CYCLE_DEFAULT > 0);
+// Scaled speed's whole purpose, stated as arithmetic: rate = grid / cycleSeconds makes a grid-tick loop
+// last cycleSeconds at ANY grid. At a fixed 10 ticks/s, grid 61600's cycle runs over an hour and a half.
+const cycleSecondsAt = (grid, rate) => grid / rate;
+check('a fixed rate makes a large grid\'s cycle unlistenable, a scaled rate does not',
+  cycleSecondsAt(61600, 10) > 5000 && Math.abs(cycleSecondsAt(61600, 61600 / 12) - 12) < 1e-9,
+  `fixed ${(cycleSecondsAt(61600, 10) / 60).toFixed(0)}min vs scaled 12s`);
+check('the same law leaves a small grid where it already was (grid 120 → the historical 10 ticks/s)',
+  Math.abs(120 / SCALED_CYCLE_DEFAULT - 10) < 1e-9);
+
+console.log('\n  Scaled rate derivation');
+check('the derived rate makes ONE median-grid cycle last exactly the target seconds', (() => {
+  const d = scaledRateFor([1092, 1650, 2640, 5100, 7920], 12);
+  return d.medianGrid === 2640 && Math.abs(d.medianGrid / d.ticksPerSec - 12) < 1e-9;
+})());
+// Median, not mean: the active set spans orders of magnitude, and one distant monster must not drag
+// the whole sky's pace with it.
+check('one enormous outlier grid does not drag the pace (median, not mean)',
+  scaledRateFor([120, 240, 360, 480, 5_000_000], 12).medianGrid === 360);
+check('no row field at all (ambient mode) means "keep the rate we have", not a rate of 0',
+  scaledRateFor([], 12) === null && scaledRateFor([120], 0) === null);
+check('the derived rate is clamped, so a monster grid cannot demand an unschedulable rate',
+  scaledRateFor([5_000_000], 0.5).ticksPerSec <= 8000);
+
+console.log('\n  Chord dwell rule (expose the full quality)');
+const dwell = extra => shouldAdvanceChord({ windowElapsed: false, holding: true, complete: false, heldSeconds: 0, maxSeconds: 100, ...extra });
+check('with the hold OFF the fixed window alone governs, exactly as before',
+  shouldAdvanceChord({ windowElapsed: true, holding: false, complete: false, heldSeconds: 0 }) &&
+  !shouldAdvanceChord({ windowElapsed: false, holding: false, complete: true, heldSeconds: 999 }));
+// With the hold on, exposure IS the clock: the chord moves the moment its quality has been heard,
+// rather than sitting out the rest of a window that has already made its point.
+check('with the hold on a fully-exposed chord advances immediately, without waiting for the window',
+  dwell({ complete: true, windowElapsed: false }));
+check('with the hold on an unexposed chord holds even once its window has elapsed',
+  !dwell({ complete: false, windowElapsed: true }));
+check('the cap releases a chord whose degree the local field simply cannot voice',
+  dwell({ complete: false, heldSeconds: 100 }) && dwell({ complete: false, heldSeconds: 250 }));
+check('under the hold the window neither advances nor blocks — only exposure and the cap decide',
+  dwell({ complete: true, windowElapsed: true }) === dwell({ complete: true, windowElapsed: false }) &&
+  dwell({ complete: false, windowElapsed: true }) === dwell({ complete: false, windowElapsed: false }));
 
 // ══ M3 — the bed ═════════════════════════════════════════════════════════════════════════════
 console.log('\n── M3: the bed ──');
@@ -287,7 +341,7 @@ console.log('\n  Budget cap');
 check('MAX_BED_OSC is a positive, binding cap (< AUDIBLE_N × 3)', MAX_BED_OSC > 0 && MAX_BED_OSC <= 10 * 3, `MAX_BED_OSC=${MAX_BED_OSC}`);
 
 // knob sanity
-check('CHORD_TICKS, TABU_K positive', CHORD_TICKS > 0 && TABU_K > 0);
+check('CHORD_SECONDS, TABU_K positive', CHORD_SECONDS > 0 && TABU_K > 0);
 check('REATTACK_PERIODS all positive, length > 1', REATTACK_PERIODS.length > 1 && REATTACK_PERIODS.every(p => p > 0));
 
 // ══ M4 — lead integration + cockpit ═════════════════════════════════════════════════════════
@@ -401,7 +455,9 @@ for (const stars of [realPoolsA, realPoolsB]) {
     agreeChecks++;
     const cov = t => coverage(t, stars);
     const chosen = chooseNextChord(current, tabu, cov, { lambdaField: 2 });
-    const ranked = candidateCosts(current, tabu, cov, { lambdaField: 2 }).sort((a, b) => a.cost - b.cost || a.id - b.id);
+    // Same tie-break the walk documents: cost, then richest, then lowest id.
+    const ranked = candidateCosts(current, tabu, cov, { lambdaField: 2 })
+      .sort((a, b) => a.cost - b.cost || b.cardinality - a.cardinality || a.id - b.id);
     if (chosen.id !== ranked[0].id) agreeFail++;
     current = chosen.id; pushTabu(tabu, current, 3);
   }
@@ -409,6 +465,82 @@ for (const stars of [realPoolsA, realPoolsB]) {
 check('chooseNextChord always agrees with candidateCosts\' argmin (same ranking, no drift)', agreeFail === 0, `${agreeFail}/${agreeChecks} mismatches`);
 
 check('EPS_SPREAD is a small positive knob', EPS_SPREAD > 0 && EPS_SPREAD < 1, `EPS_SPREAD=${EPS_SPREAD}`);
+
+// ══ Chord richness — cardinality-fair field term + earned extension incentive ═══════════════════
+console.log('\n── Chord richness: reaching past the triad ──');
+
+// Why the field term normalizes PER CARDINALITY CLASS. coverage is a MEAN over a chord's degrees, so
+// averaging over more degrees regresses toward the field's mean: measured over 12 real codex locations
+// the coverage spread shrinks monotonically with size (3-note 0.081 → 6-note 0.048) while the class
+// MEANS agree to three decimals. maxCov over the whole vocabulary is therefore always held by a triad,
+// and a 7th used to pay a field cost for being LARGE rather than for being out of tune.
+console.log('\n  Field term is fair across cardinality');
+const chImaj7 = findT('Imaj7'), chIIm7 = findT('IIm7');
+const mixed = new Set([chIii.id, chMin.id, chImaj7.id, chIIm7.id]);   // 2 triads + 2 four-note chords
+const tabuMixed = CHORDS.map(t => t.id).filter(id => !mixed.has(id));   // includes chI.id — current is always tabu
+// Triad class spans .90/.60 (spread .30 ≥ EPS). Four-note class spans .80/.70 — its best is BELOW the
+// best triad, which is exactly the situation the old global normalization punished.
+const mixedCov = t => t.id === chIii.id ? 0.90 : t.id === chMin.id ? 0.60 : t.id === chImaj7.id ? 0.80 : t.id === chIIm7.id ? 0.70 : 0;
+const rMixed = candidateCosts(chI.id, tabuMixed, mixedCov, { lambdaField: 1, richness: 0 });
+const bestTriad = rMixed.find(r => r.id === chIii.id), bestFour = rMixed.find(r => r.id === chImaj7.id);
+check('the best chord of EACH cardinality class pays fieldCost 0',
+  Math.abs(bestTriad.fieldCost) < 1e-9 && Math.abs(bestFour.fieldCost) < 1e-9,
+  `triad ${bestTriad.fieldCost.toFixed(4)}, four-note ${bestFour.fieldCost.toFixed(4)}`);
+check('a 7th is no longer charged for a coverage gap it cannot close by being large',
+  bestFour.fieldCost < 1 * (0.90 - 0.80) / 0.30,
+  `would have paid ${(1 * (0.90 - 0.80) / 0.30).toFixed(4)} under global normalization`);
+check('within a class the spread law is unchanged (worst four-note pays the faded EPS_SPREAD cost)',
+  Math.abs(rMixed.find(r => r.id === chIIm7.id).fieldCost - 1 * 0.10 / EPS_SPREAD) < 1e-9,
+  `got ${rMixed.find(r => r.id === chIIm7.id).fieldCost.toFixed(4)}`);
+// The Feature A worked example above is a triad-only candidate set and still reproduces Avery's
+// overlay numbers exactly — per-class normalization is a strict no-op when one class is present.
+check('single-cardinality candidate set reproduces the pre-existing field law exactly',
+  Math.abs(iii1.fieldCost - 0.642857) < 1e-4 && Math.abs(bvi1.fieldCost - 0.035714) < 1e-4);
+
+console.log('\n  Richness is EARNED by the chord\'s weakest degree');
+const flatSupport = new Array(12).fill(1);
+const noMaj7 = flatSupport.map((g, d) => d === 11 ? 0 : g);           // nothing to sound on at degree 11
+check('perDegreeSupport keeps coverage\'s double sum per degree (perfect star → 1 everywhere)',
+  perDegreeSupport([perfectStar]).every(g => Math.abs(g - 1) < 1e-9));
+check('perDegreeSupport ignores a zero-weight star exactly as coverage does',
+  perDegreeSupport([{ weight: 0, pool: perfectStar.pool }]).every(g => g === 0));
+check('weakestSupport reports the chord\'s least-supported degree, not its mean',
+  weakestSupport(chImaj7, noMaj7) === 0 && weakestSupport(chI, noMaj7) === 1);
+const richAt = (perDegree, richness = 0.5) => candidateCosts(chI.id, tabuMixed, mixedCov, { lambdaField: 1, richness, perDegree });
+check('a fully-supported 7th earns the whole incentive',
+  Math.abs(richAt(flatSupport).find(r => r.id === chImaj7.id).richness - 0.5) < 1e-9);
+check('a 7th whose extension degree has nothing to sound on earns none of it',
+  richAt(noMaj7).find(r => r.id === chImaj7.id).richness === 0);
+check('a triad never earns the incentive at all',
+  richAt(flatSupport).find(r => r.id === chIii.id).richness === 0);
+check('richness 0 reproduces the plain parsimony + field cost',
+  richAt(flatSupport, 0).every(r => Math.abs(r.cost - (r.parsimony + r.fieldCost)) < 1e-9));
+// Saturation: the musical event is LEAVING the triad. A linear (cardinality−3) gives a 13th three times
+// a 7th's discount, and over real codex fields that runs away — even 0.15 put the walk on six-note
+// chords 58% of the time. Every extended chord gets the same earned bonus; the 5th and 6th notes must
+// pay their own way in voice leading and field support.
+const sixNote = CHORDS.find(c => c.cardinality === 6 && c.rootSemitone === 0);
+const tabuSaturate = CHORDS.map(t => t.id).filter(id => id !== chImaj7.id && id !== sixNote.id);
+const rSaturate = candidateCosts(chI.id, tabuSaturate, () => 0.5, { lambdaField: 1, richness: 0.5, perDegree: flatSupport });
+check('the incentive saturates at the first extension (a 6-note chord earns no more than a 7th)',
+  rSaturate.find(r => r.id === sixNote.id).richness === rSaturate.find(r => r.id === chImaj7.id).richness,
+  `6-note ${rSaturate.find(r => r.id === sixNote.id).richness}, 7th ${rSaturate.find(r => r.id === chImaj7.id).richness}`);
+
+console.log('\n  Tie-break no longer structurally prefers the triad');
+// CHORDS is ascending-id with major_triad/minor_triad at quality indices 0 and 1, so a plain lowest-id
+// tie-break handed every exact tie to a triad: the walk could take a 7th only by strictly beating one.
+const chIsus4 = findT('Isus4');
+const tiePair = new Set([chIsus4.id, chImaj7.id]);   // both parsimony 1 from I, both alone in their class
+const tabuTie = CHORDS.map(t => t.id).filter(id => !tiePair.has(id));
+const rTie = candidateCosts(chI.id, tabuTie, () => 0.5, { lambdaField: 2, richness: 0 });
+check('the constructed pair really does tie on cost (same parsimony, same field cost)',
+  Math.abs(rTie[0].cost - rTie[1].cost) < 1e-9 && rTie.every(r => r.parsimony === 1),
+  rTie.map(r => `${r.symbol}=${r.cost.toFixed(3)}`).join(' '));
+check('an exact tie now goes to the richer chord, and the triad no longer wins by id',
+  chooseNextChord(chI.id, tabuTie, () => 0.5, { lambdaField: 2, richness: 0 }).id === chImaj7.id,
+  `chose ${chooseNextChord(chI.id, tabuTie, () => 0.5, { lambdaField: 2, richness: 0 }).symbol}`);
+check('production RICHNESS is a small positive incentive, not a thumb on the scale',
+  RICHNESS > 0 && RICHNESS < 1, `RICHNESS=${RICHNESS}`);
 
 // ══ Sky Root handoff, B1 — anchor-independent tone lists ═══════════════════════════════════════
 console.log('\n── B1: anchor-independent tone lists ──');

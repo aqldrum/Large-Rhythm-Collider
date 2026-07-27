@@ -659,6 +659,26 @@
                     <input type="range" id="lrc-tuning-slider" min="0" max="8" step="0.25" value="2" aria-label="local tuning strength in semitones of voice-leading cost">
                     <b id="lrc-tuning-readout">2.0 st</b>
                 </label>
+                <!-- Scaled speed: derive ticks/s from the median sounding grid so one grid cycle lasts a
+                     fixed number of seconds anywhere. Without it the polyrhythmic chorus only emerges at
+                     low grids — grid 61600's cycle runs 103 minutes at a fixed 10 ticks/s. -->
+                <label class="lrc-tuning-row" for="lrc-scaled-speed">
+                    <span>scaled speed</span>
+                    <input type="checkbox" id="lrc-scaled-speed" aria-label="scale the tick rate to the median nearby grid cycle">
+                    <b id="lrc-scaled-readout">off</b>
+                </label>
+                <label class="lrc-tuning-row" for="lrc-cycle-slider">
+                    <span>grid cycle</span>
+                    <input type="range" id="lrc-cycle-slider" min="2" max="40" step="0.5" value="12" aria-label="seconds per grid cycle in scaled speed mode">
+                    <b id="lrc-cycle-readout">12.0 s</b>
+                </label>
+                <!-- Hold each chord past its window until every one of its degrees has actually sounded,
+                     so the full quality is exposed rather than whichever tones the rows happened to reach. -->
+                <label class="lrc-tuning-row" for="lrc-full-quality">
+                    <span>full quality</span>
+                    <input type="checkbox" id="lrc-full-quality" aria-label="hold each chord until every chord tone has sounded">
+                    <b id="lrc-quality-readout">off</b>
+                </label>
             </div>
         </div>
     </div>

@@ -28,8 +28,6 @@ const ROW_SUSTAIN = 0.05;           // held level across the gate
 const ROW_PEAK = 0.16;              // envelope peak for a real scheduled attack
 const ROW_GATE = 0.14;              // note length from attack start to release start — DECOUPLED from onsets
 const ROW_RELEASE = 0.09;           // exponential release into the reverb tail (no click)
-const ROW_SEED_PEAK = 0.10;         // softer peak for a program-swap seed blip
-const ROW_SEED_ATTACK = 0.05;       // gentler attack for a seed blip
 // Shared reverb send — rows only (the ambient bed owns its own reverb). Pre-delay keeps dry attacks
 // crisp; the wet-side highpass stops dense grids piling into low-end mud; damping darkens the tail.
 const ROW_REVERB_SECONDS = 10;     // impulse length — the apparent "size" of the space
@@ -101,6 +99,13 @@ export class SpatialGridRowPlayer {
     this.reverb = this._buildReverbSend(output);    // wet send, tapped post-master (fades with enable)
     this.enabled = false;
     this.stars = new Map();
+    // Exposure ledger for the sky's "hold the chord until its full quality has sounded" rule. The player
+    // stays harmony-blind: it records only WHICH folded tone sounded and WHEN, carrying the tone's cents
+    // straight through from the program. cosmos-audio owns the root and maps those cents to chord degrees.
+    // Keyed by fraction so it stays bounded by the distinct tones of the active programs (tens), and
+    // pruned by age on read rather than reset, so a lookahead attack scheduled across a chord boundary
+    // is still counted at the moment it actually sounds.
+    this.soundedTones = new Map();   // fraction -> { cents, when } (latest attack)
     this.logicalVoiceCount = 0;
     this.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0, installs: 0, entries: 0, exits: 0 };
     this.setListenerPose(AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP);
@@ -214,7 +219,9 @@ export class SpatialGridRowPlayer {
     // fraction -> owning rhythm key (from the compact program's selectedTones) so a sounding voice can be
     // traced to the bloom node that represents its rhythm. Missing/absent → null (voice just won't light a node).
     const ownerKeyByFraction = new Map((program.selectedTones || []).map(tone => [tone.fraction, tone.ownerKey ?? null]));
-    return { program, gain, voices: new Map(), oscillators: new Set(), lastToneByLayer: new Map(), ownerKeyByFraction, cursorCycle: 0, cursorEvent: 0, startTime: 0, retireAt: Infinity };
+    // Same projection for the tone's absolute cents — the only harmonic datum the exposure ledger carries.
+    const centsByFraction = new Map((program.selectedTones || []).map(tone => [tone.fraction, tone.cents]));
+    return { program, gain, voices: new Map(), oscillators: new Set(), lastToneByLayer: new Map(), ownerKeyByFraction, centsByFraction, cursorCycle: 0, cursorEvent: 0, startTime: 0, retireAt: Infinity };
   }
 
   _syncCursor(deck, absoluteTick) {
@@ -227,7 +234,16 @@ export class SpatialGridRowPlayer {
     if (deck.cursorEvent < 0) { deck.cursorEvent = 0; deck.cursorCycle++; }
   }
 
-  _seedDeck(deck, absoluteTick, when) {
+  // A program swap is SILENT: it only restores the repeat-cull memory a deck that had been running
+  // since the loop start would already hold. It must NOT sound the tones it restores.
+  //
+  // Under the old legato voicing a swap had to re-articulate every held tone or the sustain vanished.
+  // Under fixed-gate short notes nothing is held — a pre-boundary voice is long over — so a sounding
+  // seed invents up to four simultaneous notes per star, all quantized to the same ROW_SWITCH_TICKS
+  // boundary, all drawn from the same loop tail. Under flight churn (a star install per entry) that
+  // stacked into a ~20-note chord repeating on the switch grid, swamping the real polyrhythm with the
+  // same chord over and over. Deck installs are now inaudible; onsets resume at the next real event.
+  _seedDeck(deck, absoluteTick) {
     const events = deck.program.events;
     if (!events.length) return;
     const cycleTick = ((absoluteTick % deck.program.grid) + deck.program.grid) % deck.program.grid;
@@ -239,10 +255,7 @@ export class SpatialGridRowPlayer {
       if (event.tick >= cycleTick) break;
       for (const action of event.layerActions) latest.set(action.layer, action);
     }
-    for (const action of latest.values()) {
-      deck.lastToneByLayer.set(action.layer, action.rawFraction);   // seed the hold memory at the boundary
-      this._startVoice(deck, action, when, true);
-    }
+    for (const action of latest.values()) deck.lastToneByLayer.set(action.layer, action.rawFraction);
   }
 
   _activatePending(star, switchTime) {
@@ -265,8 +278,7 @@ export class SpatialGridRowPlayer {
     }
     star.currentDeck = deck;
     star.pending = null;
-    // Install the new deck as current before seeding so equal-distance crossfade voices yield to it.
-    this._seedDeck(deck, pending.boundaryTick, switchTime);
+    this._seedDeck(deck, pending.boundaryTick);
     this.stats.installs++;
   }
 
@@ -352,7 +364,7 @@ export class SpatialGridRowPlayer {
           // notes marks a loop-constant layer as all-hold and it never sounds again after its seed blip.)
           if (deck.program.repeatCull && deck.lastToneByLayer.get(action.layer) === action.rawFraction) continue;
           deck.lastToneByLayer.set(action.layer, action.rawFraction);
-          this._startVoice(deck, action, Math.max(now, when), false);
+          this._startVoice(deck, action, Math.max(now, when));
         }
       }
       deck.cursorEvent++;
@@ -360,7 +372,7 @@ export class SpatialGridRowPlayer {
     }
   }
 
-  _startVoice(deck, action, when, seeded) {
+  _startVoice(deck, action, when) {
     const frequencyHz = culledGridRowFrequency(action.rawRatio);
     if (frequencyHz === null) return;
     this._releaseLayer(deck, action.layer, when, VOICE_RELEASE);
@@ -372,14 +384,12 @@ export class SpatialGridRowPlayer {
     osc.frequency.setValueAtTime(Math.min(this.ctx.sampleRate * 0.45, frequencyHz), when);
     // Fixed-gate ADSR: the note lasts ROW_GATE regardless of the next onset, then releases into the
     // reverb tail. holdUntil is clamped so a very short tuned ROW_GATE can't invert the automation.
-    const peak = seeded ? ROW_SEED_PEAK : ROW_PEAK;
-    const attack = seeded ? ROW_SEED_ATTACK : ROW_ATTACK;
     const sustain = Math.max(0.0001, ROW_SUSTAIN);
-    const holdUntil = when + Math.max(ROW_GATE, attack + ROW_DECAY);
+    const holdUntil = when + Math.max(ROW_GATE, ROW_ATTACK + ROW_DECAY);
     const endAt = holdUntil + ROW_RELEASE;
     env.gain.setValueAtTime(0.0001, when);
-    env.gain.linearRampToValueAtTime(peak, when + attack);
-    env.gain.exponentialRampToValueAtTime(sustain, when + attack + ROW_DECAY);
+    env.gain.linearRampToValueAtTime(ROW_PEAK, when + ROW_ATTACK);
+    env.gain.exponentialRampToValueAtTime(sustain, when + ROW_ATTACK + ROW_DECAY);
     env.gain.setValueAtTime(sustain, holdUntil);
     env.gain.exponentialRampToValueAtTime(0.0001, endAt);
     osc.connect(env);
@@ -401,8 +411,10 @@ export class SpatialGridRowPlayer {
       const ownerKey = deck.ownerKeyByFraction?.get(action.fraction) ?? null;
       voice.visualLife = { startTime: when, endTime: endAt, ownerKey };
       star.visualLives.push(voice.visualLife);
-      star.visualAttacks.push({ when, strength: seeded ? 0.45 : 1, ownerKey });
+      star.visualAttacks.push({ when, strength: 1, ownerKey });
     }
+    const soundedCents = deck.centsByFraction?.get(action.fraction);
+    if (Number.isFinite(soundedCents)) this.soundedTones.set(action.fraction, { cents: soundedCents, when });
     this.logicalVoiceCount++;
     osc.start(when);
     osc.stop(endAt + 0.02);   // self-terminating; a same-layer steal reschedules this earlier in _releaseLayer
@@ -447,7 +459,22 @@ export class SpatialGridRowPlayer {
     const now = this.ctx.currentTime;
     for (const star of this.stars.values()) this._destroyStar(star, now);
     this.stars.clear();
+    this.soundedTones.clear();
     this.logicalVoiceCount = 0;
+  }
+
+  // The tones whose attack audio-context time has actually REACHED since `since` — a lookahead attack
+  // scheduled past `now` does not count as heard yet. Entries older than `retain` are dropped on read,
+  // which is the ledger's only pruning (no reset, so an attack scheduled just before a chord boundary
+  // still counts toward the chord it lands in). Returns [{ fraction, cents }].
+  soundedSince(since, retain = 300) {
+    const now = this.ctx.currentTime;
+    const out = [];
+    for (const [fraction, entry] of this.soundedTones) {
+      if (entry.when < now - retain) { this.soundedTones.delete(fraction); continue; }
+      if (entry.when >= since && entry.when <= now) out.push({ fraction, cents: entry.cents });
+    }
+    return out;
   }
 
   debugState() {

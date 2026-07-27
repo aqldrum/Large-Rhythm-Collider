@@ -84,7 +84,7 @@ for (let r = 0; r < 12; r++) {
 }
 export const START_CHORD_ID = 0;   // I major — the frame's anchor chord (root at degree 0 = 1/1), id 0
 
-const DEFAULTS = { tabuK: 3, lambdaField: 2.0 };
+const DEFAULTS = { tabuK: 3, lambdaField: 2.0, richness: 0.45 };
 export const GAIN_CEILING_CENTS = 45;   // full at 0¢, ~half-power ~20¢, 0 by here — the ONE playability law
 // Sky Root handoff Feature A: floor under the candidate set's raw coverage spread (maxCov-minCov) when
 // normalizing the field term. Without it, a near-flat field (deep dust) would divide by ~0 and blow the
@@ -160,39 +160,105 @@ export function coverage(chord, audibleStars) {
   return wSum > 0 ? num / wSum : 0;
 }
 
+// The field's support at each of the 12 degrees: the audibility-weighted mean gainForDev there, over
+// the audible star set (a star with no tone near that degree contributes 0, not a skip). Structurally
+// identical to sky-root.js's scoreRootAt().perDegree, which scores candidate ROOTS the same way — and
+// it is exactly coverage()'s double sum kept PER DEGREE instead of averaged over one chord's degrees.
+export function perDegreeSupport(audibleStars) {
+  const perDegree = new Array(12).fill(0);
+  let wSum = 0;
+  for (const star of audibleStars || []) {
+    const weight = star.weight > 0 ? star.weight : 0;
+    if (!weight) continue;
+    wSum += weight;
+    if (star.pool) for (let d = 0; d < 12; d++) { const slot = star.pool[d]; if (slot) perDegree[d] += weight * gainForDev(slot.dev); }
+  }
+  if (wSum > 0) for (let d = 0; d < 12; d++) perDegree[d] /= wSum;
+  return perDegree;
+}
+
+// A chord's WEAKEST degree ∈ [0,1] — how well supported its least well-tuned note is here. coverage()'s
+// mean cannot see this: averaging over more degrees pulls a big chord toward the field's mean, so one
+// badly-tuned extension is glaring in a triad and invisible in a 13th. This is the earned half of the
+// richness incentive — extensions are only worth reaching for where the sky can actually voice them.
+export function weakestSupport(chord, perDegree) {
+  if (!perDegree) return 0;
+  let weakest = Infinity;
+  for (const d of chord.semitones) weakest = Math.min(weakest, perDegree[d] ?? 0);
+  return Number.isFinite(weakest) ? weakest : 0;
+}
+
 // Two-pass candidate ranking shared by chooseNextChord (picks the argmin) and candidateCosts (the debug
 // overlay, so it shows exactly the numbers the walk actually used — never a re-derived approximation):
 // 1. Gather the non-tabu candidates with their raw fieldCoverage.
-// 2. Normalize OVER THAT CANDIDATE SET: maxCov/minCov/spread = maxCov−minCov, fieldCost(next) =
-//    λ·(maxCov−cov(next))/max(spread, EPS_SPREAD). When spread ≥ EPS_SPREAD, field costs span the full
-//    [0, λ] — λ literally means "perfect local alignment is worth λ semitones of extra voice-leading
-//    motion." When spread < EPS_SPREAD (deep dust / flat field), the term fades toward 0 and pure
-//    parsimony takes back over (dividing by the real tiny spread instead would blow the term up for no
-//    reason — the opposite of "sparser region → vaguer").
+// 2. Normalize WITHIN EACH CARDINALITY CLASS: maxCov/minCov/spread = maxCov−minCov over the candidates
+//    of the same size, fieldCost(next) = λ·(maxCov_k−cov(next))/max(spread_k, EPS_SPREAD). When spread ≥
+//    EPS_SPREAD, field costs span the full [0, λ] — λ literally means "perfect local alignment is worth λ
+//    semitones of extra voice-leading motion." When spread < EPS_SPREAD (deep dust / flat field), the term
+//    fades toward 0 and pure parsimony takes back over (dividing by the real tiny spread instead would blow
+//    the term up for no reason — the opposite of "sparser region → vaguer").
+//
+//    Per CLASS, not over the whole set, because coverage is a MEAN over the chord's degrees: averaging
+//    over more degrees regresses toward the field's mean, so the coverage spread shrinks monotonically
+//    with cardinality (measured over real codex fields: 3-note 0.081 → 6-note 0.048, with the class MEANS
+//    identical to three decimals). maxCov over the whole 396 is therefore always held by a triad, and a
+//    7th was being scored against a target its size structurally cannot reach — it paid a field cost for
+//    being large, not for being out of tune. Normalizing per class asks each chord only "how well tuned
+//    are you for your own size here", so cardinality is chosen by voice leading and richness below,
+//    never by an artifact of averaging.
+// 3. Subtract an EARNED richness incentive: richness·(is this chord extended at all)·weakestSupport.
+//    Without it, leveling the field term only makes a supported 7th TIE its triad, and the tie-break
+//    would still take the triad. Two things keep it from becoming a thumb on the scale:
+//    — It is EARNED. Scaling by the chord's weakest degree means extensions are cheap where the sky is
+//      well tuned across all of the chord's degrees and full price where the extension has nothing to
+//      sound on, so the geography still decides — which is also the only thing that makes a 7th audibly
+//      different from a triad downstream, where a row tone must land within ROW_CONSONANCE_CENTS of the
+//      extension degree to be selected at all.
+//    — It SATURATES at the first extension. The musical event is leaving the triad; the fifth and sixth
+//      notes must earn their place on voice leading and field support alone. A linear (cardinality−3)
+//      instead gives a 13th three times the discount of a 7th, and measured over real codex fields that
+//      runs away completely: even richness 0.15 put the walk on six-note chords 58% of the time.
 function rankCandidates(currentId, tabu, fieldCoverage, opts = {}) {
   const lambda = opts.lambdaField ?? DEFAULTS.lambdaField;
+  const richnessWeight = opts.richness ?? DEFAULTS.richness;
+  const perDegree = opts.perDegree || null;
   const current = CHORDS[currentId];
   const raw = [];
   for (const next of CHORDS) if (!tabu.includes(next.id)) raw.push({ chord: next, coverage: fieldCoverage(next) });
-  let maxCov = -Infinity, minCov = Infinity;
-  for (const r of raw) { if (r.coverage > maxCov) maxCov = r.coverage; if (r.coverage < minCov) minCov = r.coverage; }
-  const denom = Math.max(maxCov - minCov, EPS_SPREAD);
+  const byCardinality = new Map();
+  for (const r of raw) {
+    let bounds = byCardinality.get(r.chord.cardinality);
+    if (!bounds) byCardinality.set(r.chord.cardinality, bounds = { maxCov: -Infinity, minCov: Infinity });
+    if (r.coverage > bounds.maxCov) bounds.maxCov = r.coverage;
+    if (r.coverage < bounds.minCov) bounds.minCov = r.coverage;
+  }
   return raw.map(({ chord, coverage }) => {
+    const { maxCov, minCov } = byCardinality.get(chord.cardinality);
     const parsimony = vlParsimony(current, chord);
-    const fieldCost = lambda * (maxCov - coverage) / denom;
-    return { id: chord.id, symbol: chord.symbol, coverage, parsimony, fieldCost, cost: parsimony + fieldCost };
+    const fieldCost = lambda * (maxCov - coverage) / Math.max(maxCov - minCov, EPS_SPREAD);
+    const weakest = perDegree ? weakestSupport(chord, perDegree) : 0;
+    const richness = chord.cardinality > 3 ? richnessWeight * weakest : 0;
+    return { id: chord.id, symbol: chord.symbol, cardinality: chord.cardinality, coverage, parsimony, fieldCost, weakest, richness, cost: parsimony + fieldCost - richness };
   });
 }
 
 // The online walk step: argmin over non-tabu chords of the ranked cost (vlParsimony + normalized field
-// term). `tabu` already contains the current chord's id (FIFO, caller-maintained) so this never returns
-// the current chord — the walk always moves. fieldCoverage: (chord) => number in [0,1], typically
-// `next => coverage(next, audibleStars)`. Deterministic tie-break: CHORDS (and so `raw`) is ascending-id
-// order and strict `<` keeps the first (lowest-id) best.
+// term − earned richness). `tabu` already contains the current chord's id (FIFO, caller-maintained) so
+// this never returns the current chord — the walk always moves. fieldCoverage: (chord) => number in
+// [0,1], typically `next => coverage(next, audibleStars)`.
+//
+// Deterministic tie-break, richest first: an exact cost tie goes to the HIGHER cardinality, then to the
+// lower id. CHORDS is built in ascending-id order with major_triad and minor_triad at quality indices 0
+// and 1, so a plain lowest-id tie-break structurally handed every tie to a triad — the walk could never
+// take a 7th that merely matched a triad, only one that strictly beat it.
 export function chooseNextChord(currentId, tabu, fieldCoverage, opts = {}) {
   const ranked = rankCandidates(currentId, tabu, fieldCoverage, opts);
-  let best = null, bestCost = Infinity;
-  for (const r of ranked) if (r.cost < bestCost) { bestCost = r.cost; best = r; }
+  let best = null;
+  for (const r of ranked) {
+    if (!best || r.cost < best.cost - 1e-9 ||
+        (Math.abs(r.cost - best.cost) <= 1e-9 && (r.cardinality > best.cardinality ||
+          (r.cardinality === best.cardinality && r.id < best.id)))) best = r;
+  }
   return best ? CHORDS[best.id] : null;   // 12·QUALITY_COUNT chords, small tabuK ⇒ never null in practice
 }
 
