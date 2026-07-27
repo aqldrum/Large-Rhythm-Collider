@@ -1,5 +1,6 @@
 import { planFamilyGrids, monotonicWebPath, shortestWebPath, buildArcPath, sampleArcPath, rideDuration } from './web-return.js';
 import { buildWebGraph, familyMembers } from './web-graph.js';
+import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from './web-travel-bloom.js';
 
 let pass = true;
 const check = (name, ok, detail = '') => { pass = pass && ok; console.log(`  ${ok ? '✓' : '✗'} ${name}${detail ? ' — ' + detail : ''}`); };
@@ -42,6 +43,13 @@ const start = sampleArcPath(arc, 0), middle = sampleArcPath(arc, 0.5), end = sam
 check('arc sampler preserves endpoints', start.position[0] === 0 && end.position[0] === 20 && end.position[2] === 5);
 check('arc sampler returns finite center/tangent', [...middle.position, ...middle.tangent].every(Number.isFinite));
 check('arc-length progress advances through the route', middle.position[0] > 5 && middle.position[0] < 15, middle.position.map(n => n.toFixed(2)).join(','));
+
+console.log('\n  Travel star lookahead');
+const bloomSamples = buildTravelBloomSamples(arc, 0.35, { behind: 2, ahead: 8, samples: 8, samplePath: sampleArcPath });
+check('lookahead samples stay bounded to the route', bloomSamples.length === 8 && bloomSamples.every(s => s.position.every(Number.isFinite) && s.strength >= 0 && s.strength <= 1));
+check('lookahead energizes a star on the forward rail', travelBloomWeight(bloomSamples[4].position, bloomSamples, 3) > 0.8);
+check('lookahead rejects a star outside the tunnel', travelBloomWeight([100, 100, 100], bloomSamples, 3) === 0);
+check('divisor proxy grows but stays visually bounded', approximateStarSize(12) < approximateStarSize(40) && approximateStarSize(1000) === 5.5);
 
 if (!pass) process.exit(1);
 console.log('\nAll Web-return assertions passed.');

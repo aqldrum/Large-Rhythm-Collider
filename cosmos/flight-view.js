@@ -10,6 +10,7 @@ import { hilbertDecode, hilbertEncode, neighborGrids, SIDE } from './cosmos/hilb
 import { GOLDEN, cardColor, CHARTED } from './cosmos/bloom-core.js';
 import { rhythmTriples, rhythmDoubles } from './cosmos/mn-core.js';
 import { sampleArcPath } from './cosmos/web-return.js';
+import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from './cosmos/web-travel-bloom.js';
 // agents.js (Collider-Battle ships / dragon-tail game) is DEFERRED for the POC and intentionally not ported.
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
@@ -34,6 +35,16 @@ const WEB_RETURN_LIFT_SPINE = 180;
 const WEB_RETURN_LIFT_RAMP = 0.08;  // fraction of the ride used to ease onto/off the elevated camera rail
 const WEB_RETURN_FRAME_CELLS = 2.2; // arc-length window used for a continuous heading across synthetic nodes
 const WEB_RETURN_FRAME_SPINE = 900;
+const WEB_RETURN_STAR_AHEAD_CELLS = 100.5; // illuminate the nearby sky before the camera reaches it
+const WEB_RETURN_STAR_BEHIND_CELLS = 1.4; // short fading wake keeps passed stars from popping dark
+const WEB_RETURN_STAR_RADIUS_CELLS = 12.35; // soft radius of the synthetic hyperspace tunnel
+const WEB_RETURN_STAR_AHEAD_SPINE = 20200;
+const WEB_RETURN_STAR_BEHIND_SPINE = 1100;
+const WEB_RETURN_STAR_RADIUS_SPINE = 6000;
+const WEB_RETURN_STAR_SAMPLES = 14;
+const BOOST_STAR_STREAK_SCALE = 10.4; // extend one frame of true screen motion into a readable trail
+const BOOST_STAR_STREAK_MAX = 100;    // px cap keeps close stars from drawing giant slashes
+const BOOST_STAR_STREAK_ALPHA = 10.34;
 const DOLLY = 700;         // SPINE: world units per scroll notch (fast travel down the codex line)
 const HIL_DOLLY_CELLS = 0.7; // HILBERT: cells per scroll notch — small on purpose so you don't
                              //   rocket across the cube (spatial hops = huge grid-index jumps) and
@@ -377,7 +388,7 @@ function beginWebReturn(webId) {
     // Aim once from the elevated rail toward a point ahead on the actual strand. Position remains
     // route-owned afterward, while arrow-key steering stays fully available during travel.
     const openingTangent = webReturnRailTangent(result.path, 0.0001, frameWindow), lift = webReturnLift(openingTangent);
-    returnRide = { ...result, elapsed: 0, lastUi: 0, liftHeight, frameWindow, lift };
+    returnRide = { ...result, elapsed: 0, lastUi: 0, liftHeight, frameWindow, lift, pathProgress: 0 };
     const lookProgress = Math.min(1, Math.max(0.0001, liftHeight * 4 / Math.max(1, result.path.total)));
     const lookAt = sampleArcPath(result.path, lookProgress).position;
     const elevated = result.path.points[0].map((value, i) => value + lift[i] * liftHeight);
@@ -405,6 +416,7 @@ function stepWebReturn(now, dt) {
   const raw = ride.elapsed / ride.duration;
   const eased = 0.5 - Math.cos(raw * Math.PI) * 0.5;
   const sample = sampleArcPath(ride.path, eased), here = cameraAbsolute();
+  ride.pathProgress = eased;
   const railTangent = webReturnRailTangent(ride.path, eased, ride.frameWindow);
   const edgeRamp = Math.max(0, Math.min(1, raw / WEB_RETURN_LIFT_RAMP, (1 - raw) / WEB_RETURN_LIFT_RAMP));
   const liftEase = 0.5 - Math.cos(edgeRamp * Math.PI) * 0.5;
@@ -1368,6 +1380,23 @@ function loop() {
   const rpOf = new Map();
   for (const z of cosmos.zones.values()) rpOf.set(z.grid, renderPosCam(z, cam.anchor, cam.off));
 
+  // Return Home star lookahead. Sample only a short curved rail around the current ride position,
+  // expressed camera-relative so it compares directly with rpOf without forming huge grid floats.
+  // The sampled route drives visuals only; it never inserts zones or changes planner/solver state.
+  let travelStarSamples = [], travelStarRadius = 0, travelStarColor = null;
+  if (returnRide) {
+    const hilbert = placement === 'hilbert';
+    const cameraWorld = cameraAbsolute();
+    travelStarRadius = hilbert ? CELL * WEB_RETURN_STAR_RADIUS_CELLS : WEB_RETURN_STAR_RADIUS_SPINE;
+    travelStarColor = activeWebs.get(returnRide.webId)?.color || '#9edcff';
+    travelStarSamples = buildTravelBloomSamples(returnRide.path, returnRide.pathProgress || 0, {
+      behind: hilbert ? CELL * WEB_RETURN_STAR_BEHIND_CELLS : WEB_RETURN_STAR_BEHIND_SPINE,
+      ahead: hilbert ? CELL * WEB_RETURN_STAR_AHEAD_CELLS : WEB_RETURN_STAR_AHEAD_SPINE,
+      samples: WEB_RETURN_STAR_SAMPLES,
+      samplePath: sampleArcPath,
+    }).map(sample => ({ ...sample, position: sample.position.map((value, i) => value - cameraWorld[i]) }));
+  }
+
   // each bloom's geometry: outer radius (spiky-ball extent), the deformation bubble, and — after projection —
   // the "black hole" screen disk. rscale matches the render loop so outerR is exact.
   const bubbles = [];
@@ -1502,17 +1531,50 @@ function loop() {
   const order = [...proj.values()].sort((a, b) => b.s.z - a.s.z);
   for (const { z, s } of order) {
     const fog = fogAt(s.z); if (fog <= 0) continue;
+    // Cache projected motion even while a star is occluded so uncovering it cannot produce a stale,
+    // full-screen streak. Space is the shared free-flight/Return Home boost, so one law serves both.
+    const previousScreen = z._starScreen;
+    z._starScreen = { x: s.x, y: s.y, at: now };
     if (!bloomed.has(z.grid) && occluded(s.x, s.y, s.z, z.grid)) continue;   // behind a black-hole blot → no draw, no click
     const dim = (bloomed.has(z.grid) && z._bloom && z._bloom.pts.length) ? 0.18 : 1;   // bloomed dot dissolves into its cloud
-    const lit = z.size > 0;                                   // partial abundance already shows (progressive)
-    const worldR = (lit ? z.size : 0.2) * STAR_SCALE;
+    const travelTarget = returnRide && z.state !== 'solved'
+      ? travelBloomWeight(rpOf.get(z.grid), travelStarSamples, travelStarRadius) : 0;
+    const glowRate = travelTarget > (z._travelGlow || 0) ? 10 : 4.5;
+    z._travelGlow = (z._travelGlow || 0) + (travelTarget - (z._travelGlow || 0)) * (1 - Math.exp(-dt * glowRate));
+    if (z._travelGlow < 0.002 && !returnRide) delete z._travelGlow;
+    const travelGlow = z._travelGlow || 0;
+    if (travelGlow > 0 && z._travelStarSize == null) z._travelStarSize = approximateStarSize(z.divisors || factorInfo(z.grid).divisors);
+    const previewSize = z._travelStarSize || 0.15;
+    const displaySize = z.state === 'solved' ? z.size : z.size + (Math.max(z.size, previewSize) - z.size) * travelGlow;
+    const lit = displaySize > 0;                               // real partial solve or visual route preview
+    const worldR = (lit ? displaySize : 0.2) * STAR_SCALE;
     let r = worldR * focal / s.z; r = Math.max(0.5, Math.min(r, 400));
     const col = z.monster ? 'rgba(255,120,105,0.92)'           // red giant = combinatorial monster (solve-on-override)
               : z.unsolvable ? 'rgba(150,120,110,0.45)'         // warm-grey = uncharted frontier (beyond cap)
-              : (lit ? starColor(z.size) : 'rgba(120,130,150,0.5)');
+              : (lit ? starColor(displaySize) : 'rgba(120,130,150,0.5)');
+    if (keys[' '] && previousScreen && now - previousScreen.at < 100) {
+      let dx = previousScreen.x - s.x, dy = previousScreen.y - s.y;
+      const motion = Math.hypot(dx, dy);
+      if (motion > 0.35) {
+        const length = Math.min(BOOST_STAR_STREAK_MAX, motion * BOOST_STAR_STREAK_SCALE), k = length / motion;
+        const tailX = s.x + dx * k, tailY = s.y + dy * k;
+        const streakColor = travelGlow > 0.01 && travelStarColor ? travelStarColor : col;
+        const streak = ctx.createLinearGradient(s.x, s.y, tailX, tailY);
+        streak.addColorStop(0, streakColor); streak.addColorStop(0.22, streakColor); streak.addColorStop(1, 'transparent');
+        ctx.globalAlpha = fog * dim * BOOST_STAR_STREAK_ALPHA;
+        ctx.strokeStyle = streak; ctx.lineWidth = Math.max(0.65, Math.min(3, r * 0.55)); ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(tailX, tailY); ctx.stroke();
+      }
+    }
     const activity = rowActivity.get(z.grid);
     if (activity && !bloomed.has(z.grid)) drawGridRowAura(ctx, s, r, fog, activity);
-    if (lit && z.size > 2.2) {                                // sun glow
+    if (travelGlow > 0.01 && travelStarColor) {                // route-energy halo around unfinished stars
+      const haloR = r * (2.4 + travelGlow * 2.2);
+      const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, haloR);
+      g.addColorStop(0, travelStarColor); g.addColorStop(0.18, travelStarColor); g.addColorStop(1, 'transparent');
+      ctx.globalAlpha = fog * dim * travelGlow * 0.32; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x, s.y, haloR, 0, 7); ctx.fill();
+    }
+    if (lit && displaySize > 2.2) {                            // solved or synthetic sun glow
       const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 2.6);
       g.addColorStop(0, col); g.addColorStop(1, 'transparent');
       ctx.globalAlpha = 0.5 * fog * dim; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x, s.y, r * 2.6, 0, 7); ctx.fill();
