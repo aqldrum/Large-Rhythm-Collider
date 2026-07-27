@@ -5,13 +5,13 @@
 // a 3D cube filling it in all directions. hilbertEncode inverts it, so from a camera cell we can
 // recover which grids live nearby (true 3D-proximity spawn).
 //
-// BITS = 10 → 8^10 = 2^30 ≈ 1.07e9 indices, cells in [0,1024)³. All intermediate values stay under
-// 2^31 so plain 32-bit bit-ops are exact (no BigInt needed). Grids beyond 2^30 are clamped — far
-// past any real codex use (12T saturates ~100K; exploration stays well under a billion).
+// BITS = 8 → 8^8 = 2^24 ≈ 16.78m indices, cells in [0,256)³. All intermediate values stay under
+// 2^31 so plain 32-bit bit-ops are exact (no BigInt needed). Grids beyond the cube are clamped.
 
 export const BITS = 8;
-export const SIDE = 1 << BITS;          // 1024 cells per axis
-const MAXI = (1 << (3 * BITS - 1)) * 2 - 1 + 1; // 2^30, exclusive index ceiling (built without 1<<31)
+export const SIDE = 1 << BITS;          // 256 cells per axis
+export const INDEX_COUNT = SIDE ** 3;    // 2^24, exclusive index ceiling
+const MAXI = INDEX_COUNT;
 const MASK = SIDE - 1;
 
 // ── Skilling's in-place transforms on the transpose array X[0..2] ──

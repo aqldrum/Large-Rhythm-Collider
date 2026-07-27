@@ -8,6 +8,7 @@ import { computeDistricts } from './gg-core.js';
 import { gridResults } from '../grid-core.js';
 import { setPlacement, macroCell, absolutePos, CELL } from './spine.js';
 import { hilbertDecode, hilbertEncode, neighborGrids, SIDE } from './hilbert.js';
+import { HILBERT_WORLD_MIN, HILBERT_WORLD_MAX, clampHilbertWorld, nearbyHilbertWalls, rebaseHilbertCamera } from './hilbert-boundary.js';
 
 let PASS = true;
 const check = (n, ok, d = '') => { PASS = PASS && ok; console.log(`  ${ok ? '✓' : '✗ FAIL'} ${n}${d ? ' — ' + d : ''}`); };
@@ -33,6 +34,21 @@ for (let i = 0; i < 262144; i++) {
 check('index↔cell bijection (encode∘decode = id) over 2^18', rt === 0, `${rt} fails`);
 check('no two indices share a cell', coll === 0, `${coll} collisions`);
 check('consecutive grids are cell-adjacent (space-filling)', adj === 0, `${adj} non-adjacent`);
+
+// The physical enclosure is exactly half a cell beyond the outermost Hilbert cell centres. Movement
+// and the local forcefield renderer consume these same helpers, so neither can silently drift.
+console.log('\n[0b] Hilbert cube — shared physical boundary');
+const outside = clampHilbertWorld([HILBERT_WORLD_MIN - CELL * 3, CELL * 4, HILBERT_WORLD_MAX + CELL * 2]);
+check('world clamp stops all three axes at the shared box', outside[0] === HILBERT_WORLD_MIN && outside[1] === CELL * 4 && outside[2] === HILBERT_WORLD_MAX);
+const padded = clampHilbertWorld([HILBERT_WORLD_MIN, CELL * 4, HILBERT_WORLD_MAX], CELL * 0.12);
+check('camera radius preserves a visible near-plane at contact', padded[0] > HILBERT_WORLD_MIN && padded[2] < HILBERT_WORLD_MAX);
+const rebased = rebaseHilbertCamera([HILBERT_WORLD_MIN - CELL, CELL * 4.25, HILBERT_WORLD_MAX + CELL], CELL * 0.12);
+const reconstructed = rebased.cell.map((value, axis) => value * CELL + rebased.off[axis]);
+check('clamped camera rebase preserves its exact world position', reconstructed.every((value, axis) => Math.abs(value - rebased.position[axis]) < 1e-9));
+check('cube walls sit half a cell beyond the edge centres', HILBERT_WORLD_MIN === -CELL / 2 && HILBERT_WORLD_MAX === (SIDE - 0.5) * CELL);
+const nearCorner = [HILBERT_WORLD_MIN + CELL, HILBERT_WORLD_MIN + CELL, HILBERT_WORLD_MIN + CELL];
+const localWalls = nearbyHilbertWalls(nearCorner, CELL * 2);
+check('only camera-local wall faces are selected for rendering', localWalls.length === 3 && localWalls.every(w => w.side === -1), `${localWalls.length} faces`);
 
 // ── set up the cube runtime exactly as flight-view does ──
 setPlacement('hilbert');

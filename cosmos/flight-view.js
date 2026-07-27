@@ -6,7 +6,8 @@
 import { M } from './mode.js';
 import { Cosmos } from './cosmos/cosmos-runtime.js';
 import { renderPosCam, setPlacement, macroCell, macroScale, backboneHash, SPACING, CELL } from './cosmos/spine.js';
-import { hilbertDecode, hilbertEncode, neighborGrids, SIDE } from './cosmos/hilbert.js';
+import { hilbertDecode, hilbertEncode, neighborGrids, INDEX_COUNT, SIDE } from './cosmos/hilbert.js';
+import { clampHilbertWorld, nearbyHilbertWalls, rebaseHilbertCamera } from './cosmos/hilbert-boundary.js';
 import { GOLDEN, cardColor, CHARTED } from './cosmos/bloom-core.js';
 import { rhythmTriples, rhythmDoubles } from './cosmos/mn-core.js';
 import { sampleArcPath } from './cosmos/web-return.js';
@@ -49,6 +50,9 @@ const DOLLY = 700;         // SPINE: world units per scroll notch (fast travel d
 const HIL_DOLLY_CELLS = 0.7; // HILBERT: cells per scroll notch — small on purpose so you don't
                              //   rocket across the cube (spatial hops = huge grid-index jumps) and
                              //   outrun the solver. Raise for faster travel, lower if it still races.
+const HIL_WALL_REVEAL_CELLS = 7; // forcefield fades in only near a face; collision uses the exact same box
+const HIL_WALL_PATCH_CELLS = 9;  // local half-width — never construct/render an entire 256-by-256 face
+const HIL_CAMERA_RADIUS = CELL * 0.12; // keeps the viewpoint in front of the near plane at contact
 // Hilbert-cube LOD window (in CELL units). CRITICAL: HIL_EVICT is the distance BEHIND you that zones
 // survive, so evict ≫ spawn keeps the whole TRAIL you fly (evict 20 → ~10k+ zones → jank). Keep evict
 // ≈ spawn + 2. Zone count while flying ≈ 4.2·HIL_EVICT³·0.9: evict 8 → ~1900 · 10 → ~3800 · 12 → ~6500.
@@ -431,15 +435,16 @@ function stepWebReturn(now, dt) {
   ride.tangent = railTangent;
   const ridePosition = sample.position.map((value, i) => value + ride.lift[i] * ride.liftHeight * liftEase);
   const delta = ridePosition.map((v, i) => v - here[i]);
-  camSpeed = dt > 0 ? Math.hypot(delta[0], delta[1], delta[2]) / dt : 0;
-  translateCam(delta);
+  const actualMove = translateCam(delta);
+  camSpeed = dt > 0 ? Math.hypot(actualMove[0], actualMove[1], actualMove[2]) / dt : 0;
 
   if (now - ride.lastUi > 250) { ride.lastUi = now; web.rideProgress = raw; showDetail(selected); }
   if (raw < 1) return true;
 
   const hc = macroCell(ride.homeGrid), scale = macroScale();
+  const arrival = placement === 'hilbert' ? clampHilbertWorld(ride.arrival, HIL_CAMERA_RADIUS) : ride.arrival;
   cam.anchor = ride.homeGrid;
-  cam.off = [ride.arrival[0] - hc[0] * scale, ride.arrival[1] - hc[1] * scale, ride.arrival[2] - hc[2] * scale];
+  cam.off = [arrival[0] - hc[0] * scale, arrival[1] - hc[1] * scale, arrival[2] - hc[2] * scale];
   cosmos.setCamera(cam.anchor); camSpeed = 0;
   web.rideProgress = 1; web.rideStatus = 'home reached'; returnRide = null; webRenderer?.clearRoute(); showDetail(selected);
   return true;
@@ -763,7 +768,9 @@ export function stopFlight() {
 export function warpTo(G) {
   if (!cosmos) return;
   G = Math.max(2, Math.floor(G) || 2);
-  cam.anchor = isValid(G) ? G : G + 1;
+  if (placement === 'hilbert') G = Math.min(INDEX_COUNT - 1, G);
+  if (!isValid(G)) G = G < INDEX_COUNT - 1 ? G + 1 : G - 1;
+  cam.anchor = G;
   cam.off = [0, 0, 0];
   cosmos.setCamera(cam.anchor);
 }
@@ -779,21 +786,20 @@ function camBasis() {
 // (keeps the floating-origin precise) and the frontier follows wherever we fly. Re-anchoring never
 // moves the camera: the offset is rebased by the exact integer cell delta.
 function translateCam(v) {
-  cam.off[0] += v[0]; cam.off[1] += v[1]; cam.off[2] += v[2];
   if (placement === 'hilbert') {
-    const c = hilbertDecode(cam.anchor);
-    const dx = Math.round(cam.off[0] / CELL), dy = Math.round(cam.off[1] / CELL), dz = Math.round(cam.off[2] / CELL);
-    if (dx || dy || dz) {
-      const clamp = n => Math.max(0, Math.min(SIDE - 1, n));
-      const nx = clamp(c[0] + dx), ny = clamp(c[1] + dy), nz = clamp(c[2] + dz);
-      cam.off[0] -= (nx - c[0]) * CELL; cam.off[1] -= (ny - c[1]) * CELL; cam.off[2] -= (nz - c[2]) * CELL;
-      cam.anchor = hilbertEncode(nx, ny, nz);
-    }
+    const before = cameraAbsolute();
+    const frame = rebaseHilbertCamera([before[0] + v[0], before[1] + v[1], before[2] + v[2]], HIL_CAMERA_RADIUS);
+    cam.anchor = frame.anchor;
+    cam.off = frame.off;
+    cosmos.setCamera(cam.anchor);
+    return frame.position.map((value, axis) => value - before[axis]);
   } else {
+    cam.off[0] += v[0]; cam.off[1] += v[1]; cam.off[2] += v[2];
     const k = Math.round(cam.off[0] / SPACING);   // only the along-axis re-anchors; Y/Z stay free
     if (k) { const na = Math.max(2, cam.anchor + k); cam.off[0] -= (na - cam.anchor) * SPACING; cam.anchor = na; }
   }
   cosmos.setCamera(cam.anchor);
+  return v;
 }
 
 function stepControls(dt, allowTranslation = true) {
@@ -829,8 +835,8 @@ function stepControls(dt, allowTranslation = true) {
   if (keys['q']) mv = [mv[0] - u[0] * step, mv[1] - u[1] * step, mv[2] - u[2] * step];
   // Sky Root B3: actual world-space translation speed this frame (turning alone doesn't count — the
   // root gather is position-only, "must not change when the player turns their head").
-  camSpeed = dt > 0 ? Math.hypot(mv[0], mv[1], mv[2]) / dt : 0;
-  translateCam(mv);
+  const actualMove = translateCam(mv);
+  camSpeed = dt > 0 ? Math.hypot(actualMove[0], actualMove[1], actualMove[2]) / dt : 0;
 }
 
 // world-relative (camera at origin, integer-spine) → view space (+z forward) → screen
@@ -838,6 +844,67 @@ function toScreen(rp, basis) {
   const vx = dot(rp, basis.r), vy = dot(rp, basis.u), vz = dot(rp, basis.d);
   if (vz <= NEAR) return null;
   return { x: cx + vx * focal / vz, y: cy - vy * focal / vz, z: vz };
+}
+
+// Render only the camera-local tiles of nearby faces. Collision and visuals share
+// hilbert-boundary.js, so the glow always resolves onto the plane that actually stops the camera.
+function drawHilbertBoundaryWalls(basis) {
+  if (placement !== 'hilbert') return;
+  const camera = cameraAbsolute(), reveal = HIL_WALL_REVEAL_CELLS * CELL;
+  const walls = nearbyHilbertWalls(camera, reveal);
+  if (!walls.length) return;
+  const colors = ['110,203,255', '197,139,255', '255,110,199'];
+  const parallelAxes = axis => axis === 0 ? [1, 2] : (axis === 1 ? [0, 2] : [0, 1]);
+  const projected = absolute => toScreen(absolute.map((value, axis) => value - camera[axis]), basis);
+  const smooth = value => value * value * (3 - 2 * value);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.lineJoin = 'round';
+  for (const wall of walls.sort((a, b) => b.distance - a.distance)) {
+    const [a, b] = parallelAxes(wall.axis);
+    const centreA = Math.max(0, Math.min(SIDE - 1, Math.round(camera[a] / CELL)));
+    const centreB = Math.max(0, Math.min(SIDE - 1, Math.round(camera[b] / CELL)));
+    const a0 = Math.max(0, centreA - HIL_WALL_PATCH_CELLS), a1 = Math.min(SIDE - 1, centreA + HIL_WALL_PATCH_CELLS);
+    const b0 = Math.max(0, centreB - HIL_WALL_PATCH_CELLS), b1 = Math.min(SIDE - 1, centreB + HIL_WALL_PATCH_CELLS);
+    const proximity = smooth(Math.max(0, 1 - wall.distance / reveal));
+    const incidence = Math.abs(basis.d[wall.axis]);
+    const color = colors[wall.axis];
+
+    for (let ia = a0; ia <= a1; ia++) for (let ib = b0; ib <= b1; ib++) {
+      const corners = [[ia - 0.5, ib - 0.5], [ia + 0.5, ib - 0.5], [ia + 0.5, ib + 0.5], [ia - 0.5, ib + 0.5]].map(([ca, cb]) => {
+        const point = [0, 0, 0]; point[wall.axis] = wall.plane; point[a] = ca * CELL; point[b] = cb * CELL;
+        return projected(point);
+      });
+      if (corners.some(point => !point)) continue;
+      const da = ia * CELL - camera[a], db = ib * CELL - camera[b];
+      const radial = Math.max(0, 1 - Math.hypot(da, db) / ((HIL_WALL_PATCH_CELLS + 0.75) * CELL));
+      const fade = smooth(radial);
+      if (fade <= 0) continue;
+      ctx.beginPath(); ctx.moveTo(corners[0].x, corners[0].y);
+      for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
+      ctx.closePath();
+      ctx.globalAlpha = (0.012 + proximity * 0.075) * fade * (0.45 + incidence * 0.55);
+      ctx.fillStyle = `rgb(${color})`; ctx.fill();
+      ctx.globalAlpha = (0.045 + proximity * 0.32) * fade * (0.35 + incidence * 0.65);
+      ctx.strokeStyle = `rgb(${color})`; ctx.lineWidth = 0.55 + proximity * 0.8; ctx.stroke();
+    }
+
+    // Close-range energy bloom at the point nearest the camera. It keeps a wall readable when its
+    // perspective grid has expanded beyond the viewport, while still disappearing when looking away.
+    const nearest = [...camera]; nearest[wall.axis] = wall.plane;
+    const impact = projected(nearest);
+    const contact = smooth(Math.max(0, 1 - wall.distance / (CELL * 1.5)));
+    if (impact && contact > 0) {
+      const radius = Math.max(W, H) * 0.85;
+      const glow = ctx.createRadialGradient(impact.x, impact.y, 0, impact.x, impact.y, radius);
+      glow.addColorStop(0, `rgba(${color},${0.16 * contact})`);
+      glow.addColorStop(0.35, `rgba(${color},${0.055 * contact})`);
+      glow.addColorStop(1, `rgba(${color},0)`);
+      ctx.globalAlpha = 1; ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+    }
+  }
+  ctx.restore();
 }
 function starColor(size) {
   const t = Math.max(0, Math.min(1, size / 5));
@@ -1438,6 +1505,7 @@ function loop() {
   const dpr = window.devicePixelRatio || 1; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
   const basis = camBasis();
+  drawHilbertBoundaryWalls(basis);
   webRenderer?.frame({
     now, anchor: cam.anchor, off: [...cam.off], d: basis.d, r: basis.r, u: basis.u,
     mouseX, mouseY, cx, cy, focal, fogNear: FOG_NEAR, fogFar: FOG_FAR, tailFrac: webTailFrac,
