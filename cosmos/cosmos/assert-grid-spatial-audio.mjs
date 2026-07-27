@@ -2,10 +2,14 @@ import { readFileSync } from 'node:fs';
 import { gridRatioOwnerSolve } from '../grid-core.js';
 import { ProgramWorkerPool } from '../program-worker-pool.js';
 import { selectedGridRatioToneRows } from '../cosmos-audio.js';
-import { SpatialGridRowPlayer } from '../spatial-grid-row-player.js';
+import {
+  CULLED_ROW_FUNDAMENTAL_HZ, CULLED_ROW_MAX_HZ,
+  SpatialGridRowPlayer, culledGridRowFrequency, nearestCulledToneVoices,
+} from '../spatial-grid-row-player.js';
 import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP, toAudioListenerPosition } from '../spatial-audio-frame.js';
 import {
-  AUDIO_MODES, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS,
+  AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, RHYTHM_VOICE_WAVEFORM,
+  ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS,
   audioCompileEligibility, chooseSpatialRows, compileGridAudioProgram,
   harmonicSelectionKey, ownerChordMatch, selectedOwnerFractions,
 } from '../cosmos-grid-audio-core.js';
@@ -85,6 +89,62 @@ check('compact program remains four canonical layers and materially small',
 check('compact program retains selected ratio+cents rows for the live debug chart',
   program.selectedTones.length === fractions.length && program.selectedTones.every(tone => tone.fraction && Number.isFinite(tone.cents)));
 
+console.log('\n  Culled-row pitch register');
+check('culled rows share the Ambient Chords rhythm voice waveform', RHYTHM_VOICE_WAVEFORM === 'triangle');
+check('culled grid rows use 220 Hz as their fundamental',
+  CULLED_ROW_FUNDAMENTAL_HZ === 220 && culledGridRowFrequency(1) === 220);
+check('the third octave is retained at the inclusive 1760 Hz ceiling',
+  CULLED_ROW_MAX_HZ === 1760 && culledGridRowFrequency(8) === 1760);
+check('tones above the ceiling fold downward by whole octaves',
+  culledGridRowFrequency(10) === 1100 && culledGridRowFrequency(16) === 1760 && culledGridRowFrequency(32) === 1760);
+check('register folding leaves already-in-range and sub-fundamental tones unchanged',
+  culledGridRowFrequency(7.5) === 1650 && culledGridRowFrequency(0.5) === 110);
+check('invalid raw ratios cannot reach an oscillator',
+  culledGridRowFrequency(0) === null && culledGridRowFrequency(-1) === null && culledGridRowFrequency(Infinity) === null);
+
+console.log('\n  Per-tone spatial voice cap');
+const toneVoiceCandidates = [
+  { starId: 50, layer: 'A', distance: 500, current: true },
+  { starId: 20, layer: 'B', distance: 200, current: true },
+  { starId: 10, layer: 'C', distance: 100, current: true },
+  { starId: 40, layer: 'D', distance: 400, current: true },
+  { starId: 30, layer: 'A', distance: 300, current: true },
+];
+check('a folded tone admits at most four logical voices',
+  CULLED_ROW_MAX_VOICES_PER_TONE === 4 && nearestCulledToneVoices(toneVoiceCandidates).length === 4);
+check('the four admitted tone voices are the four nearest to the listener',
+  nearestCulledToneVoices(toneVoiceCandidates).map(candidate => candidate.starId).join(',') === '10,20,30,40');
+check('a current deck wins an exact-distance tie against its retiring predecessor',
+  nearestCulledToneVoices([
+    { starId: 10, layer: 'A', distance: 100, current: false },
+    { starId: 10, layer: 'A', distance: 100, current: true },
+  ], 1)[0].current);
+
+const allocationPlayer = Object.create(SpatialGridRowPlayer.prototype);
+allocationPlayer.stats = { toneCapMisses: 0, toneCapEvictions: 0 };
+allocationPlayer.logicalVoiceCount = 4;
+allocationPlayer._releaseLayer = (deck, layer) => { deck.voices.delete(layer); allocationPlayer.logicalVoiceCount--; };
+const allocationDeck = (grid, tone = true) => ({
+  program: { grid },
+  voices: new Map(tone ? [['A', { layer: 'A', toneKey: '1/1' }]] : []),
+});
+allocationPlayer.stars = new Map([
+  [10, { id: 10, distance: 100, retiringDecks: [], currentDeck: allocationDeck(10) }],
+  [20, { id: 20, distance: 200, retiringDecks: [], currentDeck: allocationDeck(20) }],
+  [30, { id: 30, distance: 300, retiringDecks: [], currentDeck: allocationDeck(30) }],
+  [50, { id: 50, distance: 500, retiringDecks: [], currentDeck: allocationDeck(50) }],
+  [40, { id: 40, distance: 400, retiringDecks: [], currentDeck: allocationDeck(40, false) }],
+]);
+const nearerDeck = allocationPlayer.stars.get(40).currentDeck;
+check('a nearer live request claims the tone and evicts its farthest incumbent',
+  allocationPlayer._claimToneVoice(nearerDeck, { layer: 'A', fraction: '1/1' }, 0) &&
+  allocationPlayer.stars.get(50).currentDeck.voices.size === 0 && allocationPlayer.stats.toneCapEvictions === 1);
+nearerDeck.voices.set('A', { layer: 'A', toneKey: '1/1' });
+allocationPlayer.stars.set(60, { id: 60, distance: 600, retiringDecks: [], currentDeck: allocationDeck(60, false) });
+check('a fifth farther live request is rejected without disturbing the nearest four',
+  !allocationPlayer._claimToneVoice(allocationPlayer.stars.get(60).currentDeck, { layer: 'A', fraction: '1/1' }, 0) &&
+  allocationPlayer.stats.toneCapMisses === 1 && allocationPlayer._toneVoiceCandidates('1/1').length === 4);
+
 const rowChart = selectedGridRatioToneRows(0, 0, [{
   selectedTones: [{ fraction: '1/1', cents: 0 }, { fraction: '5/4', cents: 386.3137 }],
   voiced: [{ layer: 'A', fraction: '5/4' }],
@@ -96,6 +156,35 @@ check('row-mode ratio chart aggregates each active star program by solved-root d
   rowChart[0].selected[0].fraction === '1/1' && rowChart[4].selected[0].fraction === '5/4' && rowChart[4].selected[0].count === 2);
 check('row-mode ON column counts live canonical voices independently of selection',
   rowChart[4].sounding[0].fraction === '5/4' && rowChart[4].sounding[0].count === 2 && rowChart[0].sounding.length === 0);
+
+console.log('\n  Voice budget accounting');
+// Short gated voices end via osc.onended, not _releaseLayer — the slot must be freed exactly once on
+// either path or the count leaks to MAX_ROW_OSC and all later attacks are silently dropped.
+const fakeParam = () => ({ value: 0.0001, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, cancelScheduledValues() {}, setTargetAtTime() {} });
+const fakeCtx = () => ({
+  sampleRate: 48000, currentTime: 0,
+  createOscillator: () => ({ type: '', frequency: fakeParam(), connect() {}, disconnect() {}, start() {}, stop() {}, onended: null }),
+  createGain: () => ({ gain: fakeParam(), connect() {}, disconnect() {} }),
+});
+const budgetPlayer = Object.create(SpatialGridRowPlayer.prototype);
+budgetPlayer.ctx = fakeCtx();
+budgetPlayer.logicalVoiceCount = 0;
+budgetPlayer.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0 };
+budgetPlayer.stars = new Map();
+budgetPlayer._claimToneVoice = () => true;   // isolate accounting from the per-tone spatial cap
+const budgetDeck = () => ({ program: { grid: 7, repeatCull: true }, voices: new Map(), oscillators: new Set(), lastToneByLayer: new Map() });
+const deckA = budgetDeck();
+budgetPlayer._startVoice(deckA, { layer: 'A', rawRatio: 1, fraction: '1/1', rawFraction: '1/1' }, 0, false);
+check('a started voice occupies exactly one budget slot', budgetPlayer.logicalVoiceCount === 1);
+[...deckA.oscillators][0].onended();
+check('a voice ending naturally frees its slot (no leak → no eventual total silence)', budgetPlayer.logicalVoiceCount === 0);
+const deckB = budgetDeck();
+budgetPlayer._startVoice(deckB, { layer: 'A', rawRatio: 1, fraction: '1/1', rawFraction: '1/1' }, 0, false);
+const stolenOsc = [...deckB.oscillators][0];
+budgetPlayer._startVoice(deckB, { layer: 'A', rawRatio: 1.25, fraction: '5/4', rawFraction: '5/4' }, 0, false);
+check('a same-layer steal keeps exactly one live slot', budgetPlayer.logicalVoiceCount === 1);
+stolenOsc.onended();
+check('a stolen voice does not double-free when its oscillator later ends', budgetPlayer.logicalVoiceCount === 1);
 
 console.log('\n  Audio-time visual activity');
 const visualPlayer = Object.create(SpatialGridRowPlayer.prototype);
@@ -129,10 +218,22 @@ const flight = readFileSync(new URL('../flight-view.js', import.meta.url), 'utf8
 const aura = readFileSync(new URL('../grid-row-aura.js', import.meta.url), 'utf8');
 const worker = readFileSync(new URL('./cull2-program-worker.js', import.meta.url), 'utf8');
 const page = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
+const style = readFileSync(new URL('../../style.css', import.meta.url), 'utf8');
 check('compiler is a dedicated worker receiving compact finalized ownership',
   worker.includes('compileGridAudioProgram') && flight.includes('ProgramWorkerPool') && flight.includes('ratioOwners: z.ratioOwners'));
 check('main scheduler only schedules precompiled row programs',
   audio.includes('gridRowPlayer?.tick') && !player.includes('buildGridCull2Readout') && !player.includes('ratioOwners'));
+check('culled rows use their own tunable voice waveform while ambient keeps the shared contract',
+  audio.includes('osc.type = RHYTHM_VOICE_WAVEFORM') && player.includes('osc.type = ROW_WAVEFORM') &&
+  player.includes("ROW_WAVEFORM = 'triangle'"));
+check('row voices are short-gated into a shared reverb send, not sustained legato',
+  player.includes('ROW_GATE') && player.includes('_buildReverbSend') && player.includes('makeRowImpulse') &&
+  !player.includes('_startLegato'));
+check('silent hold is re-derived per loop so held tones re-articulate each cycle instead of vanishing',
+  player.includes('deck.lastToneByLayer') && player.includes('deck.lastToneByLayer.clear()'));
+check('flight supplies true listener distance and the player enforces the four-voice tone cap',
+  flight.includes('distance: candidate.distance') && player.includes('_claimToneVoice') &&
+  CULLED_ROW_MAX_VOICES_PER_TONE === 4 && flight.includes('toneCapEvictions'));
 check('3D graph uses one PannerNode per star and listener orientation, not screen pan',
   player.includes('createPanner()') && player.includes("panningModel = 'HRTF'") && player.includes('AUDIO_LISTENER_FORWARD'));
 check('flight aura reads live row voices and attack pulses without entering the worker/compiler path',
@@ -144,6 +245,12 @@ check('audio and aura concerns live in dedicated modules rather than the flight 
 check('dense selected-ratio debug data uses real wrapping cells instead of pad-based text columns',
   flight.includes("createElement('table')") && flight.includes("className = 'sky-ratio-table'") &&
   flight.includes("className = 'sky-ratio-tokens'") && !flight.includes('selected.padEnd'));
+check('debug overlay scroll captures the wheel only under the pointer and contains scroll chaining',
+  flight.includes('pointer-events:auto') && flight.includes("addEventListener('wheel', event => event.stopPropagation()") &&
+  flight.includes('overscroll-behavior:contain'));
+check('debug overlay renders a sticky root-policy summary and explainable candidate table',
+  flight.includes("className = 'sky-root-policy'") && flight.includes("className = 'sky-root-policy-table'") &&
+  flight.includes('ROOT SELECTION · LIVE POLICY') && style.includes('#sky-debug-panel .sky-root-policy') && style.includes('position: sticky'));
 check('cockpit exposes both explicit modes with ambient chords as default',
   page.includes('id="lrc-audio-mode"') && page.indexOf('value="ambient-chords" selected') < page.indexOf('value="culled-grid-rows"'));
 check('cockpit exposes the live local-tuning weight in voice-leading semitone units',

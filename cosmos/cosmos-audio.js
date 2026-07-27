@@ -7,8 +7,10 @@
 import { normalizeLayers, lcmAll, ratioToCents } from './oracle-core.js';
 import { nearestDegree } from './grid-core.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): the global progression + its one gain law. Pure, no DOM.
-import { TRIADS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, coverage as skyCoverage, gainForDev } from './sky-walk.js';
-import { AUDIO_MODES } from './cosmos-grid-audio-core.js';
+import { CHORDS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, coverage as skyCoverage, gainForDev } from './sky-walk.js';
+import { normalizeRootLadder, resetPhraseTracker, observePhraseBoundary, pushRecentRoot,
+  classifyRootDestinations, rankModulationDestinations, decideRootAtBoundary } from './sky-modulation.js';
+import { AUDIO_MODES, RHYTHM_VOICE_WAVEFORM } from './cosmos-grid-audio-core.js';
 import { SpatialGridRowPlayer } from './spatial-grid-row-player.js';
 
 const ROOT_HZ = 220;             // Phase 0: one root for every voice (per-star root is a later phase)
@@ -36,10 +38,6 @@ const REATTACK_PERIODS = [45, 56, 64, 81, 100];   // ticks; mutually near-coprim
                                   // a polyrhythm, not a synchronized pad — REATTACK_PERIODS[hash(id)%n]
 const REVERB_WET = 0.3;          // shared send level
 const REVERB_SECONDS = 4, REVERB_DECAY = 3;   // procedural impulse: exp-decaying noise burst, no assets
-// Sky Root handoff B3: root-state knobs (ROOT_RADIUS/SETTLE_SPEED/SETTLE_TICKS/ROOT_RESOLVE_MIN_TICKS
-// are camera/gather-side — flight-view.js owns camera state, so they live in ITS knob block).
-const ROOT_HYSTERESIS = 0.10;    // relative margin the pending root must beat the incumbent's CURRENT
-                                 // score by to swap — incumbent keeps its seat on ties (no thrash).
 const ROOT_TOP_K = 8;            // how much of the ranked ladder the debug overlay shows
 
 // One cycle of the rhythm as an ordered list of {t, ratio}: t = onset time as a fraction of the
@@ -95,14 +93,18 @@ let leadMaskRootKey = -1;         // root swaps independently invalidate the sam
 // ── Full Sky: the global chord walk (online, stateful — not precomputed) + the ambient bed ──
 let skyChordId = START_CHORD_ID, skyTabu = null, skyStep = -1;   // walk state; skyStep=-1 = not yet observed
 let currentField = [];            // last setField() items — also the input to coverage()
-// Sky Root handoff B3: the solved harmonic frame's anchor. Default/fallback is always 1/1 (v1's fixed
-// root) — flight-view.js proposes a ladder (from a world-space gather, not the audible/proj set) once
-// settled somewhere; the swap is atomic at the NEXT chord boundary, never mid-chord. rootKey is an
-// opaque version counter (not the cents value — floats are a bad cache key) zones use to invalidate
-// their re-folded z.skyPoolAt cache.
+// The solved harmonic frame starts on a PROVISIONAL 1/1 so playback has a deterministic anchor before
+// the first geographic solve. The first valid solve establishes it (possibly retaining 1/1) at a chord
+// boundary; all later changes use the live normalized geography/exhaustion policy. rootKey is an opaque
+// cache version (not cents — floats and revisits make poor cache keys).
 let skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }, rootKeyCounter = 0;
-let pendingRoot = null;            // { ladder, incumbentScore } | null — proposed, consumed at the next chord boundary
 let lastRootLadder = [];           // most recent solve's full ladder, kept for the debug overlay (survives consumption)
+let rootEstablished = false;
+let rootPhraseTracker = null;
+let recentSkyRoots = [];
+let lastRootPolicyProposal = null;
+let rootPolicyContext = { settled: false, currentEpoch: 0 };
+let lastRootDecision = null;
 let lastSyncedChordId = null;     // so syncBedDegrees only re-swells CONTINUING voices on an actual change
 let bedStars = new Map();         // id (a star's grid) -> { filter, panner, gainNode, oscMap, octave, pool, reattachStep }
 let bedOscCount = 0;
@@ -124,7 +126,10 @@ export function initAudio() {
   gridRowPlayer = new SpatialGridRowPlayer(audioCtx, muteGainNode);
   audioMode = AUDIO_MODES.AMBIENT_CHORDS;
   skyChordId = START_CHORD_ID; skyTabu = pushTabu([], skyChordId, TABU_K); skyStep = -1; lastSyncedChordId = null;
-  skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; pendingRoot = null; lastRootLadder = [];
+  skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; lastRootLadder = [];
+  rootEstablished = false;
+  rootPhraseTracker = resetPhraseTracker(skyRoot.rootKey, skyChordId, skyTabu);
+  recentSkyRoots = []; lastRootPolicyProposal = null; rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
   bedStars = new Map(); bedOscCount = 0; currentField = [];
   transportStart = audioCtx.currentTime;   // one shared clock starts here; lead swaps ride the same phase
   liveOscs = new Set();
@@ -191,7 +196,7 @@ export function setLead(voice) {
 // degrees)? Pure — no lead/audioCtx state — so a headless guard can check mask agreement directly.
 export function leadNoteInChord(ratio, chordId, rootCents = 0) {
   const { d, dev } = nearestDegree(ratioToCents(ratio), rootCents);
-  return TRIADS[chordId].semitones.includes(d) && Math.abs(dev) <= LEAD_MASK_WINDOW;
+  return CHORDS[chordId].semitones.includes(d) && Math.abs(dev) <= LEAD_MASK_WINDOW;
 }
 
 // Recompute leadMask against the CURRENT global sky chord. Cheap (≤ lead cardinality), so it's called
@@ -218,7 +223,7 @@ export function setSpatial(pan, gain, octaveLift) {
 // -> star's StereoPanner -> star's distance GainNode -> bedBus (dry -> master, wet -> shared reverb).
 // The pure scheduling-decision helpers below (hashId/bedDegreesFor/reattachStepFor) are exported
 // alongside the SKY KNOBS so a headless guard can verify the bed's decisions without a real AudioContext.
-export { CHORD_TICKS, TABU_K, LAMBDA_FIELD, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_HYSTERESIS, ROOT_TOP_K };
+export { CHORD_TICKS, TABU_K, LAMBDA_FIELD, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_TOP_K };
 
 // User-facing harmonic-policy control. Because candidate field costs are normalized, this has a
 // stable meaning: the best local tuning advantage can justify up to this many semitones of additional
@@ -230,7 +235,7 @@ export function setTuningStrength(value) {
 }
 
 export function currentTuningStrength() { return LAMBDA_FIELD; }
-const currentChordSemitones = () => TRIADS[skyChordId].semitones;
+const currentChordSemitones = () => CHORDS[skyChordId].semitones;
 
 // small deterministic integer hash (Avery: REATTACK_PERIODS[hash(grid) % n] — a plain mod would
 // correlate neighbouring grids' reattack phase; this scrambles it).
@@ -246,7 +251,7 @@ export function hashId(n) {
 // degree, it's just silent for that voice (spec). Pure: no WebAudio, so a headless guard can check
 // mask-silence correctness directly.
 export function bedDegreesFor(chordId, pool) {
-  return TRIADS[chordId].semitones.filter(d => pool && pool[d]);
+  return CHORDS[chordId].semitones.filter(d => pool && pool[d]);
 }
 
 // Debug-table model for the chromatic material the bed is ACTUALLY holding right now. There is no
@@ -256,7 +261,7 @@ export function bedDegreesFor(chordId, pool) {
 // defensive oscillator budget is full. `stars` uses debugSkyState's plain-data shape, so this remains
 // pure/headless-testable and the overlay never has to infer playback state from chord membership.
 export function selectedRatioToneRows(chordId, stars) {
-  const chordDegrees = new Set(TRIADS[chordId]?.semitones || []);
+  const chordDegrees = new Set(CHORDS[chordId]?.semitones || []);
   const selected = Array.from({ length: 12 }, () => new Map());
   const sounding = Array.from({ length: 12 }, () => new Map());
   const bump = (map, fraction, extra = {}) => {
@@ -292,7 +297,7 @@ export function selectedRatioToneRows(chordId, stars) {
 // selected into ITS immutable worker-built program; ON is counted from that star's live canonical
 // A–D voices. Degrees are measured in the current solved-root frame, matching the compiler mask.
 export function selectedGridRatioToneRows(chordId, rootCents, stars) {
-  const chordDegrees = new Set(TRIADS[chordId]?.semitones || []);
+  const chordDegrees = new Set(CHORDS[chordId]?.semitones || []);
   const selected = Array.from({ length: 12 }, () => new Map());
   const sounding = Array.from({ length: 12 }, () => new Map());
   const bump = (map, fraction, extra = {}) => {
@@ -477,39 +482,166 @@ function stepSkyWalk(ticks) {
   const audibleStars = currentField.map(it => ({ pool: it.pool, weight: it.gain }));
   const next = chooseNextChord(skyChordId, skyTabu, t => skyCoverage(t, audibleStars), { lambdaField: LAMBDA_FIELD });
   skyChordId = next.id; pushTabu(skyTabu, skyChordId, TABU_K);
-  maybeSwapRoot();   // Sky Root B3: pending → atomic swap, ONLY at a chord boundary (never mid-chord)
+  rootPhraseTracker = observePhraseBoundary(rootPhraseTracker,
+    { rootKey: skyRoot.rootKey, chordId: skyChordId, tabu: skyTabu }).tracker;
+  applyRootPolicyAtBoundary();   // sole live root authority; atomic after chord+tabu advance
 }
 
-// Sky Root B3: flight-view.js proposes a freshly solved ladder + the incumbent's re-scored CURRENT
-// score (both computed against the same world-space gather — see SKY_ROOT_HANDOFF_2026-07-22.md's
-// "gather set ≠ audible set"). Only stashed here; the swap itself waits for the next chord boundary.
+// Flight proposes exact ladder + incumbent data from one world-space gather. The proposal remains
+// inspectable, but can act only while flight reports the same settled geographic epoch.
 export function proposeRoot(proposal) {
-  pendingRoot = proposal;
-  if (proposal && proposal.ladder) lastRootLadder = proposal.ladder;
+  if (proposal && proposal.ladder) {
+    lastRootLadder = proposal.ladder;
+    lastRootPolicyProposal = proposal;
+  }
 }
 
-// Pure swap decision (no module state) — a headless guard can verify this without a live audio
-// transport: does a pending ladder beat the incumbent's CURRENT score by the RELATIVE margin
-// `hysteresis`? Incumbent keeps its seat on ties, so the frame never thrashes between two near-equal
-// roots. Empty ladder → null (keep the incumbent — the 1/1 default's fallback IS just "never swap").
-export function shouldSwapRoot(ladder, incumbentScore, hysteresis = ROOT_HYSTERESIS) {
-  if (!ladder || !ladder.length) return null;
-  const top = ladder[0];
-  return top.score > incumbentScore * (1 + hysteresis) ? top : null;
+// Live policy context from the camera owner. Epoch mismatch invalidates a solve immediately; no stale
+// region can establish or modulate a root at a later boundary.
+export function setRootPolicyContext({ settled = false, geographyEpoch = 0 } = {}) {
+  rootPolicyContext = { settled: !!settled, currentEpoch: geographyEpoch };
 }
 
-// Consume the pending proposal (one-shot — a stale proposal never re-applies). Only ever called from
-// stepSkyWalk's chord-changed branch above — the swap is atomic AT a chord boundary by construction
-// (there is no other call site). Chord id/tabu/step are untouched: the walk doesn't reset, the frame
-// just moved under it.
-function maybeSwapRoot() {
-  if (!pendingRoot) return;
-  const { ladder, incumbentScore } = pendingRoot; pendingRoot = null;
-  const winner = shouldSwapRoot(ladder, incumbentScore);
-  if (winner) { rootKeyCounter++; skyRoot = { fraction: winner.fraction, cents: winner.cents, rootKey: rootKeyCounter }; }
+function rootPolicyComputation() {
+  if (!lastRootPolicyProposal?.ladder?.length || !lastRootPolicyProposal.incumbent) return null;
+  const normalized = normalizeRootLadder(lastRootPolicyProposal.ladder, lastRootPolicyProposal.incumbent);
+  const context = {
+    settled: rootPolicyContext.settled,
+    proposalEpoch: lastRootPolicyProposal.proposalEpoch,
+    currentEpoch: rootPolicyContext.currentEpoch,
+  };
+  const decision = decideRootAtBoundary(normalized, rootPhraseTracker, context, {
+    established: rootEstablished,
+    chordDegrees: currentChordSemitones(),
+    recentRoots: recentSkyRoots,
+    tuningStrength: LAMBDA_FIELD,
+  });
+  return { normalized, context, decision };
 }
 
-// → { fraction, cents, rootKey } — the sky's current solved root (default/fallback '1/1' @ 0¢).
+function proposalIncumbentFrom(row) {
+  return { fraction: row.fraction, cents: row.cents, score: row.score, perDegree: row.perDegree };
+}
+
+// Called only after the chord walk advances. Bootstrap always resolves on the first valid proposal:
+// either a clear candidate wins or the field explicitly establishes the provisional 1/1. Subsequent
+// changes require the normal live geography/exhaustion trigger and a ranked destination.
+function applyRootPolicyAtBoundary() {
+  const computation = rootPolicyComputation();
+  if (!computation?.decision.actionable) return null;
+  const { decision, normalized } = computation;
+  const previousRoot = { ...skyRoot };
+  const wasEstablished = rootEstablished;
+  const winner = decision.winner;
+  let changed = false;
+
+  if (winner) {
+    rootKeyCounter++;
+    skyRoot = { fraction: winner.fraction, cents: winner.cents, rootKey: rootKeyCounter };
+    changed = true;
+    if (wasEstablished) recentSkyRoots = pushRecentRoot(recentSkyRoots, previousRoot);
+    lastRootPolicyProposal = { ...lastRootPolicyProposal, incumbent: proposalIncumbentFrom(winner) };
+  } else if (!wasEstablished) {
+    // A flat/near-tied first solve validates retaining 1/1. Preserve the exact re-scored incumbent so
+    // subsequent geography comparisons use the same gather rather than a rounded/default value.
+    lastRootPolicyProposal = { ...lastRootPolicyProposal, incumbent: proposalIncumbentFrom(normalized.incumbent) };
+  }
+
+  rootEstablished = true;
+  rootPhraseTracker = resetPhraseTracker(skyRoot.rootKey, skyChordId, skyTabu);
+  lastRootDecision = {
+    reason: decision.trigger.reason,
+    changed,
+    from: { fraction: previousRoot.fraction, cents: previousRoot.cents },
+    to: { fraction: skyRoot.fraction, cents: skyRoot.cents },
+    bootstrapChoice: decision.trigger.bootstrapChoice || null,
+  };
+  return lastRootDecision;
+}
+
+function rootPolicyDebugSnapshot() {
+  const phrase = rootPhraseTracker || resetPhraseTracker(skyRoot.rootKey, skyChordId, skyTabu || []);
+  const base = {
+    live: true,
+    established: rootEstablished,
+    available: false,
+    phrase,
+    solve: { settled: rootPolicyContext.settled, proposalEpoch: null, currentEpoch: rootPolicyContext.currentEpoch, valid: false },
+    recentRoots: recentSkyRoots.map(root => ({ ...root })),
+    trigger: null,
+    destination: null,
+    previewDestination: null,
+    lastDecision: lastRootDecision,
+    rows: [],
+  };
+  const computation = rootPolicyComputation();
+  if (!computation) return base;
+  const { normalized, decision } = computation;
+  const trigger = decision.trigger;
+  const chordDegrees = currentChordSemitones();
+  const previewTrigger = { due: true, reason: 'exhaustion', geographicCandidateIds: [] };
+  const previewRanking = rankModulationDestinations(normalized, previewTrigger,
+    { chordDegrees, recentRoots: recentSkyRoots, tuningStrength: LAMBDA_FIELD });
+  const actualRanking = decision.ranking;
+  const displayRanking = actualRanking.length ? actualRanking : previewRanking;
+  const costsByRoot = new Map(displayRanking.map(row => [row.rootId, row]));
+  const classified = classifyRootDestinations(normalized, { recentRoots: recentSkyRoots });
+  const incumbentRow = classified.find(row => row.sameRoot) || null;
+  const compactDestination = row => row ? {
+    fraction: row.fraction, cents: row.cents, rank: row.rank, score: row.score, fitness: row.fitness,
+    arrivalCoverage: row.arrivalCoverage, arrivalFitness: row.arrivalFitness, motionCents: row.motionCents,
+    motionCost: row.motionCost, tuningCost: row.tuningCost, cost: row.cost,
+  } : null;
+  return {
+    live: true,
+    established: rootEstablished,
+    available: true,
+    incumbent: {
+      fraction: normalized.incumbent.fraction,
+      cents: normalized.incumbent.cents,
+      score: normalized.incumbent.score,
+      fitness: normalized.incumbent.fitness,
+      rank: incumbentRow?.rank || null,
+      candidateCount: normalized.rows.length,
+    },
+    ladder: {
+      minScore: normalized.minScore,
+      maxScore: normalized.maxScore,
+      spread: normalized.spread,
+      epsilon: normalized.epsilon,
+      denominator: normalized.denominator,
+      normalizedRange: normalized.normalizedRange,
+    },
+    phrase,
+    solve: {
+      settled: rootPolicyContext.settled,
+      proposalEpoch: lastRootPolicyProposal.proposalEpoch,
+      currentEpoch: rootPolicyContext.currentEpoch,
+      valid: trigger.proposalValid,
+    },
+    recentRoots: recentSkyRoots.map(root => ({ ...root })),
+    trigger,
+    destination: compactDestination(actualRanking[0]),
+    previewDestination: compactDestination(previewRanking[0]),
+    pending: decision.actionable,
+    lastDecision: lastRootDecision,
+    rows: classified.slice(0, ROOT_TOP_K).map(row => {
+      const costs = costsByRoot.get(row.rootId);
+      return {
+        fraction: row.fraction, cents: row.cents, rank: row.rank, score: row.score, fitness: row.fitness,
+        statusCode: row.statusCode, status: row.status, eligible: row.eligible, geographicPass: row.geographicPass,
+        arrivalCoverage: costs?.arrivalCoverage ?? null,
+        arrivalFitness: costs?.arrivalFitness ?? null,
+        motionCents: costs?.motionCents ?? null,
+        motionCost: costs?.motionCost ?? null,
+        tuningCost: costs?.tuningCost ?? null,
+        cost: costs?.cost ?? null,
+      };
+    }),
+  };
+}
+
+// → { fraction, cents, rootKey } — the sky's current root (provisional '1/1' until first establishment).
 // rootKey is an opaque version counter zones use to invalidate their re-folded z.skyPoolAt cache —
 // NOT the cents value (a bad cache key: floats, and a future modulation hop could revisit the same
 // cents exactly). ROOT_HZ(220) · 2^(cents/1200) is the effective root frequency — 1/1 itself never moves.
@@ -526,7 +658,7 @@ export function currentTicks() {
 
 // → { symbol, semitones } — the sky's current chord, for the cockpit readout (M4) and lead masking.
 export function currentSkyChord() {
-  return { symbol: TRIADS[skyChordId].symbol, id: skyChordId, semitones: currentChordSemitones() };
+  return { symbol: CHORDS[skyChordId].symbol, id: skyChordId, semitones: currentChordSemitones() };
 }
 
 // Dev-only introspection snapshot for the live debug overlay (flight-view.js, ?skyDebug=1) — NOT used
@@ -568,10 +700,10 @@ export function debugSkyState() {
     rootHz: ROOT_HZ,   // 1/1's fixed fundamental — the root solve only ever picks a RATIO relative to this
     root,
     rootLadder: ladderTopK,
-    rootPending: !!pendingRoot,
-    chord: { id: skyChordId, symbol: TRIADS[skyChordId].symbol, semitones: currentChordSemitones() },
-    tabu: (skyTabu || []).map(id => ({ id, symbol: TRIADS[id].symbol })),
-    coverageByTriad: TRIADS.map(t => ({ id: t.id, symbol: t.symbol, coverage: Math.round(skyCoverage(t, audibleStars) * 1000) / 1000 })),
+    rootPolicy: rootPolicyDebugSnapshot(),
+    chord: { id: skyChordId, symbol: CHORDS[skyChordId].symbol, semitones: currentChordSemitones() },
+    tabu: (skyTabu || []).map(id => ({ id, symbol: CHORDS[id].symbol })),
+    coverageByTriad: CHORDS.map(t => ({ id: t.id, symbol: t.symbol, coverage: Math.round(skyCoverage(t, audibleStars) * 1000) / 1000 })),
     candidateCosts: candidates,
     selectedRatioTones: audioMode === AUDIO_MODES.CULLED_GRID_ROWS
       ? selectedGridRatioToneRows(skyChordId, skyRoot.cents, gridRows?.stars)
@@ -641,7 +773,9 @@ export function stopAudio() {
   gridRowPlayer?.destroy(); gridRowPlayer = null;
   bedStars = new Map(); dyingStars = []; bedOscCount = 0; currentField = [];
   skyChordId = START_CHORD_ID; skyTabu = null; skyStep = -1; lastSyncedChordId = null;
-  skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; pendingRoot = null; lastRootLadder = [];
+  skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; lastRootLadder = [];
+  rootEstablished = false; rootPhraseTracker = null; recentSkyRoots = []; lastRootPolicyProposal = null;
+  rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
   lead = null; schedIdx = 0; schedCycle = 0; transportStart = null;
   leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1;
   if (audioCtx) { try { audioCtx.close(); } catch {} }
@@ -686,7 +820,7 @@ function schedulerTick() {
 function scheduleNote(note, time, noteIdx) {
   if (liveOscs.size >= MAX_LIVE_OSC) return;
   const freq = ROOT_HZ * note.ratio * (2 ** currentOctaveLift);
-  const osc = audioCtx.createOscillator(); osc.type = 'triangle'; osc.frequency.value = freq;
+  const osc = audioCtx.createOscillator(); osc.type = RHYTHM_VOICE_WAVEFORM; osc.frequency.value = freq;
   const env = audioCtx.createGain();
   // Full Sky tint: in-(global-)chord onsets play full, out-of-chord onsets duck — the rhythm is
   // sacrosanct, no onset is ever skipped, the sky only tints it (M4 — replaces the per-star Chord Walk).

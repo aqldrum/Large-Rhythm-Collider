@@ -12,7 +12,7 @@
 // Success criterion for Feature A: different locations produce DIFFERENT trails.
 import { readFileSync } from 'fs';
 import { gridShardSolve, shardKeysOf } from '../grid-core.js';
-import { TRIADS, START_CHORD_ID, coverage, chooseNextChord, pushTabu } from '../sky-walk.js';
+import { CHORDS, START_CHORD_ID, coverage, chooseNextChord, pushTabu } from '../sky-walk.js';
 import { TABU_K, LAMBDA_FIELD } from '../cosmos-audio.js';
 
 const N_LOCATIONS = 5, GRIDS_PER_LOCATION = 10, WALK_STEPS = 12;
@@ -31,7 +31,7 @@ function gridPool(G) {
 
 function runWalk(audibleStars) {
   let current = START_CHORD_ID, tabu = pushTabu([], current, TABU_K);
-  const trail = [TRIADS[current].symbol];
+  const trail = [CHORDS[current].symbol];
   for (let i = 0; i < WALK_STEPS; i++) {
     const next = chooseNextChord(current, tabu, t => coverage(t, audibleStars), { lambdaField: LAMBDA_FIELD });
     current = next.id; pushTabu(tabu, current, TABU_K); trail.push(next.symbol);
@@ -54,11 +54,11 @@ for (let i = 0; i < N_LOCATIONS; i++) locations.push(pool.slice(i * stride, i * 
 
 const results = locations.map((grids, i) => {
   const audibleStars = grids.map(G => ({ pool: gridPool(G), weight: 1 }));
-  const covByTriad = TRIADS.map(t => coverage(t, audibleStars));
+  const covByTriad = CHORDS.map(t => coverage(t, audibleStars));
   const spread = Math.max(...covByTriad) - Math.min(...covByTriad);
   const trail = runWalk(audibleStars);
   console.log(`location ${i}: grids [${grids.join(', ')}]`);
-  console.log(`  coverage spread (24 triads): min ${Math.min(...covByTriad).toFixed(3)} max ${Math.max(...covByTriad).toFixed(3)} spread ${spread.toFixed(3)}`);
+  console.log(`  coverage spread (${CHORDS.length} chords): min ${Math.min(...covByTriad).toFixed(3)} max ${Math.max(...covByTriad).toFixed(3)} spread ${spread.toFixed(3)}`);
   console.log(`  ${WALK_STEPS}-step walk: ${trail.join(' → ')}\n`);
   return { grids, spread, trail: trail.join(' → ') };
 });

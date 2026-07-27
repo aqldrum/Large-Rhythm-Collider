@@ -176,3 +176,13 @@ roots through the recent-root history. Normal release/attack overlap remains the
 Full Sky Debug should show: incumbent ladder rank and exact score, ladder spread/normalized fitness,
 chords since the last root change, exhaustion state, proposed destination, and trigger reason
 (`geography` or `exhaustion`). This makes every modulation explainable before tuning it by ear.
+
+## 2026-07-24 live-policy landing
+
+The normalized policy is now the sole live root authority; the old 10% `ROOT_HYSTERESIS` path is
+removed. Engine entry still needs an immediate pitch frame, so 1/1 exists only as a visibly provisional
+anchor. The first valid settled solve establishes the root at the next chord boundary without normal
+dwell: a clearly differentiated candidate wins, while a flat ladder explicitly validates retaining
+1/1. Later changes use minimum dwell, live geographic epoch validation, progression exhaustion,
+recent-root history, arrival-chord tuning, and moderate root-motion ranking. Full Sky Debug consumes the
+same decision object as playback and labels the policy `LIVE`.

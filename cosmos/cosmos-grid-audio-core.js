@@ -7,11 +7,16 @@ export const AUDIO_MODES = Object.freeze({
   CULLED_GRID_ROWS: 'culled-grid-rows',
 });
 
+// The clicked Ambient Chords rhythm and the spatial Cull2 rows intentionally share one voice color.
+// Their envelopes and spatial graphs remain mode-specific.
+export const RHYTHM_VOICE_WAVEFORM = 'triangle';
+
 export const ROW_ACTIVE_STARS = 8;
 export const ROW_PREWARM_STARS = 12;
 export const ROW_RADIUS = 1400;
-export const ROW_CONSONANCE_CENTS = 35;
+export const ROW_CONSONANCE_CENTS = 15;
 export const ROW_SWITCH_TICKS = 16;
+export const CULLED_ROW_MAX_VOICES_PER_TONE = 4;
 
 const mod = (value, divisor) => ((value % divisor) + divisor) % divisor;
 
