@@ -2,25 +2,87 @@
 // module, no DOM, no audio, no ProgressionSolver: the frame is an EXACT 12TET grid (degree 0 = 1/1),
 // so chord-tone deviation is degenerate — the walk reduces to pure voice-leading parsimony (circular
 // semitone motion) plus a field term that rewards whatever the nearby sky is actually well-tuned for.
-// Reimplements the triad-table / min-over-6-bijections idea from chord-walk.js locally (~30 lines);
-// does not import it — chord-walk.js is parked, not reused (see the handoff's hard rules).
+// Reimplements the chord-table / min-over-bijections idea from chord-walk.js locally; does not import
+// it — chord-walk.js is parked, not reused (see the handoff's hard rules).
 
 const ROMAN = ['I', 'bII', 'II', 'bIII', 'III', 'IV', 'bV', 'V', 'bVI', 'VI', 'bVII', 'VII'];
-const romanSymbol = (r, quality) => quality === 'min' ? ROMAN[r].toLowerCase() : ROMAN[r];
 const circ12 = (a, b) => { const d = Math.abs(a - b) % 12; return Math.min(d, 12 - d); };
-const PERMS3 = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
 
-// The vocabulary: 24 major/minor triads on the global frame — always ALL available (the frame IS
-// 12TET; there's no per-star playability filter in the sky walk, only the field term). Built in
-// ascending-id order (id = rootSemitone*2 + (minor?1:0)), same id scheme chord-walk.js used.
-export const TRIADS = [];
+// The chord vocabulary — ported from the Codex Compiler's MasterQualityCatalog.js: the CONSONANT (11)
+// and SPECIALIZED (22) qualities by tier (the catalog's own "(18)" section label is stale — it lists 22).
+// Scale modes are deliberately deferred. Each quality is a pitch-class
+// set from root 0; cardinality varies 3–6 (see vlParsimony/coverage below for how the variable size is
+// handled). ORDER IS THE ID SCHEME: id = rootSemitone*QUALITY_COUNT + qualityIndex, and major_triad is
+// index 0 so I major stays id 0 (START_CHORD_ID). Keep major_triad/minor_triad first two — the P/L/R
+// structural guards and the legacy Roman-numeral display rely on it.
+export const CHORD_QUALITIES = [
+  // Consonant (11)
+  { id: 'major_triad',     symbol: 'maj',     intervals: [0, 4, 7],           tier: 'consonant' },
+  { id: 'minor_triad',     symbol: 'm',       intervals: [0, 3, 7],           tier: 'consonant' },
+  { id: 'sus4',            symbol: 'sus4',    intervals: [0, 5, 7],           tier: 'consonant' },
+  { id: 'major_7th',       symbol: 'maj7',    intervals: [0, 4, 7, 11],       tier: 'consonant' },
+  { id: 'minor_7th',       symbol: 'm7',      intervals: [0, 3, 7, 10],       tier: 'consonant' },
+  { id: 'dominant_7th',    symbol: '7',       intervals: [0, 4, 7, 10],       tier: 'consonant' },
+  { id: 'dom7_sus4',       symbol: '7sus4',   intervals: [0, 5, 7, 10],       tier: 'consonant' },
+  { id: 'minor_major_7th', symbol: 'mMaj7',   intervals: [0, 3, 7, 11],       tier: 'consonant' },
+  { id: 'major_6th',       symbol: '6',       intervals: [0, 4, 7, 9],        tier: 'consonant' },
+  { id: 'minor_6th',       symbol: 'm6',      intervals: [0, 3, 7, 9],        tier: 'consonant' },
+  { id: 'add9',            symbol: 'add9',    intervals: [0, 2, 4, 7],        tier: 'consonant' },
+  // Specialized (22)
+  { id: 'dim_triad',       symbol: 'dim',     intervals: [0, 3, 6],           tier: 'specialized' },
+  { id: 'aug_triad',       symbol: 'aug',     intervals: [0, 4, 8],           tier: 'specialized' },
+  { id: 'dim7',            symbol: 'dim7',    intervals: [0, 3, 6, 9],        tier: 'specialized' },
+  { id: 'half_dim7',       symbol: 'm7b5',    intervals: [0, 3, 6, 10],       tier: 'specialized' },
+  { id: 'aug7',            symbol: '7#5',     intervals: [0, 4, 8, 10],       tier: 'specialized' },
+  { id: 'dom9',            symbol: '9',       intervals: [0, 2, 4, 7, 10],    tier: 'specialized' },
+  { id: 'major_9th',       symbol: 'maj9',    intervals: [0, 2, 4, 7, 11],    tier: 'specialized' },
+  { id: 'minor_9th',       symbol: 'm9',      intervals: [0, 2, 3, 7, 10],    tier: 'specialized' },
+  { id: 'dom11',           symbol: '11',      intervals: [0, 2, 4, 5, 7, 10], tier: 'specialized' },
+  { id: 'minor_11th',      symbol: 'm11',     intervals: [0, 2, 3, 5, 7, 10], tier: 'specialized' },
+  { id: 'dom13',           symbol: '13',      intervals: [0, 2, 4, 7, 9, 10], tier: 'specialized' },
+  { id: 'dom7_sharp9',     symbol: '7#9',     intervals: [0, 3, 4, 7, 10],    tier: 'specialized' },
+  { id: 'dom7_flat9',      symbol: '7b9',     intervals: [0, 1, 4, 7, 10],    tier: 'specialized' },
+  { id: 'dom13_flat9',     symbol: '13b9',    intervals: [0, 1, 4, 7, 9, 10], tier: 'specialized' },
+  { id: 'dom7_sharp11',    symbol: '7#11',    intervals: [0, 4, 6, 7, 10],    tier: 'specialized' },
+  { id: 'dom7_alt',        symbol: '7alt',    intervals: [0, 3, 4, 8, 10],    tier: 'specialized' },
+  { id: 'dom9_sus4',       symbol: '9sus4',   intervals: [0, 2, 5, 7, 10],    tier: 'specialized' },
+  { id: 'dom13_sus4',      symbol: '13sus4',  intervals: [0, 2, 5, 9, 10],    tier: 'specialized' },
+  { id: 'aug_maj7',        symbol: 'augMaj7', intervals: [0, 4, 8, 11],       tier: 'specialized' },
+  { id: 'italian_6th',     symbol: 'It6',     intervals: [0, 4, 6, 10],       tier: 'specialized' },
+  { id: 'french_6th',      symbol: 'Fr6',     intervals: [0, 2, 6, 8],        tier: 'specialized' },
+  { id: 'quartal_triad',   symbol: 'q',       intervals: [0, 5, 10],          tier: 'specialized' },
+];
+export const QUALITY_COUNT = CHORD_QUALITIES.length;   // 33 (11 consonant + 22 specialized)
+
+// Legacy display stays clean for the two triads (I, i, bVI …); everything richer is Roman + the
+// quality's own suffix (V7, IImaj7, bVIdim). The P/L/R guard and Feature-A worked example both look
+// chords up by these symbols, so the triad forms must not change.
+const chordSymbol = (r, quality) =>
+  quality.id === 'major_triad' ? ROMAN[r]
+  : quality.id === 'minor_triad' ? ROMAN[r].toLowerCase()
+  : ROMAN[r] + quality.symbol;
+
+// The vocabulary: every quality on all 12 roots, always ALL available (the frame IS 12TET; there's no
+// per-star playability filter in the sky walk, only the field term). Built in ascending-id order.
+// Historical export name was TRIADS; it now holds the full 12·QUALITY_COUNT chord set.
+export const CHORDS = [];
 for (let r = 0; r < 12; r++) {
-  for (const quality of ['maj', 'min']) {
-    const semitones = (quality === 'maj' ? [r, (r + 4) % 12, (r + 7) % 12] : [r, (r + 3) % 12, (r + 7) % 12]).sort((a, b) => a - b);
-    TRIADS.push({ id: r * 2 + (quality === 'min' ? 1 : 0), rootSemitone: r, quality, semitones, symbol: romanSymbol(r, quality) });
+  for (let qi = 0; qi < QUALITY_COUNT; qi++) {
+    const q = CHORD_QUALITIES[qi];
+    const semitones = [...new Set(q.intervals.map(iv => (r + iv) % 12))].sort((a, b) => a - b);
+    CHORDS.push({
+      id: r * QUALITY_COUNT + qi,
+      rootSemitone: r,
+      quality: q.id,
+      qualitySymbol: q.symbol,
+      tier: q.tier,
+      cardinality: semitones.length,
+      semitones,
+      symbol: chordSymbol(r, q),
+    });
   }
 }
-export const START_CHORD_ID = 0;   // I major — the frame's anchor triad (root at degree 0 = 1/1)
+export const START_CHORD_ID = 0;   // I major — the frame's anchor chord (root at degree 0 = 1/1), id 0
 
 const DEFAULTS = { tabuK: 3, lambdaField: 2.0 };
 export const GAIN_CEILING_CENTS = 45;   // full at 0¢, ~half-power ~20¢, 0 by here — the ONE playability law
@@ -31,16 +93,39 @@ export const GAIN_CEILING_CENTS = 45;   // full at 0¢, ~half-power ~20¢, 0 by 
 // "hexatonic lock" proof for why the un-normalized version was field-blind after its first step.
 export const EPS_SPREAD = 0.15;
 
-// Min-over-6-bijections voice-leading cost between two triads' semitone sets — pure circular-semitone
-// parsimony, no JI/beta term (unlike chord-walk's vlCost): on an exact 12TET frame there's no JI
-// deviation for the CHORD MOTION itself; JI deviation lives in each star's pool tones, scored separately.
+// Circular-semitone voice-leading cost between two chords' pitch-class sets — pure parsimony, no JI/beta
+// term (on an exact 12TET frame there's no JI deviation for the CHORD MOTION itself; JI deviation lives
+// in each star's pool tones, scored separately by coverage()). Generalized to chords of DIFFERENT sizes
+// via minimal voice leading with doubling (Tymoczko): anchor every note of the smaller chord onto a
+// DISTINCT note of the larger (an injection), then each leftover larger-chord note doubles onto its
+// nearest smaller-chord note; minimize the total. For two equal-size chords this is exactly the old
+// min-over-all-bijections (leftover set empty), so triad↔triad costs — and the P/L/R structure — are
+// unchanged. Symmetric: the smaller chord is always the doubled one regardless of argument order.
 export function vlParsimony(A, B) {
+  const a = A.semitones, b = B.semitones;
+  const S = a.length <= b.length ? a : b;   // smaller — gets doubled onto the larger
+  const L = a.length <= b.length ? b : a;   // larger — every note used exactly once
+  const used = new Array(L.length).fill(false);
   let best = Infinity;
-  for (const perm of PERMS3) {
-    let sum = 0;
-    for (let i = 0; i < 3; i++) sum += circ12(A.semitones[i], B.semitones[perm[i]]);
-    if (sum < best) best = sum;
-  }
+  const recurse = (si, sum) => {
+    if (sum >= best) return;                 // leftover cost is ≥ 0, so a partial sum ≥ best can't win
+    if (si === S.length) {
+      let total = sum;
+      for (let li = 0; li < L.length; li++) if (!used[li]) {
+        let near = Infinity;
+        for (let k = 0; k < S.length; k++) { const d = circ12(L[li], S[k]); if (d < near) near = d; }
+        total += near;
+      }
+      if (total < best) best = total;
+      return;
+    }
+    for (let li = 0; li < L.length; li++) if (!used[li]) {
+      used[li] = true;
+      recurse(si + 1, sum + circ12(S[si], L[li]));
+      used[li] = false;
+    }
+  };
+  recurse(0, 0);
   return best;
 }
 
@@ -53,20 +138,24 @@ export function gainForDev(dev) {
   return c * c;
 }
 
-// coverage(triad, audibleStars) ∈ [0,1]: the audibility-weighted mean, over the audible star set, of
-// each star's own mean gainForDev across the triad's 3 degrees (a star missing a degree contributes 0
-// for that degree, not a skip). audibleStars = [{ pool, weight }] — plain data, no zone/DOM coupling.
-// Weight = a star's current distance-gain. (Weighted-mean-of-per-star-mean == per-degree-weighted-mean-
-// then-averaged, since weight doesn't vary by degree — same double sum either order.)
-export function coverage(triad, audibleStars) {
+// coverage(chord, audibleStars) ∈ [0,1]: the audibility-weighted mean, over the audible star set, of
+// each star's own MEAN gainForDev across the chord's degrees (a star missing a degree contributes 0 for
+// that degree, not a skip). Dividing by the chord's cardinality (not a fixed 3) keeps the scale [0,1]
+// across mixed chord sizes — so a bigger chord must have MORE of its degrees well-tuned to score as high
+// as a triad (an intentional, mild size bias toward simpler chords in sparse fields). audibleStars =
+// [{ pool, weight }], plain data, no zone/DOM coupling. Weight = a star's current distance-gain.
+// (Weighted-mean-of-per-star-mean == per-degree-weighted-mean-then-averaged, since weight doesn't vary
+// by degree — same double sum either order.)
+export function coverage(chord, audibleStars) {
   if (!audibleStars || !audibleStars.length) return 0;
+  const n = chord.semitones.length || 1;
   let wSum = 0, num = 0;
   for (const star of audibleStars) {
     const weight = star.weight > 0 ? star.weight : 0;
     if (!weight) continue;
     let g = 0;
-    if (star.pool) for (const d of triad.semitones) { const slot = star.pool[d]; if (slot) g += gainForDev(slot.dev); }
-    num += weight * (g / 3); wSum += weight;
+    if (star.pool) for (const d of chord.semitones) { const slot = star.pool[d]; if (slot) g += gainForDev(slot.dev); }
+    num += weight * (g / n); wSum += weight;
   }
   return wSum > 0 ? num / wSum : 0;
 }
@@ -82,29 +171,29 @@ export function coverage(triad, audibleStars) {
 //    reason — the opposite of "sparser region → vaguer").
 function rankCandidates(currentId, tabu, fieldCoverage, opts = {}) {
   const lambda = opts.lambdaField ?? DEFAULTS.lambdaField;
-  const current = TRIADS[currentId];
+  const current = CHORDS[currentId];
   const raw = [];
-  for (const next of TRIADS) if (!tabu.includes(next.id)) raw.push({ triad: next, coverage: fieldCoverage(next) });
+  for (const next of CHORDS) if (!tabu.includes(next.id)) raw.push({ chord: next, coverage: fieldCoverage(next) });
   let maxCov = -Infinity, minCov = Infinity;
   for (const r of raw) { if (r.coverage > maxCov) maxCov = r.coverage; if (r.coverage < minCov) minCov = r.coverage; }
   const denom = Math.max(maxCov - minCov, EPS_SPREAD);
-  return raw.map(({ triad, coverage }) => {
-    const parsimony = vlParsimony(current, triad);
+  return raw.map(({ chord, coverage }) => {
+    const parsimony = vlParsimony(current, chord);
     const fieldCost = lambda * (maxCov - coverage) / denom;
-    return { id: triad.id, symbol: triad.symbol, coverage, parsimony, fieldCost, cost: parsimony + fieldCost };
+    return { id: chord.id, symbol: chord.symbol, coverage, parsimony, fieldCost, cost: parsimony + fieldCost };
   });
 }
 
-// The online walk step: argmin over non-tabu triads of the ranked cost (vlParsimony + normalized field
-// term). `tabu` already contains the current chord's id (FIFO, caller-maintained, same convention as
-// chord-walk.js) so this never returns the current chord — the walk always moves. fieldCoverage: (triad)
-// => number in [0,1], typically `next => coverage(next, audibleStars)`. Deterministic tie-break: TRIADS
-// (and so `raw`) is ascending-id order and strict `<` keeps the first (lowest-id) best.
+// The online walk step: argmin over non-tabu chords of the ranked cost (vlParsimony + normalized field
+// term). `tabu` already contains the current chord's id (FIFO, caller-maintained) so this never returns
+// the current chord — the walk always moves. fieldCoverage: (chord) => number in [0,1], typically
+// `next => coverage(next, audibleStars)`. Deterministic tie-break: CHORDS (and so `raw`) is ascending-id
+// order and strict `<` keeps the first (lowest-id) best.
 export function chooseNextChord(currentId, tabu, fieldCoverage, opts = {}) {
   const ranked = rankCandidates(currentId, tabu, fieldCoverage, opts);
   let best = null, bestCost = Infinity;
   for (const r of ranked) if (r.cost < bestCost) { bestCost = r.cost; best = r; }
-  return best ? TRIADS[best.id] : null;   // 24 triads, tabuK=3 ⇒ ≤4 excluded — never null in practice
+  return best ? CHORDS[best.id] : null;   // 12·QUALITY_COUNT chords, small tabuK ⇒ never null in practice
 }
 
 // Every non-tabu candidate's cost breakdown (id, symbol, raw coverage, parsimony, normalized fieldCost,
@@ -123,7 +212,7 @@ export function pushTabu(tabu, id, k = DEFAULTS.tabuK) {
 
 // Pure function of the absolute tick count -> which chord-clock STEP we're at (resync-safe: recomputed
 // fresh each frame from tick count alone, same pattern as cosmos-audio.js's chordIndexForCycle). This is
-// NOT which triad is sounding — the walk is online/stateful (the field changes as you fly), so the
+// NOT which chord is sounding — the walk is online/stateful (the field changes as you fly), so the
 // caller advances chooseNextChord() once per step increase and remembers the resulting chord + tabu.
 export function chordStepIndex(absoluteTicks, chordTicks) {
   return Math.floor(absoluteTicks / chordTicks);

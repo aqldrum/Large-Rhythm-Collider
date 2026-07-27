@@ -3660,6 +3660,33 @@ body.cosmos-active #cosmos-view {
 .lrc-tuning-row b { min-width: 42px; color: var(--hud-text); font: 600 10px var(--mono); text-align: right; text-transform: none; letter-spacing: 0; }
 
 /* Full Sky developer readout: real cells keep dense selected-ratio pools from flowing into ON. */
+#sky-debug-panel { scrollbar-color: rgba(145,169,199,.65) rgba(255,255,255,.04); }
+#sky-debug-panel .sky-root-policy {
+  position: sticky;
+  top: -10px;
+  z-index: 2;
+  margin: -10px -12px 10px;
+  padding: 9px 12px 10px;
+  background: rgba(8,10,16,.985);
+  border-bottom: 1px solid rgba(145,169,199,.3);
+  box-shadow: 0 7px 14px rgba(0,0,0,.28);
+}
+#sky-debug-panel .sky-root-policy-heading { margin-bottom: 4px; color: #fff; font-weight: 700; letter-spacing: .08em; }
+#sky-debug-panel .sky-root-policy-summary { white-space: pre-wrap; color: #cfe3ff; }
+#sky-debug-panel .sky-root-policy-table { width: 100%; margin-top: 7px; border-collapse: collapse; font-size: 9.5px; }
+#sky-debug-panel .sky-root-policy-table th,
+#sky-debug-panel .sky-root-policy-table td { padding: 2px 5px; border: 1px solid rgba(255,255,255,.1); text-align: right; white-space: nowrap; }
+#sky-debug-panel .sky-root-policy-table th { color: #91a9c7; font-weight: 600; }
+#sky-debug-panel .sky-root-policy-table th:first-child,
+#sky-debug-panel .sky-root-policy-table td:first-child,
+#sky-debug-panel .sky-root-policy-table th:last-child,
+#sky-debug-panel .sky-root-policy-table td:last-child { text-align: left; }
+#sky-debug-panel .sky-root-status-incumbent { color: #fff; background: rgba(255,255,255,.05); }
+#sky-debug-panel .sky-root-status-geographic-pass { color: #8fffc3; }
+#sky-debug-panel .sky-root-status-recent,
+#sky-debug-panel .sky-root-status-below-band,
+#sky-debug-panel .sky-root-status-raw-margin-fail,
+#sky-debug-panel .sky-root-status-fitness-gap-fail { color: #8290a3; }
 #sky-debug-panel .sky-debug-text { white-space: pre-wrap; }
 #sky-debug-panel .sky-ratio-section { margin: 8px 0; }
 #sky-debug-panel .sky-ratio-heading { margin-bottom: 3px; color: #dceaff; }

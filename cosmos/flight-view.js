@@ -14,8 +14,8 @@ import { sampleArcPath } from './cosmos/web-return.js';
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, setAudioMode, currentAudioMode, setGridSpatialField, gridRowVisualState, setTuningStrength } from './cosmos-audio.js';
-import { AUDIO_MODES, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, setAudioMode, currentAudioMode, setGridSpatialField, gridRowVisualState, setTuningStrength, setRootPolicyContext } from './cosmos-audio.js';
+import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
 import { drawGridRowAura } from './grid-row-aura.js';
@@ -145,7 +145,7 @@ let rowGeneration = 0;
 let rowSelectionKey = '';
 
 // Sky Root handoff, Feature B3: camera/gather-side knobs (flight-view owns camera state — root-state
-// knobs ROOT_HYSTERESIS/ROOT_TOP_K live in cosmos-audio.js's SKY KNOBS, same split as AUDIBLE_N above).
+// display depth ROOT_TOP_K lives in cosmos-audio.js's SKY KNOBS, same split as AUDIBLE_N above).
 const ROOT_RADIUS = 1400;        // world units — a true-3D-distance gather radius around the camera, NOT
                                   // the view-depth-sorted audible set (the root must not change on turning
                                   // your head). Start ≈ hilbert's FOG_NEAR; Avery tunes by ear/eye.
@@ -155,6 +155,8 @@ const ROOT_RESOLVE_MIN_TICKS = 297;   // rate limit: at most one solve this ofte
 let camSpeed = 0;                // this frame's actual world-space translation speed (units/sec) — stepControls sets it
 let settleSinceTick = null;      // tick count when speed first dropped below SETTLE_SPEED, or null (moving)
 let lastRootResolveTick = -Infinity;   // tick of the last proposed solve (rate limit)
+let rootGeographyEpoch = 0;      // invalidates a settled solve once meaningful movement resumes
+let rootPolicyWasSettled = false;
 
 // ── number theory (frontier validity + solve cost proxy) ──
 function factorInfo(n) {
@@ -651,6 +653,7 @@ export function ensureFlight(canvas, hudEl) {
   pool = new Pool(new URL('./cosmos/abundance-worker.js?v=5', import.meta.url), poolSize);
   rowCompiler = new ProgramWorkerPool(new URL('./cosmos/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
   rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
+  settleSinceTick = null; lastRootResolveTick = -Infinity; rootGeographyEpoch = 0; rootPolicyWasSettled = false;
   if (audioModeEl) audioModeEl.value = AUDIO_MODES.AMBIENT_CHORDS;
   if (tuningSliderEl) setTuningStrength(tuningSliderEl.value);
   changeAudioMode(AUDIO_MODES.AMBIENT_CHORDS);
@@ -1083,6 +1086,7 @@ function updateGridRowField(placed, basis) {
     id: candidate.id,
     program: candidate.z._rowAudio.program,
     position: toAudioListenerPosition(candidate.position, basis),
+    distance: candidate.distance,
     gain: rowDistanceGain(candidate.distance),
     cutoff: rowDistanceCutoff(candidate.distance),
   })));
@@ -1137,9 +1141,14 @@ function ensureSkyDebugPanel() {
   if (skyDebugEl) return;
   skyDebugEl = document.createElement('div');
   skyDebugEl.id = 'sky-debug-panel';
-  skyDebugEl.style.cssText = 'position:fixed;top:12px;right:12px;width:min(680px,calc(100vw - 48px));max-height:82vh;overflow:auto;' +
+  skyDebugEl.style.cssText = 'position:fixed;top:12px;right:12px;width:min(760px,calc(100vw - 48px));max-height:82vh;overflow:auto;' +
     'background:rgba(8,10,16,.9);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:10px 12px;' +
-    'font:10.5px/1.55 var(--mono,ui-monospace,monospace);color:#cfe3ff;z-index:700;pointer-events:none;';
+    'font:10.5px/1.55 var(--mono,ui-monospace,monospace);color:#cfe3ff;z-index:700;pointer-events:auto;' +
+    'overscroll-behavior:contain;scrollbar-gutter:stable;';
+  // Native wheel scrolling belongs to the panel while the pointer is over it. Do not preventDefault:
+  // stopping propagation keeps this diagnostic surface independent from present/future dolly handlers,
+  // while overflow:auto performs the actual scroll. Outside the panel the canvas still owns the wheel.
+  skyDebugEl.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
   // MUST land inside #cosmos-view, not document.body: `body.cosmos-active > *:not(#cosmos-view)` hides
   // every other top-level child with !important during the full-swallow (style.css) — a body-level
   // panel silently never shows while flying. #cosmos-view has no transform/filter, so position:fixed
@@ -1149,6 +1158,90 @@ function ensureSkyDebugPanel() {
 }
 
 const fmtDev = d => (d > 0 ? '+' : '') + d.toFixed(1) + '¢';
+const fmtPolicy = (value, digits = 3) => Number.isFinite(value) ? value.toFixed(digits) : '—';
+
+function rootPolicyBlock(policy) {
+  const section = document.createElement('section');
+  section.className = 'sky-root-policy';
+  const heading = document.createElement('div');
+  heading.className = 'sky-root-policy-heading';
+  heading.textContent = 'ROOT SELECTION · LIVE POLICY';
+  section.appendChild(heading);
+  if (!policy?.available) {
+    const waiting = document.createElement('div');
+    waiting.className = 'sky-root-policy-summary';
+    waiting.textContent = 'provisional 1/1 · waiting for the first settled root solve';
+    section.appendChild(waiting);
+    return section;
+  }
+
+  const p = policy, inc = p.incumbent, trigger = p.trigger;
+  const confidence = p.ladder.normalizedRange < 0.25 ? 'vague' : p.ladder.normalizedRange < 0.75 ? 'mixed' : 'distinct';
+  const triggerState = !p.solve.valid
+    ? (p.solve.settled ? 'blocked: stale epoch' : 'blocked: moving')
+    : !p.established && trigger.due
+      ? `due: bootstrap → ${trigger.bootstrapChoice}`
+    : !trigger.dwellReady
+      ? 'blocked: dwell'
+      : trigger.due
+        ? `due: ${trigger.reason}`
+        : p.phrase.exhaustionDue
+          ? 'blocked: no eligible destination'
+          : 'waiting: geography / phrase cycle';
+  const destination = p.destination || p.previewDestination;
+  const bootstrapRetain = !p.established && trigger.reason === 'bootstrap' && trigger.bootstrapChoice === 'incumbent';
+  const destinationLabel = p.destination ? 'DESTINATION' : bootstrapRetain ? 'DESTINATION' : 'RANK PREVIEW';
+  const destinationText = bootstrapRetain
+    ? `${inc.fraction} · retain provisional anchor`
+    : destination
+      ? `${destination.fraction} · ${fmtPolicy(destination.motionCents, 0)}¢ · cost ${fmtPolicy(destination.cost, 2)}`
+      : '—';
+  const recent = p.recentRoots.length ? p.recentRoots.map(root => root.fraction || `${fmtPolicy(root.cents, 1)}¢`).join(' → ') : '—';
+  const lastDecision = p.lastDecision
+    ? `${p.lastDecision.reason}: ${p.lastDecision.from.fraction} → ${p.lastDecision.to.fraction}${p.lastDecision.changed ? '' : ' (retained)'}`
+    : '—';
+  const lines = [
+    `ROOT  ${inc.fraction}${p.established ? '' : ' [provisional]'} · rank ${inc.rank || '—'}/${inc.candidateCount} · raw ${fmtPolicy(inc.score, 4)} · fitness ${fmtPolicy(inc.fitness, 3)}`,
+    `FIELD spread ${fmtPolicy(p.ladder.spread, 4)} / ε ${fmtPolicy(p.ladder.epsilon, 4)} · range ${fmtPolicy(p.ladder.normalizedRange, 3)} · ${confidence}`,
+    `PHRASE dwell ${p.phrase.chordsSinceRootChange}/${trigger.minDwellChords} · states ${p.phrase.seenStateKeys.length} · repeated ${p.phrase.exhaustionDue ? p.phrase.repeatedStateKey : 'no'}`,
+    `SOLVE epoch ${p.solve.proposalEpoch ?? '—'}/${p.solve.currentEpoch} · ${p.solve.settled ? 'settled' : 'moving'} · ${p.solve.valid ? 'proposal valid' : 'proposal invalid'}`,
+    `TRIGGER ${triggerState}`,
+    `${destinationLabel} ${destinationText}`,
+    `RECENT ${recent}`,
+    `LAST ${lastDecision}`,
+  ];
+  const summary = document.createElement('div');
+  summary.className = 'sky-root-policy-summary';
+  summary.textContent = lines.join('\n');
+  section.appendChild(summary);
+
+  if (p.rows.length) {
+    const table = document.createElement('table');
+    table.className = 'sky-root-policy-table';
+    const labels = ['Root', 'Rank', 'Raw', 'Fit', 'Arrival', 'Motion', 'Tune', 'Total', 'Status'];
+    const thead = table.createTHead(), header = thead.insertRow();
+    for (const label of labels) { const th = document.createElement('th'); th.scope = 'col'; th.textContent = label; header.appendChild(th); }
+    const tbody = table.createTBody();
+    for (const row of p.rows) {
+      const tr = tbody.insertRow();
+      tr.className = `sky-root-status-${row.statusCode}`;
+      const values = [
+        row.fraction,
+        row.rank,
+        fmtPolicy(row.score, 4),
+        fmtPolicy(row.fitness, 3),
+        fmtPolicy(row.arrivalCoverage, 3),
+        Number.isFinite(row.motionCents) ? `${fmtPolicy(row.motionCents, 0)}¢/${fmtPolicy(row.motionCost, 2)}` : '—',
+        fmtPolicy(row.tuningCost, 2),
+        fmtPolicy(row.cost, 2),
+        row.status,
+      ];
+      for (const value of values) { const td = tr.insertCell(); td.textContent = value; }
+    }
+    section.appendChild(table);
+  }
+  return section;
+}
 
 function appendRatioTokens(cell, ratios) {
   if (!ratios.length) { cell.textContent = '—'; return; }
@@ -1195,21 +1288,21 @@ function renderSkyDebug(now) {
   skyDebugLast = now;
   const s = debugSkyState();
   const lines = [];
-  lines.push(`FULL SKY DEBUG   mode ${s.audioMode}   tuning ${s.tuningStrength.toFixed(2)}st   root ${s.root.fraction} (${s.root.cents}¢, ${s.root.hz}Hz)${s.rootPending ? '  [solve pending]' : ''}`);
+  lines.push(`FULL SKY DEBUG   mode ${s.audioMode}   tuning ${s.tuningStrength.toFixed(2)}st   sounding root ${s.root.fraction} (${s.root.cents}¢, ${s.root.hz}Hz)${s.rootPolicy.pending ? '  [policy decision pending]' : ''}`);
   const settleState = settleSinceTick === null ? 'moving' : `settled ${(Math.max(0, (currentTicks() - settleSinceTick))).toFixed(0)}/${SETTLE_TICKS} ticks`;
   lines.push(`  ${settleState}, camSpeed ${camSpeed.toFixed(1)}u/s (settle<${SETTLE_SPEED})`);
-  if (s.rootLadder.length) lines.push(`  ladder (top ${s.rootLadder.length})  ${s.rootLadder.map(r => `${r.fraction}:${r.score.toFixed(2)}`).join('  ')}`);
   lines.push(`chord  ${s.chord.symbol}  degrees [${s.chord.semitones.join(',')}]`);
   lines.push(`trail  ${s.tabu.map(c => c.symbol).join(' → ')}`);
   if (s.gridRows) {
     const compiler = rowCompiler?.snapshot() || { queued: 0, compiling: 0, completed: 0, cancelled: 0, errors: 0 };
-    lines.push(`rows   ${s.gridRows.activeStars}/${ROW_ACTIVE_STARS} active · ${rowPrewarmIds.size}/${ROW_PREWARM_STARS} warm · ${s.gridRows.voices}/${s.gridRows.budget} voices · ${s.gridRows.budgetMisses} misses`);
+    lines.push(`rows   ${s.gridRows.activeStars}/${ROW_ACTIVE_STARS} active · ${rowPrewarmIds.size}/${ROW_PREWARM_STARS} warm · ${s.gridRows.voices}/${s.gridRows.budget} voices · ${s.gridRows.budgetMisses} budget misses`);
+    lines.push(`tone cap  ${CULLED_ROW_MAX_VOICES_PER_TONE} each · ${s.gridRows.toneCapMisses} rejected · ${s.gridRows.toneCapEvictions} farther voices swapped`);
     lines.push(`worker q${compiler.queued} c${compiler.compiling} done${compiler.completed} cancel${compiler.cancelled} err${compiler.errors} last${compiler.lastCompileMs?.toFixed?.(1) || 0}ms`);
     for (const star of s.gridRows.stars) lines.push(`  #${star.id} ${star.events} ticks · ${star.selectedRatios} ratios · ${star.voices} voices${star.pendingKey ? ' [swap pending]' : ''}`);
   }
   const ratioTableAt = lines.length;
   const ratioContext = s.audioMode === AUDIO_MODES.CULLED_GRID_ROWS
-    ? 'active grid-star programs; ON = live A–D voices'
+    ? `active grid-star programs; ON = live A–D voices, max ${CULLED_ROW_MAX_VOICES_PER_TONE} per tone`
     : 'audible-star pools; ON = live bed voices';
   const covSorted = [...s.coverageByTriad].sort((a, b) => b.coverage - a.coverage);
   lines.push(`coverage (best→worst)  ${covSorted.map(c => `${c.symbol}:${c.coverage.toFixed(2)}`).join('  ')}`);
@@ -1227,6 +1320,7 @@ function renderSkyDebug(now) {
     } else lines.push(`  ▶ (silent — no chord degree covered)`);
   }
   const fragment = document.createDocumentFragment();
+  fragment.appendChild(rootPolicyBlock(s.rootPolicy));
   const before = document.createElement('div');
   before.className = 'sky-debug-text';
   before.textContent = lines.slice(0, ratioTableAt).join('\n');
@@ -1236,7 +1330,9 @@ function renderSkyDebug(now) {
   after.className = 'sky-debug-text';
   after.textContent = lines.slice(ratioTableAt).join('\n');
   fragment.appendChild(after);
+  const priorScrollTop = skyDebugEl.scrollTop;
   skyDebugEl.replaceChildren(fragment);
+  skyDebugEl.scrollTop = priorScrollTop;
 }
 
 function loop() {
@@ -1330,8 +1426,14 @@ function loop() {
   // (a few thousand gainForDev evals) — never done per frame.
   const ticks = currentTicks();
   if (camSpeed < SETTLE_SPEED) { if (settleSinceTick === null) settleSinceTick = ticks; }
-  else settleSinceTick = null;
+  else {
+    if (rootPolicyWasSettled) rootGeographyEpoch++;
+    rootPolicyWasSettled = false;
+    settleSinceTick = null;
+  }
   const settled = settleSinceTick !== null && (ticks - settleSinceTick) >= SETTLE_TICKS;
+  if (settled) rootPolicyWasSettled = true;
+  setRootPolicyContext({ settled, geographyEpoch: rootGeographyEpoch });
   if (settled && (ticks - lastRootResolveTick) >= ROOT_RESOLVE_MIN_TICKS) {
     lastRootResolveTick = ticks;
     const rootField = [];
@@ -1343,8 +1445,13 @@ function loop() {
       rootField.push({ tones: z.skyTones, weight: distGain(d) });
     }
     const ladder = solveRoots(rootField);
-    const incumbentScore = scoreRootAt(currentSkyRoot().cents, rootField).score;
-    proposeRoot({ ladder, incumbentScore });
+    const currentRoot = currentSkyRoot();
+    const incumbentResult = scoreRootAt(currentRoot.cents, rootField);
+    proposeRoot({
+      ladder,
+      incumbent: { fraction: currentRoot.fraction, cents: currentRoot.cents, score: incumbentResult.score, perDegree: incumbentResult.perDegree },
+      proposalEpoch: rootGeographyEpoch,
+    });
   }
 
   // Re-anchored playback: each zone lazily caches its re-folded pool at the CURRENT solved root,
@@ -1452,6 +1559,10 @@ function loop() {
     // radial scale: plain BLOOM_R per cardinality step, soft-kneed so sparse high-cardinality outliers don't
     // blow out the footprint, and clamped so the OUTER radius stays within BLOOM_MAX_R (loose safety ceiling).
     const rscale = Math.min(BLOOM_R, BLOOM_MAX_R / (1 + cardExtent(Math.max(1, data.cmax - data.cmin))));
+    // A bloomed grid gets no single grid-centre orb (suppressed below); instead each node whose OWNER
+    // rhythm currently has a live/attacking row voice lights up, keyed by the shared canonical rhythm key.
+    const act = rowActivity.get(g);
+    const nodeSources = act && act.sources ? new Map(act.sources.map(src => [src.key, src])) : null;
     for (let pi = 0; pi < N; pi++) {
       const p = B.pts[pi];
       const R = rscale * (1 + cardExtent(p.c - data.cmin));    // radial extent = cardinality (soft-kneed spikes)
@@ -1465,6 +1576,7 @@ function loop() {
       const fog = fogAt(sp.z); if (fog <= 0) continue;                    // per-node fog (far side of a big bloom fades)
       const rv = Math.min(1, (now - p.bt) / BLOOM_RV_MS), a0 = fog * rv;   // per-node birth ease
       const r = Math.max(0.4, Math.min(2.6 * focal / sp.z, 6)) * (0.5 + 0.5 * rv);
+      if (nodeSources) { const src = nodeSources.get(p.key); if (src) drawGridRowAura(ctx, sp, r, fog, src); }
       ctx.globalAlpha = a0; ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, 7); ctx.fill();
       if (p.dense) { ctx.globalAlpha = a0 * 0.5; ctx.strokeStyle = p.col; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sp.x, sp.y, r + 1.6, 0, 7); ctx.stroke(); }
       const nid = g + ':' + pi;
