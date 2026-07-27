@@ -3561,7 +3561,10 @@ body.cosmos-active #cosmos-view {
     display: block; position: fixed; inset: 0; z-index: 510;
     background: radial-gradient(circle at 50% 42%, #0a0f0d, #000 78%);   /* neutral-black space, faint green cast */
 }
-#cosmos-canvas { width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+#cosmos-web-canvas,
+#cosmos-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#cosmos-web-canvas { pointer-events: none; }
+#cosmos-canvas { cursor: crosshair; touch-action: none; }
 
 /* HUD status line — muted house text, mono numerals (accent green comes from var(--known) in the markup) */
 #cosmos-hud { position: absolute; left: 16px; top: 14px; font-family: var(--mono); font-size: 11px; color: var(--dim); pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,.6); }

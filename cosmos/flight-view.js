@@ -9,6 +9,7 @@ import { renderPosCam, setPlacement, macroCell, macroScale, backboneHash, SPACIN
 import { hilbertDecode, hilbertEncode, neighborGrids, SIDE } from './cosmos/hilbert.js';
 import { GOLDEN, cardColor, CHARTED } from './cosmos/bloom-core.js';
 import { rhythmTriples, rhythmDoubles } from './cosmos/mn-core.js';
+import { sampleArcPath } from './cosmos/web-return.js';
 // agents.js (Collider-Battle ships / dragon-tail game) is DEFERRED for the POC and intentionally not ported.
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
@@ -79,19 +80,18 @@ const DRAG_SLOP = 5;       // px of pointer travel before a press counts as a lo
 // zone to zone traces a cosmic web across the cube. Membership is the codex index already loaded for the
 // charted lookup (no new data); placement is deterministic (macroCell), so members that aren't loaded as
 // stars still get positioned + connected. Node-level: click a node → trace ITS mother's family. ──
-const WEB_K = 3;              // nearest-neighbour edges per member (proximity web of local strands, not a hub)
-const WEB_LINE_W = 2;        // strand thickness (px); beads scale with it
-const WEB_STRAND_A = 0.3;    // strand base alpha (× depth fog)
-const WEB_REVEAL_FRAC = 0.75;// reveal a member (+ its now-ready edges) when within this × FOG_FAR of the camera
+// Membership, graph construction, reveal, projection, picking, and drawing all live in the dedicated
+// OffscreenCanvas worker. This thread keeps only tiny Web metadata for the HUD/card.
 // Dragon-tail trim: cap how far behind/around the camera web strands draw, as a fraction of FOG_FAR, with a
 // soft fade over the last stretch. The FUTURE graphics slider drives `webTailFrac` (lower = shorter tail =
 // cheaper: low graphics keeps a stub, high graphics streams a long tail). Default 1.0 ≈ the fog range (no
 // visible change until the slider lowers it).
 let   webTailFrac = 1.0;
-const WEB_BUCKET = 8;         // cell-space bucket size for the kNN build (codex is sparse in the cube → cheap)
 const WEB_COLORS = ['#ff6ec7', '#6ecbff', '#ffd86e', '#8dff6e', '#c58bff', '#ff9a6e'];
 let   webColorN = 0;
 const activeWebs = new Map(); // web id -> web { tag, color, slot, visible, dynamic?, ... }
+let   hoverWeb = null;         // nearest visible strand, returned asynchronously by the Web worker
+let   returnRide = null;       // active camera autopilot along a selected Web back to its authored grid
 const WEB_MAX = 10;           // max simultaneous webs (mother + MN); number keys 1-9,0 hide/show each slot,
                               //   a hidden slot is reclaimed by the next trace (so you can swap webs in/out)
 // MN "hyperlane" web: a motif (Root Double or CT/IT/RDCP triple) scanned live from a node's layers is
@@ -99,11 +99,11 @@ const WEB_MAX = 10;           // max simultaneous webs (mother + MN); number key
 // Cross-cardinality, cache-free, and EFFECTIVELY INFINITE (all multiples), so it's drawn as a DYNAMIC
 // camera-local web: members = the current LOD stars divisible by base, rebuilt as you fly → it never
 // "stops short", it flows with you. (Mother webs are finite lineages → stay global + persistent.)
-const MN_REFRESH_MS = 200;    // dynamic MN web rebuild cadence
 const MN_CHIP_MAX = 12;       // most motif chips to show on a node panel (triples first, rarer first)
 // Collider-Battle prototype: AI cube-frame ships that each SELECT a network and fly its family, leaving a
 // tunnel-trail, crashing into one another. Toggle with the B key (off by default). All sim lives in agents.js.
 const AGENT_COUNT = 6;        // ships spawned by the B toggle
+const AGENT_WEB_LINE_W = 2, AGENT_WEB_STRAND_A = 0.3;
 let   swarm = null;
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 // Depth fog: stars fade to black between these view-depths so the field reads as deep space fading
@@ -184,6 +184,55 @@ class Pool {
   _drain() { while (this.queue.length && this.free.length) { const w = this.free.pop(), job = this.queue.shift(), id = ++this.id; this.jobs.set(id, job); w._job = id; w._payload = job.payload; w.postMessage({ id, ...job.payload }); } }
 }
 
+// One worker owns the complete Web pipeline and its transferred overlay canvas. Frames are
+// backpressured: if the worker is still drawing, only the newest camera snapshot is retained.
+class WebRenderer {
+  constructor(url, canvas, placementMode, onFrame) {
+    this.worker = new Worker(url, { type: 'module' });
+    this.onFrame = onFrame; this.frameId = 0; this.requestId = 0; this.pending = new Map();
+    this.busy = false; this.latestFrame = null; this.closed = false;
+    this.worker.onmessage = event => this._message(event.data || {});
+    this.worker.onerror = event => { event.preventDefault?.(); console.warn('[cosmos Web worker]', event.message || event); this._failAll(event.message || 'Web worker failed'); };
+    const offscreen = canvas.transferControlToOffscreen();
+    this.worker.postMessage({ type: 'init', canvas: offscreen, placement: placementMode }, [offscreen]);
+  }
+  post(message, transfer = []) { if (!this.closed) this.worker.postMessage(message, transfer); }
+  resize(width, height, dpr) { this.post({ type: 'resize', width, height, dpr }); }
+  upsert(web) { this.post({ type: 'upsert', web }); }
+  remove(webId) { this.post({ type: 'remove', webId }); }
+  visibility(webId, visible) { this.post({ type: 'visibility', webId, visible }); }
+  select(webId) { this.post({ type: 'select', webId }); }
+  clearRoute() { this.post({ type: 'clearRoute' }); }
+  zones(added, removed) {
+    if (!added.length && !removed.length) return;
+    const a = Int32Array.from(added), r = Int32Array.from(removed);
+    this.post({ type: 'zones', added: a, removed: r }, [a.buffer, r.buffer]);
+  }
+  frame(frame) { this.latestFrame = frame; if (!this.busy) this._sendFrame(); }
+  _sendFrame() {
+    if (!this.latestFrame || this.closed) return;
+    const frame = this.latestFrame; this.latestFrame = null; this.busy = true;
+    this.post({ type: 'frame', frameId: ++this.frameId, frame });
+  }
+  request(op, payload = {}) {
+    if (this.closed) return Promise.reject(new Error('Web worker is closed.'));
+    const id = ++this.requestId;
+    return new Promise((resolve, reject) => { this.pending.set(id, { resolve, reject }); this.post({ type: 'request', id, op, ...payload }); });
+  }
+  _message(message) {
+    if (message.type === 'frameDone') {
+      this.busy = false; this.onFrame?.(message); this._sendFrame(); return;
+    }
+    if (message.type === 'response') {
+      const pending = this.pending.get(message.id); if (!pending) return;
+      this.pending.delete(message.id);
+      if (message.error) pending.reject(new Error(message.error)); else pending.resolve(message.result);
+    }
+  }
+  _failAll(reason) { this.closed = true; this.busy = false; for (const job of this.pending.values()) job.reject(new Error(reason)); this.pending.clear(); }
+  terminate() { if (this.closed) return; this._failAll('Web worker terminated.'); this.worker.terminate(); }
+}
+
 // ── vec helpers ──
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -216,112 +265,106 @@ function mtagOfKey(key) {
   const i = binarySearch(indexKeys, key); if (i < 0) return null;
   return mtagNames[indexMtag[i]] || null;
 }
-// Build a k-nearest-neighbour proximity graph over member grids in CELL space (bucketed → cheap even
-// for thousands of members; the codex scatters sparsely through the Hilbert cube). Edges are index
-// pairs into `members`; adj[i] lists a member's incident edge indices (for incremental reveal).
-function buildWeb(members) {
-  const n = members.length, pos = new Array(n);
-  for (let i = 0; i < n; i++) pos[i] = macroCell(members[i]);
-  const B = WEB_BUCKET, buckets = new Map();
-  const bk = (x, y, z) => (x / B | 0) + ',' + (y / B | 0) + ',' + (z / B | 0);
-  for (let i = 0; i < n; i++) { const p = pos[i]; const k = bk(p[0], p[1], p[2]); let a = buckets.get(k); if (!a) { a = []; buckets.set(k, a); } a.push(i); }
-  const d2 = (a, b) => { const dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2]; return dx * dx + dy * dy + dz * dz; };
-  const edges = [], adj = Array.from({ length: n }, () => []), seen = new Set();
-  for (let i = 0; i < n; i++) {
-    const p = pos[i], bx = p[0] / B | 0, by = p[1] / B | 0, bz = p[2] / B | 0, cand = [];
-    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
-      const a = buckets.get((bx + dx) + ',' + (by + dy) + ',' + (bz + dz)); if (a) for (const j of a) if (j !== i) cand.push(j);
-    }
-    cand.sort((a, b) => d2(pos[a], p) - d2(pos[b], p));
-    for (let t = 0, lim = Math.min(WEB_K, cand.length); t < lim; t++) {
-      const j = cand[t], key = i < j ? i * n + j : j * n + i;
-      if (seen.has(key)) continue; seen.add(key);
-      const ei = edges.length; edges.push([i, j]); adj[i].push(ei); adj[j].push(ei);
-    }
-  }
-  return { members, edges, adj };
-}
 // Assign a slot (0..WEB_MAX-1) for a new web: lowest free, else reclaim the lowest HIDDEN web's slot
 // (toggling a web off frees it for the next trace). Returns -1 if all WEB_MAX slots are visible.
 function claimSlot() {
   const used = new Map(); for (const w of activeWebs.values()) used.set(w.slot, w);
   for (let s = 0; s < WEB_MAX; s++) if (!used.has(s)) return s;
   let victim = null; for (const w of activeWebs.values()) if (w.visible === false && (!victim || w.slot < victim.slot)) victim = w;
-  if (victim) { activeWebs.delete(victim.tag); return victim.slot; }
+  if (victim) { removeWeb(victim.tag); return victim.slot; }
   return -1;   // full (all visible) — hide one with its number key to free a slot
 }
 // number key 1-9,0 → toggle that slot's web visibility (hidden webs stop drawing but keep their state)
-function toggleSlot(s) { for (const w of activeWebs.values()) if (w.slot === s) { w.visible = !w.visible; return; } }
+function toggleSlot(s) { for (const w of activeWebs.values()) if (w.slot === s) { w.visible = !w.visible; webRenderer?.visibility(w.tag, w.visible); return; } }
+
+function removeWeb(id) {
+  activeWebs.delete(id);
+  webRenderer?.remove(id);
+  if (returnRide && returnRide.webId === id) { returnRide = null; webRenderer?.clearRoute(); }
+  if (selected && selected.kind === 'web' && selected.webId === id) { selected = null; showDetail(null); }
+}
 
 // Toggle a mother-scale network on/off. srcGrid (the clicked node's grid) is seeded revealed so the web
 // has an anchor even before you fly to it.
 function toggleWeb(tag, srcGrid) {
-  if (activeWebs.has(tag)) { activeWebs.delete(tag); return; }
+  if (activeWebs.has(tag)) { removeWeb(tag); return; }
   const members = mtagGrids && mtagGrids.get(tag);
   if (!members || !members.length) return;
   const slot = claimSlot(); if (slot < 0) return;
-  const g = buildWeb(members);
   const web = { tag, slot, visible: true, color: WEB_COLORS[webColorN++ % WEB_COLORS.length],
-    members, edges: g.edges, adj: g.adj, revealed: new Set(), revealedIdx: new Set(), liveEdges: [] };
-  const si = members.indexOf(srcGrid);
-  if (si >= 0) { web.revealedIdx.add(si); web.revealed.add(srcGrid); }
+    homeGrid: srcGrid, memberCount: members.length, localNodes: members.length, visibleNodes: 0 };
   activeWebs.set(tag, web);
+  webRenderer?.upsert({ tag, visible: true, dynamic: false, color: web.color, homeGrid: srcGrid, members });
 }
 // Toggle a Master-Network family web. Members = grids divisible by the motif's base-LCM (host it at some
-// scalar) — but that set is infinite, so the web is DYNAMIC: drawWebs rebuilds it from the current LOD
+// scalar) — but that set is infinite, so the worker rebuilds it from the current LOD
 // stars every frame-ish, so it flows endlessly with the camera (smart LOD, never a hard cap).
 function toggleMNWeb(id, base, srcGrid) {
-  if (activeWebs.has(id)) { activeWebs.delete(id); return; }
+  if (activeWebs.has(id)) { removeWeb(id); return; }
   if (!(base >= 2)) return;
   const slot = claimSlot(); if (slot < 0) return;
-  activeWebs.set(id, { tag: id, slot, visible: true, dynamic: true, base,
-    color: WEB_COLORS[webColorN++ % WEB_COLORS.length], members: [], edges: [], built: -1 });
+  const web = { tag: id, slot, visible: true, dynamic: true, base, homeGrid: srcGrid,
+    color: WEB_COLORS[webColorN++ % WEB_COLORS.length], localNodes: 0, visibleNodes: 0 };
+  activeWebs.set(id, web);
+  webRenderer?.upsert({ tag: id, visible: true, dynamic: true, base, color: web.color, homeGrid: srcGrid });
 }
 // Draw all visible webs under the star field. Two kinds:
 //  • static (mother): finite member list, revealed progressively as the camera nears each strand.
 //  • dynamic (MN): infinite family, so members = the current LOD stars divisible by base, rebuilt on a
 //    cadence → the web flows endlessly with the camera (smart LOD).
-function drawWebs(rpOf, basis, now) {
-  if (!activeWebs.size) return;
-  const R2 = (FOG_FAR * WEB_REVEAL_FRAC) ** 2;
-  const posOf = g => rpOf.get(g) || gridRP(g);
-  // dragon-tail trim: cull/soft-fade strands beyond webTailFrac·FOG_FAR (the graphics-tier tail length)
-  const tailR2 = (FOG_FAR * webTailFrac) ** 2, tailKnee = tailR2 * 0.49;   // fade over the last ~30%
-  const d2Of = rp => rp[0] * rp[0] + rp[1] * rp[1] + rp[2] * rp[2];
-  const tailFade = d2 => d2 <= tailKnee ? 1 : Math.max(0, (tailR2 - d2) / (tailR2 - tailKnee));
-  const drawEdge = (ga, gb) => {
-    const ra = posOf(ga), rb = posOf(gb), da = d2Of(ra), db = d2Of(rb);
-    if (da > tailR2 && db > tailR2) return;                                // whole strand past the tail
-    const a = toScreen(ra, basis), b = toScreen(rb, basis); if (!a || !b) return;
-    const f = Math.min(fogAt(a.z), fogAt(b.z)) * Math.min(tailFade(da), tailFade(db)); if (f <= 0) return;
-    ctx.globalAlpha = WEB_STRAND_A * f; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
-  };
-  const drawBead = g => { const rp = posOf(g), d2 = d2Of(rp); if (d2 > tailR2) return; const sp = toScreen(rp, basis); if (!sp) return; const f = fogAt(sp.z) * tailFade(d2); if (f <= 0) return; ctx.globalAlpha = 0.6 * f; ctx.beginPath(); ctx.arc(sp.x, sp.y, WEB_LINE_W * 1.1, 0, 7); ctx.fill(); };
-  for (const web of activeWebs.values()) {
-    if (web.visible === false) continue;
-    ctx.lineWidth = WEB_LINE_W; ctx.strokeStyle = web.color; ctx.lineCap = 'round';
-    if (web.dynamic) {
-      if (now - web.built > MN_REFRESH_MS) {                 // rebuild from the current LOD field
-        const mem = []; for (const g of cosmos.zones.keys()) if (g % web.base === 0) mem.push(g);
-        const gr = buildWeb(mem); web.members = mem; web.edges = gr.edges; web.built = now;
-      }
-      for (const [i, j] of web.edges) drawEdge(web.members[i], web.members[j]);
-      ctx.fillStyle = web.color; for (const g of web.members) drawBead(g);
-      continue;
-    }
-    // static: reveal newly-near members (+ their now-ready edges), then draw the lit strands
-    for (let i = 0; i < web.members.length; i++) {
-      if (web.revealedIdx.has(i)) continue;
-      const rp = posOf(web.members[i]);
-      if (rp[0] * rp[0] + rp[1] * rp[1] + rp[2] * rp[2] < R2) {
-        web.revealedIdx.add(i); web.revealed.add(web.members[i]);
-        for (const ei of web.adj[i]) { const e = web.edges[ei]; if (web.revealedIdx.has(e[0]) && web.revealedIdx.has(e[1])) web.liveEdges.push(ei); }
-      }
-    }
-    for (const ei of web.liveEdges) { const e = web.edges[ei]; drawEdge(web.members[e[0]], web.members[e[1]]); }
-    ctx.fillStyle = web.color; for (const i of web.revealedIdx) drawBead(web.members[i]);
-  }
-  ctx.globalAlpha = 1;
+const cameraAbsolute = () => { const c = macroCell(cam.anchor), s = macroScale(); return [c[0] * s + cam.off[0], c[1] * s + cam.off[1], c[2] * s + cam.off[2]]; };
+
+function cancelWebReturn(status = 'ride cancelled') {
+  const webId = returnRide?.webId || (selected?.kind === 'web' ? selected.webId : null);
+  webRouteGeneration++;
+  const web = webId && activeWebs.get(webId); if (web) { web.rideStatus = status; web.routePlanning = false; }
+  returnRide = null; camSpeed = 0; webRenderer?.clearRoute();
+  if (selected && selected.kind === 'web') showDetail(selected);
+}
+
+function beginWebReturn(webId) {
+  const web = activeWebs.get(webId);
+  if (!web || web.homeGrid == null || !webRenderer) return;
+  const generation = ++webRouteGeneration;
+  web.visible = true; web.routePlanning = true; web.rideStatus = 'stitching route off-thread';
+  webRenderer.visibility(webId, true); selected = { kind: 'web', webId }; webRenderer.select(webId); showDetail(selected);
+  webRenderer.request('planReturn', { webId, cameraStart: cameraAbsolute() }).then(result => {
+    if (generation !== webRouteGeneration || !activeWebs.has(webId)) { webRenderer.clearRoute(); return; }
+    web.routePlanning = false;
+    returnRide = { ...result, started: performance.now(), lastUi: 0 };
+    // Aim down the opening strand exactly once. From here on the route owns position only; the
+    // player's view remains inertial and arrow-key steering stays fully available during travel.
+    const opening = sampleArcPath(result.path, 0.0001).tangent; // skip any duplicate camera→first-node point
+    cam.yaw = Math.atan2(opening[0], opening[2]);
+    cam.pitch = Math.asin(Math.max(-1, Math.min(1, opening[1])));
+    web.rideStatus = result.sampled ? `riding an adaptive ${result.routeNodes}-node route` : `riding ${result.routeNodes} connected nodes`;
+    showDetail(selected);
+  }).catch(error => {
+    if (generation !== webRouteGeneration || !activeWebs.has(webId)) return;
+    web.routePlanning = false; web.rideStatus = error.message || 'route planning failed'; webRenderer.clearRoute(); showDetail(selected);
+  });
+}
+
+function stepWebReturn(now, dt) {
+  if (!returnRide) return false;
+  const ride = returnRide, web = activeWebs.get(ride.webId);
+  if (!web) { cancelWebReturn(); return false; }
+  const raw = Math.min(1, (now - ride.started) / (ride.duration * 1000));
+  const eased = 0.5 - Math.cos(raw * Math.PI) * 0.5;
+  const sample = sampleArcPath(ride.path, eased), here = cameraAbsolute();
+  const delta = sample.position.map((v, i) => v - here[i]);
+  camSpeed = dt > 0 ? Math.hypot(delta[0], delta[1], delta[2]) / dt : 0;
+  translateCam(delta);
+
+  if (now - ride.lastUi > 250) { ride.lastUi = now; web.rideProgress = raw; showDetail(selected); }
+  if (raw < 1) return true;
+
+  const hc = macroCell(ride.homeGrid), scale = macroScale();
+  cam.anchor = ride.homeGrid;
+  cam.off = [ride.arrival[0] - hc[0] * scale, ride.arrival[1] - hc[1] * scale, ride.arrival[2] - hc[2] * scale];
+  cosmos.setCamera(cam.anchor); camSpeed = 0;
+  web.rideProgress = 1; web.rideStatus = 'home reached'; returnRide = null; webRenderer?.clearRoute(); showDetail(selected);
+  return true;
 }
 
 // Draw the Collider-Battle ships: each agent's tunnel-trail (fading polyline) + a velocity-oriented cube
@@ -337,18 +380,18 @@ function drawAgents(basis) {
   for (const a of swarm.agents) {
     // dragon tail = the agent's OWN network web: strands between the family-member grid cells it has
     // threaded (older = dimmer), plus a live edge from the last node to the ship, plus a bead per node.
-    ctx.lineWidth = WEB_LINE_W; ctx.strokeStyle = a.color; ctx.lineCap = 'round';
+    ctx.lineWidth = AGENT_WEB_LINE_W; ctx.strokeStyle = a.color; ctx.lineCap = 'round';
     const nodes = a.path, N = nodes.length;
     let prev = N ? proj(cellW(nodes[0])) : null;
     for (let i = 1; i < N; i++) {
       const sp = proj(cellW(nodes[i]));
-      if (sp && prev) { const fog = fogAt(sp.z); if (fog > 0) { ctx.globalAlpha = WEB_STRAND_A * fog * (i / N); ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(sp.x, sp.y); ctx.stroke(); } }
+      if (sp && prev) { const fog = fogAt(sp.z); if (fog > 0) { ctx.globalAlpha = AGENT_WEB_STRAND_A * fog * (i / N); ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(sp.x, sp.y); ctx.stroke(); } }
       prev = sp;
     }
     const c0 = proj(a.p);
-    if (a.alive && prev && c0) { const fog = fogAt(c0.z); if (fog > 0) { ctx.globalAlpha = WEB_STRAND_A * fog; ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(c0.x, c0.y); ctx.stroke(); } }   // growing edge
+    if (a.alive && prev && c0) { const fog = fogAt(c0.z); if (fog > 0) { ctx.globalAlpha = AGENT_WEB_STRAND_A * fog; ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(c0.x, c0.y); ctx.stroke(); } }   // growing edge
     ctx.fillStyle = a.color;
-    for (let i = 0; i < N; i++) { const sp = proj(cellW(nodes[i])); if (!sp) continue; const fog = fogAt(sp.z); if (fog <= 0) continue; ctx.globalAlpha = 0.55 * fog * (0.3 + 0.7 * i / N); ctx.beginPath(); ctx.arc(sp.x, sp.y, WEB_LINE_W * 1.1, 0, 7); ctx.fill(); }
+    for (let i = 0; i < N; i++) { const sp = proj(cellW(nodes[i])); if (!sp) continue; const fog = fogAt(sp.z); if (fog <= 0) continue; ctx.globalAlpha = 0.55 * fog * (0.3 + 0.7 * i / N); ctx.beginPath(); ctx.arc(sp.x, sp.y, AGENT_WEB_LINE_W * 1.1, 0, 7); ctx.fill(); }
     if (!a.alive) {                                   // crash flash: expanding rings
       if (c0) { const t = Math.max(0, Math.min(1, 1 - a.crashT / swarm.respawnMs)), fog = fogAt(c0.z);
         const rr = swarm.cubeR * (1 + 4 * t) * focal / c0.z;
@@ -381,7 +424,8 @@ function drawAgents(basis) {
   ctx.globalAlpha = 1;
 }
 
-let cv, ctx, hud, cosmos, pool, cam, keys = {}, W = 0, H = 0, cx = 0, cy = 0, focal = 800, last = 0, started = false, bound = false;
+let cv, ctx, hud, cosmos, pool, cam, webCanvas = null, webRenderer = null, webRouteGeneration = 0;
+let webZoneAdded = [], webZoneRemoved = [], keys = {}, W = 0, H = 0, cx = 0, cy = 0, focal = 800, last = 0, started = false, bound = false;
 let hbLast = 0, hbPlans = 0, hbShards = 0, hbSolved = 0;   // per-second solve-progress heartbeat
 // Picking state. Cursor is tracked in CSS px (canvas-relative for hit-tests, client for the tooltip).
 // `hover` is resolved each frame from what's actually drawn under the cursor; `selected` is pinned on
@@ -477,6 +521,8 @@ export function ensureFlight(canvas, hudEl) {
     const helpBtn = document.getElementById('cosmos-help-btn');
     if (helpBtn && helpPanelEl) helpBtn.addEventListener('click', () => helpPanelEl.classList.toggle('open'));
     if (detailEl) detailEl.addEventListener('click', e => {
+      const home = e.target.closest && e.target.closest('.web-home-btn'); if (home) { beginWebReturn(home.dataset.id); return; }
+      const cancel = e.target.closest && e.target.closest('.web-cancel-btn'); if (cancel) { cancelWebReturn(); return; }
       const ap = e.target.closest && e.target.closest('.apply-btn'); if (ap) { applyToEngine(selected); return; }
       const ov = e.target.closest && e.target.closest('.ov-btn'); if (ov) { overrideSolve(+ov.dataset.g); return; }
       const wb = e.target.closest && e.target.closest('.web-btn'); if (wb) { toggleWeb(wb.dataset.tag, +wb.dataset.g); showDetail(selected); return; }
@@ -549,25 +595,40 @@ export function ensureFlight(canvas, hudEl) {
   // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
   placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
   setPlacement(placement);
+  // A transferred canvas cannot be transferred a second time after exit/re-entry, so each flight session
+  // replaces the inert overlay element with a fresh identical canvas before starting its Web worker.
+  const previousWebCanvas = document.getElementById('cosmos-web-canvas');
+  webCanvas = previousWebCanvas.cloneNode(false); previousWebCanvas.replaceWith(webCanvas);
+  if (!webCanvas.transferControlToOffscreen) throw new Error('Cosmos Webs require OffscreenCanvas support.');
+  webZoneAdded = []; webZoneRemoved = []; webRouteGeneration++;
+  webRenderer = new WebRenderer(new URL('./cosmos/web-render-worker.js?v=1', import.meta.url), webCanvas, placement, message => {
+    hoverWeb = message.hover || null;
+    for (const [id, visibleNodes, localNodes] of message.counts || []) {
+      const web = activeWebs.get(id); if (web) { web.visibleNodes = visibleNodes; web.localNodes = localNodes; }
+    }
+    if (message.error) console.warn('[cosmos Web frame]', message.error);
+  });
   if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none';
   if (controlsEl) {
     const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['arrows', 'steer'], ['scroll', 'dolly'],
-                  ['click star', 'bloom'], ['click node', 'inspect / apply'], ['right-click', 'collapse'], ['1–0', 'toggle webs']];
+                  ['click star', 'bloom'], ['click node', 'inspect / apply'], ['click Web', 'inspect / return'],
+                  ['Esc', 'cancel return ride'], ['right-click', 'collapse'], ['1–0', 'toggle webs']];
     controlsEl.innerHTML = rows.map(([k, v]) => `<div class="help-kv"><span>${k}</span><b>${v}</b></div>`).join('') +
       `<div class="help-note">${placement === 'hilbert' ? 'cube' : 'spine'} placement</div>`;
   }
   BLOOM_MAX_R = placement === 'hilbert' ? BLOOM_MAX_R_FRAC * CELL : Infinity;   // keep clouds inside their cell
+  const zoneHooks = { onZoneAdded: grid => webZoneAdded.push(grid), onZoneRemoved: grid => webZoneRemoved.push(grid) };
   if (placement === 'hilbert') {
     // 3D-proximity frontier: spawn/evict by cell distance; grids rest at their own cells (no puffs).
     FOG_NEAR = HIL_SPAWN * CELL * 0.4; FOG_FAR = HIL_EVICT * CELL;   // fade right up to the evict shell
-    cosmos = new Cosmos({ reachScale: 0.15, evictRadius: HIL_EVICT, poolSize, isValid, puffs: false, compete: false,
+    cosmos = new Cosmos({ reachScale: 0.15, evictRadius: HIL_EVICT, poolSize, isValid, puffs: false, compete: false, ...zoneHooks,
       dispatch: g => pool.dispatch(g),
       neighbors: cam => neighborGrids(hilbertDecode(cam), Math.max(2, Math.round(hilSpawn))),
       cellDist: (g, cam) => { const a = hilbertDecode(g), b = hilbertDecode(cam); return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]); } });
   } else {
     // evict window ≈ what the fog lets you see (FOG_FAR/SPACING) plus margin. spawn ~80% (hysteresis).
     FOG_NEAR = 3500; FOG_FAR = 13000;
-    cosmos = new Cosmos({ reachScale: 0.15, spawnRadius: 1100, evictRadius: 1400, poolSize, isValid, dispatch: g => pool.dispatch(g) });
+    cosmos = new Cosmos({ reachScale: 0.15, spawnRadius: 1100, evictRadius: 1400, poolSize, isValid, dispatch: g => pool.dispatch(g), ...zoneHooks });
   }
   // agents deferred (POC): no ships — `swarm` stays null and all swarm paths guard on it.
   // yaw = π/2 points forward (+X); anchor = frontier center + render origin, off = world offset from it
@@ -587,10 +648,12 @@ export function stopFlight() {
   started = false;
   if (pool) { for (const w of pool.all()) w.terminate(); pool = null; }   // kill the whole pool — no lingering solve
   if (rowCompiler) { rowCompiler.terminate(); rowCompiler = null; }
+  if (webRenderer) { webRenderer.terminate(); webRenderer = null; }
+  webRouteGeneration++; webZoneAdded = []; webZoneRemoved = [];
   cosmos = null;
   bloomed.clear(); bloomCache.clear(); bloomPlanning.clear(); bloomInFlight = 0;
   activeWebs.clear(); webColorN = 0;
-  selected = null; hover = null;
+  returnRide = null; selected = null; hover = null; hoverWeb = null;
   leadVoice = null; stopAudio(); audibleIds = new Set(); rowActiveIds = new Set(); rowPrewarmIds = new Set();   // kill the cosmos-audio transport, mirroring the worker teardown
   if (skyDebugEl) skyDebugEl.style.display = 'none';   // dev overlay — hide, don't destroy (cheap to reuse on re-entry)
   if (ctx && cv) { const dpr = window.devicePixelRatio || 1; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H); }
@@ -632,13 +695,14 @@ function translateCam(v) {
   cosmos.setCamera(cam.anchor);
 }
 
-function stepControls(dt) {
+function stepControls(dt, allowTranslation = true) {
   // arrow keys steer the camera (Helix-style) — left turns left, up looks up
   if (keys['arrowleft'])  cam.yaw   -= TURN * dt;
   if (keys['arrowright']) cam.yaw   += TURN * dt;
   if (keys['arrowup'])    cam.pitch += TURN * dt;
   if (keys['arrowdown'])  cam.pitch -= TURN * dt;
   cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch));
+  if (!allowTranslation) return;
 
   // WASD/QE translate along the camera basis; Space boosts speed
   const { d, r, u } = camBasis();
@@ -738,7 +802,12 @@ function updateTooltip() {
   if (!hover) { tipEl.style.display = 'none'; return; }
   tipEl.style.display = 'block';
   tipEl.style.left = (mClientX + 14) + 'px'; tipEl.style.top = (mClientY + 14) + 'px';
-  if (hover.kind === 'node') {
+  if (hover.kind === 'web') {
+    const web = activeWebs.get(hover.webId);
+    if (!web) { tipEl.style.display = 'none'; return; }
+    tipEl.innerHTML = `<div class="t-l" style="color:${web.color}">◈ ${web.dynamic ? web.tag.replace(/^mn:/, '') : web.tag}</div>` +
+      `<div class="t-d">click to inspect · home grid ${web.homeGrid.toLocaleString()}</div>`;
+  } else if (hover.kind === 'node') {
     tipEl.innerHTML = `<div class="t-l">${hover.layers ? hover.layers.join(' : ') : hover.c + '-tone'}</div>` +
       `<div class="t-d">${hover.c}-tone · fund ${hover.fund}${hover.dense ? ' · +dense' : ''} · ${hover.charted ? 'charted' : 'uncharted'}</div>`;
   } else {
@@ -754,7 +823,31 @@ function showDetail(sel) {
   if (!sel) { detailEl.style.display = 'none'; return; }
   detailEl.style.display = 'block';
   const dismiss = `<div style="margin-top:8px;color:var(--dimmer);font-size:10px">click empty space to dismiss</div>`;
-  if (sel.kind === 'node') {
+  if (sel.kind === 'web') {
+    const web = activeWebs.get(sel.webId);
+    if (!web) { detailEl.style.display = 'none'; return; }
+    const homeCell = macroCell(web.homeGrid), camCell = macroCell(cam.anchor);
+    const cellDistance = Math.hypot(homeCell[0] - camCell[0], homeCell[1] - camCell[1], homeCell[2] - camCell[2]);
+    const riding = !!(web.routePlanning || (returnRide && returnRide.webId === web.tag));
+    const title = web.dynamic ? web.tag.replace(/^mn:/, '') : `mother ${web.tag}`;
+    const family = web.dynamic ? 'unbounded' : `${web.memberCount.toLocaleString()} grids`;
+    const status = web.routePlanning ? 'stitching route off-thread' : riding
+      ? `${Math.round((web.rideProgress || 0) * 100)}% · ${returnRide.duration.toFixed(0)}s bounded ride`
+      : (web.rideStatus || 'ready');
+    const travelButton = riding
+      ? `<button class="web-cancel-btn" style="width:100%;margin-top:10px;background:rgba(255,255,255,.05);border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-size:11px;padding:7px;border-radius:var(--border-radius);cursor:pointer">cancel return ride</button>`
+      : `<button class="web-home-btn" data-id="${web.tag}" style="width:100%;margin-top:10px;background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px;border-radius:var(--border-radius);cursor:pointer">Return Home · grid ${web.homeGrid.toLocaleString()}</button>`;
+    bodyEl.innerHTML =
+      `<div class="big" style="color:${web.color}">◈ ${title}</div>` +
+      `<div class="r"><span>network reach</span><b>${family}</b></div>` +
+      `<div class="r"><span>visible nodes</span><b>${(web.visibleNodes || 0).toLocaleString()}</b></div>` +
+      (web.dynamic ? `<div class="r"><span>nested-ratio base</span><b>${web.base.toLocaleString()}</b></div>` : '') +
+      `<div class="r"><span>home grid</span><b>${web.homeGrid.toLocaleString()}</b></div>` +
+      `<div class="r"><span>distance</span><b>${cellDistance.toFixed(1)} cells</b></div>` +
+      `<div class="r"><span>travel</span><b>${status}</b></div>` +
+      (web.dynamic ? `<div style="margin-top:7px;color:var(--dimmer);font-size:10px;line-height:1.45">This family is infinite. Return Home samples qualifying NR grids adaptively while the local Web rebuilds around the camera.</div>` : '') +
+      travelButton + dismiss;
+  } else if (sel.kind === 'node') {
     const col = sel.charted ? CHARTED : cardColor(sel.c);
     const slotLbl = w => w ? ` [${w.slot === 9 ? '0' : w.slot + 1}${w.visible === false ? ' off' : ''}]` : '';
     const tag = mtagOfKey(sel.key), members = tag && mtagGrids && mtagGrids.get(tag);
@@ -1077,13 +1170,22 @@ function loop() {
   requestAnimationFrame(loop);
   if (M.mode !== 'flight' || !cosmos) return;
   const now = performance.now(); let dt = (now - last) / 1000; last = now; dt = Math.min(dt, 0.05);
-  stepControls(dt);
+  const ridingWeb = stepWebReturn(now, dt);
+  stepControls(dt, !ridingWeb);
   cosmos.tick(dt);
+  if (webZoneAdded.length || webZoneRemoved.length) {
+    const added = webZoneAdded; const removed = webZoneRemoved; webZoneAdded = []; webZoneRemoved = [];
+    webRenderer?.zones(added, removed);
+  }
   if (swarm && swarm.agents.length) swarm.update(dt, cam.anchor);
 
   const dpr = window.devicePixelRatio || 1; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
   const basis = camBasis();
+  webRenderer?.frame({
+    now, anchor: cam.anchor, off: [...cam.off], d: basis.d, r: basis.r, u: basis.u,
+    mouseX, mouseY, cx, cy, focal, fogNear: FOG_NEAR, fogFar: FOG_FAR, tailFrac: webTailFrac,
+  });
 
   // bloom bookkeeping: drop any bloomed star that flew out of the world; keep the rest streaming their FULL
   // clouds (runtime priority-solves the most-recent click via setFocus; we stream all of them here).
@@ -1209,8 +1311,6 @@ function loop() {
       ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(p.s.x, p.s.y); ctx.stroke();
     }
   }
-  // network spiderweb(s): reveal members as the camera nears them and draw the lit strands (behind stars)
-  drawWebs(rpOf, basis, now);
   drawAgents(basis);   // Collider-Battle ships (over the web, under the picking rings)
   // ── picking: as we draw, note the star/node nearest the cursor and the pinned selection's live pos ──
   const havePtr = mouseX >= 0;
@@ -1300,9 +1400,9 @@ function loop() {
   }
   // resolve hover (a node under the cursor wins — it's the specific target), draw the selection + hover
   // rings on their live screen positions, and drive the tooltip. The detail panel is pinned on click.
-  hover = pickNode || pickStar;
+  hover = pickNode || pickStar || hoverWeb;
   ringAt(selPos, '#ffffff', 1.6);
-  if (hover && !(selected && ((hover.kind === 'star' && selected.kind === 'star' && hover.grid === selected.grid) || (hover.kind === 'node' && selected.kind === 'node' && hover.id === selected.id))))
+  if (hover && hover.kind !== 'web' && !(selected && ((hover.kind === 'star' && selected.kind === 'star' && hover.grid === selected.grid) || (hover.kind === 'node' && selected.kind === 'node' && hover.id === selected.id))))
     ringAt(hover, 'rgba(255,255,255,0.7)', 1.2);
   if (cv) cv.style.cursor = hover ? 'pointer' : 'crosshair';
   updateTooltip();
@@ -1315,7 +1415,7 @@ function loop() {
     console.log(`[cosmos] zones ${st.total} · solved ${st.solved} (+${st.solved - hbSolved}/s) · solving ${st.solving} · pending ${st.pending} · tasks/s: plan ${ev.plans - hbPlans} shard ${ev.shards - hbShards} · inflight ${st.inFlight}/${pool.size} · worker-err ${pool.errors} · task-err ${ev.errors} · blooms ${bloomCache.size}`);
     hbLast = now; hbPlans = ev.plans; hbShards = ev.shards; hbSolved = st.solved;
     for (const g of bloomCache.keys()) if (!cosmos.zones.has(g)) bloomCache.delete(g);   // drop evicted blooms
-    if (selected && selected.kind === 'star') showDetail(selected);   // refresh live abundance/state as it solves
+    if (selected && (selected.kind === 'star' || selected.kind === 'web')) showDetail(selected);   // refresh live abundance/state / visible Web count
   }
   // top HUD is deliberately minimal: grid, active blooms, active webs — nothing else. Solve stats + flight
   // controls live in the top-right help popup (#cosmos-help-panel); full solve detail is in the console heartbeat.
@@ -1328,7 +1428,8 @@ function loop() {
     for (let s = 0; s < WEB_MAX; s++) { const w = bySlot.get(s); if (!w) continue; chips += `<span style="color:${w.color};opacity:${w.visible === false ? 0.35 : 1};font-weight:bold">${s === 9 ? '0' : s + 1}</span>`; }
     webHud = ` · ◈ ${chips}`;
   }
-  hud.innerHTML = `grid <b>${cam.anchor.toLocaleString()}</b>${focusHud}${webHud}`;
+  const rideHud = returnRide ? ` · <span style="color:${activeWebs.get(returnRide.webId)?.color || 'var(--known)'}">↢ home ${Math.round((activeWebs.get(returnRide.webId)?.rideProgress || 0) * 100)}%</span>` : '';
+  hud.innerHTML = `grid <b>${cam.anchor.toLocaleString()}</b>${focusHud}${webHud}${rideHud}`;
   // live solve queue → the help popup (only while open, so it's free when closed)
   if (helpPanelEl && liveEl && helpPanelEl.classList.contains('open')) {
     const errRow = (pool.errors || ev.errors) ? `<div class="help-kv"><span>errors</span><b style="color:#e88">${pool.errors + ev.errors}</b></div>` : '';
@@ -1344,6 +1445,7 @@ function resize() {
   const dpr = window.devicePixelRatio || 1;
   W = cv.clientWidth; H = cv.clientHeight; cv.width = W * dpr; cv.height = H * dpr;
   cx = W / 2; cy = H / 2; focal = Math.min(W, H) * 0.9;
+  webRenderer?.resize(W, H, dpr);
 }
 
 function bindControls() {
@@ -1354,6 +1456,7 @@ function bindControls() {
     rel(e);
     if (!down) return;
     if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > DRAG_SLOP) dragged = true;   // look-drag, not a click
+    if (returnRide) { lx = e.clientX; ly = e.clientY; return; }
     cam.yaw += (e.clientX - lx) * 0.004; cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch - (e.clientY - ly) * 0.004)); lx = e.clientX; ly = e.clientY;
   });
   // left-click (no drag): star → BLOOM it (persists as part of the trail) + pin its panel, priority-solving
@@ -1373,9 +1476,12 @@ function bindControls() {
       cosmos.setFocus(hover.grid); selected = hover;   // focus the bloom you're interacting with (the filter targets it)
       leadVoice = { ...deriveVoice(hover.layers), node: hover };   // node click = "make it sound" (stars don't set a lead)
       setLead(leadVoice); openCockpit();   // M4: no per-star song solve — the global sky chord tints it (cosmos-audio.js)
+    } else if (hover && hover.kind === 'web') {
+      selected = { kind: 'web', webId: hover.webId };
     } else {
       selected = null;
     }
+    webRenderer?.select(selected?.kind === 'web' ? selected.webId : null);
     showDetail(selected);
   });
   // right-click a bloom (its star OR any of its nodes) → COLLAPSE it back to a plain dot
@@ -1393,6 +1499,7 @@ function bindControls() {
   // scroll = quick "flight": dolly forward/back along the view direction (Helix's primary travel)
   cv.addEventListener('wheel', e => {
     e.preventDefault();
+    if (returnRide) return;
     const { d } = camBasis();
     const dist = placement === 'hilbert' ? CELL * HIL_DOLLY_CELLS : DOLLY;   // gentle in the cube
     const step = dist * (e.deltaY < 0 ? 1 : -1);
@@ -1402,6 +1509,7 @@ function bindControls() {
   window.addEventListener('keydown', e => {
     if (M.mode !== 'flight' || typing(e.target)) return;
     const k = e.key.toLowerCase(); const firstPress = !keys[k]; keys[k] = true;
+    if (firstPress && k === 'escape') { cancelWebReturn(); e.preventDefault(); }
     if (firstPress && /^[0-9]$/.test(k)) { toggleSlot(k === '0' ? 9 : +k - 1); if (selected) showDetail(selected); }   // 1-9,0 → hide/show web slots
     if (firstPress && k === 'b' && swarm) { if (swarm.agents.length) swarm.clear(); else swarm.spawn(AGENT_COUNT, cam.anchor); }   // B → toggle Collider-Battle ships
     if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)

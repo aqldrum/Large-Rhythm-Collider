@@ -599,6 +599,9 @@
          Purely additive: default-hidden via CSS (#cosmos-view); body.cosmos-active reveals it full-viewport.
          The element IDs below are REQUIRED — ensureFlight() looks them up by id. -->
     <div id="cosmos-view">
+        <!-- Webs render on a transferred OffscreenCanvas in their own worker. Keeping this canvas below
+             the flight canvas preserves the original layering: Web strands behind stars and blooms. -->
+        <canvas id="cosmos-web-canvas" aria-hidden="true"></canvas>
         <canvas id="cosmos-canvas"></canvas>
         <div id="cosmos-hud"></div>
         <div id="tooltip"></div>

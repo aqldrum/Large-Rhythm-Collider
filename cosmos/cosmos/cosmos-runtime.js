@@ -66,8 +66,9 @@ export class Cosmos {
   // the cube's Hilbert layout already carries the visual structure.
   constructor({ reachScale = 0.15, spawnRadius = 60, evictRadius = 90, poolSize = 4,
                 costUnit = 1, solve, cost, isValid, dispatch, restRadius = 40,
-                neighbors = null, cellDist = null, puffs = true, compete = true }) {
-    Object.assign(this, { reachScale, spawnRadius, evictRadius, poolSize, costUnit, solve, cost, isValid, dispatch, restRadius, puffs, compete });
+                neighbors = null, cellDist = null, puffs = true, compete = true,
+                onZoneAdded = null, onZoneRemoved = null }) {
+    Object.assign(this, { reachScale, spawnRadius, evictRadius, poolSize, costUnit, solve, cost, isValid, dispatch, restRadius, puffs, compete, onZoneAdded, onZoneRemoved });
     this.neighbors = neighbors || (cam => { const a = []; for (let g = cam - this.spawnRadius; g <= cam + this.spawnRadius; g++) a.push(g); return a; });
     this.cellDist = cellDist || ((g, cam) => Math.abs(g - cam));
     this.zones = new Map();      // grid -> zone
@@ -94,7 +95,7 @@ export class Cosmos {
   _expandFrontier() {
     for (const g of this.neighbors(this.cam)) {
       if (g < 2 || this.zones.has(g) || !this.isValid(g)) continue;
-      this.zones.set(g, this._makeZone(g)); this.events.spawned++;
+      this.zones.set(g, this._makeZone(g)); this.events.spawned++; this.onZoneAdded?.(g);
     }
   }
 
@@ -253,7 +254,7 @@ export class Cosmos {
   _evict() {
     for (const [g, z] of this.zones) {
       if (this.cellDist(g, this.cam) > this.evictRadius) {
-        this.zones.delete(g); this.events.evicted++;
+        this.zones.delete(g); this.events.evicted++; this.onZoneRemoved?.(g);
         // virtual mode: drop its queued solve. async mode: in-flight tasks free their pool slot when
         // they reply (callbacks see the zone is gone via identity check and no-op).
         if (this.inFlight.length) this.inFlight = this.inFlight.filter(f => f.grid !== g);
