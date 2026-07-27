@@ -97,7 +97,11 @@ export function compactGridAudioProgram(readout, metadata = {}) {
     repeatCull: readout.repeatCull,
     layers: [...readout.layers],
     selectedFractions: readout.ratioCatalog.filter(note => note.selected).map(note => note.fraction),
-    selectedTones: readout.ratioCatalog.filter(note => note.selected).map(note => ({ fraction: note.fraction, cents: note.cents })),
+    // ownerKey/ownerLayers identify the representative rhythm each selected tone comes from — the same
+    // canonical key grid-core stamps on bloom nodes, so a sounding voice can light its own bloom node.
+    selectedTones: readout.ratioCatalog.filter(note => note.selected).map(note => ({
+      fraction: note.fraction, cents: note.cents, ownerKey: note.ownerKey ?? null, ownerLayers: note.ownerLayers ?? null,
+    })),
     events: readout.events.map(event => ({
       tick: event.tick,
       layerActions: event.layerActions.map(compactAction),

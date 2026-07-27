@@ -211,7 +211,10 @@ export class SpatialGridRowPlayer {
     const gain = this.ctx.createGain();
     gain.gain.value = 0;
     gain.connect(this.stars.get(program.grid)?.filter || this.master);
-    return { program, gain, voices: new Map(), oscillators: new Set(), lastToneByLayer: new Map(), cursorCycle: 0, cursorEvent: 0, startTime: 0, retireAt: Infinity };
+    // fraction -> owning rhythm key (from the compact program's selectedTones) so a sounding voice can be
+    // traced to the bloom node that represents its rhythm. Missing/absent → null (voice just won't light a node).
+    const ownerKeyByFraction = new Map((program.selectedTones || []).map(tone => [tone.fraction, tone.ownerKey ?? null]));
+    return { program, gain, voices: new Map(), oscillators: new Set(), lastToneByLayer: new Map(), ownerKeyByFraction, cursorCycle: 0, cursorEvent: 0, startTime: 0, retireAt: Infinity };
   }
 
   _syncCursor(deck, absoluteTick) {
@@ -393,9 +396,12 @@ export class SpatialGridRowPlayer {
     if (star) {
       // Bounded life now (was Infinity for held legato voices): short notes make the aura pulse per
       // attack rather than glow for a sustained voice. A same-layer steal shortens this in _releaseLayer.
-      voice.visualLife = { startTime: when, endTime: endAt };
+      // ownerKey tags the life/attack with the rhythm that sourced it, so a bloomed grid can light the
+      // matching bloom node instead of a single grid-centre orb.
+      const ownerKey = deck.ownerKeyByFraction?.get(action.fraction) ?? null;
+      voice.visualLife = { startTime: when, endTime: endAt, ownerKey };
       star.visualLives.push(voice.visualLife);
-      star.visualAttacks.push({ when, strength: seeded ? 0.45 : 1 });
+      star.visualAttacks.push({ when, strength: seeded ? 0.45 : 1, ownerKey });
     }
     this.logicalVoiceCount++;
     osc.start(when);
@@ -482,18 +488,27 @@ export class SpatialGridRowPlayer {
     if (!this.enabled) return [];
     const now = this.ctx.currentTime;
     const out = [];
+    const attackPulse = attack => {
+      const age = now - attack.when;
+      return (age < 0 || age > VISUAL_ATTACK_SECONDS) ? 0 : attack.strength * Math.pow(1 - age / VISUAL_ATTACK_SECONDS, 2);
+    };
     for (const star of this.stars.values()) {
       star.visualAttacks = star.visualAttacks.filter(attack => attack.when >= now - VISUAL_ATTACK_SECONDS);
       star.visualLives = star.visualLives.filter(life => life.endTime > now);
       const voices = star.visualLives.reduce((count, life) => count + (life.startTime <= now ? 1 : 0), 0);
       if (!voices) continue;
       let pulse = 0;
+      for (const attack of star.visualAttacks) pulse = Math.max(pulse, attackPulse(attack));
+      // Per-source breakdown keyed by owning rhythm — a bloomed grid lights each node whose rhythm has a
+      // live voice or a recent attack (attacks linger past the short note, so a node pulses then fades).
+      const sources = new Map();
+      const bump = key => { let s = sources.get(key); if (!s) sources.set(key, s = { key, voices: 0, pulse: 0 }); return s; };
+      for (const life of star.visualLives) if (life.startTime <= now && life.ownerKey != null) bump(life.ownerKey).voices++;
       for (const attack of star.visualAttacks) {
-        const age = now - attack.when;
-        if (age < 0 || age > VISUAL_ATTACK_SECONDS) continue;
-        pulse = Math.max(pulse, attack.strength * Math.pow(1 - age / VISUAL_ATTACK_SECONDS, 2));
+        const p = attackPulse(attack);   // 0 for a not-yet-reached lookahead attack — don't light its node early
+        if (p > 0 && attack.ownerKey != null) { const s = bump(attack.ownerKey); s.pulse = Math.max(s.pulse, p); }
       }
-      out.push({ id: star.id, voices, pulse });
+      out.push({ id: star.id, voices, pulse, sources: [...sources.values()] });
     }
     return out;
   }

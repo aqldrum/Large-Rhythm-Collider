@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { gridRatioOwnerSolve } from '../grid-core.js';
+import { gridRatioOwnerSolve, gridShardSystems, shardKeysOf } from '../grid-core.js';
 import { ProgramWorkerPool } from '../program-worker-pool.js';
 import { selectedGridRatioToneRows } from '../cosmos-audio.js';
 import {
@@ -88,6 +88,16 @@ check('compact program remains four canonical layers and materially small',
   `${Math.round(JSON.stringify(program).length / 1024)}KB`);
 check('compact program retains selected ratio+cents rows for the live debug chart',
   program.selectedTones.length === fractions.length && program.selectedTones.every(tone => tone.fraction && Number.isFinite(tone.cents)));
+
+console.log('\n  Bloom-node orb join (owner rhythm → bloom node)');
+check('each selected tone carries its owning rhythm key + layers',
+  program.selectedTones.length > 0 && program.selectedTones.every(t => typeof t.ownerKey === 'string' && Array.isArray(t.ownerLayers) && t.ownerLayers.length >= 2));
+// The join that lets a bloomed grid light the exact node that sounded: an owner's canonical key must
+// exist among the grid's bloom-node keys (gridShardSystems over every shard = the full system set).
+const bloomKeys = new Set(shardKeysOf(120).flatMap(A => gridShardSystems(120, A).map(s => s.key)));
+check('every ratio-owner key is present among the grid\'s bloom-node keys',
+  solved.ratioOwners.every(o => bloomKeys.has(o.key)), `${solved.ratioOwners.filter(o => !bloomKeys.has(o.key)).length}/${solved.ratioOwners.length} unmatched`);
+check('every selected tone\'s ownerKey resolves to a real bloom node', program.selectedTones.every(t => bloomKeys.has(t.ownerKey)));
 
 console.log('\n  Culled-row pitch register');
 check('culled rows share the Ambient Chords rhythm voice waveform', RHYTHM_VOICE_WAVEFORM === 'triangle');
@@ -192,15 +202,23 @@ visualPlayer.enabled = true;
 visualPlayer.ctx = { currentTime: 10 };
 visualPlayer.stars = new Map([[120, {
   active: true,
-  visualAttacks: [{ when: 9.9, strength: 1 }, { when: 10.05, strength: 1 }],
-  visualLives: [{ startTime: 9, endTime: 10.12 }, { startTime: 10.05, endTime: Infinity }],
+  visualAttacks: [{ when: 9.9, strength: 1, ownerKey: 'A' }, { when: 10.05, strength: 1, ownerKey: 'B' }],
+  visualLives: [{ startTime: 9, endTime: 10.12, ownerKey: 'A' }, { startTime: 10.05, endTime: Infinity, ownerKey: 'B' }],
 }]]);
 let visual = visualPlayer.visualState()[0];
 check('aura follows the voice sounding now, not the next lookahead-scheduled voice',
   visual.voices === 1 && visual.pulse > 0);
+// per-source breakdown: only the owner rhythm sounding NOW lights, and its lookahead attack (age < 0)
+// does not light its node early.
+check('sources light only the owner rhythm sounding now (future lookahead attack stays dark)',
+  visual.sources.length === 1 && visual.sources[0].key === 'A' && visual.sources[0].voices === 1 && visual.sources[0].pulse > 0);
 visualPlayer.ctx.currentTime = 10.08;
 visual = visualPlayer.visualState()[0];
 check('aura sees the brief real crossfade overlap once audio-context time reaches it', visual.voices === 2);
+check('both overlapping owner rhythms now light their own nodes', (() => {
+  const byKey = new Map(visual.sources.map(s => [s.key, s]));
+  return visual.sources.length === 2 && byKey.get('A').voices === 1 && byKey.get('B').voices === 1 && byKey.get('B').pulse > 0;
+})());
 
 console.log('\n  Camera/WebAudio coordinate frame');
 const basis = { r: [1, 0, 0], u: [0, 1, 0], d: [0, 0, 1] };

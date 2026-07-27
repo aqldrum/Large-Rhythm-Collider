@@ -1385,6 +1385,10 @@ function loop() {
     // radial scale: plain BLOOM_R per cardinality step, soft-kneed so sparse high-cardinality outliers don't
     // blow out the footprint, and clamped so the OUTER radius stays within BLOOM_MAX_R (loose safety ceiling).
     const rscale = Math.min(BLOOM_R, BLOOM_MAX_R / (1 + cardExtent(Math.max(1, data.cmax - data.cmin))));
+    // A bloomed grid gets no single grid-centre orb (suppressed below); instead each node whose OWNER
+    // rhythm currently has a live/attacking row voice lights up, keyed by the shared canonical rhythm key.
+    const act = rowActivity.get(g);
+    const nodeSources = act && act.sources ? new Map(act.sources.map(src => [src.key, src])) : null;
     for (let pi = 0; pi < N; pi++) {
       const p = B.pts[pi];
       const R = rscale * (1 + cardExtent(p.c - data.cmin));    // radial extent = cardinality (soft-kneed spikes)
@@ -1398,6 +1402,7 @@ function loop() {
       const fog = fogAt(sp.z); if (fog <= 0) continue;                    // per-node fog (far side of a big bloom fades)
       const rv = Math.min(1, (now - p.bt) / BLOOM_RV_MS), a0 = fog * rv;   // per-node birth ease
       const r = Math.max(0.4, Math.min(2.6 * focal / sp.z, 6)) * (0.5 + 0.5 * rv);
+      if (nodeSources) { const src = nodeSources.get(p.key); if (src) drawGridRowAura(ctx, sp, r, fog, src); }
       ctx.globalAlpha = a0; ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, 7); ctx.fill();
       if (p.dense) { ctx.globalAlpha = a0 * 0.5; ctx.strokeStyle = p.col; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sp.x, sp.y, r + 1.6, 0, 7); ctx.stroke(); }
       const nid = g + ':' + pi;
