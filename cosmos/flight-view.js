@@ -29,6 +29,11 @@ const STAR_SCALE = 4, NEAR = 5;
 // Helix-style flight feel: arrow keys steer, WASD/QE translate, scroll dollies for fast travel.
 const TURN = 1.5;          // camera turn rate (rad/sec)
 const BOOST = 6;           // spacebar speed multiplier on top of WASD (cam.speed is the base)
+const WEB_RETURN_LIFT_CELLS = 0.24; // ride slightly above the strand so it reads as a route, not a near-plane seam
+const WEB_RETURN_LIFT_SPINE = 180;
+const WEB_RETURN_LIFT_RAMP = 0.08;  // fraction of the ride used to ease onto/off the elevated camera rail
+const WEB_RETURN_FRAME_CELLS = 2.2; // arc-length window used for a continuous heading across synthetic nodes
+const WEB_RETURN_FRAME_SPINE = 900;
 const DOLLY = 700;         // SPINE: world units per scroll notch (fast travel down the codex line)
 const HIL_DOLLY_CELLS = 0.7; // HILBERT: cells per scroll notch — small on purpose so you don't
                              //   rocket across the cube (spatial hops = huge grid-index jumps) and
@@ -322,21 +327,64 @@ function cancelWebReturn(status = 'ride cancelled') {
   if (selected && selected.kind === 'web') showDetail(selected);
 }
 
+// Route-local "up": world-up projected perpendicular to the strand. Near a vertical strand there
+// is no meaningful world-up component, so fall back to a stable horizontal perpendicular.
+function webReturnLift(tangent) {
+  let lift = [-tangent[0] * tangent[1], 1 - tangent[1] ** 2, -tangent[2] * tangent[1]];
+  if (Math.hypot(...lift) < 0.12) {
+    const fallback = Math.abs(tangent[0]) < 0.9 ? [1, 0, 0] : [0, 0, 1], along = dot(fallback, tangent);
+    lift = fallback.map((value, i) => value - tangent[i] * along);
+  }
+  return norm(lift);
+}
+
+// The sampler's immediate tangent changes at every subdivided spline point. A chord spanning a
+// fixed arc-length window is continuous and ignores those synthetic joints while still anticipating
+// real bends in the route. Near either endpoint the window naturally becomes one-sided.
+function webReturnRailTangent(path, progress, windowDistance) {
+  const halfWindow = Math.max(0.0001, Math.min(0.12, windowDistance / Math.max(1, path.total)));
+  const before = sampleArcPath(path, Math.max(0, progress - halfWindow)).position;
+  const after = sampleArcPath(path, Math.min(1, progress + halfWindow)).position;
+  return norm(after.map((value, i) => value - before[i]));
+}
+
+function webReturnLookDirection(ride) {
+  const forward = norm(ride.tangent), up = norm(ride.lift), right = norm(cross(up, forward));
+  const cp = Math.cos(ride.lookPitch), sp = Math.sin(ride.lookPitch);
+  const cy = Math.cos(ride.lookYaw), sy = Math.sin(ride.lookYaw);
+  return norm([0, 1, 2].map(i => forward[i] * cp * cy + right[i] * cp * sy + up[i] * sp));
+}
+
+function applyWebReturnLook(ride) {
+  const direction = webReturnLookDirection(ride);
+  cam.yaw = Math.atan2(direction[0], direction[2]);
+  cam.pitch = Math.asin(Math.max(-1, Math.min(1, direction[1])));
+}
+
 function beginWebReturn(webId) {
   const web = activeWebs.get(webId);
   if (!web || web.homeGrid == null || !webRenderer) return;
   const generation = ++webRouteGeneration;
-  web.visible = true; web.routePlanning = true; web.rideStatus = 'stitching route off-thread';
+  web.visible = true; web.routePlanning = true; web.rideProgress = 0; web.rideStatus = 'stitching route off-thread';
   webRenderer.visibility(webId, true); selected = { kind: 'web', webId }; webRenderer.select(webId); showDetail(selected);
   webRenderer.request('planReturn', { webId, cameraStart: cameraAbsolute() }).then(result => {
     if (generation !== webRouteGeneration || !activeWebs.has(webId)) { webRenderer.clearRoute(); return; }
     web.routePlanning = false;
-    returnRide = { ...result, started: performance.now(), lastUi: 0 };
-    // Aim down the opening strand exactly once. From here on the route owns position only; the
-    // player's view remains inertial and arrow-key steering stays fully available during travel.
-    const opening = sampleArcPath(result.path, 0.0001).tangent; // skip any duplicate camera→first-node point
-    cam.yaw = Math.atan2(opening[0], opening[2]);
-    cam.pitch = Math.asin(Math.max(-1, Math.min(1, opening[1])));
+    const liftHeight = placement === 'hilbert' ? CELL * WEB_RETURN_LIFT_CELLS : WEB_RETURN_LIFT_SPINE;
+    const frameWindow = placement === 'hilbert' ? CELL * WEB_RETURN_FRAME_CELLS : WEB_RETURN_FRAME_SPINE;
+    // Aim once from the elevated rail toward a point ahead on the actual strand. Position remains
+    // route-owned afterward, while arrow-key steering stays fully available during travel.
+    const openingTangent = webReturnRailTangent(result.path, 0.0001, frameWindow), lift = webReturnLift(openingTangent);
+    returnRide = { ...result, elapsed: 0, lastUi: 0, liftHeight, frameWindow, lift };
+    const lookProgress = Math.min(1, Math.max(0.0001, liftHeight * 4 / Math.max(1, result.path.total)));
+    const lookAt = sampleArcPath(result.path, lookProgress).position;
+    const elevated = result.path.points[0].map((value, i) => value + lift[i] * liftHeight);
+    const openingView = norm(lookAt.map((value, i) => value - elevated[i]));
+    const right = norm(cross(lift, openingTangent));
+    returnRide.tangent = openingTangent;
+    returnRide.lookYaw = Math.atan2(dot(openingView, right), dot(openingView, openingTangent));
+    returnRide.lookPitch = Math.asin(Math.max(-1, Math.min(1, dot(openingView, lift))));
+    applyWebReturnLook(returnRide);
     web.rideStatus = result.sampled ? `riding an adaptive ${result.routeNodes}-node route` : `riding ${result.routeNodes} connected nodes`;
     showDetail(selected);
   }).catch(error => {
@@ -349,10 +397,24 @@ function stepWebReturn(now, dt) {
   if (!returnRide) return false;
   const ride = returnRide, web = activeWebs.get(ride.webId);
   if (!web) { cancelWebReturn(); return false; }
-  const raw = Math.min(1, (now - ride.started) / (ride.duration * 1000));
+  // Space already means boost in free flight; during autopilot it accelerates the route clock by
+  // the same multiplier. Accumulated ride time keeps press/release transitions continuous.
+  ride.elapsed = Math.min(ride.duration, ride.elapsed + dt * (keys[' '] ? BOOST : 1));
+  const raw = ride.elapsed / ride.duration;
   const eased = 0.5 - Math.cos(raw * Math.PI) * 0.5;
   const sample = sampleArcPath(ride.path, eased), here = cameraAbsolute();
-  const delta = sample.position.map((v, i) => v - here[i]);
+  const railTangent = webReturnRailTangent(ride.path, eased, ride.frameWindow);
+  const edgeRamp = Math.max(0, Math.min(1, raw / WEB_RETURN_LIFT_RAMP, (1 - raw) / WEB_RETURN_LIFT_RAMP));
+  const liftEase = 0.5 - Math.cos(edgeRamp * Math.PI) * 0.5;
+  let targetLift = webReturnLift(railTangent);
+  if (dot(targetLift, ride.lift) < 0) targetLift = targetLift.map(value => -value);
+  const liftBlend = 1 - Math.exp(-dt * 8);
+  const blendedLift = ride.lift.map((value, i) => value + (targetLift[i] - value) * liftBlend);
+  const liftAlong = dot(blendedLift, railTangent);
+  ride.lift = norm(blendedLift.map((value, i) => value - railTangent[i] * liftAlong));
+  ride.tangent = railTangent;
+  const ridePosition = sample.position.map((value, i) => value + ride.lift[i] * ride.liftHeight * liftEase);
+  const delta = ridePosition.map((v, i) => v - here[i]);
   camSpeed = dt > 0 ? Math.hypot(delta[0], delta[1], delta[2]) / dt : 0;
   translateCam(delta);
 
@@ -696,12 +758,24 @@ function translateCam(v) {
 }
 
 function stepControls(dt, allowTranslation = true) {
-  // arrow keys steer the camera (Helix-style) — left turns left, up looks up
-  if (keys['arrowleft'])  cam.yaw   -= TURN * dt;
-  if (keys['arrowright']) cam.yaw   += TURN * dt;
-  if (keys['arrowup'])    cam.pitch += TURN * dt;
-  if (keys['arrowdown'])  cam.pitch -= TURN * dt;
-  cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch));
+  // During a return ride, arrow look is measured in the moving path frame. The pitch restriction
+  // therefore remains ±80° around the strand even when its tangent points vertically or loops past
+  // world-up; converting the resulting direction back to yaw/pitch does not impose a second clamp.
+  if (returnRide) {
+    if (keys['arrowleft'])  returnRide.lookYaw   -= TURN * dt;
+    if (keys['arrowright']) returnRide.lookYaw   += TURN * dt;
+    if (keys['arrowup'])    returnRide.lookPitch += TURN * dt;
+    if (keys['arrowdown'])  returnRide.lookPitch -= TURN * dt;
+    returnRide.lookPitch = Math.max(-1.4, Math.min(1.4, returnRide.lookPitch));
+    applyWebReturnLook(returnRide);
+  } else {
+    // Free-flight arrows retain their original world-relative yaw/pitch behavior.
+    if (keys['arrowleft'])  cam.yaw   -= TURN * dt;
+    if (keys['arrowright']) cam.yaw   += TURN * dt;
+    if (keys['arrowup'])    cam.pitch += TURN * dt;
+    if (keys['arrowdown'])  cam.pitch -= TURN * dt;
+    cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch));
+  }
   if (!allowTranslation) return;
 
   // WASD/QE translate along the camera basis; Space boosts speed

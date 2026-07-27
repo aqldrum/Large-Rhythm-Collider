@@ -28,6 +28,69 @@ export function planFamilyGrids(startGrid, homeGrid, base, maxWaypoints = 96) {
   return { grids, logicalCount, sampled: logicalCount > grids.length };
 }
 
+// Choose a spatially direct, forward-only route from a bounded candidate set. Candidates are
+// projected onto the start→home axis and bucketed by progress; the search may move only into a
+// later bucket, so even a noisy widening-tube sample can never double back. Keeping several close
+// candidates per bucket lets the dynamic program avoid the zig-zagging produced by a greedy
+// "nearest point to each sample" pass.
+export function monotonicWebPath(candidates, startGrid, homeGrid, pointOf,
+                                 { bands = 12, maxWaypoints = 96, candidatesPerBand = 6,
+                                   deviationWeight = 0.35 } = {}) {
+  if (startGrid === homeGrid) return [homeGrid];
+  maxWaypoints = Math.max(2, Math.floor(maxWaypoints) || 2);
+  bands = Math.max(1, Math.min(maxWaypoints - 1, Math.floor(bands) || 1));
+  candidatesPerBand = Math.max(1, Math.floor(candidatesPerBand) || 1);
+  const startPoint = pointOf(startGrid), homePoint = pointOf(homeGrid);
+  const axis = homePoint.map((value, i) => value - startPoint[i]);
+  const axis2 = axis[0] ** 2 + axis[1] ** 2 + axis[2] ** 2;
+  if (!axis2) return [startGrid, homeGrid];
+
+  const buckets = Array.from({ length: bands + 1 }, () => []), seen = new Set();
+  for (const grid of [startGrid, ...(candidates || []), homeGrid]) {
+    if (seen.has(grid)) continue; seen.add(grid);
+    if (grid === startGrid) { buckets[0].push({ grid, point: startPoint, t: 0, lateral: 0, band: 0 }); continue; }
+    if (grid === homeGrid) { buckets[bands].push({ grid, point: homePoint, t: 1, lateral: 0, band: bands }); continue; }
+    const point = pointOf(grid), delta = point.map((value, i) => value - startPoint[i]);
+    const t = (delta[0] * axis[0] + delta[1] * axis[1] + delta[2] * axis[2]) / axis2;
+    if (!(t > 0 && t < 1)) continue;
+    const closest = startPoint.map((value, i) => value + axis[i] * t);
+    const lateral = dist(point, closest), band = Math.max(1, Math.min(bands - 1, Math.round(t * bands)));
+    buckets[band].push({ grid, point, t, lateral, band });
+  }
+  for (let band = 1; band < bands; band++) {
+    const center = band / bands;
+    buckets[band].sort((a, b) => (a.lateral + Math.abs(a.t - center) * Math.sqrt(axis2)) -
+      (b.lateral + Math.abs(b.t - center) * Math.sqrt(axis2)));
+    buckets[band].length = Math.min(candidatesPerBand, buckets[band].length);
+  }
+
+  const nodes = buckets.flat();
+  // Prefer dense progress (one or two bands at a time), but widen across genuinely empty tube
+  // sections. The final attempt always permits a route, with the direct start→home edge as fallback.
+  for (let allowedSkip = 1; allowedSkip <= bands; allowedSkip = Math.min(bands, allowedSkip * 2)) {
+    const costs = new Float64Array(nodes.length); costs.fill(Infinity);
+    const prev = new Int32Array(nodes.length); prev.fill(-1);
+    costs[0] = 0;
+    for (let j = 1; j < nodes.length; j++) {
+      const to = nodes[j];
+      for (let i = 0; i < j; i++) {
+        const from = nodes[i], skip = to.band - from.band;
+        if (skip < 1 || skip > allowedSkip || !(to.t > from.t)) continue;
+        const cost = costs[i] + dist(from.point, to.point) + deviationWeight * to.lateral;
+        if (cost < costs[j]) { costs[j] = cost; prev[j] = i; }
+      }
+    }
+    const goal = nodes.length - 1;
+    if (Number.isFinite(costs[goal])) {
+      const route = [];
+      for (let at = goal; at >= 0; at = prev[at]) { route.push(nodes[at].grid); if (at === 0) break; }
+      return route.reverse();
+    }
+    if (allowedSkip === bands) break;
+  }
+  return [startGrid, homeGrid];
+}
+
 // Shortest route through a finite Web graph (mother-scale Webs use this; MN Webs use the arithmetic
 // planner above). A tiny binary heap keeps this responsive for the larger codex lineages.
 export function shortestWebPath(members, edges, startGrid, homeGrid, pointOf) {

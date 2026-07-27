@@ -3,11 +3,14 @@
 // and Return Home route planning. The flight loop only sends camera frames + zone deltas and consumes
 // tiny hover/count snapshots.
 import { setPlacement, macroCell, macroScale, backboneHash, CELL } from './spine.js';
+import { hilbertEncode, SIDE } from './hilbert.js';
 import { buildWebGraph, familyMembers } from './web-graph.js';
-import { planFamilyGrids, shortestWebPath, buildArcPath, unitDelta, rideDuration } from './web-return.js';
+import { planFamilyGrids, monotonicWebPath, shortestWebPath, buildArcPath, unitDelta, rideDuration } from './web-return.js';
 
 const WEB_K = 3, WEB_BUCKET = 8, WEB_LINE_W = 2, WEB_STRAND_A = 0.3, WEB_HIT = 9;
 const WEB_REVEAL_FRAC = 0.75, WEB_ROUTE_MAX = 96, WEB_ROUTE_SUBDIV = 8, MN_REFRESH_MS = 200;
+const WEB_ROUTE_HOP_CELLS = 8, WEB_TUBE_CHOICES = 6, WEB_TUBE_RADIUS_MAX = 36;
+const WEB_ROUTE_CAMERA_EPS = 0.001;
 const webs = new Map(), zoneGrids = new Set();
 let canvas = null, ctx = null, W = 0, H = 0, dpr = 1, placement = 'hilbert';
 let selectedId = null, routePath = null, zonesDirty = true, lastDynamicBuild = -Infinity;
@@ -53,11 +56,24 @@ function render(frame) {
             (c[1] - camCell[1]) * scale + h[1] - frame.off[1],
             (c[2] - camCell[2]) * scale + h[2] - frame.off[2]];
   };
-  const toScreen = point => {
+  const toView = point => {
     const x = dot(point, frame.r), y = dot(point, frame.u), z = dot(point, frame.d);
+    return { x, y, z };
+  };
+  const projectView = view => {
+    const { x, y, z } = view;
     if (z <= 5) return null;
     return { x: frame.cx + x * frame.focal / z, y: frame.cy - y * frame.focal / z, z };
   };
+  const projectRouteView = view => {
+    const x = frame.cx + view.x * frame.focal / view.z, y = frame.cy - view.y * frame.focal / view.z;
+    // The camera-plane intersection can project extremely far off-canvas. Keep that endpoint well
+    // outside the viewport but numerically tame so Canvas reliably clips the line at its own edge.
+    const dx = x - frame.cx, dy = y - frame.cy;
+    const shrink = Math.max(1, Math.abs(dx) / Math.max(1, W * 2), Math.abs(dy) / Math.max(1, H * 2));
+    return { x: frame.cx + dx / shrink, y: frame.cy + dy / shrink, z: view.z };
+  };
+  const toScreen = point => projectView(toView(point));
   const fogAt = z => Math.max(0, Math.min(1, 1 - (z - frame.fogNear) / (frame.fogFar - frame.fogNear)));
   const revealR2 = (frame.fogFar * WEB_REVEAL_FRAC) ** 2;
   const tailR2 = (frame.fogFar * frame.tailFrac) ** 2, tailKnee = tailR2 * 0.49;
@@ -92,6 +108,9 @@ function render(frame) {
   for (const web of webs.values()) {
     web.visibleNodes = 0;
     if (!web.visible || !web.members) continue;
+    // The selected Web enters a frozen travel mode. Its camera-local graph would lag a fast ride,
+    // so only the immutable route below is rendered until arrival or cancellation.
+    if (routePath?.webId === web.tag) continue;
     ctx.strokeStyle = web.color; ctx.fillStyle = web.color; ctx.lineCap = 'round';
     if (web.dynamic) {
       for (const [a, b] of web.edges) drawEdge(web, web.members[a], web.members[b]);
@@ -118,20 +137,111 @@ function render(frame) {
     const web = webs.get(routePath.webId), points = [...routePath.path.points, routePath.homePoint];
     if (web) {
       ctx.strokeStyle = web.color; ctx.lineWidth = WEB_LINE_W * 2.2; ctx.lineCap = 'round';
-      let previous = null;
+      let previousView = null;
       for (const point of points) {
         const relative = [point[0] - cameraAbsolute[0], point[1] - cameraAbsolute[1], point[2] - cameraAbsolute[2]];
-        const screen = toScreen(relative);
-        if (screen && previous) {
-          const fade = Math.min(fogAt(previous.z), fogAt(screen.z));
-          if (fade > 0) { ctx.globalAlpha = 0.76 * fade; ctx.beginPath(); ctx.moveTo(previous.x, previous.y); ctx.lineTo(screen.x, screen.y); ctx.stroke(); }
+        const view = toView(relative);
+        if (previousView && (previousView.z > WEB_ROUTE_CAMERA_EPS || view.z > WEB_ROUTE_CAMERA_EPS)) {
+          let a = previousView, b = view;
+          // Travel strands persist to the camera itself, rather than using the normal 5-unit render
+          // plane. The current grid-to-grid leg therefore runs offscreen until its next node is
+          // reached, and only disappears once the whole sampled section has passed behind.
+          if (a.z <= WEB_ROUTE_CAMERA_EPS || b.z <= WEB_ROUTE_CAMERA_EPS) {
+            const clipZ = WEB_ROUTE_CAMERA_EPS * 1.01, t = (clipZ - a.z) / (b.z - a.z);
+            const clipped = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: clipZ };
+            if (a.z <= WEB_ROUTE_CAMERA_EPS) a = clipped; else b = clipped;
+          }
+          const as = projectRouteView(a), bs = projectRouteView(b);
+          if (as && bs) {
+            // A segment remains readable while either endpoint is within fog; it disappears only
+            // once both ends are behind the player or beyond the forward visibility envelope.
+            const fade = Math.max(fogAt(as.z), fogAt(bs.z));
+            if (fade > 0) { ctx.globalAlpha = 0.76 * fade; ctx.beginPath(); ctx.moveTo(as.x, as.y); ctx.lineTo(bs.x, bs.y); ctx.stroke(); }
+          }
         }
-        previous = screen;
+        previousView = view;
+      }
+
+      // Travel waypoints use an unmistakable diamond + core instead of the normal tiny Web bead.
+      // Label only the nearest visible few so the player can read the actual grid connections
+      // without a 96-node route becoming a wall of text.
+      const visibleRouteNodes = [];
+      for (let i = 0; i < routePath.grids.length; i++) {
+        const grid = routePath.grids[i], relative = gridRelative(grid), screen = toScreen(relative);
+        if (!screen) continue;
+        const fade = fogAt(screen.z); if (fade <= 0) continue;
+        const home = i === routePath.grids.length - 1, radius = home ? 6.5 : 5;
+        ctx.globalAlpha = (home ? 1 : 0.88) * fade;
+        ctx.fillStyle = web.color; ctx.strokeStyle = web.color; ctx.lineWidth = home ? 2 : 1.4;
+        ctx.beginPath();
+        ctx.moveTo(screen.x, screen.y - radius); ctx.lineTo(screen.x + radius, screen.y);
+        ctx.lineTo(screen.x, screen.y + radius); ctx.lineTo(screen.x - radius, screen.y); ctx.closePath(); ctx.stroke();
+        ctx.beginPath(); ctx.arc(screen.x, screen.y, home ? 2.5 : 2, 0, 7); ctx.fill();
+        visibleRouteNodes.push({ grid, screen, fade, home }); web.visibleNodes++;
+      }
+      visibleRouteNodes.sort((a, b) => a.screen.z - b.screen.z);
+      ctx.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace'; ctx.textBaseline = 'middle';
+      for (let i = 0; i < Math.min(4, visibleRouteNodes.length); i++) {
+        const node = visibleRouteNodes[i], label = node.grid.toLocaleString();
+        ctx.globalAlpha = Math.max(0.55, node.fade); ctx.fillStyle = web.color;
+        ctx.fillText(label, node.screen.x + 9, node.screen.y);
       }
     }
   }
   ctx.globalAlpha = 1;
   return { hover, counts: [...webs.values()].map(web => [web.tag, web.visibleNodes, web.members?.length || 0]) };
+}
+
+const cellDistance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+// Sample the unbounded family inside an expanding spatial tube around the direct start→home line.
+// A family owns every positive multiple of `base`; Hilbert-encoding the visited lattice cells lets
+// us test that membership without enumerating the family. Each progress sample stops widening once
+// it has several choices, keeping planning bounded while still feeding a non-greedy path search.
+function hilbertTubeCandidates(startGrid, homeGrid, base, bands) {
+  if (bands <= 1) return [startGrid, homeGrid];
+  const a = macroCell(startGrid), b = macroCell(homeGrid), centers = [];
+  for (let band = 1; band < bands; band++) {
+    const t = band / bands;
+    centers.push(a.map((value, i) => Math.max(0, Math.min(SIDE - 1, Math.round(value + (b[i] - value) * t)))));
+  }
+  const found = centers.map(() => new Set()), candidates = new Set([startGrid, homeGrid]);
+  const radiusTarget = Math.min(WEB_TUBE_RADIUS_MAX, Math.max(4, Math.ceil(Math.cbrt(base) * 1.5)));
+  for (let radius = 0; radius <= radiusTarget; radius++) {
+    let complete = true;
+    for (let ci = 0; ci < centers.length; ci++) {
+      if (found[ci].size >= WEB_TUBE_CHOICES) continue;
+      complete = false;
+      const center = centers[ci];
+      for (let dx = -radius; dx <= radius; dx++) for (let dy = -radius; dy <= radius; dy++) for (let dz = -radius; dz <= radius; dz++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz)) !== radius) continue;
+        const x = center[0] + dx, y = center[1] + dy, z = center[2] + dz;
+        if (x < 0 || y < 0 || z < 0 || x >= SIDE || y >= SIDE || z >= SIDE) continue;
+        const grid = hilbertEncode(x, y, z);
+        if (grid < 2 || grid % base) continue;
+        found[ci].add(grid); candidates.add(grid);
+      }
+    }
+    if (complete) break;
+  }
+
+  // Very sparse families can outgrow the bounded tube radius. Probe nearby family multiples in
+  // Hilbert-index space for only the still-empty samples; these remain genuine family nodes and
+  // the monotonic search will reject probes that do not make spatial progress toward home.
+  const maxGrid = SIDE ** 3 - 1, maxQ = Math.floor(maxGrid / base);
+  for (let ci = 0; ci < centers.length; ci++) {
+    if (found[ci].size) continue;
+    const center = centers[ci], centerGrid = hilbertEncode(center[0], center[1], center[2]);
+    const q0 = Math.max(1, Math.min(maxQ, Math.round(centerGrid / base))), probes = [];
+    for (let dq = -128; dq <= 128; dq++) {
+      const q = q0 + dq; if (q < 1 || q > maxQ) continue;
+      const grid = q * base, cell = macroCell(grid);
+      probes.push([cellDistance(cell, center), grid]);
+    }
+    probes.sort((x, y) => x[0] - y[0]);
+    for (let i = 0; i < Math.min(WEB_TUBE_CHOICES, probes.length); i++) candidates.add(probes[i][1]);
+  }
+  return [...candidates];
 }
 
 function planReturn(webId, cameraStart) {
@@ -141,8 +251,17 @@ function planReturn(webId, cameraStart) {
   for (const grid of web.members) { const d = distance3(cameraStart, gridAbsolute(grid)); if (d < nearest) { nearest = d; startGrid = grid; } }
   let grids, logicalNodes, sampled = false;
   if (web.dynamic) {
-    const plan = planFamilyGrids(startGrid, web.homeGrid, web.base, WEB_ROUTE_MAX);
-    grids = plan.grids; logicalNodes = plan.logicalCount; sampled = plan.sampled;
+    const logicalPlan = planFamilyGrids(startGrid, web.homeGrid, web.base, WEB_ROUTE_MAX);
+    logicalNodes = logicalPlan.logicalCount;
+    const startCell = macroCell(startGrid), homeCell = macroCell(web.homeGrid);
+    const bands = Math.max(1, Math.min(WEB_ROUTE_MAX - 1,
+      Math.ceil(cellDistance(startCell, homeCell) / WEB_ROUTE_HOP_CELLS)));
+    const candidates = placement === 'hilbert'
+      ? hilbertTubeCandidates(startGrid, web.homeGrid, web.base, bands)
+      : planFamilyGrids(startGrid, web.homeGrid, web.base, WEB_ROUTE_MAX * 4).grids;
+    grids = monotonicWebPath(candidates, startGrid, web.homeGrid, gridAbsolute,
+      { bands, maxWaypoints: WEB_ROUTE_MAX, candidatesPerBand: WEB_TUBE_CHOICES });
+    sampled = logicalNodes > grids.length;
   } else {
     grids = shortestWebPath(web.members, web.edges, startGrid, web.homeGrid, gridAbsolute);
     if (!grids) throw new Error('No connected strand reaches home.');
@@ -155,7 +274,7 @@ function planReturn(webId, cameraStart) {
   const standoff = Math.min(standoffMax, Math.max(80, distance3(beforeHome, homePoint) * 0.32));
   const arrival = homePoint.map((value, i) => value - homeDirection[i] * standoff);
   const path = buildArcPath([cameraStart, ...gridPoints.slice(0, -1), arrival], WEB_ROUTE_SUBDIV);
-  routePath = { webId, path, homePoint };
+  routePath = { webId, path, homePoint, grids };
   return { webId, homeGrid: web.homeGrid, startGrid, logicalNodes, sampled, routeNodes: grids.length,
     duration: rideDuration(logicalNodes), path, homePoint, arrival, homeDirection };
 }

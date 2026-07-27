@@ -1,4 +1,4 @@
-import { planFamilyGrids, shortestWebPath, buildArcPath, sampleArcPath, rideDuration } from './web-return.js';
+import { planFamilyGrids, monotonicWebPath, shortestWebPath, buildArcPath, sampleArcPath, rideDuration } from './web-return.js';
 import { buildWebGraph, familyMembers } from './web-graph.js';
 
 let pass = true;
@@ -25,6 +25,17 @@ check('worker graph adjacency covers every emitted edge', proximity.edges.every(
 const graph = shortestWebPath([10, 20, 30, 40], [[0, 1], [1, 2], [0, 3], [3, 2]], 10, 30,
   g => g === 40 ? [100, 0, 0] : [g, 0, 0]);
 check('finite Web route follows cheapest connected strands', graph.join(',') === '10,20,30', graph.join(','));
+
+const corridorPoints = new Map([
+  [1, [0, 0, 0]], [2, [2, 8, 0]], [3, [3, 1, 0]], [4, [5, -1, 0]],
+  [5, [7, 1, 0]], [6, [8, 9, 0]], [9, [10, 0, 0]], [20, [-2, 0, 0]],
+]);
+const corridor = monotonicWebPath([...corridorPoints.keys()], 1, 9, g => corridorPoints.get(g),
+  { bands: 4, maxWaypoints: 8, candidatesPerBand: 3 });
+const corridorX = corridor.map(g => corridorPoints.get(g)[0]);
+check('tube route starts and ends at the requested nodes', corridor[0] === 1 && corridor.at(-1) === 9, corridor.join(','));
+check('tube route advances monotonically toward home', corridorX.every((x, i) => !i || x > corridorX[i - 1]), corridorX.join(','));
+check('tube route prefers the straight corridor over lateral distractors', corridor.includes(3) && corridor.includes(4) && corridor.includes(5) && !corridor.includes(2) && !corridor.includes(6), corridor.join(','));
 
 const arc = buildArcPath([[0, 0, 0], [10, 5, 0], [20, 0, 5]], 8);
 const start = sampleArcPath(arc, 0), middle = sampleArcPath(arc, 0.5), end = sampleArcPath(arc, 1);
