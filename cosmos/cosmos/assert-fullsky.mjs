@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { gridShardSolve, shardKeysOf, gridShardSystems, divisorsFast, nearestDegree, poolFromRatios, TONE_BIN_CENTS } from '../grid-core.js';
 import { deriveScale } from '../oracle-core.js';
 import { CHORDS, CHORD_QUALITIES, QUALITY_COUNT, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, perDegreeSupport, weakestSupport, chooseNextChord, candidateCosts, pushTabu, chordStepIndex } from '../sky-walk.js';
-import { CHORD_TICKS, TABU_K, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState } from '../cosmos-audio.js';
+import { CHORD_SECONDS, CHORD_MAX_SECONDS, SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState, scaledRateFor, shouldAdvanceChord } from '../cosmos-audio.js';
 import { poolFromTones, solveRoots, scoreRootAt } from '../sky-root.js';
 import { ratioToCents } from '../oracle-core.js';
 
@@ -219,7 +219,55 @@ check('coverage: an unweighted (gain 0) star never contributes', coverage(triad,
 console.log('\n  Chord-clock helper');
 let clockFail = 0;
 for (const ticks of [0, 1, 255, 256, 257, 5000, 65535]) if (chordStepIndex(ticks, 256) !== Math.floor(ticks / 256)) clockFail++;
-check('chordStepIndex is a pure floor(ticks/chordTicks)', clockFail === 0, `${clockFail} mismatches`);
+check('chordStepIndex is a pure floor(elapsed/window)', clockFail === 0, `${clockFail} mismatches`);
+
+// ── TWO CLOCKS ──────────────────────────────────────────────────────────────────────────────────
+// The grid clock (ticks) scales with playback speed so a row program's `grid`-tick loop can be made to
+// last a fixed wall duration at any grid. The sky clock (seconds) must NOT: a chord window, a pad's
+// breath and the root solve's settle are listening durations. Every seconds constant below is its old
+// tick value over the historical 10 ticks/s default, so the two clocks agree exactly at that rate.
+console.log('\n  Two clocks: sky constants are rate-independent seconds');
+check('CHORD_SECONDS is the old 256-tick window at the historical 10 ticks/s', CHORD_SECONDS === 256 / 10);
+check('REATTACK_PERIODS are the old tick periods at that same rate',
+  REATTACK_PERIODS.join(',') === [45, 56, 64, 81, 100].map(t => t / 10).join(','));
+check('the full-quality hold is capped so an unvoiceable degree cannot stall the walk',
+  CHORD_MAX_SECONDS > CHORD_SECONDS && Number.isFinite(CHORD_MAX_SECONDS), `${CHORD_MAX_SECONDS}s`);
+// A rate change must not move the sky clock. currentSkySeconds reads a fixed epoch; currentTicks does not.
+check('speed mode is an explicit two-value enum with a scaled cycle default',
+  SPEED_MODES.FIXED === 'fixed' && SPEED_MODES.SCALED === 'scaled' && SCALED_CYCLE_DEFAULT > 0);
+// Scaled speed's whole purpose, stated as arithmetic: rate = grid / cycleSeconds makes a grid-tick loop
+// last cycleSeconds at ANY grid. At a fixed 10 ticks/s, grid 61600's cycle runs over an hour and a half.
+const cycleSecondsAt = (grid, rate) => grid / rate;
+check('a fixed rate makes a large grid\'s cycle unlistenable, a scaled rate does not',
+  cycleSecondsAt(61600, 10) > 5000 && Math.abs(cycleSecondsAt(61600, 61600 / 12) - 12) < 1e-9,
+  `fixed ${(cycleSecondsAt(61600, 10) / 60).toFixed(0)}min vs scaled 12s`);
+check('the same law leaves a small grid where it already was (grid 120 → the historical 10 ticks/s)',
+  Math.abs(120 / SCALED_CYCLE_DEFAULT - 10) < 1e-9);
+
+console.log('\n  Scaled rate derivation');
+check('the derived rate makes ONE median-grid cycle last exactly the target seconds', (() => {
+  const d = scaledRateFor([1092, 1650, 2640, 5100, 7920], 12);
+  return d.medianGrid === 2640 && Math.abs(d.medianGrid / d.ticksPerSec - 12) < 1e-9;
+})());
+// Median, not mean: the active set spans orders of magnitude, and one distant monster must not drag
+// the whole sky's pace with it.
+check('one enormous outlier grid does not drag the pace (median, not mean)',
+  scaledRateFor([120, 240, 360, 480, 5_000_000], 12).medianGrid === 360);
+check('no row field at all (ambient mode) means "keep the rate we have", not a rate of 0',
+  scaledRateFor([], 12) === null && scaledRateFor([120], 0) === null);
+check('the derived rate is clamped, so a monster grid cannot demand an unschedulable rate',
+  scaledRateFor([5_000_000], 0.5).ticksPerSec <= 8000);
+
+console.log('\n  Chord dwell rule (expose the full quality)');
+const dwell = extra => shouldAdvanceChord({ windowElapsed: true, holding: true, complete: false, heldSeconds: 0, maxSeconds: 100, ...extra });
+check('the chord window is still necessary — nothing advances before it elapses',
+  !dwell({ windowElapsed: false, complete: true }) && !shouldAdvanceChord({ windowElapsed: false, holding: false }));
+check('with the hold off the window alone advances the walk, exactly as before',
+  shouldAdvanceChord({ windowElapsed: true, holding: false, complete: false, heldSeconds: 0 }));
+check('with the hold on an unexposed chord keeps holding past its window', !dwell({}));
+check('a chord that has exposed every degree advances at its window', dwell({ complete: true }));
+check('the cap releases a chord whose degree the local field simply cannot voice',
+  dwell({ complete: false, heldSeconds: 100 }) && dwell({ complete: false, heldSeconds: 250 }));
 
 // ══ M3 — the bed ═════════════════════════════════════════════════════════════════════════════
 console.log('\n── M3: the bed ──');
@@ -287,7 +335,7 @@ console.log('\n  Budget cap');
 check('MAX_BED_OSC is a positive, binding cap (< AUDIBLE_N × 3)', MAX_BED_OSC > 0 && MAX_BED_OSC <= 10 * 3, `MAX_BED_OSC=${MAX_BED_OSC}`);
 
 // knob sanity
-check('CHORD_TICKS, TABU_K positive', CHORD_TICKS > 0 && TABU_K > 0);
+check('CHORD_SECONDS, TABU_K positive', CHORD_SECONDS > 0 && TABU_K > 0);
 check('REATTACK_PERIODS all positive, length > 1', REATTACK_PERIODS.length > 1 && REATTACK_PERIODS.every(p => p > 0));
 
 // ══ M4 — lead integration + cockpit ═════════════════════════════════════════════════════════

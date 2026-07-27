@@ -99,6 +99,13 @@ export class SpatialGridRowPlayer {
     this.reverb = this._buildReverbSend(output);    // wet send, tapped post-master (fades with enable)
     this.enabled = false;
     this.stars = new Map();
+    // Exposure ledger for the sky's "hold the chord until its full quality has sounded" rule. The player
+    // stays harmony-blind: it records only WHICH folded tone sounded and WHEN, carrying the tone's cents
+    // straight through from the program. cosmos-audio owns the root and maps those cents to chord degrees.
+    // Keyed by fraction so it stays bounded by the distinct tones of the active programs (tens), and
+    // pruned by age on read rather than reset, so a lookahead attack scheduled across a chord boundary
+    // is still counted at the moment it actually sounds.
+    this.soundedTones = new Map();   // fraction -> { cents, when } (latest attack)
     this.logicalVoiceCount = 0;
     this.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0, installs: 0, entries: 0, exits: 0 };
     this.setListenerPose(AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP);
@@ -212,7 +219,9 @@ export class SpatialGridRowPlayer {
     // fraction -> owning rhythm key (from the compact program's selectedTones) so a sounding voice can be
     // traced to the bloom node that represents its rhythm. Missing/absent → null (voice just won't light a node).
     const ownerKeyByFraction = new Map((program.selectedTones || []).map(tone => [tone.fraction, tone.ownerKey ?? null]));
-    return { program, gain, voices: new Map(), oscillators: new Set(), lastToneByLayer: new Map(), ownerKeyByFraction, cursorCycle: 0, cursorEvent: 0, startTime: 0, retireAt: Infinity };
+    // Same projection for the tone's absolute cents — the only harmonic datum the exposure ledger carries.
+    const centsByFraction = new Map((program.selectedTones || []).map(tone => [tone.fraction, tone.cents]));
+    return { program, gain, voices: new Map(), oscillators: new Set(), lastToneByLayer: new Map(), ownerKeyByFraction, centsByFraction, cursorCycle: 0, cursorEvent: 0, startTime: 0, retireAt: Infinity };
   }
 
   _syncCursor(deck, absoluteTick) {
@@ -404,6 +413,8 @@ export class SpatialGridRowPlayer {
       star.visualLives.push(voice.visualLife);
       star.visualAttacks.push({ when, strength: 1, ownerKey });
     }
+    const soundedCents = deck.centsByFraction?.get(action.fraction);
+    if (Number.isFinite(soundedCents)) this.soundedTones.set(action.fraction, { cents: soundedCents, when });
     this.logicalVoiceCount++;
     osc.start(when);
     osc.stop(endAt + 0.02);   // self-terminating; a same-layer steal reschedules this earlier in _releaseLayer
@@ -448,7 +459,22 @@ export class SpatialGridRowPlayer {
     const now = this.ctx.currentTime;
     for (const star of this.stars.values()) this._destroyStar(star, now);
     this.stars.clear();
+    this.soundedTones.clear();
     this.logicalVoiceCount = 0;
+  }
+
+  // The tones whose attack audio-context time has actually REACHED since `since` — a lookahead attack
+  // scheduled past `now` does not count as heard yet. Entries older than `retain` are dropped on read,
+  // which is the ledger's only pruning (no reset, so an attack scheduled just before a chord boundary
+  // still counts toward the chord it lands in). Returns [{ fraction, cents }].
+  soundedSince(since, retain = 300) {
+    const now = this.ctx.currentTime;
+    const out = [];
+    for (const [fraction, entry] of this.soundedTones) {
+      if (entry.when < now - retain) { this.soundedTones.delete(fraction); continue; }
+      if (entry.when >= since && entry.when <= now) out.push({ fraction, cents: entry.cents });
+    }
+    return out;
   }
 
   debugState() {

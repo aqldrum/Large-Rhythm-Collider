@@ -224,6 +224,38 @@ check('the primed tone is the layer\'s last tone at or before the boundary, as a
 check('the row voice has one envelope shape — no separate softer seed blip',
   !readFileSync(new URL('../spatial-grid-row-player.js', import.meta.url), 'utf8').includes('ROW_SEED_'));
 
+console.log('\n  Chord-exposure ledger');
+// "Expose the full quality": the sky holds a chord until every one of its degrees has actually sounded.
+// The player stays harmony-blind — it records only which folded tone sounded and when, carrying the
+// tone's cents straight through from the program; cosmos-audio owns the root and does the folding.
+const ledgerPlayer = Object.create(SpatialGridRowPlayer.prototype);
+ledgerPlayer.ctx = fakeCtx();
+ledgerPlayer.logicalVoiceCount = 0;
+ledgerPlayer.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0 };
+ledgerPlayer.stars = new Map();
+ledgerPlayer.soundedTones = new Map();
+ledgerPlayer._claimToneVoice = () => true;
+const ledgerDeck = { program: { grid: 7, repeatCull: true }, voices: new Map(), oscillators: new Set(),
+  lastToneByLayer: new Map(), centsByFraction: new Map([['1/1', 0], ['5/4', 386.31], ['3/2', 701.96]]) };
+ledgerPlayer.ctx.currentTime = 10;
+ledgerPlayer._startVoice(ledgerDeck, { layer: 'A', rawRatio: 1, fraction: '1/1', rawFraction: '1/1' }, 9.5);
+ledgerPlayer._startVoice(ledgerDeck, { layer: 'B', rawRatio: 1.25, fraction: '5/4', rawFraction: '5/4' }, 9.9);
+ledgerPlayer._startVoice(ledgerDeck, { layer: 'C', rawRatio: 1.5, fraction: '3/2', rawFraction: '3/2' }, 10.4);  // lookahead
+check('the ledger carries each sounded tone\'s cents through from the program',
+  ledgerPlayer.soundedTones.get('5/4').cents === 386.31);
+check('a lookahead attack is not counted as heard until audio-context time reaches it',
+  ledgerPlayer.soundedSince(0).map(t => t.fraction).sort().join(',') === '1/1,5/4');
+ledgerPlayer.ctx.currentTime = 10.5;
+check('the same attack counts once its scheduled time arrives',
+  ledgerPlayer.soundedSince(0).map(t => t.fraction).sort().join(',') === '1/1,3/2,5/4');
+check('the ledger is windowed, so a chord only sees what sounded since it began',
+  ledgerPlayer.soundedSince(10).map(t => t.fraction).sort().join(',') === '3/2');
+// No reset on a chord change: an attack scheduled just before a boundary must still count toward the
+// chord it lands in. Pruning is by age on read alone, which also bounds the map.
+ledgerPlayer.ctx.currentTime = 400;
+ledgerPlayer.soundedSince(0);
+check('entries age out on read so the ledger cannot grow without bound', ledgerPlayer.soundedTones.size === 0);
+
 console.log('\n  Audio-time visual activity');
 const visualPlayer = Object.create(SpatialGridRowPlayer.prototype);
 visualPlayer.enabled = true;

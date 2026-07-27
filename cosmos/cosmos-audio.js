@@ -10,7 +10,7 @@ import { nearestDegree } from './grid-core.js';
 import { CHORDS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, coverage as skyCoverage, perDegreeSupport, gainForDev } from './sky-walk.js';
 import { normalizeRootLadder, resetPhraseTracker, observePhraseBoundary, pushRecentRoot,
   classifyRootDestinations, rankModulationDestinations, decideRootAtBoundary } from './sky-modulation.js';
-import { AUDIO_MODES, RHYTHM_VOICE_WAVEFORM } from './cosmos-grid-audio-core.js';
+import { AUDIO_MODES, RHYTHM_VOICE_WAVEFORM, ownerChordMatch } from './cosmos-grid-audio-core.js';
 import { SpatialGridRowPlayer } from './spatial-grid-row-player.js';
 
 const ROOT_HZ = 220;             // Phase 0: one root for every voice (per-star root is a later phase)
@@ -26,7 +26,13 @@ const LEAD_MASK_WINDOW = 35;     // cents — a lead onset counts as "in the glo
 // The global ambient bed — nearby stars' degree pools voiced against the one sky-wide chord walk.
 // AUDIBLE_N (which/how-many zones feed the bed) lives in flight-view.js's FLIGHT/LOD KNOBS block —
 // audible-set SELECTION is a camera/projection concern, kept out of this dependency-free audio layer.
-const CHORD_TICKS = 256;         // universal-clock ticks per chord (≈25.6s at the default 10 ticks/s)
+// Sky-clock constants, in SECONDS (see the TWO CLOCKS block). Each is the tick-denominated value it
+// replaces divided by the historical 10 ticks/s default, so behaviour at that rate is unchanged.
+const CHORD_SECONDS = 25.6;      // one chord window (was CHORD_TICKS = 256)
+// "Expose the full quality": hold the chord past its window until every one of its degrees has actually
+// SOUNDED, so a 7th is heard as a 7th rather than as whichever of its tones happened to land. Capped —
+// a degree the local field simply cannot voice must not stall the walk forever.
+const CHORD_MAX_SECONDS = 4 * CHORD_SECONDS;
 const TABU_K = 3;                // sky-walk tabu length (chord-walk.js's exact convention)
 const TUNING_STRENGTH_MAX = 8;
 let LAMBDA_FIELD = 2.0;          // live local-tuning pull, in semitones of voice-leading cost
@@ -45,8 +51,20 @@ const MAX_BED_OSC = 30;          // bed oscillator budget (≤3 tones/star × AU
 const BED_ATTACK = 1.5, BED_RELEASE = 2.5;   // seconds — long swells, this is half the product
 const BED_PEAK = 0.12;           // per-voice envelope peak (modest — many sustained voices sum)
 const BED_SUSTAIN_FRAC = 0.4;    // a swell settles to this fraction of its peak, not to silence (held pad)
-const REATTACK_PERIODS = [45, 56, 64, 81, 100];   // ticks; mutually near-coprime so the sky breathes as
-                                  // a polyrhythm, not a synchronized pad — REATTACK_PERIODS[hash(id)%n]
+const REATTACK_PERIODS = [4.5, 5.6, 6.4, 8.1, 10];   // SKY-CLOCK seconds; mutually near-coprime so the sky
+                                  // breathes as a polyrhythm, not a synchronized pad — REATTACK_PERIODS[hash(id)%n]
+// SCALED SPEED. A row program's loop is `grid` ticks long, so at a fixed rate a star's cycle lasts
+// grid/ticksPerSec seconds — 12s at grid 120 but 103 MINUTES at grid 61600. That is why the polyrhythmic
+// chorus only ever emerged down at the low grids: up high you were hearing a few isolated onsets out of
+// a cycle you would never live to finish. Scaled mode instead derives the rate from the median grid
+// actually sounding, so a cycle lasts SCALED_CYCLE_SECONDS wherever you are. Measured over real grids at
+// a 12s cycle, onset density stays musical the whole way up (grid 120: 12 events, 1.0/s → grid 61600:
+// 92 events, 7.7/s) — bigger grids read as denser chorus, not as a buzz.
+const SPEED_MODES = Object.freeze({ FIXED: 'fixed', SCALED: 'scaled' });
+const SCALED_CYCLE_DEFAULT = 12;   // seconds per grid cycle — grid 120's cycle at the historical 10 ticks/s
+const SCALED_RATE_MIN = 1, SCALED_RATE_MAX = 8000;   // ticks/s clamp; 8000 covers the largest charted grids
+const SCALED_RATE_HYSTERESIS = 0.06;   // only re-anchor the transport when the target moves >6% — the median
+                                  // grid is a discrete step function, and every change re-anchors the epoch
 const REVERB_WET = 0.3;          // shared send level
 const REVERB_SECONDS = 4, REVERB_DECAY = 3;   // procedural impulse: exp-decaying noise burst, no assets
 const ROOT_TOP_K = 8;            // how much of the ranked ladder the debug overlay shows
@@ -80,19 +98,29 @@ let schedulerTimer = null;
 let audioMode = AUDIO_MODES.AMBIENT_CHORDS;
 let gridRowPlayer = null;
 
-// ── shared transport ── universal clock = a fixed TICK RATE (ticks/sec), not a fixed cycle duration.
-// A "tick" is one ONSET of whichever star is currently the lead (lead.notes.length ticks = one full
-// cycle) — NOT one grid-step: `grid` is the LCM of the layers and can be tens of thousands even for a
-// modest rhythm, which made cycles hours long when ticks were grid-steps (that's why the chord clock
-// looked frozen/disconnected). Using the onset count instead pins the average note rate to ticksPerSec
-// regardless of grid size, while note.t fractions still preserve the exact (uneven) onset spacing within
-// the cycle — only the overall pace changes, not the rhythm's internal proportions.
+// ── TWO CLOCKS ─────────────────────────────────────────────────────────────────────────────────
+// GRID CLOCK (ticks). A fixed TICK RATE (ticks/sec), not a fixed cycle duration. For the lead, a
+// "tick" is one ONSET (lead.notes.length ticks = one full cycle) — NOT one grid-step: `grid` is the
+// LCM of the layers and can be tens of thousands even for a modest rhythm, which made cycles hours
+// long when ticks were grid-steps. Using the onset count instead pins the average note rate to
+// ticksPerSec regardless of grid size, while note.t fractions still preserve the exact (uneven) onset
+// spacing within the cycle. Row programs DO run on grid-steps (a program's loop is `grid` ticks), which
+// is exactly why the rate has to be able to scale with the local grid — see setSpeedMode.
+//
+// SKY CLOCK (seconds). Wall-clock seconds since the audio context started, NEVER re-anchored. The
+// chord walk, the bed's re-swells and the root policy's settle/rate-limit are all "how long a listener
+// experiences this harmony" quantities: they must not speed up when playback does. Keeping them on
+// ticks is what would make scaled speed unusable — at grid 61600's ~5100 ticks/s the 256-tick chord
+// window would fire every 50ms. The two clocks agree exactly at the historical 10 ticks/s default,
+// which is how every seconds constant below was derived.
 let ticksPerSec = 10;              // default: 10 ticks/sec (~100ms/tick) — slow enough to actually listen
-let transportStart = null;        // audioCtx time at which the absolute tick counter reads 0
+let transportStart = null;        // audioCtx time at which the absolute tick counter reads 0 (re-anchored on rate change)
+let audioEpoch = null;            // audioCtx time the transport started — the sky clock's fixed origin
 let lead = null;                  // { notes, grid, cardinality, node } | null
 let schedIdx = 0, schedCycle = 0; // scheduler's cursor into lead.notes / current cycle number
 let currentOctaveLift = 0;        // applies to NEWLY scheduled notes only (spec: don't repitch in flight)
 const absoluteTicks = now => (now - transportStart) * ticksPerSec;   // monotonic tick count since transport start
+const skySeconds = now => (audioEpoch == null ? 0 : now - audioEpoch);   // monotonic wall seconds, rate-independent
 
 // ── Full Sky lead tint (M4): the lead's chord mask now comes from the GLOBAL walk, not a per-star
 // song — solveStarSong is no longer called from the click path. Ducks (−12dB), never silences: the
@@ -103,6 +131,14 @@ let leadMaskRootKey = -1;         // root swaps independently invalidate the sam
 
 // ── Full Sky: the global chord walk (online, stateful — not precomputed) + the ambient bed ──
 let skyChordId = START_CHORD_ID, skyTabu = null, skyStep = -1;   // walk state; skyStep=-1 = not yet observed
+let chordStartedAt = 0;           // sky-clock seconds the current chord began — the dwell/exposure origin
+let holdForFullQuality = false;   // "expose the full quality" — hold a chord until every degree has sounded
+let lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };   // overlay-only snapshot
+let bedSoundedDegrees = new Set();   // ambient-mode half of the exposure ledger, cleared at each chord change
+let speedMode = SPEED_MODES.FIXED;
+let scaledCycleSeconds = SCALED_CYCLE_DEFAULT;
+let fixedTickRate = 10;           // the raw ticks/s the tempo slider last asked for — restored on leaving scaled mode
+let scaledMedianGrid = 0;         // most recent median sounding grid (overlay + rate derivation)
 let currentField = [];            // last setField() items — also the input to coverage()
 // The solved harmonic frame starts on a PROVISIONAL 1/1 so playback has a deterministic anchor before
 // the first geographic solve. The first valid solve establishes it (possibly retaining 1/1) at a chord
@@ -142,7 +178,10 @@ export function initAudio() {
   rootPhraseTracker = resetPhraseTracker(skyRoot.rootKey, skyChordId, skyTabu);
   recentSkyRoots = []; lastRootPolicyProposal = null; rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
   bedStars = new Map(); bedOscCount = 0; currentField = [];
-  transportStart = audioCtx.currentTime;   // one shared clock starts here; lead swaps ride the same phase
+  transportStart = audioCtx.currentTime;   // grid clock starts here; lead swaps ride the same phase
+  audioEpoch = transportStart;             // sky clock shares the origin but is never re-anchored after this
+  chordStartedAt = 0; lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };
+  scaledMedianGrid = 0;
   liveOscs = new Set();
   schedIdx = 0; schedCycle = 0;
   schedulerTimer = setInterval(schedulerTick, LOOKAHEAD_MS);
@@ -170,8 +209,49 @@ export function setAudioMode(mode) {
 
 export function setGridSpatialField(items) {
   if (!audioCtx || !gridRowPlayer) return;
+  applyScaledRate(items);          // before setField: the boundary tick it stamps must use the new rate
   gridRowPlayer.setField(items || [], currentTicks());
 }
+
+// Scaled speed: hold one grid cycle at scaledCycleSeconds by deriving ticks/s from the MEDIAN grid
+// currently sounding. Median, not mean, because the active set spans orders of magnitude and one
+// distant monster must not drag the whole sky's pace with it. Only re-derives past a hysteresis band —
+// the median is a discrete step function over a churning star set, and every rate change re-anchors
+// the transport epoch, so tracking it exactly would jitter the pace continuously while flying.
+// Pure part, exported so a headless guard can verify the law without a live AudioContext: the median
+// grid of the sounding field, and the clamped rate that makes ONE grid cycle last cycleSeconds.
+// → null when there is no row field at all (ambient mode), which means "keep the rate we have".
+export function scaledRateFor(grids, cycleSeconds) {
+  const sorted = (grids || []).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length || !(cycleSeconds > 0)) return null;
+  const medianGrid = sorted[sorted.length >> 1];
+  return { medianGrid, ticksPerSec: Math.max(SCALED_RATE_MIN, Math.min(SCALED_RATE_MAX, medianGrid / cycleSeconds)) };
+}
+
+function applyScaledRate(items) {
+  if (speedMode !== SPEED_MODES.SCALED) return;
+  const derived = scaledRateFor((items || []).map(item => item.program?.grid), scaledCycleSeconds);
+  if (!derived) return;
+  scaledMedianGrid = derived.medianGrid;
+  if (Math.abs(derived.ticksPerSec - ticksPerSec) / Math.max(derived.ticksPerSec, ticksPerSec) > SCALED_RATE_HYSTERESIS) {
+    setTickRate(derived.ticksPerSec);
+  }
+}
+
+// 'scaled' derives ticks/s from the local grid; 'fixed' restores whatever the tempo slider last set.
+export function setSpeedMode(mode, cycleSeconds) {
+  speedMode = Object.values(SPEED_MODES).includes(mode) ? mode : SPEED_MODES.FIXED;
+  if (Number.isFinite(+cycleSeconds) && +cycleSeconds > 0) scaledCycleSeconds = +cycleSeconds;
+  if (speedMode === SPEED_MODES.FIXED) { scaledMedianGrid = 0; setTickRate(fixedTickRate); }
+  else if (scaledMedianGrid > 0) {
+    setTickRate(Math.max(SCALED_RATE_MIN, Math.min(SCALED_RATE_MAX, scaledMedianGrid / scaledCycleSeconds)));
+  }
+  return { mode: speedMode, cycleSeconds: scaledCycleSeconds, ticksPerSec, medianGrid: scaledMedianGrid };
+}
+
+// "Expose the full quality": hold each chord until every one of its degrees has actually sounded.
+export function setHoldForFullQuality(on) { holdForFullQuality = !!on; return holdForFullQuality; }
+export function currentSpeedMode() { return { mode: speedMode, cycleSeconds: scaledCycleSeconds, ticksPerSec, medianGrid: scaledMedianGrid }; }
 
 // Read-only bridge for flight visuals. The audio player remains the authority on whether a row star
 // really has live voices and whether a scheduled attack has reached audio-context time.
@@ -234,7 +314,7 @@ export function setSpatial(pan, gain, octaveLift) {
 // -> star's StereoPanner -> star's distance GainNode -> bedBus (dry -> master, wet -> shared reverb).
 // The pure scheduling-decision helpers below (hashId/bedDegreesFor/reattachStepFor) are exported
 // alongside the SKY KNOBS so a headless guard can verify the bed's decisions without a real AudioContext.
-export { CHORD_TICKS, TABU_K, LAMBDA_FIELD, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_TOP_K };
+export { CHORD_SECONDS, CHORD_MAX_SECONDS, SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, LAMBDA_FIELD, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_TOP_K };
 
 // User-facing harmonic-policy control. Because candidate field costs are normalized, this has a
 // stable meaning: the best local tuning advantage can justify up to this many semitones of additional
@@ -337,10 +417,10 @@ export function selectedGridRatioToneRows(chordId, rootCents, stars) {
   }));
 }
 
-// Which REATTACK_PERIODS-relative step a star is on at a given absolute tick count — pure floor
+// Which REATTACK_PERIODS-relative step a star is on at a given SKY-CLOCK second count — pure floor
 // division off a per-star period (chosen via hashId), same resync-safe shape as chordStepIndex.
-export function reattachStepFor(id, ticks) {
-  return Math.floor(ticks / REATTACK_PERIODS[hashId(id) % REATTACK_PERIODS.length]);
+export function reattachStepFor(id, seconds) {
+  return Math.floor(seconds / REATTACK_PERIODS[hashId(id) % REATTACK_PERIODS.length]);
 }
 
 // Ramp an envelope's gain from wherever it currently sits UP to `peak` (BED_ATTACK) then settle to a
@@ -405,6 +485,7 @@ function createVoice(bs, degree, now) {
   // compares this against the current pool to detect that and release+recreate).
   const v = { osc, env, degree, dev: slot.dev, fraction: slot.fraction };
   bs.oscMap.set(degree, v);
+  bedSoundedDegrees.add(degree);   // exposure ledger: the bed sounds BY degree, so this is already the answer
   swellEnvelope(env.gain, BED_PEAK * gainForDev(slot.dev), now);
   return v;
 }
@@ -469,11 +550,12 @@ function syncBedDegrees(now) {
 
 // Each star re-swells on its own deterministic period (mutually near-coprime REATTACK_PERIODS) so the
 // sky breathes as a slow polyrhythm rather than one synchronized pad — the v1 stand-in for real
-// per-star rhythm. Driven by the tick clock (schedulerTick), independent of any lead.
-function pumpReattacks(now, ticks) {
+// per-star rhythm. Driven by the SKY clock: how often a pad breathes is a listening duration, so it
+// must not speed up with playback.
+function pumpReattacks(now, seconds) {
   for (const bs of bedStars.values()) {
     if (!bs.oscMap.size) continue;
-    const stepNow = reattachStepFor(bs.id, ticks);
+    const stepNow = reattachStepFor(bs.id, seconds);
     if (bs.reattachStep === undefined) { bs.reattachStep = stepNow; continue; }
     if (stepNow === bs.reattachStep) continue;
     bs.reattachStep = stepNow;
@@ -481,15 +563,64 @@ function pumpReattacks(now, ticks) {
   }
 }
 
-// The sky walk's chord clock: a pure step index off the universal tick clock (CHORD_TICKS apart).
-// Online, not precomputed — advancing past a boundary calls chooseNextChord ONCE against the CURRENT
-// field (no history replay; if ticks jump far ahead — e.g. a backgrounded tab — the walk just takes
-// one hop and re-anchors, same "don't retroactively replay" spirit as setTickRate).
-function stepSkyWalk(ticks) {
-  const step = chordStepIndex(ticks, CHORD_TICKS);
-  if (skyStep < 0) { skyStep = step; return; }
-  if (step === skyStep) return;
+// Which of the CURRENT chord's degrees have actually been sounded since it began. Row mode reads the
+// player's ledger and folds each sounded tone's absolute cents to a degree around the live root; the
+// bed sounds by degree already. Deliberately NOT the pool's per-degree best tone: any valid tone inside
+// the consonance window exposes that degree — the pool keeps only the min-|dev| representative per
+// degree, and requiring that one would refuse to count a perfectly good third the field really played.
+function chordExposure(nowSeconds) {
+  const chord = CHORDS[skyChordId];
+  const sounded = new Set();
+  if (audioMode === AUDIO_MODES.CULLED_GRID_ROWS) {
+    const since = audioEpoch + chordStartedAt;   // ledger times are audio-context times, not sky seconds
+    for (const tone of gridRowPlayer?.soundedSince(since) || []) {
+      const match = ownerChordMatch(tone.cents, skyRoot.cents, chord.semitones);
+      if (match?.selected) sounded.add(match.degree);
+    }
+  } else {
+    // Live voices AND the ledger: the bed is a sustained pad, so a voice that carries across a chord
+    // change never re-enters createVoice — counting only new attacks would leave its degree looking
+    // unexposed forever. The ledger covers the converse case, a voice that swelled and was released
+    // inside this window.
+    for (const bs of bedStars.values()) for (const degree of bs.oscMap.keys()) sounded.add(degree);
+    for (const degree of bedSoundedDegrees) sounded.add(degree);
+    for (const degree of [...sounded]) if (!chord.semitones.includes(degree)) sounded.delete(degree);
+  }
+  const missing = chord.semitones.filter(degree => !sounded.has(degree));
+  return { degrees: chord.semitones, sounded: [...sounded].sort((a, b) => a - b), missing,
+    complete: missing.length === 0, heldSeconds: nowSeconds - chordStartedAt };
+}
+
+// Pure dwell rule, exported so a headless guard can verify it without a live AudioContext. The chord
+// window is a MINIMUM once the hold is on: elapsing it is necessary but no longer sufficient. A chord
+// that has exposed its full quality moves on at its next boundary; one that has not keeps holding until
+// it does, or until the cap rescues a degree the local field simply cannot voice.
+export function shouldAdvanceChord({ windowElapsed, holding, complete, heldSeconds, maxSeconds = CHORD_MAX_SECONDS }) {
+  if (!windowElapsed) return false;
+  if (!holding) return true;
+  return !!complete || heldSeconds >= maxSeconds;
+}
+
+// The sky walk's chord clock: a pure step index off the SKY clock, CHORD_SECONDS apart (a chord window
+// is a listening duration — it must not shrink when scaled speed raises the tick rate). Online, not
+// precomputed — advancing past a boundary calls chooseNextChord ONCE against the CURRENT field (no
+// history replay; if the clock jumps far ahead — e.g. a backgrounded tab — the walk just takes one hop
+// and re-anchors, same "don't retroactively replay" spirit as setTickRate).
+//
+// With holdForFullQuality the window becomes a MINIMUM, not a fixed period: the chord holds past its
+// boundary until every one of its degrees has sounded, so the full quality is exposed rather than
+// whichever of its tones the local rows happened to reach. CHORD_MAX_SECONDS caps the hold — a degree
+// the field cannot voice at all must not stall the walk. skyStep re-anchors to the CURRENT step on
+// release, so a long hold never replays the windows it spanned.
+function stepSkyWalk(seconds) {
+  const step = chordStepIndex(seconds, CHORD_SECONDS);
+  if (skyStep < 0) { skyStep = step; chordStartedAt = seconds; return; }
+  const exposure = chordExposure(seconds);
+  lastChordExposure = exposure;
+  if (!shouldAdvanceChord({ windowElapsed: step !== skyStep, holding: holdForFullQuality, ...exposure })) return;
   skyStep = step;
+  chordStartedAt = seconds;
+  bedSoundedDegrees = new Set();
   const audibleStars = currentField.map(it => ({ pool: it.pool, weight: it.gain }));
   const next = chooseNextChord(skyChordId, skyTabu, t => skyCoverage(t, audibleStars),
     { lambdaField: LAMBDA_FIELD, richness: RICHNESS, perDegree: perDegreeSupport(audibleStars) });
@@ -661,11 +792,17 @@ export function currentSkyRoot() {
   return { ...skyRoot };
 }
 
-// Pure read of the universal tick clock — flight-view.js uses this (not audioCtx directly) to track
-// settle-duration/rate-limit the root solve in the SAME tick units CHORD_TICKS/ROOT_RESOLVE_MIN_TICKS
-// use, so a tempo change doesn't skew what "settled" means. 0 before the transport starts.
+// Pure read of the GRID clock — the unit row programs and the lead are scheduled in. 0 before the
+// transport starts. Rate-dependent by design: it is what makes a grid cycle scale with playback speed.
 export function currentTicks() {
   return audioCtx && transportStart != null ? absoluteTicks(audioCtx.currentTime) : 0;
+}
+
+// Pure read of the SKY clock — flight-view.js uses this (not audioCtx, not currentTicks) for the root
+// solve's settle duration and rate limit, in the SAME seconds CHORD_SECONDS uses. Rate-independent, so
+// neither the tempo slider nor scaled speed can skew what "settled" means. 0 before the transport starts.
+export function currentSkySeconds() {
+  return audioCtx && audioEpoch != null ? skySeconds(audioCtx.currentTime) : 0;
 }
 
 // → { symbol, semitones } — the sky's current chord, for the cockpit readout (M4) and lead masking.
@@ -710,6 +847,8 @@ export function debugSkyState() {
   return {
     audioMode,
     tuningStrength: LAMBDA_FIELD,
+    speed: { ...currentSpeedMode(), skySeconds: currentSkySeconds() },
+    chordExposure: { ...lastChordExposure, holding: holdForFullQuality },
     gridRows,
     rootHz: ROOT_HZ,   // 1/1's fixed fundamental — the root solve only ever picks a RATIO relative to this
     root,
@@ -758,7 +897,8 @@ export function setField(items) {
 // Ticks per second (the universal clock's rate). Re-anchors the transport epoch so the CURRENT
 // absolute tick count is preserved under the new rate (a rate change glides pace rather than jumping
 // the playhead — past ticks don't retroactively speed up or slow down).
-export function setTickRate(rate) {
+export function setTickRate(rate, fromUser = false) {
+  if (fromUser) fixedTickRate = rate;   // remember the slider's rate so leaving scaled mode restores it
   if (!audioCtx) { ticksPerSec = rate; return; }
   const now = audioCtx.currentTime;
   const ticksSoFar = absoluteTicks(now);
@@ -790,7 +930,8 @@ export function stopAudio() {
   skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; lastRootLadder = [];
   rootEstablished = false; rootPhraseTracker = null; recentSkyRoots = []; lastRootPolicyProposal = null;
   rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
-  lead = null; schedIdx = 0; schedCycle = 0; transportStart = null;
+  lead = null; schedIdx = 0; schedCycle = 0; transportStart = null; audioEpoch = null;
+  chordStartedAt = 0; bedSoundedDegrees = new Set(); scaledMedianGrid = 0;
   leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1;
   if (audioCtx) { try { audioCtx.close(); } catch {} }
   audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; liveOscs = null;
@@ -811,9 +952,9 @@ function resyncSchedulePointer() {
 
 function schedulerTick() {
   if (!audioCtx) return;
-  const now = audioCtx.currentTime, ticks = absoluteTicks(now);
-  stepSkyWalk(ticks);          // the sky's own chord clock — independent of any lead (no click gating)
-  if (audioMode === AUDIO_MODES.AMBIENT_CHORDS) pumpReattacks(now, ticks);
+  const now = audioCtx.currentTime;
+  stepSkyWalk(skySeconds(now));   // the sky's own chord clock — independent of any lead (no click gating)
+  if (audioMode === AUDIO_MODES.AMBIENT_CHORDS) pumpReattacks(now, skySeconds(now));
   gridRowPlayer?.tick(now, now + SCHEDULE_AHEAD, transportStart, ticksPerSec);
   ensureLeadMask(false);       // cheap cache-check; recomputes only right after stepSkyWalk changed the chord
   if (audioMode !== AUDIO_MODES.AMBIENT_CHORDS) return;

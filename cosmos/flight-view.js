@@ -14,7 +14,7 @@ import { sampleArcPath } from './cosmos/web-return.js';
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, setAudioMode, currentAudioMode, setGridSpatialField, gridRowVisualState, setTuningStrength, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, setHoldForFullQuality, setAudioMode, currentAudioMode, setGridSpatialField, gridRowVisualState, setTuningStrength, setRootPolicyContext } from './cosmos-audio.js';
 import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
@@ -150,11 +150,13 @@ const ROOT_RADIUS = 1400;        // world units — a true-3D-distance gather ra
                                   // the view-depth-sorted audible set (the root must not change on turning
                                   // your head). Start ≈ hilbert's FOG_NEAR; Avery tunes by ear/eye.
 const SETTLE_SPEED = 5;          // world units/sec below which the camera counts as "stopped"
-const SETTLE_TICKS = 30;         // ticks (universal clock) speed must stay under SETTLE_SPEED before solving
-const ROOT_RESOLVE_MIN_TICKS = 297;   // rate limit: at most one solve this often (coprime with CHORD_TICKS=256)
+// Both on the SKY clock (rate-independent wall seconds), not the grid tick clock — scaled speed can put
+// the tick rate in the thousands, and "settled" must mean the same duration to a listener at any speed.
+const SETTLE_SECONDS = 3;        // seconds speed must stay under SETTLE_SPEED before solving (was 30 ticks)
+const ROOT_RESOLVE_MIN_SECONDS = 29.7;   // rate limit: at most one solve this often (coprime with CHORD_SECONDS=25.6)
 let camSpeed = 0;                // this frame's actual world-space translation speed (units/sec) — stepControls sets it
-let settleSinceTick = null;      // tick count when speed first dropped below SETTLE_SPEED, or null (moving)
-let lastRootResolveTick = -Infinity;   // tick of the last proposed solve (rate limit)
+let settleSinceSecond = null;    // sky second when speed first dropped below SETTLE_SPEED, or null (moving)
+let lastRootResolveSecond = -Infinity;   // sky second of the last proposed solve (rate limit)
 let rootGeographyEpoch = 0;      // invalidates a settled solve once meaningful movement resumes
 let rootPolicyWasSettled = false;
 
@@ -507,6 +509,8 @@ let leadVoice = null, muted = false;
 let lrcDivEl = null, lrcHeadEl = null, cockpitPlotEl = null, cockpitPlotCtx = null;
 let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, chordReadoutEl = null, audioModeEl = null;
 let tuningSliderEl = null, tuningReadoutEl = null;
+let scaledSpeedEl = null, scaledReadoutEl = null, cycleSliderEl = null, cycleReadoutEl = null;
+let fullQualityEl = null, qualityReadoutEl = null;
 // Cardinality band filter: only nodes with cardinality in [cardLo, cardHi] render + hit-test (isolate radial
 // shells; makes monster clouds parseable). Elements + a change-guard so the DOM is only touched when needed.
 // The band targets ONLY the currently-focused bloom (cosmos.focusGrid); other blooms render in full. filterGrid
@@ -620,6 +624,9 @@ export function ensureFlight(canvas, hudEl) {
     audioModeEl = document.getElementById('lrc-audio-mode');
     tuningSliderEl = document.getElementById('lrc-tuning-slider');
     tuningReadoutEl = document.getElementById('lrc-tuning-readout');
+    scaledSpeedEl = document.getElementById('lrc-scaled-speed'); scaledReadoutEl = document.getElementById('lrc-scaled-readout');
+    cycleSliderEl = document.getElementById('lrc-cycle-slider'); cycleReadoutEl = document.getElementById('lrc-cycle-readout');
+    fullQualityEl = document.getElementById('lrc-full-quality'); qualityReadoutEl = document.getElementById('lrc-quality-readout');
     if (lrcHeadEl) {
       let clickTimer = null;   // debounce: a dblclick fires two clicks — let the pending single-click resolve
       lrcHeadEl.addEventListener('click', () => {                 // toggles cockpit; ignored while a dblclick is landing
@@ -630,8 +637,14 @@ export function ensureFlight(canvas, hudEl) {
     }
     if (muteBtnEl) muteBtnEl.addEventListener('click', toggleMute);
     if (tempoSliderEl) tempoSliderEl.addEventListener('input', () => {
-      const rate = +tempoSliderEl.value; setTickRate(rate);
+      const rate = +tempoSliderEl.value; setTickRate(rate, true);   // fromUser: scaled mode restores this on exit
       if (tempoReadoutEl) tempoReadoutEl.textContent = rate + '/s';
+    });
+    if (scaledSpeedEl) scaledSpeedEl.addEventListener('change', applySpeedControls);
+    if (cycleSliderEl) cycleSliderEl.addEventListener('input', applySpeedControls);
+    if (fullQualityEl) fullQualityEl.addEventListener('change', () => {
+      const on = setHoldForFullQuality(fullQualityEl.checked);
+      if (qualityReadoutEl) qualityReadoutEl.textContent = on ? 'hold' : 'off';
     });
     if (audioModeEl) audioModeEl.addEventListener('change', () => changeAudioMode(audioModeEl.value));
     if (tuningSliderEl) tuningSliderEl.addEventListener('input', () => {
@@ -653,9 +666,12 @@ export function ensureFlight(canvas, hudEl) {
   pool = new Pool(new URL('./cosmos/abundance-worker.js?v=5', import.meta.url), poolSize);
   rowCompiler = new ProgramWorkerPool(new URL('./cosmos/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
   rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
-  settleSinceTick = null; lastRootResolveTick = -Infinity; rootGeographyEpoch = 0; rootPolicyWasSettled = false;
+  settleSinceSecond = null; lastRootResolveSecond = -Infinity; rootGeographyEpoch = 0; rootPolicyWasSettled = false;
   if (audioModeEl) audioModeEl.value = AUDIO_MODES.AMBIENT_CHORDS;
   if (tuningSliderEl) setTuningStrength(tuningSliderEl.value);
+  setTickRate(tempoSliderEl ? +tempoSliderEl.value : 10, true);
+  if (fullQualityEl) setHoldForFullQuality(fullQualityEl.checked);
+  applySpeedControls();
   changeAudioMode(AUDIO_MODES.AMBIENT_CHORDS);
   // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
   placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
@@ -990,6 +1006,19 @@ function showDetail(sel) {
   }
 }
 
+// One handler for both speed controls: the mode and the target cycle are a single decision, and the
+// tempo slider stays meaningful because leaving scaled mode restores exactly the rate it last set.
+function applySpeedControls() {
+  const scaled = !!scaledSpeedEl?.checked;
+  const cycleSeconds = cycleSliderEl ? +cycleSliderEl.value : undefined;
+  const state = setSpeedMode(scaled ? 'scaled' : 'fixed', cycleSeconds);
+  if (cycleReadoutEl) cycleReadoutEl.textContent = state.cycleSeconds.toFixed(1) + ' s';
+  if (scaledReadoutEl) scaledReadoutEl.textContent = scaled
+    ? (state.medianGrid ? `${Math.round(state.ticksPerSec)}/s @ ${state.medianGrid.toLocaleString()}` : 'waiting for rows')
+    : 'off';
+  if (tempoSliderEl) tempoSliderEl.disabled = scaled;
+}
+
 function openCockpit() { if (lrcDivEl) lrcDivEl.classList.add('open'); }
 
 function changeAudioMode(mode) {
@@ -1123,6 +1152,14 @@ function drawCockpitPlot() {
 function drawChordReadout() {
   if (!chordReadoutEl || !lrcDivEl || !lrcDivEl.classList.contains('open')) return;
   chordReadoutEl.innerHTML = `♪ <b>${currentSkyRoot().fraction}</b> <b class="cur">${currentSkyChord().symbol}</b>`;
+  // The scaled rate is derived from the live field, so its readout has to follow the field, not the
+  // control that switched the mode on.
+  if (scaledSpeedEl?.checked && scaledReadoutEl) {
+    const speed = currentSpeedMode();
+    scaledReadoutEl.textContent = speed.medianGrid
+      ? `${Math.round(speed.ticksPerSec)}/s @ ${speed.medianGrid.toLocaleString()}` : 'waiting for rows';
+    if (tempoReadoutEl) tempoReadoutEl.textContent = Math.round(speed.ticksPerSec) + '/s';
+  }
 }
 
 // ── Full Sky DEBUG OVERLAY (dev-only, ?skyDebug=1) ──────────────────────────────────────────────
@@ -1289,9 +1326,21 @@ function renderSkyDebug(now) {
   const s = debugSkyState();
   const lines = [];
   lines.push(`FULL SKY DEBUG   mode ${s.audioMode}   tuning ${s.tuningStrength.toFixed(2)}st   sounding root ${s.root.fraction} (${s.root.cents}¢, ${s.root.hz}Hz)${s.rootPolicy.pending ? '  [policy decision pending]' : ''}`);
-  const settleState = settleSinceTick === null ? 'moving' : `settled ${(Math.max(0, (currentTicks() - settleSinceTick))).toFixed(0)}/${SETTLE_TICKS} ticks`;
+  const settleState = settleSinceSecond === null ? 'moving' : `settled ${(Math.max(0, (currentSkySeconds() - settleSinceSecond))).toFixed(1)}/${SETTLE_SECONDS}s`;
   lines.push(`  ${settleState}, camSpeed ${camSpeed.toFixed(1)}u/s (settle<${SETTLE_SPEED})`);
+  // Two clocks: the grid clock (ticks/s, scales with speed) and the sky clock (seconds, never does).
+  lines.push(`clock  ${s.speed.mode === 'scaled'
+    ? `SCALED ${Math.round(s.speed.ticksPerSec)} ticks/s from median grid ${s.speed.medianGrid.toLocaleString()} → ${s.speed.cycleSeconds}s/cycle`
+    : `fixed ${Math.round(s.speed.ticksPerSec)} ticks/s`}   ·   sky ${s.speed.skySeconds.toFixed(1)}s`);
   lines.push(`chord  ${s.chord.symbol}  degrees [${s.chord.semitones.join(',')}]`);
+  // Exposure: which of the chord's degrees have actually SOUNDED this window. With the hold on, the
+  // chord will not move until this is complete (or the cap fires).
+  const exposure = s.chordExposure;
+  if (exposure) {
+    const missing = exposure.degrees.filter(d => !exposure.sounded.includes(d));
+    lines.push(`quality  ${exposure.holding ? 'HOLD' : 'free'}  sounded [${exposure.sounded.join(',')}]` +
+      `${missing.length ? `  waiting on [${missing.join(',')}]` : '  ✓ full quality exposed'}  held ${exposure.heldSeconds.toFixed(1)}s`);
+  }
   lines.push(`trail  ${s.tabu.map(c => c.symbol).join(' → ')}`);
   if (s.gridRows) {
     const compiler = rowCompiler?.snapshot() || { queued: 0, compiling: 0, completed: 0, cancelled: 0, errors: 0 };
@@ -1421,24 +1470,24 @@ function loop() {
   audibleIds = new Set(skyChosen.map(c => c.z.grid));
 
   // Sky Root handoff B3: settle trigger — solve when camera speed has stayed below SETTLE_SPEED for
-  // SETTLE_TICKS (ticks = the universal clock, read via cosmos-audio's currentTicks so "settled" means
-  // the same thing regardless of tempo), rate-limited to at most one solve per ROOT_RESOLVE_MIN_TICKS.
+  // SETTLE_SECONDS (the SKY clock, read via cosmos-audio's currentSkySeconds so "settled" means the same
+  // duration at any tempo or scaled speed), rate-limited to one solve per ROOT_RESOLVE_MIN_SECONDS.
   // The gather set is a world-space RADIUS around the camera (rpOf is already camera-relative, so its
   // length IS true 3D distance) — NOT the view-depth-sorted proj/audible set above, so the root never
   // changes just because you turned to look somewhere else. Solving here is rare + main-thread-cheap
   // (a few thousand gainForDev evals) — never done per frame.
-  const ticks = currentTicks();
-  if (camSpeed < SETTLE_SPEED) { if (settleSinceTick === null) settleSinceTick = ticks; }
+  const skyNow = currentSkySeconds();
+  if (camSpeed < SETTLE_SPEED) { if (settleSinceSecond === null) settleSinceSecond = skyNow; }
   else {
     if (rootPolicyWasSettled) rootGeographyEpoch++;
     rootPolicyWasSettled = false;
-    settleSinceTick = null;
+    settleSinceSecond = null;
   }
-  const settled = settleSinceTick !== null && (ticks - settleSinceTick) >= SETTLE_TICKS;
+  const settled = settleSinceSecond !== null && (skyNow - settleSinceSecond) >= SETTLE_SECONDS;
   if (settled) rootPolicyWasSettled = true;
   setRootPolicyContext({ settled, geographyEpoch: rootGeographyEpoch });
-  if (settled && (ticks - lastRootResolveTick) >= ROOT_RESOLVE_MIN_TICKS) {
-    lastRootResolveTick = ticks;
+  if (settled && (skyNow - lastRootResolveSecond) >= ROOT_RESOLVE_MIN_SECONDS) {
+    lastRootResolveSecond = skyNow;
     const rootField = [];
     for (const z of cosmos.zones.values()) {
       if (!z.skyTones || !z.skyTones.length) continue;
