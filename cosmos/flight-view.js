@@ -21,6 +21,7 @@ import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREW
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
 import { drawGridRowAura } from './grid-row-aura.js';
+import { buildRhythmInspectorModel } from './rhythm-inspector-model.js';
 import { SolverWorkerPool } from './cosmos/solver-worker-pool.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
@@ -497,10 +498,23 @@ let indexGrid = null, indexMtag = null, mtagNames = null, mtagGrids = null;
 let mouseX = -1, mouseY = -1, mClientX = 0, mClientY = 0;
 let hover = null, selected = null;
 // Cosmos-audio cockpit: the lead voice currently sounding (node's own tuning, from cosmos-audio.deriveVoice)
-// + the DOM refs for the collapsible #lrc-div cockpit (Linear Plot + transport strip). `leadVoice.node.grid`
+// + the DOM refs for the collapsible #lrc-div inspector (Linear Plot + scale table). `leadVoice.node.grid`
 // is the star whose live screen projection drives spatialization each frame (see the `loop()` proj block).
 let leadVoice = null, muted = false;
 let lrcDivEl = null, lrcHeadEl = null, cockpitPlotEl = null, cockpitPlotCtx = null;
+let cockpitPlotKeyEl = null;
+let lrcPanelToggleEl = null, lrcExitEl = null, lrcEmptyEl = null, rhythmInspectorEl = null;
+let rhythmTitleEl = null, rhythmSubtitleEl = null, rhythmStateEl = null;
+let metricFundamentalEl = null, metricOnsetsEl = null, metricDensityEl = null;
+let structureListEl = null, connectionsEl = null, listenBtnEl = null, loadBtnEl = null;
+let scaleCountEl = null, scaleFundamentalEl = null, scaleTableBodyEl = null, scaleLightEl = null;
+let inspectedNode = null, rhythmInspectorModel = null;
+const cockpitVisibleLayers = new Set(['A', 'B', 'C', 'D']);
+let cockpitLayerColors = { A: '#ff6b6b', B: '#4ecdc4', C: '#00a638ff', D: '#f9ca24' };
+let cockpitScaleHighlightsEnabled = true, cockpitScaleLastNodeIndex = -1;
+const cockpitScaleRows = new Map(), cockpitScaleHighlightTimestamps = new Map();
+const COCKPIT_SCALE_HIGHLIGHT_MS = 300;
+let audioLabEl = null, audioLabOn = false;
 let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, chordReadoutEl = null, audioModeEl = null;
 let tuningSliderEl = null, tuningReadoutEl = null;
 let scaledSpeedEl = null, scaledReadoutEl = null, cycleSliderEl = null, cycleReadoutEl = null;
@@ -609,11 +623,29 @@ export function ensureFlight(canvas, hudEl) {
       }
       mtagGrids = new Map();
       for (const [t, a] of acc) mtagGrids.set(t, [...new Set(a)].sort((x, y) => x - y));
+      if (inspectedNode) renderRhythmConnections();
     }).catch(() => {});
-    // ── cosmos-audio cockpit: #lrc-div owns its own interaction (single-click/`+` → toggle cockpit,
-    //    double-click → exit). Wired here (not flight-boot.js) so it shares the `bound` no-double-bind guard.
+    // ── Selected-rhythm inspector. Its explicit expand and exit controls replace the old hidden
+    //    double-click exit gesture; development audio controls now live in the independent Z overlay.
     lrcDivEl = document.getElementById('lrc-div'); lrcHeadEl = document.getElementById('lrc-head');
     cockpitPlotEl = document.getElementById('lrc-plot'); cockpitPlotCtx = cockpitPlotEl && cockpitPlotEl.getContext('2d');
+    cockpitPlotKeyEl = document.getElementById('lrc-plot-key');
+    const rootStyle = getComputedStyle(document.documentElement);
+    cockpitLayerColors = Object.fromEntries(['A', 'B', 'C', 'D'].map(layer => {
+      const cssColor = rootStyle.getPropertyValue(`--layer-${layer.toLowerCase()}`).trim();
+      return [layer, cssColor || cockpitLayerColors[layer]];
+    }));
+    lrcPanelToggleEl = document.getElementById('lrc-panel-toggle'); lrcExitEl = document.getElementById('lrc-exit-btn');
+    lrcEmptyEl = document.getElementById('lrc-empty-state'); rhythmInspectorEl = document.getElementById('lrc-rhythm-inspector');
+    rhythmTitleEl = document.getElementById('lrc-rhythm-title'); rhythmSubtitleEl = document.getElementById('lrc-rhythm-subtitle');
+    rhythmStateEl = document.getElementById('lrc-rhythm-state');
+    metricFundamentalEl = document.getElementById('lrc-metric-fundamental'); metricOnsetsEl = document.getElementById('lrc-metric-onsets');
+    metricDensityEl = document.getElementById('lrc-metric-density'); structureListEl = document.getElementById('lrc-structure-list');
+    connectionsEl = document.getElementById('lrc-connections'); listenBtnEl = document.getElementById('lrc-listen-btn');
+    loadBtnEl = document.getElementById('lrc-load-btn');
+    scaleCountEl = document.getElementById('lrc-scale-count'); scaleFundamentalEl = document.getElementById('lrc-scale-fundamental');
+    scaleTableBodyEl = document.getElementById('lrc-scale-table-body'); scaleLightEl = document.getElementById('lrc-scale-light-toggle');
+    audioLabEl = document.getElementById('lrc-audio-lab');
     muteBtnEl = document.getElementById('lrc-mute-btn');
     tempoSliderEl = document.getElementById('lrc-tempo-slider'); tempoReadoutEl = document.getElementById('lrc-tempo-readout');
     chordReadoutEl = document.getElementById('lrc-chord-readout');
@@ -625,14 +657,40 @@ export function ensureFlight(canvas, hudEl) {
     fullQualityEl = document.getElementById('lrc-full-quality'); qualityReadoutEl = document.getElementById('lrc-quality-readout');
     modulationEl = document.getElementById('lrc-modulation'); modulationReadoutEl = document.getElementById('lrc-modulation-readout');
     midiOutEl = document.getElementById('lrc-midi-out'); midiReadoutEl = document.getElementById('lrc-midi-readout');
-    if (lrcHeadEl) {
-      let clickTimer = null;   // debounce: a dblclick fires two clicks — let the pending single-click resolve
-      lrcHeadEl.addEventListener('click', () => {                 // toggles cockpit; ignored while a dblclick is landing
-        if (clickTimer) return;
-        clickTimer = setTimeout(() => { clickTimer = null; lrcDivEl.classList.toggle('open'); }, 220);
-      });
-      lrcHeadEl.addEventListener('dblclick', () => { clearTimeout(clickTimer); clickTimer = null; window.exitCosmos(); });
-    }
+    if (lrcPanelToggleEl) lrcPanelToggleEl.addEventListener('click', () => {
+      const open = lrcDivEl.classList.toggle('open');
+      lrcPanelToggleEl.setAttribute('aria-expanded', String(open));
+    });
+    if (lrcExitEl) lrcExitEl.addEventListener('click', () => window.exitCosmos());
+    if (cockpitPlotKeyEl) cockpitPlotKeyEl.addEventListener('click', e => {
+      const button = e.target.closest?.('[data-plot-layer]');
+      if (!button || button.disabled) return;
+      const layer = button.dataset.plotLayer;
+      if (cockpitVisibleLayers.has(layer)) cockpitVisibleLayers.delete(layer);
+      else cockpitVisibleLayers.add(layer);
+      renderCockpitLayerControls();
+      drawCockpitPlot();
+    });
+    if (listenBtnEl) listenBtnEl.addEventListener('click', toggleRhythmAudition);
+    if (scaleLightEl) scaleLightEl.addEventListener('click', () => {
+      cockpitScaleHighlightsEnabled = !cockpitScaleHighlightsEnabled;
+      scaleLightEl.classList.toggle('active', cockpitScaleHighlightsEnabled);
+      scaleLightEl.setAttribute('aria-pressed', String(cockpitScaleHighlightsEnabled));
+      scaleLightEl.setAttribute('aria-label', `${cockpitScaleHighlightsEnabled ? 'Disable' : 'Enable'} playback highlights`);
+      scaleLightEl.title = `${cockpitScaleHighlightsEnabled ? 'Disable' : 'Enable'} playback highlights`;
+      resetCockpitScaleHighlights();
+    });
+    if (loadBtnEl) loadBtnEl.addEventListener('click', () => {
+      if (!inspectedNode) return;
+      applyToEngine(inspectedNode);
+      updateRhythmActionState();
+    });
+    if (lrcDivEl) lrcDivEl.addEventListener('click', event => {
+      const web = event.target.closest?.('[data-rhythm-web]');
+      if (web && inspectedNode) { toggleWeb(web.dataset.rhythmWeb, inspectedNode.grid); renderRhythmConnections(); return; }
+      const motif = event.target.closest?.('[data-rhythm-mn]');
+      if (motif && inspectedNode) { toggleMNWeb(motif.dataset.rhythmMn, +motif.dataset.base, inspectedNode.grid); renderRhythmConnections(); }
+    });
     if (muteBtnEl) muteBtnEl.addEventListener('click', toggleMute);
     if (tempoSliderEl) tempoSliderEl.addEventListener('input', () => {
       const rate = +tempoSliderEl.value; setTickRate(rate, true);   // fromUser: scaled mode restores this on exit
@@ -661,12 +719,15 @@ export function ensureFlight(canvas, hudEl) {
       const strength = setTuningStrength(tuningSliderEl.value);
       if (tuningReadoutEl) tuningReadoutEl.textContent = strength.toFixed(2).replace(/0$/, '') + ' st';
     });
+    if (audioLabEl) audioLabEl.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
     // Full Sky debug overlay: seeded once from ?skyDebug=1 (so a bookmarked link opens straight into
     // it); the C key (bindControls, below) is the primary toggle from here on. Seeding this per-session
     // instead would stomp a manual C-toggle every time you exit/re-enter cosmos.
     skyDebugOn = new URLSearchParams(location.search).get('skyDebug') === '1';
+    audioLabOn = new URLSearchParams(location.search).get('audioLab') === '1';
     bindControls();
   }
+  resetRhythmInspector();
   // ── PER-SESSION engine: fresh worker pool + cosmos on every entry; stopFlight() tears both down on exit ──
   const poolSize = Math.max(2, Math.min(POOL_MAX, (navigator.hardwareConcurrency || 4) - 2));
   FOCUS_FETCH_CONC = Math.max(2, poolSize - 1);   // divert most of the pool to the focused cloud, keep 1 ambient
@@ -702,10 +763,12 @@ export function ensureFlight(canvas, hudEl) {
     if (message.error) console.warn('[cosmos Web frame]', message.error);
   });
   if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none';
+  if (audioLabEl) audioLabEl.hidden = !audioLabOn;
   if (controlsEl) {
     const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['arrows', 'steer'], ['scroll', 'dolly'],
                   ['click star', 'bloom'], ['click node', 'inspect / apply'], ['click Web', 'inspect / return'],
-                  ['Esc', 'cancel return ride'], ['right-click', 'collapse'], ['1–0', 'toggle webs']];
+                  ['Esc', 'cancel return ride'], ['right-click', 'collapse'], ['1–0', 'toggle webs'],
+                  ['Z', 'audio lab'], ['C', 'full sky debug']];
     controlsEl.innerHTML = rows.map(([k, v]) => `<div class="help-kv"><span>${k}</span><b>${v}</b></div>`).join('') +
       `<div class="help-note">${placement === 'hilbert' ? 'cube' : 'spine'} placement</div>`;
   }
@@ -749,6 +812,7 @@ export function stopFlight() {
   returnRide = null; selected = null; hover = null; hoverWeb = null;
   leadVoice = null; stopAudio(); audibleIds = new Set(); rowActiveIds = new Set(); rowPrewarmIds = new Set();   // kill the cosmos-audio transport, mirroring the worker teardown
   if (skyDebugEl) skyDebugEl.style.display = 'none';   // dev overlay — hide, don't destroy (cheap to reuse on re-entry)
+  if (audioLabEl) audioLabEl.hidden = true;
   if (ctx && cv) { const dpr = window.devicePixelRatio || 1; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H); }
 }
 
@@ -988,6 +1052,7 @@ function updateTooltip() {
 function showDetail(sel) {
   if (!detailEl) return;
   if (!sel) { detailEl.style.display = 'none'; return; }
+  if (sel.kind === 'node') { detailEl.style.display = 'none'; renderRhythmInspector(sel); return; }
   detailEl.style.display = 'block';
   const dismiss = `<div style="margin-top:8px;color:var(--dimmer);font-size:10px">click empty space to dismiss</div>`;
   if (sel.kind === 'web') {
@@ -1014,39 +1079,6 @@ function showDetail(sel) {
       `<div class="r"><span>travel</span><b>${status}</b></div>` +
       (web.dynamic ? `<div style="margin-top:7px;color:var(--dimmer);font-size:10px;line-height:1.45">This family is infinite. Return Home samples qualifying NR grids adaptively while the local Web rebuilds around the camera.</div>` : '') +
       travelButton + dismiss;
-  } else if (sel.kind === 'node') {
-    const col = sel.charted ? CHARTED : cardColor(sel.c);
-    const slotLbl = w => w ? ` [${w.slot === 9 ? '0' : w.slot + 1}${w.visible === false ? ' off' : ''}]` : '';
-    const tag = mtagOfKey(sel.key), members = tag && mtagGrids && mtagGrids.get(tag);
-    const mw = tag && activeWebs.get(tag), on = !!mw;
-    const webBtn = (members && members.length)
-      ? `<button class="web-btn" data-tag="${tag}" data-g="${sel.grid}" style="width:100%;margin-top:8px;background:rgba(0,0,0,.3);border:1px solid ${on ? '#ff6ec7' : 'var(--line)'};color:${on ? '#ff6ec7' : 'var(--dim)'};font-family:var(--sans);font-size:11px;padding:6px;border-radius:var(--border-radius);cursor:pointer">◈ ${on ? 'clear' : 'trace'} mother-scale network ${tag} · ${members.length} grids${slotLbl(mw)}</button>`
-      : '';
-    // MN motifs scanned live from the node's layer tuple (any cardinality): triples first (richer / rarer
-    // by larger base-LCM), then Root Doubles. Each chip toggles its "hyperlane" family web.
-    const motifs = sel.layers ? [...rhythmTriples(sel.layers).sort((a, b) => b.base - a.base),
-                                 ...rhythmDoubles(sel.layers).sort((a, b) => b.base - a.base)].slice(0, MN_CHIP_MAX) : [];
-    const typeCol = { CT: '#8dff6e', IT: '#6ecbff', RDCP: '#ffd86e', RD: '#c58bff' };
-    const chip = m => { const id = 'mn:' + m.key, mnw = activeWebs.get(id), mon = !!mnw, c = typeCol[m.kind] || 'var(--dim)';
-      return `<button class="mn-btn" data-id="${id}" data-base="${m.base}" data-g="${sel.grid}" title="${m.kind} · base ${m.base} → family = multiples of ${m.base}" style="display:inline-block;margin:3px 3px 0 0;padding:3px 7px;background:${mon ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.3)'};border:1px solid ${mon ? c : 'var(--line)'};color:${c};font-family:var(--mono);font-size:10px;border-radius:5px;cursor:pointer">${m.kind === 'RD' ? 'RD ' : ''}${m.key.replace(/^(CT|IT|RDCP):/, '$1 ')}${slotLbl(mnw)}</button>`; };
-    const mnBlock = motifs.length
-      ? `<div style="margin-top:8px;color:var(--dimmer);font-size:10px">master-network hyperlanes</div><div>${motifs.map(chip).join('')}</div>`
-      : '';
-    // apply-to-engine affordance: ≤4-layer rhythms load into the LRC engine; >4-layer nodes are inspect-only
-    const applyBlock = sel.layers
-      ? (sel.layers.length <= 4
-          ? `<button class="apply-btn" style="width:100%;margin-top:8px;background:${sel._applied ? 'rgba(0,255,136,.18)' : 'rgba(0,255,136,.08)'};border:1px solid var(--known);color:var(--known);font-family:var(--sans);font-weight:500;font-size:11px;padding:7px;border-radius:var(--border-radius);cursor:pointer">${sel._applied ? '✓ loaded into engine' : '▶ load into engine'}</button>`
-          : `<div style="margin-top:8px;padding:7px;border:1px dashed var(--dimmer);border-radius:6px;color:var(--dimmer);font-size:10px;text-align:center">${sel.layers.length}+ layers — not playable in engine</div>`)
-      : '';
-    bodyEl.innerHTML =
-      `<div class="big" style="color:${col}">${sel.layers ? sel.layers.join(' : ') : sel.c + '-tone'}</div>` +
-      `<div class="r"><span>cardinality</span><b>${sel.c}-tone</b></div>` +
-      `<div class="r"><span>fundamental</span><b>${sel.fund}</b></div>` +
-      `<div class="r"><span>grid</span><b>${sel.grid.toLocaleString()}</b></div>` +
-      `<div class="r"><span>keep-two</span><b>${sel.dense ? 'paired (+dense)' : 'solo'}</b></div>` +
-      `<div class="r"><span>codex</span><b>${sel.charted ? 'charted' : 'uncharted'}</b></div>` +
-      (tag ? `<div class="r"><span>mother scale</span><b>${tag}</b></div>` : '') +
-      (sel.rs ? `<div style="margin-top:8px;color:var(--dim);line-height:1.5">${sel.rs}</div>` : '') + applyBlock + webBtn + mnBlock + dismiss;
   } else {
     const z = cosmos.zones.get(sel.grid), fi = factorInfo(sel.grid);
     if (z && z.monster) {              // combinatorial black hole — identified, solve gated behind an override
@@ -1102,7 +1134,187 @@ function drawModulationReadout() {
     ? `${m.cents >= 0 ? '+' : ''}${m.cents.toFixed(0)}¢ · ${m.glideSeconds.toFixed(2)}s glide` : 'off';
 }
 
-function openCockpit() { if (lrcDivEl) lrcDivEl.classList.add('open'); }
+const inspectorEscape = value => String(value ?? '').replace(/[&<>"']/g, char => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[char]));
+
+const inspectorNumber = value => Number.isInteger(value) ? value.toLocaleString() : Number(value).toFixed(2).replace(/\.00$/, '');
+
+function openCockpit() {
+  if (!lrcDivEl) return;
+  lrcDivEl.classList.add('open');
+  lrcPanelToggleEl?.setAttribute('aria-expanded', 'true');
+}
+
+function resetRhythmInspector() {
+  inspectedNode = null; rhythmInspectorModel = null;
+  resetCockpitScaleHighlights(); cockpitScaleRows.clear();
+  if (scaleTableBodyEl) scaleTableBodyEl.replaceChildren();
+  if (scaleCountEl) scaleCountEl.textContent = '— Pitches';
+  if (scaleFundamentalEl) scaleFundamentalEl.textContent = 'Fundamental —';
+  renderCockpitLayerControls();
+  if (rhythmInspectorEl) rhythmInspectorEl.hidden = true;
+  if (lrcEmptyEl) lrcEmptyEl.hidden = false;
+  const sub = lrcHeadEl?.querySelector('.lrc-div-sub'); if (sub) sub.textContent = 'select a node to inspect';
+  if (lrcDivEl) lrcDivEl.classList.remove('open');
+  lrcPanelToggleEl?.setAttribute('aria-expanded', 'false');
+  updateRhythmActionState();
+}
+
+function updateRhythmActionState() {
+  const listening = !!(inspectedNode && leadVoice?.node?.id === inspectedNode.id);
+  if (listenBtnEl) {
+    listenBtnEl.classList.toggle('active', listening);
+    listenBtnEl.disabled = !inspectedNode;
+    listenBtnEl.setAttribute('aria-pressed', String(listening));
+    listenBtnEl.setAttribute('aria-label', `${listening ? 'Stop listening to' : 'Listen to'} selected rhythm`);
+    listenBtnEl.title = listening ? 'Stop listening' : 'Listen';
+  }
+  if (loadBtnEl) {
+    const loaded = !!inspectedNode?._applied;
+    loadBtnEl.textContent = loaded ? 'LOADED' : 'LOAD';
+    loadBtnEl.classList.toggle('loaded', loaded);
+    loadBtnEl.disabled = !inspectedNode?.layers || inspectedNode.layers.length > 4;
+    loadBtnEl.setAttribute('aria-label', loaded ? 'Selected rhythm loaded into LRC' : 'Load selected rhythm into LRC');
+    loadBtnEl.title = loaded ? 'Loaded into LRC' : 'Load into LRC';
+  }
+}
+
+function setRhythmAudition(node) {
+  if (!node?.layers) return;
+  resetCockpitScaleHighlights();
+  leadVoice = { ...deriveVoice(node.layers), node };
+  setLead(leadVoice);
+  updateRhythmActionState();
+}
+
+function toggleRhythmAudition() {
+  if (!inspectedNode) return;
+  if (leadVoice?.node?.id === inspectedNode.id) { setLead(null); leadVoice = null; resetCockpitScaleHighlights(); }
+  else setRhythmAudition(inspectedNode);
+  updateRhythmActionState();
+}
+
+function resetCockpitScaleHighlights() {
+  cockpitScaleLastNodeIndex = -1;
+  cockpitScaleHighlightTimestamps.clear();
+  for (const row of cockpitScaleRows.values()) {
+    row.classList.remove('pitch-playback-highlight');
+    row.style.removeProperty('--playback-alpha');
+  }
+}
+
+function renderCockpitScaleTable() {
+  if (!scaleTableBodyEl || !rhythmInspectorModel) return;
+  resetCockpitScaleHighlights(); cockpitScaleRows.clear();
+  if (scaleCountEl) scaleCountEl.textContent = `${rhythmInspectorModel.pitchCount.toLocaleString()} ${rhythmInspectorModel.pitchCount === 1 ? 'Pitch' : 'Pitches'}`;
+  if (scaleFundamentalEl) scaleFundamentalEl.textContent = `Fundamental ${inspectorNumber(rhythmInspectorModel.fundamental)}`;
+  scaleTableBodyEl.innerHTML = rhythmInspectorModel.ratios.map((ratio, index) =>
+    `<tr class="pitch-row" data-pitch-index="${index}" data-ratio-fraction="${inspectorEscape(ratio.fraction)}"><td class="ratio-cell">${inspectorEscape(ratio.fraction)}</td><td class="cents-cell">${ratio.cents.toFixed(1)}</td></tr>`
+  ).join('');
+  for (const row of scaleTableBodyEl.querySelectorAll('[data-ratio-fraction]')) cockpitScaleRows.set(row.dataset.ratioFraction, row);
+  const scroller = scaleTableBodyEl.closest('.lrc-scale-table-container'); if (scroller) scroller.scrollTop = 0;
+}
+
+function updateCockpitScaleHighlights(now) {
+  const listening = leadVoice?.node?.id === inspectedNode?.id;
+  if (!listening || !rhythmInspectorModel?.nodes.length || !cockpitScaleHighlightsEnabled) {
+    if (!listening && (cockpitScaleLastNodeIndex !== -1 || cockpitScaleHighlightTimestamps.size)) resetCockpitScaleHighlights();
+    return;
+  }
+  const phase = transportPhase();
+  let nodeIndex = rhythmInspectorModel.nodes.length - 1;
+  for (let i = 0; i < rhythmInspectorModel.nodes.length; i++) {
+    if (rhythmInspectorModel.nodes[i].phase > phase) break;
+    nodeIndex = i;
+  }
+  if (nodeIndex !== cockpitScaleLastNodeIndex) {
+    cockpitScaleLastNodeIndex = nodeIndex;
+    cockpitScaleHighlightTimestamps.set(rhythmInspectorModel.nodes[nodeIndex].ratioFraction, now);
+  }
+  for (const [fraction, timestamp] of cockpitScaleHighlightTimestamps) {
+    const row = cockpitScaleRows.get(fraction), age = now - timestamp;
+    if (!row || age > COCKPIT_SCALE_HIGHLIGHT_MS) {
+      cockpitScaleHighlightTimestamps.delete(fraction);
+      if (row) { row.classList.remove('pitch-playback-highlight'); row.style.removeProperty('--playback-alpha'); }
+      continue;
+    }
+    row.classList.add('pitch-playback-highlight');
+    row.style.setProperty('--playback-alpha', (1 - age / COCKPIT_SCALE_HIGHLIGHT_MS).toFixed(3));
+  }
+}
+
+function renderCockpitLayerControls() {
+  if (!cockpitPlotKeyEl) return;
+  const layerCount = rhythmInspectorModel?.layers.length || 0;
+  for (const button of cockpitPlotKeyEl.querySelectorAll('[data-plot-layer]')) {
+    const layer = button.dataset.plotLayer;
+    const available = layer.charCodeAt(0) - 64 <= layerCount;
+    const visible = available && cockpitVisibleLayers.has(layer);
+    button.disabled = !available;
+    button.setAttribute('aria-pressed', String(visible));
+    button.setAttribute('aria-label', available
+      ? `${visible ? 'Hide' : 'Show'} layer ${layer}`
+      : `Layer ${layer} is not present`);
+  }
+}
+
+function renderRhythmConnections() {
+  if (!connectionsEl || !inspectedNode) return;
+  const tag = mtagOfKey(inspectedNode.key);
+  const members = tag && mtagGrids?.get(tag);
+  const motherWeb = tag && activeWebs.get(tag);
+  const motifs = inspectedNode.layers
+    ? [...rhythmTriples(inspectedNode.layers).sort((a, b) => b.base - a.base),
+       ...rhythmDoubles(inspectedNode.layers).sort((a, b) => b.base - a.base)].slice(0, MN_CHIP_MAX)
+    : [];
+  const rows = [];
+  if (tag) rows.push(`<div class="lrc-connection-row"><span>Mother scale</span><b>${inspectorEscape(tag)}</b></div>`);
+  const actions = [];
+  if (tag && members?.length) actions.push(`<button type="button" class="lrc-connection-btn${motherWeb ? ' active' : ''}" data-rhythm-web="${inspectorEscape(tag)}">${motherWeb ? 'Clear' : 'Trace'} mother · ${members.length.toLocaleString()}</button>`);
+  for (const motif of motifs) {
+    const id = `mn:${motif.key}`, active = activeWebs.has(id);
+    actions.push(`<button type="button" class="lrc-connection-btn${active ? ' active' : ''}" data-rhythm-mn="${inspectorEscape(id)}" data-base="${motif.base}">${inspectorEscape(motif.key.replace(/^(CT|IT|RDCP):/, '$1 '))}</button>`);
+  }
+  connectionsEl.innerHTML = rows.join('') + (actions.length
+    ? `<div class="lrc-connection-actions">${actions.join('')}</div>`
+    : '<div class="lrc-connections-empty">No charted network connections.</div>');
+}
+
+function renderRhythmInspector(node) {
+  if (!node?.layers) return;
+  inspectedNode = node;
+  rhythmInspectorModel = buildRhythmInspectorModel(node.layers);
+  if (lrcEmptyEl) lrcEmptyEl.hidden = true;
+  if (rhythmInspectorEl) rhythmInspectorEl.hidden = false;
+  if (rhythmTitleEl) rhythmTitleEl.textContent = rhythmInspectorModel.identity;
+  if (rhythmSubtitleEl) rhythmSubtitleEl.textContent = `grid ${rhythmInspectorModel.grid.toLocaleString()} · ${rhythmInspectorModel.pitchCount}-tone${node.dense ? ' · paired' : ''}`;
+  if (rhythmStateEl) {
+    rhythmStateEl.textContent = node.charted ? 'charted' : 'open space';
+    rhythmStateEl.classList.toggle('charted', !!node.charted);
+  }
+  const sub = lrcHeadEl?.querySelector('.lrc-div-sub'); if (sub) sub.textContent = rhythmInspectorModel.identity;
+  if (metricFundamentalEl) metricFundamentalEl.textContent = inspectorNumber(rhythmInspectorModel.fundamental);
+  if (metricOnsetsEl) metricOnsetsEl.textContent = rhythmInspectorModel.compositeLength.toLocaleString();
+  if (metricDensityEl) metricDensityEl.textContent = `${rhythmInspectorModel.density.toFixed(2)}%`;
+  renderCockpitScaleTable();
+  if (structureListEl) {
+    const metrics = [
+      ['Groupings', rhythmInspectorModel.groupings.map(inspectorNumber).join(' · ')],
+      ['Layer sum', rhythmInspectorModel.layerSum.toLocaleString()],
+      ['Range', rhythmInspectorModel.range.toFixed(2)],
+      ['P/G ratio', rhythmInspectorModel.pulseToGrouping.toFixed(2)],
+      ['Average deviation', rhythmInspectorModel.avgDeviation == null ? '—' : `${rhythmInspectorModel.avgDeviation.toFixed(2)}¢`],
+      ['Keep-two', node.dense ? 'paired' : 'solo'],
+    ];
+    structureListEl.innerHTML = metrics.map(([label, value]) => `<div><dt>${label}</dt><dd title="${inspectorEscape(value)}">${inspectorEscape(value)}</dd></div>`).join('');
+  }
+  renderCockpitLayerControls();
+  renderRhythmConnections();
+  updateRhythmActionState();
+  openCockpit();
+  drawCockpitPlot();
+}
 
 function changeAudioMode(mode) {
   const next = setAudioMode(mode);
@@ -1208,24 +1420,41 @@ function updateGridRowField(placed, basis) {
 // unmuting resumes in sync rather than restarting the cycle. Shared by the cockpit button and the M key.
 function toggleMute() {
   muted = !muted; setMuted(muted);
-  if (muteBtnEl) { muteBtnEl.textContent = muted ? '\u{1F507}' : '\u{1F50A}'; muteBtnEl.classList.toggle('muted', muted); }
+  if (muteBtnEl) {
+    muteBtnEl.textContent = 'M'; muteBtnEl.classList.toggle('muted', muted);
+    muteBtnEl.setAttribute('aria-pressed', String(muted)); muteBtnEl.title = muted ? 'Unmute' : 'Mute';
+  }
 }
 
-// Linear Plot: composite onsets as ticks along a horizontal track + a sweeping playhead. Only worth
-// drawing while the cockpit is actually open (cheap either way — one canvas, tens of ticks).
+// Selected rhythm's real spaces plot: horizontal position is the attack's true transport phase and
+// vertical position is the following gap. Layer ownership supplies the shared main-page colors;
+// coincident attacks go white. The plot deliberately has no connectors.
 function drawCockpitPlot() {
-  if (!cockpitPlotCtx || !lrcDivEl || !lrcDivEl.classList.contains('open')) return;
-  const w = cockpitPlotEl.width, h = cockpitPlotEl.height;
-  cockpitPlotCtx.clearRect(0, 0, w, h);
-  cockpitPlotCtx.strokeStyle = 'rgba(255,255,255,.14)'; cockpitPlotCtx.lineWidth = 1;
-  cockpitPlotCtx.beginPath(); cockpitPlotCtx.moveTo(0, h / 2); cockpitPlotCtx.lineTo(w, h / 2); cockpitPlotCtx.stroke();
-  if (leadVoice) {
-    cockpitPlotCtx.fillStyle = '#00ff88';
-    for (const n of leadVoice.notes) { const x = n.t * w; cockpitPlotCtx.fillRect(x - 0.75, h * 0.2, 1.5, h * 0.6); }
+  if (!cockpitPlotCtx || !rhythmInspectorModel || !lrcDivEl?.classList.contains('open')) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, cockpitPlotEl.clientWidth || 576), h = Math.max(1, cockpitPlotEl.clientHeight || 192);
+  const pixelW = Math.round(w * dpr), pixelH = Math.round(h * dpr);
+  if (cockpitPlotEl.width !== pixelW || cockpitPlotEl.height !== pixelH) { cockpitPlotEl.width = pixelW; cockpitPlotEl.height = pixelH; }
+  const g = cockpitPlotCtx; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  const top = 8, bottom = h - 9, height = bottom - top, maxGap = Math.max(1, rhythmInspectorModel.maxGap);
+  const xFor = node => 1 + node.phase * (w - 2);
+  const yFor = node => bottom - node.gap / maxGap * height;
+
+  for (const node of rhythmInspectorModel.nodes) {
+    const visibleOwners = node.owners.filter(owner => cockpitVisibleLayers.has(owner));
+    if (!visibleOwners.length) continue;
+    const x = xFor(node), y = yFor(node), coincident = visibleOwners.length > 1;
+    g.fillStyle = coincident ? '#f4f7fb' : (cockpitLayerColors[visibleOwners[0]] || '#aab2bd');
+    g.beginPath(); g.arc(x, y, coincident ? 2.3 : 1.65, 0, Math.PI * 2); g.fill();
+    if (coincident) { g.strokeStyle = 'rgba(255,255,255,.28)'; g.beginPath(); g.arc(x, y, 4, 0, Math.PI * 2); g.stroke(); }
   }
-  const ph = transportPhase();
-  cockpitPlotCtx.strokeStyle = '#fff'; cockpitPlotCtx.lineWidth = 1.5;
-  cockpitPlotCtx.beginPath(); cockpitPlotCtx.moveTo(ph * w, 0); cockpitPlotCtx.lineTo(ph * w, h); cockpitPlotCtx.stroke();
+
+  if (leadVoice?.node?.id === inspectedNode?.id) {
+    const x = 1 + transportPhase() * (w - 2);
+    g.strokeStyle = 'rgba(255,255,255,.72)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+  }
+  updateCockpitScaleHighlights(performance.now());
 }
 
 // Full Sky readout (M4): the GLOBAL walk's current chord — one sky-wide progression, not a per-star
@@ -1233,7 +1462,7 @@ function drawCockpitPlot() {
 // Root B3: Roman numerals are relative to the solved root, so the root fraction sits beside them —
 // "I" beside "1/1" reads as the v1 default; once a swap lands, the root fraction itself changes.
 function drawChordReadout() {
-  if (!chordReadoutEl || !lrcDivEl || !lrcDivEl.classList.contains('open')) return;
+  if (!chordReadoutEl || !audioLabOn) return;
   chordReadoutEl.innerHTML = `♪ <b>${currentSkyRoot().fraction}</b> <b class="cur">${currentSkyChord().symbol}</b>`;
   // The scaled rate is derived from the live field, so its readout has to follow the field, not the
   // control that switched the mode on.
@@ -1573,7 +1802,7 @@ function loop() {
 
   // cosmos-audio: drive the lead voice's spatialization from its star's live projection this frame.
   if (leadVoice) {
-    if (!cosmos.zones.has(leadVoice.node.grid)) { setLead(null); leadVoice = null; }   // evicted → clear the lead
+    if (!cosmos.zones.has(leadVoice.node.grid)) { setLead(null); leadVoice = null; updateRhythmActionState(); }   // evicted → clear the lead
     else {
       const lp = proj.get(leadVoice.node.grid);
       if (lp) setSpatial(clampN((cx - lp.s.x) / cx, -1, 1), distGain(lp.s.z), distOctave(lp.s.z));   // screen-right → pan right (Avery: was backwards)
@@ -1872,8 +2101,8 @@ function bindControls() {
       }
     } else if (hover && hover.kind === 'node') {
       cosmos.setFocus(hover.grid); selected = hover;   // focus the bloom you're interacting with (the filter targets it)
-      leadVoice = { ...deriveVoice(hover.layers), node: hover };   // node click = "make it sound" (stars don't set a lead)
-      setLead(leadVoice); openCockpit();   // M4: no per-star song solve — the global sky chord tints it (cosmos-audio.js)
+      setRhythmAudition(hover);   // preserve the existing click-to-hear behavior; the inspector can stop/restart it explicitly
+      openCockpit();              // M4: no per-star song solve — the global sky chord tints it (cosmos-audio.js)
     } else if (hover && hover.kind === 'web') {
       selected = { kind: 'web', webId: hover.webId };
     } else {
@@ -1912,6 +2141,7 @@ function bindControls() {
     if (firstPress && k === 'b' && swarm) { if (swarm.agents.length) swarm.clear(); else swarm.spawn(AGENT_COUNT, cam.anchor); }   // B → toggle Collider-Battle ships
     if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)
     if (firstPress && k === 'c') { skyDebugOn = !skyDebugOn; if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none'; }   // C → toggle the Full Sky debug overlay (dev)
+    if (firstPress && k === 'z' && !e.metaKey && !e.ctrlKey && !e.altKey) { audioLabOn = !audioLabOn; if (audioLabEl) audioLabEl.hidden = !audioLabOn; }   // Z → toggle the audio debug overlay
     if (k.startsWith('arrow') || k === ' ') e.preventDefault();   // don't scroll the page
   });
   window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });

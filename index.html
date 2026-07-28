@@ -630,72 +630,131 @@
                 <div id="cosmos-help-live" class="help-body"></div>
             </div>
         </div>
-        <!-- minimized "LRC div" → the cockpit (lower-left). Click the head to toggle the cockpit open
-             (Linear Plot + transport for whatever rhythm is sounding); double-click the head to exit
-             flight (stops all flight computation + the cosmos-audio transport). -->
+        <!-- Selected-rhythm inspector. The node identity + real spaces plot are the primary product surface. -->
         <div id="lrc-div">
-            <div id="lrc-head" class="lrc-head" title="Click: toggle cockpit · Double-click: exit flight">
-                <span class="lrc-div-mark">◱ LRC</span>
-                <span class="lrc-div-sub">select a rhythm to hear it</span>
+            <div id="lrc-head" class="lrc-head">
+                <button id="lrc-panel-toggle" class="lrc-head-copy" type="button" aria-expanded="false" aria-controls="lrc-cockpit-body">
+                    <span class="lrc-div-mark">Rhythm</span>
+                    <span class="lrc-div-sub">select a node to inspect</span>
+                </button>
+                <button id="lrc-listen-btn" class="lrc-head-action lrc-listen-action" type="button" aria-label="Listen to selected rhythm" aria-pressed="false" title="Listen" disabled>
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M5 9v6h4l5 4V5L9 9H5Z"></path>
+                        <path d="M17 9.5c.8.7 1.2 1.5 1.2 2.5s-.4 1.8-1.2 2.5M19.5 7c1.5 1.4 2.3 3 2.3 5s-.8 3.6-2.3 5"></path>
+                    </svg>
+                </button>
+                <button id="lrc-load-btn" class="lrc-head-action lrc-load-action" type="button" aria-label="Load selected rhythm into LRC" title="Load into LRC" disabled>LOAD</button>
+                <button id="lrc-exit-btn" class="lrc-icon-btn" type="button" aria-label="Exit Cosmos" title="Exit Cosmos">×</button>
             </div>
             <div id="lrc-cockpit-body" class="lrc-cockpit-body">
-                <canvas id="lrc-plot" width="260" height="36"></canvas>
-                <div id="lrc-chord-readout" class="lrc-chord-readout"></div>
-                <label class="lrc-audio-mode-row" for="lrc-audio-mode">
-                    <span>audio</span>
-                    <select id="lrc-audio-mode" aria-label="Cosmos audio mode">
-                        <option value="ambient-chords" selected>Ambient chords</option>
-                        <option value="culled-grid-rows">Culled grid rows · 3D</option>
-                    </select>
-                </label>
-                <div class="lrc-transport">
-                    <button id="lrc-mute-btn" title="Mute">🔊</button>
-                    <span class="lrc-tempo-cap">ticks/s</span>
-                    <input type="range" id="lrc-tempo-slider" min="1" max="100" step="1" value="10" aria-label="universal clock rate (ticks per second)">
-                    <b id="lrc-tempo-readout">10/s</b>
+                <div id="lrc-empty-state" class="lrc-empty-state">
+                    <span class="lrc-empty-orbit" aria-hidden="true"></span>
+                    <p>Bloom a star, then select one of its rhythm nodes.</p>
                 </div>
-                <label class="lrc-tuning-row" for="lrc-tuning-slider">
-                    <span>local tuning</span>
-                    <input type="range" id="lrc-tuning-slider" min="0" max="8" step="0.25" value="2" aria-label="local tuning strength in semitones of voice-leading cost">
-                    <b id="lrc-tuning-readout">2.0 st</b>
-                </label>
-                <!-- Scaled speed: derive ticks/s from the median sounding grid so one grid cycle lasts a
-                     fixed number of seconds anywhere. Without it the polyrhythmic chorus only emerges at
-                     low grids — grid 61600's cycle runs 103 minutes at a fixed 10 ticks/s. -->
-                <label class="lrc-tuning-row" for="lrc-scaled-speed">
-                    <span>scaled speed</span>
-                    <input type="checkbox" id="lrc-scaled-speed" aria-label="scale the tick rate to the median nearby grid cycle">
-                    <b id="lrc-scaled-readout">off</b>
-                </label>
-                <label class="lrc-tuning-row" for="lrc-cycle-slider">
-                    <span>grid cycle</span>
-                    <input type="range" id="lrc-cycle-slider" min="2" max="40" step="0.5" value="12" aria-label="seconds per grid cycle in scaled speed mode">
-                    <b id="lrc-cycle-readout">12.0 s</b>
-                </label>
-                <!-- MIDI Out: mirror every sounding voice to a DAW in exact JI, MPE over the IAC bus.
-                     Needs a user gesture (Web MIDI permission), so it is a checkbox, not a default. -->
-                <label class="lrc-tuning-row" for="lrc-midi-out">
-                    <span>MIDI out</span>
-                    <input type="checkbox" id="lrc-midi-out" aria-label="stream the cosmos to a DAW over MPE MIDI">
-                    <b id="lrc-midi-readout">off</b>
-                </label>
-                <!-- Modulation: retune the SOLVED ROOT to the fundamental so a root change is heard as a
-                     key change, not as the same pitches re-read in a new frame. All voices glide (shared
-                     detune bus, the main page's setTargetAtTime law), over a fraction of a grid cycle. -->
-                <label class="lrc-tuning-row" for="lrc-modulation">
-                    <span>modulation</span>
-                    <input type="checkbox" id="lrc-modulation" aria-label="retune each newly solved root to the fundamental">
-                    <b id="lrc-modulation-readout">off</b>
-                </label>
-                <!-- Hold each chord past its window until every one of its degrees has actually sounded,
-                     so the full quality is exposed rather than whichever tones the rows happened to reach. -->
-                <label class="lrc-tuning-row" for="lrc-full-quality">
-                    <span>full quality</span>
-                    <input type="checkbox" id="lrc-full-quality" aria-label="hold each chord until every chord tone has sounded">
-                    <b id="lrc-quality-readout">off</b>
-                </label>
+                <section id="lrc-rhythm-inspector" class="lrc-rhythm-inspector" hidden aria-live="polite">
+                    <div class="lrc-plot-frame">
+                        <canvas id="lrc-plot" width="672" height="184" aria-label="Selected rhythm linear spaces plot"></canvas>
+                        <div id="lrc-plot-key" class="lrc-plot-key" role="group" aria-label="Plot layer visibility">
+                            <button type="button" data-plot-layer="A" aria-pressed="true" aria-label="Hide layer A">A</button>
+                            <button type="button" data-plot-layer="B" aria-pressed="true" aria-label="Hide layer B">B</button>
+                            <button type="button" data-plot-layer="C" aria-pressed="true" aria-label="Hide layer C">C</button>
+                            <button type="button" data-plot-layer="D" aria-pressed="true" aria-label="Hide layer D">D</button>
+                        </div>
+                    </div>
+
+                    <div class="lrc-inspector-lower">
+                        <div class="lrc-inspector-fields">
+                            <header class="lrc-rhythm-titlebar">
+                                <div>
+                                    <h2 id="lrc-rhythm-title">—</h2>
+                                    <p id="lrc-rhythm-subtitle">—</p>
+                                </div>
+                                <span id="lrc-rhythm-state" class="lrc-rhythm-state">uncharted</span>
+                            </header>
+
+                            <dl class="lrc-primary-metrics">
+                                <div><dt>Fundamental</dt><dd id="lrc-metric-fundamental">—</dd></div>
+                                <div><dt>Onsets</dt><dd id="lrc-metric-onsets">—</dd></div>
+                                <div><dt>Density</dt><dd id="lrc-metric-density">—</dd></div>
+                            </dl>
+
+                            <details class="lrc-inspector-disclosure">
+                                <summary>Structure</summary>
+                                <dl id="lrc-structure-list" class="lrc-detail-list"></dl>
+                            </details>
+                            <details class="lrc-inspector-disclosure">
+                                <summary>Connections</summary>
+                                <div id="lrc-connections" class="lrc-connections"></div>
+                            </details>
+                        </div>
+
+                        <section id="lrc-scale-chart" class="scale-chart lrc-scale-chart" aria-label="Selected rhythm scale">
+                            <div class="pitch-count-display">
+                                <strong id="lrc-scale-count">— Pitches</strong>
+                                <button id="lrc-scale-light-toggle" class="lrc-scale-light-toggle active" type="button" title="Disable playback highlights" aria-label="Disable playback highlights" aria-pressed="true"></button>
+                            </div>
+                            <div class="scale-header"><span id="lrc-scale-fundamental" class="scale-type">Fundamental —</span></div>
+                            <div class="scale-table-container lrc-scale-table-container">
+                                <table class="scale-table">
+                                    <thead><tr><th>Ratio</th><th>Cents</th></tr></thead>
+                                    <tbody id="lrc-scale-table-body"></tbody>
+                                </table>
+                            </div>
+                        </section>
+                    </div>
+
+                </section>
             </div>
         </div>
+
+        <!-- Development-only Cosmos audio controls. Z gates this overlay independently of the inspector. -->
+        <aside id="lrc-audio-lab" class="lrc-audio-lab" aria-label="Cosmos audio lab" hidden>
+                    <div class="lrc-audio-lab-head"><span>Audio lab</span><kbd>Z</kbd></div>
+                    <div class="lrc-chord-readout" id="lrc-chord-readout"></div>
+                    <label class="lrc-audio-mode-row" for="lrc-audio-mode">
+                        <span>audio</span>
+                        <select id="lrc-audio-mode" aria-label="Cosmos audio mode">
+                            <option value="ambient-chords" selected>Ambient chords</option>
+                            <option value="culled-grid-rows">Culled grid rows · 3D</option>
+                        </select>
+                    </label>
+                    <div class="lrc-transport">
+                        <button id="lrc-mute-btn" title="Mute" aria-label="Mute Cosmos audio">M</button>
+                        <span class="lrc-tempo-cap">ticks/s</span>
+                        <input type="range" id="lrc-tempo-slider" min="1" max="100" step="1" value="10" aria-label="universal clock rate (ticks per second)">
+                        <b id="lrc-tempo-readout">10/s</b>
+                    </div>
+                    <label class="lrc-tuning-row" for="lrc-tuning-slider">
+                        <span>local tuning</span>
+                        <input type="range" id="lrc-tuning-slider" min="0" max="8" step="0.25" value="2" aria-label="local tuning strength in semitones of voice-leading cost">
+                        <b id="lrc-tuning-readout">2.0 st</b>
+                    </label>
+                    <label class="lrc-tuning-row" for="lrc-scaled-speed">
+                        <span>scaled speed</span>
+                        <input type="checkbox" id="lrc-scaled-speed" aria-label="scale the tick rate to the median nearby grid cycle">
+                        <b id="lrc-scaled-readout">off</b>
+                    </label>
+                    <label class="lrc-tuning-row" for="lrc-cycle-slider">
+                        <span>grid cycle</span>
+                        <input type="range" id="lrc-cycle-slider" min="2" max="40" step="0.5" value="12" aria-label="seconds per grid cycle in scaled speed mode">
+                        <b id="lrc-cycle-readout">12.0 s</b>
+                    </label>
+                    <label class="lrc-tuning-row" for="lrc-midi-out">
+                        <span>MIDI out</span>
+                        <input type="checkbox" id="lrc-midi-out" aria-label="stream the cosmos to a DAW over MPE MIDI">
+                        <b id="lrc-midi-readout">off</b>
+                    </label>
+                    <label class="lrc-tuning-row" for="lrc-modulation">
+                        <span>modulation</span>
+                        <input type="checkbox" id="lrc-modulation" aria-label="retune each newly solved root to the fundamental">
+                        <b id="lrc-modulation-readout">off</b>
+                    </label>
+                    <label class="lrc-tuning-row" for="lrc-full-quality">
+                        <span>full quality</span>
+                        <input type="checkbox" id="lrc-full-quality" aria-label="hold each chord until every chord tone has sounded">
+                        <b id="lrc-quality-readout">off</b>
+                    </label>
+        </aside>
     </div>
     <script type="module" src="cosmos/flight-boot.js"></script>
 

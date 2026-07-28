@@ -3628,26 +3628,121 @@ body.cosmos-active #cosmos-view {
 #cosmos-help-panel .help-kv b { color: var(--ink); font-family: var(--mono); font-weight: 600; white-space: nowrap; }
 #cosmos-help-panel .help-note { margin-top: 6px; font-size: 10px; color: var(--hud-text-muted); opacity: .7; }
 
-/* the minimized "LRC div" = the cockpit (the site's own minimize/expand metaphor): collapsed, it's a
-   house panel (uppercase green title + a muted sub + a `+` expand glyph); expanded (.open), it reveals
-   the Linear Plot + transport strip for whatever rhythm cosmos-audio is sounding. Sits lower-left.
-   Interaction lives on .lrc-head (the title row) so it never fights the transport controls below it:
-   single-click toggles .open, double-click exits flight (see flight-view.js's `bound` wiring). */
-#lrc-div { position: absolute; left: 16px; bottom: 16px; width: 260px; padding: 8px 14px; user-select: none; z-index: 520; transition: all var(--transition-speed); }
-#lrc-div:hover { border-color: var(--hud-accent); background: rgba(40,40,40,.92); }
-.lrc-head { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-#lrc-div .lrc-div-mark { font-family: var(--sans); font-size: 12px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; color: var(--hud-accent); }
-#lrc-div .lrc-div-sub { flex: 1; font-family: var(--sans); font-size: 10px; letter-spacing: .5px; color: var(--hud-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lrc-head::after { content: "+"; font-size: 14px; line-height: 1; color: var(--hud-text); border: 1px solid var(--hud-border); border-radius: 4px; width: 22px; height: 22px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
-#lrc-div.open .lrc-head::after { content: "\2212"; }   /* − */
+/* Selected-rhythm inspector. It deliberately uses typography and spacing more than nested boxes: the
+   rhythm tuple and spaces plot are the identity, with deep metrics progressively disclosed below. */
+#lrc-div {
+    position: absolute; left: 16px; bottom: 16px; width: min(310px, calc(100vw - 32px));
+    padding: 0; overflow: hidden; user-select: none; z-index: 520;
+    transition: width var(--transition-speed), border-color var(--transition-speed), background var(--transition-speed);
+}
+#lrc-div.open { width: min(620px, calc(100vw - 32px)); }
+.lrc-head { min-height: 42px; display: flex; align-items: stretch; border-bottom: 1px solid transparent; }
+#lrc-div.open .lrc-head { border-bottom-color: var(--hud-border); }
+.lrc-head-copy {
+    min-width: 0; flex: 1; display: flex; align-items: baseline; gap: 10px; padding: 10px 12px;
+    border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer;
+}
+#lrc-div .lrc-div-mark { font: 600 11px var(--sans); letter-spacing: 1.3px; text-transform: uppercase; color: var(--hud-accent); }
+#lrc-div .lrc-div-sub { min-width: 0; flex: 1; font: 10px var(--sans); letter-spacing: .25px; color: var(--hud-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lrc-head-copy::after { content: "+"; margin-left: auto; color: var(--dim); font: 15px/1 var(--mono); }
+#lrc-div.open .lrc-head-copy::after { content: "\2212"; }
+.lrc-head-action {
+    flex: 0 0 auto; align-self: center; border: 1px solid var(--hud-border); border-radius: 4px; cursor: pointer;
+    transition: color var(--transition-speed), border-color var(--transition-speed), background var(--transition-speed), opacity var(--transition-speed);
+}
+.lrc-head-action:focus-visible { outline: 1px solid var(--hud-accent); outline-offset: 2px; }
+.lrc-head-action:disabled { cursor: default; opacity: .25; }
+.lrc-listen-action { width: 28px; height: 26px; margin-left: 5px; padding: 5px; background: rgba(255,255,255,.025); color: var(--dim); }
+.lrc-listen-action svg { display: block; width: 100%; height: 100%; }
+.lrc-listen-action svg path:first-child { fill: currentColor; stroke: none; }
+.lrc-listen-action svg path:last-child { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.lrc-listen-action:hover:not(:disabled), .lrc-listen-action.active { border-color: rgba(0,255,136,.55); color: var(--known); background: rgba(0,255,136,.08); }
+.lrc-load-action { height: 26px; margin-left: 5px; padding: 0 7px; border-color: rgba(0,255,136,.6); background: rgba(0,255,136,.14); color: var(--known); font: 600 8px var(--sans); letter-spacing: .08em; }
+.lrc-load-action:hover:not(:disabled), .lrc-load-action.loaded { border-color: var(--hud-accent); background: rgba(0,255,136,.26); color: #fff; }
+.lrc-icon-btn {
+    width: 34px; flex: 0 0 auto; margin-left: 5px; border: 0; border-left: 1px solid var(--hud-border); background: transparent;
+    color: var(--dim); font: 17px var(--sans); cursor: pointer; transition: color var(--transition-speed), background var(--transition-speed);
+}
+.lrc-icon-btn:hover, .lrc-icon-btn:focus-visible { color: var(--ink); background: rgba(255,255,255,.05); outline: none; }
 
-/* cockpit body: Linear Plot (onset ticks + sweeping playhead) + a compact transport strip. Hidden until
-   a rhythm is selected (auto-expand) or the handle is clicked open. */
-#lrc-div .lrc-cockpit-body { display: none; }
-#lrc-div.open .lrc-cockpit-body { display: block; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--hud-border); }
-#lrc-plot { display: block; width: 100%; height: 36px; }
-/* Chord Walk readout: current chord + the song's loop as a compact strip (current highlighted) + tonality */
-.lrc-chord-readout { margin-top: 6px; font-family: var(--mono); font-size: 10px; color: var(--dim); white-space: nowrap; overflow-x: auto; }
+#lrc-div .lrc-cockpit-body { display: none; max-height: calc(100vh - 86px); overflow-y: auto; scrollbar-width: thin; }
+#lrc-div.open .lrc-cockpit-body { display: block; }
+.lrc-empty-state { padding: 28px 26px 30px; text-align: center; color: var(--dim); font: 11px/1.55 var(--sans); }
+.lrc-empty-state p { max-width: 220px; margin: 12px auto 0; }
+.lrc-empty-orbit { display: block; width: 34px; height: 34px; margin: 0 auto; border: 1px solid rgba(255,255,255,.2); border-radius: 50%; position: relative; }
+.lrc-empty-orbit::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: var(--hud-accent); box-shadow: 0 0 8px rgba(0,255,136,.55); }
+.lrc-rhythm-inspector[hidden], .lrc-empty-state[hidden] { display: none !important; }
+.lrc-rhythm-inspector { padding: 20px 22px 18px; }
+.lrc-rhythm-titlebar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 3px 0 14px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.lrc-rhythm-titlebar h2 { margin: 0; color: var(--ink); font: 600 24px/1.12 var(--mono); letter-spacing: .02em; }
+.lrc-rhythm-titlebar p { margin: 5px 0 0; color: var(--dim); font: 9px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.lrc-rhythm-state { margin-top: 2px; padding: 3px 6px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; color: var(--dim); font: 8px var(--sans); letter-spacing: .08em; text-transform: uppercase; }
+.lrc-rhythm-state.charted { border-color: rgba(0,255,136,.42); color: var(--known); }
+
+.lrc-plot-frame { position: relative; margin: 0 0 10px; padding: 5px 0 17px; border-bottom: 1px solid rgba(255,255,255,.08); }
+#lrc-plot { display: block; width: 100%; height: 192px; }
+.lrc-plot-key { position: absolute; right: 0; bottom: 4px; display: flex; gap: 7px; font: 8px var(--mono); }
+.lrc-plot-key button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: 1; cursor: pointer; opacity: 1; transition: opacity var(--transition-speed), filter var(--transition-speed); }
+.lrc-plot-key button:hover { filter: brightness(1.3); }
+.lrc-plot-key button:focus-visible { outline: 1px solid currentColor; outline-offset: 2px; }
+.lrc-plot-key button[aria-pressed="false"] { opacity: .28; }
+.lrc-plot-key button:disabled { cursor: default; opacity: .1; filter: none; }
+.lrc-plot-key button[data-plot-layer="A"] { color: var(--layer-a); }
+.lrc-plot-key button[data-plot-layer="B"] { color: var(--layer-b); }
+.lrc-plot-key button[data-plot-layer="C"] { color: var(--layer-c); }
+.lrc-plot-key button[data-plot-layer="D"] { color: var(--layer-d); }
+
+.lrc-inspector-lower { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(190px, .85fr); align-items: start; gap: 22px; }
+.lrc-inspector-fields { min-width: 0; }
+.lrc-primary-metrics { display: grid; grid-template-columns: repeat(3, 1fr); margin: 0; padding: 13px 0 15px; }
+.lrc-primary-metrics > div { min-width: 0; padding: 0 10px; border-left: 1px solid rgba(255,255,255,.09); }
+.lrc-primary-metrics > div:first-child { padding-left: 0; border-left: 0; }
+.lrc-primary-metrics > div:last-child { padding-right: 0; }
+.lrc-primary-metrics dt { margin-bottom: 4px; color: var(--dim); font: 8px var(--sans); letter-spacing: .09em; text-transform: uppercase; }
+.lrc-primary-metrics dd { margin: 0; overflow: hidden; color: var(--ink); font: 600 14px var(--mono); text-overflow: ellipsis; }
+
+.lrc-scale-chart { min-width: 0; margin: 0; padding: 8px; }
+.lrc-scale-chart .pitch-count-display { margin-bottom: 6px; padding-top: 2px; }
+.lrc-scale-chart .scale-header { margin-bottom: 6px; padding-bottom: 4px; }
+.lrc-scale-light-toggle {
+    grid-column: 3; justify-self: end; width: 9px; height: 9px; margin: 0 4px 6px 0; padding: 0;
+    border: 1px solid var(--hud-border); border-radius: 2px; background: rgba(90,90,90,.8); cursor: pointer;
+    transition: background .2s ease, border-color .2s ease;
+}
+.lrc-scale-light-toggle.active { border-color: rgba(0,255,136,.9); background: rgba(0,255,136,.9); }
+.lrc-scale-light-toggle:focus-visible { outline: 1px solid var(--hud-accent); outline-offset: 2px; }
+.lrc-scale-table-container { height: 178px; max-height: 178px; overscroll-behavior: contain; scrollbar-width: thin; }
+.lrc-scale-chart .pitch-row { cursor: default; }
+
+.lrc-inspector-disclosure { border-top: 1px solid rgba(255,255,255,.08); }
+.lrc-inspector-disclosure summary { padding: 10px 0; list-style: none; color: var(--dim); font: 9px var(--sans); letter-spacing: .09em; text-transform: uppercase; cursor: pointer; }
+.lrc-inspector-disclosure summary::-webkit-details-marker { display: none; }
+.lrc-inspector-disclosure summary::after { content: "+"; float: right; color: rgba(255,255,255,.42); font: 12px var(--mono); }
+.lrc-inspector-disclosure[open] summary::after { content: "\2212"; }
+.lrc-inspector-disclosure summary:focus-visible { outline: 1px solid rgba(0,255,136,.45); outline-offset: -2px; }
+.lrc-detail-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin: 0; padding: 2px 0 13px; }
+.lrc-detail-list > div { min-width: 0; }
+.lrc-detail-list dt { color: var(--dim); font: 8px var(--sans); letter-spacing: .05em; text-transform: uppercase; }
+.lrc-detail-list dd { margin: 3px 0 0; overflow: hidden; color: var(--ink); font: 10px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.lrc-connections { padding: 1px 0 12px; color: var(--dim); font: 10px/1.5 var(--sans); }
+.lrc-connection-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.lrc-connection-row b { color: var(--ink); font: 10px var(--mono); }
+.lrc-connection-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.lrc-connection-btn { padding: 4px 7px; border: 1px solid rgba(255,255,255,.15); border-radius: 4px; background: rgba(255,255,255,.035); color: var(--dim); font: 9px var(--mono); cursor: pointer; }
+.lrc-connection-btn:hover, .lrc-connection-btn.active { border-color: var(--hud-accent); color: var(--known); }
+.lrc-connections-empty { color: var(--dimmer); }
+
+.lrc-audio-lab {
+    position: fixed; right: 12px; bottom: 12px; z-index: 700; width: min(320px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px); overflow: auto; padding: 12px 14px 14px;
+    border: 1px solid rgba(255,255,255,.18); border-radius: 8px; background: rgba(8,10,16,.94);
+    box-shadow: 0 8px 28px rgba(0,0,0,.38); font-family: var(--sans); pointer-events: auto;
+    overscroll-behavior: contain; scrollbar-gutter: stable;
+}
+.lrc-audio-lab[hidden] { display: none !important; }
+.lrc-audio-lab-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; color: var(--hud-accent); font: 600 10px var(--sans); letter-spacing: .1em; text-transform: uppercase; }
+.lrc-audio-lab-head kbd { padding: 2px 5px; border: 1px solid var(--hud-border); border-radius: 3px; color: var(--dim); background: rgba(255,255,255,.035); font: 9px var(--mono); }
+.lrc-chord-readout { margin: 2px 0 8px; font: 10px var(--mono); color: var(--dim); white-space: nowrap; overflow-x: auto; }
 .lrc-chord-readout .cur { color: var(--known); }
 .lrc-chord-readout .strip { margin: 0 6px; color: var(--hud-text-muted); }
 .lrc-chord-readout .tonality { color: var(--hud-text-muted); }
@@ -3658,6 +3753,21 @@ body.cosmos-active #cosmos-view {
 .lrc-tuning-row span { white-space: nowrap; }
 .lrc-tuning-row input[type=range] { min-width: 0; flex: 1; accent-color: var(--hud-accent); }
 .lrc-tuning-row b { min-width: 42px; color: var(--hud-text); font: 600 10px var(--mono); text-align: right; text-transform: none; letter-spacing: 0; }
+
+@media (max-height: 680px) {
+    #lrc-div .lrc-cockpit-body { max-height: calc(100vh - 64px); }
+    .lrc-rhythm-inspector { padding-top: 14px; }
+    #lrc-plot { height: 142px; }
+    .lrc-primary-metrics { padding-top: 9px; padding-bottom: 10px; }
+    .lrc-scale-table-container { height: 138px; max-height: 138px; }
+}
+
+@media (max-width: 520px) {
+    .lrc-rhythm-inspector { padding-left: 16px; padding-right: 16px; }
+    .lrc-inspector-lower { grid-template-columns: minmax(0, 1fr) minmax(128px, .78fr); gap: 12px; }
+    .lrc-primary-metrics > div { padding-left: 5px; padding-right: 5px; }
+    .lrc-primary-metrics dd { font-size: 11px; }
+}
 
 /* Full Sky developer readout: real cells keep dense selected-ratio pools from flowing into ON. */
 #sky-debug-panel { scrollbar-color: rgba(145,169,199,.65) rgba(255,255,255,.04); }
