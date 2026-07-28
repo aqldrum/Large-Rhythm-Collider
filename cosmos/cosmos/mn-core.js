@@ -47,3 +47,15 @@ export function rhythmTriples(layers) {
   }
   return [...seen.values()];
 }
+
+// Exact NR membership for a rhythm inside a bloomed grid. A grid can host a motif because it is a
+// multiple of the motif's base without every rhythm in that grid containing the motif; the bloom Web
+// therefore tests the rhythm's normalized pairs/triples rather than inheriting grid membership.
+export function rhythmMotifKeys(layers) {
+  if (!Array.isArray(layers) || layers.length < 2) return new Set();
+  return new Set([...rhythmTriples(layers), ...rhythmDoubles(layers)].map(motif => motif.key));
+}
+
+export function rhythmContainsMotif(layers, motifKey) {
+  return !!motifKey && rhythmMotifKeys(layers).has(motifKey);
+}

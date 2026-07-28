@@ -1,13 +1,29 @@
 // web-return.js — bounded route planning + smooth sampling for Cosmos Web travel.
 //
 // A Master-Network family contains every positive multiple of its base LCM. That set is infinite,
-// so a return ride must never enumerate it. planFamilyGrids samples actual family members at an
-// adaptive stride: nearby homes visit every node, while very distant homes stay within a fixed
+// so a Web ride must never enumerate it. planFamilyGrids samples actual family members at an
+// adaptive stride: nearby destinations visit every node, while very distant destinations stay within a fixed
 // waypoint budget. The existing camera-local Web renderer fills in the visible neighbourhood as
 // the camera travels.
 
 const clamp01 = n => Math.max(0, Math.min(1, n));
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const norm3 = a => { const length = Math.hypot(...a) || 1; return a.map(value => value / length); };
+
+// A pole-safe camera frame for guided Web travel. Unlike the free-flight Euler camera, this frame
+// takes its up reference from the route lift, so a vertical tangent still has an unambiguous right/up.
+// lookPitch is kept below ±90° by the caller, ensuring view direction never becomes parallel to lift.
+export function routeCameraBasis(tangent, lift, lookYaw = 0, lookPitch = 0) {
+  const forward = norm3(tangent), routeUp = norm3(lift), routeRight = norm3(cross3(routeUp, forward));
+  const cp = Math.cos(lookPitch), sp = Math.sin(lookPitch), cy = Math.cos(lookYaw), sy = Math.sin(lookYaw);
+  const d = norm3([0, 1, 2].map(i => forward[i] * cp * cy + routeRight[i] * cp * sy + routeUp[i] * sp));
+  let r = norm3(cross3(routeUp, d));
+  if (Math.hypot(...r) < 1e-6) r = routeRight;
+  const u = norm3(cross3(d, r));
+  return { d, r, u, forward, routeUp, routeRight, alignment: dot3(d, forward) };
+}
 
 export function planFamilyGrids(startGrid, homeGrid, base, maxWaypoints = 96) {
   base = Math.max(2, Math.floor(base) || 0);
@@ -24,7 +40,7 @@ export function planFamilyGrids(startGrid, homeGrid, base, maxWaypoints = 96) {
     const g = q * base;
     if (grids[grids.length - 1] !== g) grids.push(g);
   }
-  grids[grids.length - 1] = homeQ * base; // keep the authored home exact despite rounding
+  grids[grids.length - 1] = homeQ * base; // keep the requested destination exact despite rounding
   return { grids, logicalCount, sampled: logicalCount > grids.length };
 }
 

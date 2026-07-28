@@ -1,6 +1,6 @@
 // web-render-worker.js — the complete Cosmos Web pipeline off the UI thread:
 // membership filtering, kNN graph builds, progressive reveal, projection, hit testing, drawing,
-// and Return Home route planning. The flight loop only sends camera frames + zone deltas and consumes
+// and destination-aware Web route planning. The flight loop only sends camera frames + zone deltas and consumes
 // tiny hover/count snapshots.
 import { setPlacement, macroCell, macroScale, backboneHash, CELL } from './spine.js';
 import { hilbertEncode, SIDE } from './hilbert.js';
@@ -244,30 +244,34 @@ function hilbertTubeCandidates(startGrid, homeGrid, base, bands) {
   return [...candidates];
 }
 
-function planReturn(webId, cameraStart) {
+function planReturn(webId, cameraStart, requestedTargetGrid) {
   const web = webs.get(webId);
   if (!web || !web.members?.length) throw new Error('Web has no local nodes yet.');
+  const targetGrid = Math.round(requestedTargetGrid);
+  if (!(targetGrid > 0)) throw new Error('Web travel needs a valid destination grid.');
+  if (web.dynamic ? targetGrid % web.base !== 0 : !web.members.includes(targetGrid))
+    throw new Error('Destination grid does not contain this Web.');
   let startGrid = null, nearest = Infinity;
   for (const grid of web.members) { const d = distance3(cameraStart, gridAbsolute(grid)); if (d < nearest) { nearest = d; startGrid = grid; } }
   let grids, logicalNodes, sampled = false;
   if (web.dynamic) {
-    const logicalPlan = planFamilyGrids(startGrid, web.homeGrid, web.base, WEB_ROUTE_MAX);
+    const logicalPlan = planFamilyGrids(startGrid, targetGrid, web.base, WEB_ROUTE_MAX);
     logicalNodes = logicalPlan.logicalCount;
-    const startCell = macroCell(startGrid), homeCell = macroCell(web.homeGrid);
+    const startCell = macroCell(startGrid), homeCell = macroCell(targetGrid);
     const bands = Math.max(1, Math.min(WEB_ROUTE_MAX - 1,
       Math.ceil(cellDistance(startCell, homeCell) / WEB_ROUTE_HOP_CELLS)));
     const candidates = placement === 'hilbert'
-      ? hilbertTubeCandidates(startGrid, web.homeGrid, web.base, bands)
-      : planFamilyGrids(startGrid, web.homeGrid, web.base, WEB_ROUTE_MAX * 4).grids;
-    grids = monotonicWebPath(candidates, startGrid, web.homeGrid, gridAbsolute,
+      ? hilbertTubeCandidates(startGrid, targetGrid, web.base, bands)
+      : planFamilyGrids(startGrid, targetGrid, web.base, WEB_ROUTE_MAX * 4).grids;
+    grids = monotonicWebPath(candidates, startGrid, targetGrid, gridAbsolute,
       { bands, maxWaypoints: WEB_ROUTE_MAX, candidatesPerBand: WEB_TUBE_CHOICES });
     sampled = logicalNodes > grids.length;
   } else {
-    grids = shortestWebPath(web.members, web.edges, startGrid, web.homeGrid, gridAbsolute);
-    if (!grids) throw new Error('No connected strand reaches home.');
+    grids = shortestWebPath(web.members, web.edges, startGrid, targetGrid, gridAbsolute);
+    if (!grids) throw new Error('No connected strand reaches that destination.');
     logicalNodes = grids.length;
   }
-  const gridPoints = grids.map(gridAbsolute), homePoint = gridAbsolute(web.homeGrid);
+  const gridPoints = grids.map(gridAbsolute), homePoint = gridAbsolute(targetGrid);
   const beforeHome = gridPoints.length > 1 ? gridPoints[gridPoints.length - 2] : cameraStart;
   const homeDirection = unitDelta(beforeHome, homePoint);
   const standoffMax = placement === 'hilbert' ? CELL * 0.8 : 700;
@@ -275,7 +279,7 @@ function planReturn(webId, cameraStart) {
   const arrival = homePoint.map((value, i) => value - homeDirection[i] * standoff);
   const path = buildArcPath([cameraStart, ...gridPoints.slice(0, -1), arrival], WEB_ROUTE_SUBDIV);
   routePath = { webId, path, homePoint, grids };
-  return { webId, homeGrid: web.homeGrid, startGrid, logicalNodes, sampled, routeNodes: grids.length,
+  return { webId, targetGrid, startGrid, logicalNodes, sampled, routeNodes: grids.length,
     duration: rideDuration(logicalNodes), path, homePoint, arrival, homeDirection };
 }
 
@@ -303,7 +307,8 @@ self.onmessage = event => {
     else if (message.type === 'frame') {
       const result = render(message.frame); self.postMessage({ type: 'frameDone', frameId: message.frameId, ...result });
     } else if (message.type === 'request') {
-      if (message.op === 'planReturn') self.postMessage({ type: 'response', id: message.id, result: planReturn(message.webId, message.cameraStart) });
+      if (message.op === 'planReturn') self.postMessage({ type: 'response', id: message.id,
+        result: planReturn(message.webId, message.cameraStart, message.targetGrid) });
     }
   } catch (error) {
     if (message.type === 'frame') self.postMessage({ type: 'frameDone', frameId: message.frameId, hover: null, counts: [], error: error.message });

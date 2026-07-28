@@ -1,6 +1,7 @@
-import { planFamilyGrids, monotonicWebPath, shortestWebPath, buildArcPath, sampleArcPath, rideDuration } from './web-return.js';
+import { planFamilyGrids, monotonicWebPath, shortestWebPath, buildArcPath, sampleArcPath, rideDuration, routeCameraBasis } from './web-return.js';
 import { buildWebGraph, familyMembers } from './web-graph.js';
 import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from './web-travel-bloom.js';
+import { rhythmContainsMotif, rhythmDoubles, rhythmMotifKeys } from './mn-core.js';
 
 let pass = true;
 const check = (name, ok, detail = '') => { pass = pass && ok; console.log(`  ${ok ? '✓' : '✗'} ${name}${detail ? ' — ' + detail : ''}`); };
@@ -19,6 +20,18 @@ check('extreme ride duration is bounded', rideDuration(far.logicalCount) <= 42, 
 
 const filtered = familyMembers([18, 19, 36, 54, 55], 18);
 check('worker membership filter keeps only NR-owning grids', filtered.join(',') === '18,36,54');
+const nestedKeys = rhythmMotifKeys([12, 8, 6]);
+check('bloom membership finds an exact nested triple', nestedKeys.has('RDCP:6:4:3'));
+check('bloom membership finds an exact nested double', rhythmContainsMotif([12, 8, 6], '3:2'));
+check('grid-level divisibility does not make every bloom rhythm a member', !rhythmContainsMotif([12, 6], '3:2'));
+const elevenSeven = rhythmDoubles([11, 7]).find(motif => motif.key === '11:7');
+check('an NR origin is its first possible grid', elevenSeven?.base === 77, elevenSeven?.base);
+const downwardCamera = routeCameraBasis([0, -1, 0], [1, 0, 0], 0, 0);
+const cameraVectors = [downwardCamera.d, downwardCamera.r, downwardCamera.u];
+check('route camera can face exactly downward', Math.abs(downwardCamera.d[1] + 1) < 1e-9);
+check('vertical route camera retains a finite orthonormal frame', cameraVectors.every(vector =>
+  vector.every(Number.isFinite) && Math.abs(Math.hypot(...vector) - 1) < 1e-9) &&
+  Math.abs(downwardCamera.d.reduce((sum, value, i) => sum + value * downwardCamera.r[i], 0)) < 1e-9);
 const proximity = buildWebGraph([10, 11, 12, 30], g => [g, 0, 0], { neighbours: 1, bucketSize: 8 });
 check('worker graph build emits stable local edges', proximity.edges.some(([a, b]) => [10, 11].includes(proximity.members[a]) && [10, 11].includes(proximity.members[b])));
 check('worker graph adjacency covers every emitted edge', proximity.edges.every((_, i) => proximity.adjacency.some(list => list.includes(i))));

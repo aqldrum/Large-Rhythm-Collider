@@ -9,8 +9,8 @@ import { renderPosCam, setPlacement, macroCell, macroScale, backboneHash, SPACIN
 import { hilbertDecode, hilbertEncode, neighborGrids, INDEX_COUNT, SIDE } from './cosmos/hilbert.js';
 import { clampHilbertWorld, containHilbertSphere, nearbyHilbertWalls, rebaseHilbertCamera } from './cosmos/hilbert-boundary.js';
 import { GOLDEN, cardColor, CHARTED } from './cosmos/bloom-core.js';
-import { rhythmTriples, rhythmDoubles } from './cosmos/mn-core.js';
-import { sampleArcPath } from './cosmos/web-return.js';
+import { rhythmTriples, rhythmDoubles, rhythmMotifKeys } from './cosmos/mn-core.js';
+import { routeCameraBasis, sampleArcPath } from './cosmos/web-return.js';
 import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from './cosmos/web-travel-bloom.js';
 // agents.js (Collider-Battle ships / dragon-tail game) is DEFERRED for the POC and intentionally not ported.
 import { binarySearch } from './oracle-core.js';
@@ -96,6 +96,7 @@ let   FOCUS_FETCH_CONC = 6; // bloom-shard fetches in flight across ALL bloomed 
 // Click-to-inspect: hover a star or bloom node → tooltip; click (no drag) → pin a detail panel.
 const NODE_HIT = 9;        // px radius to grab a bloom node under the cursor (nodes take priority)
 const STAR_HIT = 7;        // px padding added to a star's drawn radius for grabbing it
+const BLOOM_WEB_HIT = 9;   // px radius around an intra-bloom spoke, matching the macro Web worker
 const DRAG_SLOP = 5;       // px of pointer travel before a press counts as a look-drag (not a click)
 // ── NETWORK SPIDERWEB: connect all 12T grids that share a mother scale (oracle-index `mtag`), drawn
 // PROGRESSIVELY — a strand lights up only once you've flown near both its endpoints, so warping from
@@ -114,6 +115,7 @@ let   webColorN = 0;
 const activeWebs = new Map(); // web id -> web { tag, color, slot, visible, dynamic?, ... }
 let   hoverWeb = null;         // nearest visible strand, returned asynchronously by the Web worker
 let   returnRide = null;       // active camera autopilot along a selected Web back to its authored grid
+let   bloomWebId = null;       // Web whose exact rhythm membership is expanded inside open blooms
 const WEB_MAX = 10;           // max simultaneous webs (mother + MN); number keys 1-9,0 hide/show each slot,
                               //   a hidden slot is reclaimed by the next trace (so you can swap webs in/out)
 // MN "hyperlane" web: a motif (Root Double or CT/IT/RDCP triple) scanned live from a node's layers is
@@ -239,6 +241,12 @@ class WebRenderer {
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const norm = a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+function pointSegmentDistance2(px, py, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, denominator = dx * dx + dy * dy;
+  const t = denominator ? Math.max(0, Math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / denominator)) : 0;
+  const x = a.x + dx * t, y = a.y + dy * t;
+  return { d2: (px - x) ** 2 + (py - y) ** 2, x, y };
+}
 // Local cube deformation: push a point radially OUT of each bloom's bubble (so neighbours make room for a
 // big cloud). A bloom never deforms its own star (b.g === grid skipped). Composed over all bubbles.
 function deform(p, grid, bubbles) {
@@ -277,13 +285,26 @@ function claimSlot() {
   return -1;   // full (all visible) — hide one with its number key to free a slot
 }
 // number key 1-9,0 → toggle that slot's web visibility (hidden webs stop drawing but keep their state)
-function toggleSlot(s) { for (const w of activeWebs.values()) if (w.slot === s) { w.visible = !w.visible; webRenderer?.visibility(w.tag, w.visible); return; } }
+function selectBloomWeb(id) {
+  bloomWebId = id && activeWebs.has(id) ? id : null;
+  webRenderer?.select((selected?.kind === 'web' && selected.webId) || bloomWebId);
+}
+
+function toggleSlot(s) {
+  for (const w of activeWebs.values()) if (w.slot === s) {
+    w.visible = !w.visible; webRenderer?.visibility(w.tag, w.visible);
+    if (w.visible) selectBloomWeb(w.tag);
+    else if (bloomWebId === w.tag) selectBloomWeb([...activeWebs.values()].find(other => other.visible)?.tag || null);
+    return;
+  }
+}
 
 function removeWeb(id) {
   activeWebs.delete(id);
   webRenderer?.remove(id);
-  if (returnRide && returnRide.webId === id) { returnRide = null; webRenderer?.clearRoute(); }
+  if (returnRide && returnRide.webId === id) { releaseWebReturnLook(returnRide); returnRide = null; webRenderer?.clearRoute(); }
   if (selected && selected.kind === 'web' && selected.webId === id) { selected = null; showDetail(null); }
+  if (bloomWebId === id) selectBloomWeb([...activeWebs.values()].find(web => web.visible)?.tag || null);
 }
 
 // Toggle a mother-scale network on/off. srcGrid (the clicked node's grid) is seeded revealed so the web
@@ -294,9 +315,11 @@ function toggleWeb(tag, srcGrid) {
   if (!members || !members.length) return;
   const slot = claimSlot(); if (slot < 0) return;
   const web = { tag, slot, visible: true, color: WEB_COLORS[webColorN++ % WEB_COLORS.length],
-    homeGrid: srcGrid, memberCount: members.length, localNodes: members.length, visibleNodes: 0 };
+    homeGrid: srcGrid, originGrid: members[0], memberCount: members.length, localNodes: members.length, visibleNodes: 0 };
   activeWebs.set(tag, web);
-  webRenderer?.upsert({ tag, visible: true, dynamic: false, color: web.color, homeGrid: srcGrid, members });
+  webRenderer?.upsert({ tag, visible: true, dynamic: false, color: web.color,
+    homeGrid: srcGrid, originGrid: web.originGrid, members });
+  selectBloomWeb(tag);
 }
 // Toggle a Master-Network family web. Members = grids divisible by the motif's base-LCM (host it at some
 // scalar) — but that set is infinite, so the worker rebuilds it from the current LOD
@@ -305,10 +328,13 @@ function toggleMNWeb(id, base, srcGrid) {
   if (activeWebs.has(id)) { removeWeb(id); return; }
   if (!(base >= 2)) return;
   const slot = claimSlot(); if (slot < 0) return;
-  const web = { tag: id, slot, visible: true, dynamic: true, base, homeGrid: srcGrid,
+  const web = { tag: id, slot, visible: true, dynamic: true, base, motifKey: id.replace(/^mn:/, ''),
+    homeGrid: srcGrid, originGrid: base,
     color: WEB_COLORS[webColorN++ % WEB_COLORS.length], localNodes: 0, visibleNodes: 0 };
   activeWebs.set(id, web);
-  webRenderer?.upsert({ tag: id, visible: true, dynamic: true, base, color: web.color, homeGrid: srcGrid });
+  webRenderer?.upsert({ tag: id, visible: true, dynamic: true, base, color: web.color,
+    homeGrid: srcGrid, originGrid: base });
+  selectBloomWeb(id);
 }
 // Draw all visible webs under the star field. Two kinds:
 //  • static (mother): finite member list, revealed progressively as the camera nears each strand.
@@ -320,6 +346,7 @@ function cancelWebReturn(status = 'ride cancelled') {
   const webId = returnRide?.webId || (selected?.kind === 'web' ? selected.webId : null);
   webRouteGeneration++;
   const web = webId && activeWebs.get(webId); if (web) { web.rideStatus = status; web.routePlanning = false; }
+  if (returnRide) releaseWebReturnLook(returnRide);
   returnRide = null; camSpeed = 0; webRenderer?.clearRoute();
   if (selected && selected.kind === 'web') showDetail(selected);
 }
@@ -346,25 +373,33 @@ function webReturnRailTangent(path, progress, windowDistance) {
 }
 
 function webReturnLookDirection(ride) {
-  const forward = norm(ride.tangent), up = norm(ride.lift), right = norm(cross(up, forward));
-  const cp = Math.cos(ride.lookPitch), sp = Math.sin(ride.lookPitch);
-  const cy = Math.cos(ride.lookYaw), sy = Math.sin(ride.lookYaw);
-  return norm([0, 1, 2].map(i => forward[i] * cp * cy + right[i] * cp * sy + up[i] * sp));
+  return routeCameraBasis(ride.tangent, ride.lift, ride.lookYaw, ride.lookPitch).d;
 }
 
 function applyWebReturnLook(ride) {
   const direction = webReturnLookDirection(ride);
-  cam.yaw = Math.atan2(direction[0], direction[2]);
+  if (Math.hypot(direction[0], direction[2]) > 1e-6) cam.yaw = Math.atan2(direction[0], direction[2]);
   cam.pitch = Math.asin(Math.max(-1, Math.min(1, direction[1])));
 }
 
-function beginWebReturn(webId) {
+// Free flight deliberately retains its ±80° pitch law. When travel ends at a vertical view, preserve
+// the last meaningful yaw and project pitch back into that legal range before dropping the route frame.
+function releaseWebReturnLook(ride) {
+  applyWebReturnLook(ride);
+  cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch));
+}
+
+function beginWebReturn(webId, destination = 'anchor') {
   const web = activeWebs.get(webId);
-  if (!web || web.homeGrid == null || !webRenderer) return;
+  const targetGrid = destination === 'origin' ? web?.originGrid : web?.homeGrid;
+  if (!web || targetGrid == null || !webRenderer) return;
+  bloomWebId = webId;
   const generation = ++webRouteGeneration;
-  web.visible = true; web.routePlanning = true; web.rideProgress = 0; web.rideStatus = 'stitching route off-thread';
+  web.visible = true; web.routePlanning = true; web.rideProgress = 0;
+  web.rideDestination = destination; web.rideTargetGrid = targetGrid;
+  web.rideStatus = `stitching ${destination} route off-thread`;
   webRenderer.visibility(webId, true); selected = { kind: 'web', webId }; webRenderer.select(webId); showDetail(selected);
-  webRenderer.request('planReturn', { webId, cameraStart: cameraAbsolute() }).then(result => {
+  webRenderer.request('planReturn', { webId, cameraStart: cameraAbsolute(), targetGrid }).then(result => {
     if (generation !== webRouteGeneration || !activeWebs.has(webId)) { webRenderer.clearRoute(); return; }
     web.routePlanning = false;
     const liftHeight = placement === 'hilbert' ? CELL * WEB_RETURN_LIFT_CELLS : WEB_RETURN_LIFT_SPINE;
@@ -372,7 +407,7 @@ function beginWebReturn(webId) {
     // Aim once from the elevated rail toward a point ahead on the actual strand. Position remains
     // route-owned afterward, while arrow-key steering stays fully available during travel.
     const openingTangent = webReturnRailTangent(result.path, 0.0001, frameWindow), lift = webReturnLift(openingTangent);
-    returnRide = { ...result, elapsed: 0, lastUi: 0, liftHeight, frameWindow, lift, pathProgress: 0 };
+    returnRide = { ...result, destination, elapsed: 0, lastUi: 0, liftHeight, frameWindow, lift, pathProgress: 0 };
     const lookProgress = Math.min(1, Math.max(0.0001, liftHeight * 4 / Math.max(1, result.path.total)));
     const lookAt = sampleArcPath(result.path, lookProgress).position;
     const elevated = result.path.points[0].map((value, i) => value + lift[i] * liftHeight);
@@ -419,12 +454,15 @@ function stepWebReturn(now, dt) {
   if (now - ride.lastUi > 250) { ride.lastUi = now; web.rideProgress = raw; showDetail(selected); }
   if (raw < 1) return true;
 
-  const hc = macroCell(ride.homeGrid), scale = macroScale();
+  const hc = macroCell(ride.targetGrid), scale = macroScale();
   const arrival = placement === 'hilbert' ? clampHilbertWorld(ride.arrival, HIL_CAMERA_RADIUS) : ride.arrival;
-  cam.anchor = ride.homeGrid;
+  cam.anchor = ride.targetGrid;
   cam.off = [arrival[0] - hc[0] * scale, arrival[1] - hc[1] * scale, arrival[2] - hc[2] * scale];
   cosmos.setCamera(cam.anchor); camSpeed = 0;
-  web.rideProgress = 1; web.rideStatus = 'home reached'; returnRide = null; webRenderer?.clearRoute(); showDetail(selected);
+  web.rideProgress = 1;
+  web.rideStatus = `${ride.destination === 'origin' ? 'origin' : 'anchor'} reached · grid ${ride.targetGrid.toLocaleString()}`;
+  releaseWebReturnLook(ride);
+  returnRide = null; webRenderer?.clearRoute(); showDetail(selected);
   return true;
 }
 
@@ -599,7 +637,8 @@ export function ensureFlight(canvas, hudEl) {
     const helpBtn = document.getElementById('cosmos-help-btn');
     if (helpBtn && helpPanelEl) helpBtn.addEventListener('click', () => helpPanelEl.classList.toggle('open'));
     if (detailEl) detailEl.addEventListener('click', e => {
-      const home = e.target.closest && e.target.closest('.web-home-btn'); if (home) { beginWebReturn(home.dataset.id); return; }
+      const travel = e.target.closest && e.target.closest('.web-travel-btn');
+      if (travel) { beginWebReturn(travel.dataset.id, travel.dataset.destination); return; }
       const cancel = e.target.closest && e.target.closest('.web-cancel-btn'); if (cancel) { cancelWebReturn(); return; }
       const ap = e.target.closest && e.target.closest('.apply-btn'); if (ap) { applyToEngine(selected); return; }
       const ov = e.target.closest && e.target.closest('.ov-btn'); if (ov) { overrideSolve(+ov.dataset.g); return; }
@@ -755,7 +794,7 @@ export function ensureFlight(canvas, hudEl) {
   webCanvas = previousWebCanvas.cloneNode(false); previousWebCanvas.replaceWith(webCanvas);
   if (!webCanvas.transferControlToOffscreen) throw new Error('Cosmos Webs require OffscreenCanvas support.');
   webZoneAdded = []; webZoneRemoved = []; webRouteGeneration++;
-  webRenderer = new WebRenderer(new URL('./cosmos/web-render-worker.js?v=1', import.meta.url), webCanvas, placement, message => {
+  webRenderer = new WebRenderer(new URL('./cosmos/web-render-worker.js?v=2', import.meta.url), webCanvas, placement, message => {
     hoverWeb = message.hover || null;
     for (const [id, visibleNodes, localNodes] of message.counts || []) {
       const web = activeWebs.get(id); if (web) { web.visibleNodes = visibleNodes; web.localNodes = localNodes; }
@@ -767,7 +806,7 @@ export function ensureFlight(canvas, hudEl) {
   if (controlsEl) {
     const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['arrows', 'steer'], ['scroll', 'dolly'],
                   ['click star', 'bloom'], ['click node', 'inspect / apply'], ['click Web', 'inspect / return'],
-                  ['Esc', 'cancel return ride'], ['right-click', 'collapse'], ['1–0', 'toggle webs'],
+                  ['Esc', 'cancel Web travel'], ['right-click', 'collapse'], ['1–0', 'toggle webs'],
                   ['Z', 'audio lab'], ['C', 'full sky debug']];
     controlsEl.innerHTML = rows.map(([k, v]) => `<div class="help-kv"><span>${k}</span><b>${v}</b></div>`).join('') +
       `<div class="help-note">${placement === 'hilbert' ? 'cube' : 'spine'} placement</div>`;
@@ -808,7 +847,7 @@ export function stopFlight() {
   webRouteGeneration++; webZoneAdded = []; webZoneRemoved = [];
   cosmos = null;
   bloomed.clear(); bloomCache.clear(); bloomPlanning.clear(); bloomInFlight = 0;
-  activeWebs.clear(); webColorN = 0;
+  activeWebs.clear(); webColorN = 0; bloomWebId = null;
   returnRide = null; selected = null; hover = null; hoverWeb = null;
   leadVoice = null; stopAudio(); audibleIds = new Set(); rowActiveIds = new Set(); rowPrewarmIds = new Set();   // kill the cosmos-audio transport, mirroring the worker teardown
   if (skyDebugEl) skyDebugEl.style.display = 'none';   // dev overlay — hide, don't destroy (cheap to reuse on re-entry)
@@ -827,6 +866,10 @@ export function warpTo(G) {
 }
 
 function camBasis() {
+  // Guided travel keeps its full route-local basis. This avoids the world-up cross-product singularity
+  // at ±90° and lets a downward Web actually be viewed straight down without changing free-flight rules.
+  if (returnRide?.tangent && returnRide?.lift)
+    return routeCameraBasis(returnRide.tangent, returnRide.lift, returnRide.lookYaw, returnRide.lookPitch);
   const d = norm([Math.cos(cam.pitch) * Math.sin(cam.yaw), Math.sin(cam.pitch), Math.cos(cam.pitch) * Math.cos(cam.yaw)]);
   const r = norm(cross([0, 1, 0], d));
   const u = cross(d, r);
@@ -854,7 +897,7 @@ function translateCam(v) {
 }
 
 function stepControls(dt, allowTranslation = true) {
-  // During a return ride, arrow look is measured in the moving path frame. The pitch restriction
+  // During Web travel, arrow look is measured in the moving path frame. The pitch restriction
   // therefore remains ±80° around the strand even when its tangent points vertically or loops past
   // world-up; converting the resulting direction back to yaw/pitch does not impose a second clamp.
   if (returnRide) {
@@ -1037,7 +1080,7 @@ function updateTooltip() {
     const web = activeWebs.get(hover.webId);
     if (!web) { tipEl.style.display = 'none'; return; }
     tipEl.innerHTML = `<div class="t-l" style="color:${web.color}">◈ ${web.dynamic ? web.tag.replace(/^mn:/, '') : web.tag}</div>` +
-      `<div class="t-d">click to inspect · home grid ${web.homeGrid.toLocaleString()}</div>`;
+      `<div class="t-d">click to inspect · anchor ${web.homeGrid.toLocaleString()} · origin ${web.originGrid.toLocaleString()}</div>`;
   } else if (hover.kind === 'node') {
     tipEl.innerHTML = `<div class="t-l">${hover.layers ? hover.layers.join(' : ') : hover.c + '-tone'}</div>` +
       `<div class="t-d">${hover.c}-tone · fund ${hover.fund}${hover.dense ? ' · +dense' : ''} · ${hover.charted ? 'charted' : 'uncharted'}</div>`;
@@ -1058,26 +1101,31 @@ function showDetail(sel) {
   if (sel.kind === 'web') {
     const web = activeWebs.get(sel.webId);
     if (!web) { detailEl.style.display = 'none'; return; }
-    const homeCell = macroCell(web.homeGrid), camCell = macroCell(cam.anchor);
-    const cellDistance = Math.hypot(homeCell[0] - camCell[0], homeCell[1] - camCell[1], homeCell[2] - camCell[2]);
+    const homeCell = macroCell(web.homeGrid), originCell = macroCell(web.originGrid), camCell = macroCell(cam.anchor);
+    const homeDistance = Math.hypot(homeCell[0] - camCell[0], homeCell[1] - camCell[1], homeCell[2] - camCell[2]);
+    const originDistance = Math.hypot(originCell[0] - camCell[0], originCell[1] - camCell[1], originCell[2] - camCell[2]);
     const riding = !!(web.routePlanning || (returnRide && returnRide.webId === web.tag));
     const title = web.dynamic ? web.tag.replace(/^mn:/, '') : `mother ${web.tag}`;
     const family = web.dynamic ? 'unbounded' : `${web.memberCount.toLocaleString()} grids`;
-    const status = web.routePlanning ? 'stitching route off-thread' : riding
+    const status = web.routePlanning ? web.rideStatus : riding
       ? `${Math.round((web.rideProgress || 0) * 100)}% · ${returnRide.duration.toFixed(0)}s bounded ride`
       : (web.rideStatus || 'ready');
     const travelButton = riding
-      ? `<button class="web-cancel-btn" style="width:100%;margin-top:10px;background:rgba(255,255,255,.05);border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-size:11px;padding:7px;border-radius:var(--border-radius);cursor:pointer">cancel return ride</button>`
-      : `<button class="web-home-btn" data-id="${web.tag}" style="width:100%;margin-top:10px;background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px;border-radius:var(--border-radius);cursor:pointer">Return Home · grid ${web.homeGrid.toLocaleString()}</button>`;
+      ? `<button class="web-cancel-btn" style="width:100%;margin-top:10px;background:rgba(255,255,255,.05);border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-size:11px;padding:7px;border-radius:var(--border-radius);cursor:pointer">cancel Web travel</button>`
+      : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px">` +
+          `<button class="web-travel-btn" data-id="${web.tag}" data-destination="anchor" style="background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Return to grid ${web.homeGrid.toLocaleString()}</button>` +
+          `<button class="web-travel-btn" data-id="${web.tag}" data-destination="origin" style="background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Origin · grid ${web.originGrid.toLocaleString()}</button>` +
+        `</div>`;
     bodyEl.innerHTML =
       `<div class="big" style="color:${web.color}">◈ ${title}</div>` +
       `<div class="r"><span>network reach</span><b>${family}</b></div>` +
       `<div class="r"><span>visible nodes</span><b>${(web.visibleNodes || 0).toLocaleString()}</b></div>` +
       (web.dynamic ? `<div class="r"><span>nested-ratio base</span><b>${web.base.toLocaleString()}</b></div>` : '') +
-      `<div class="r"><span>home grid</span><b>${web.homeGrid.toLocaleString()}</b></div>` +
-      `<div class="r"><span>distance</span><b>${cellDistance.toFixed(1)} cells</b></div>` +
+      `<div class="r"><span>first-clicked grid</span><b>${web.homeGrid.toLocaleString()}</b></div>` +
+      `<div class="r"><span>origin grid</span><b>${web.originGrid.toLocaleString()}</b></div>` +
+      `<div class="r"><span>anchor / origin distance</span><b>${homeDistance.toFixed(1)} / ${originDistance.toFixed(1)} cells</b></div>` +
       `<div class="r"><span>travel</span><b>${status}</b></div>` +
-      (web.dynamic ? `<div style="margin-top:7px;color:var(--dimmer);font-size:10px;line-height:1.45">This family is infinite. Return Home samples qualifying NR grids adaptively while the local Web rebuilds around the camera.</div>` : '') +
+      (web.dynamic ? `<div style="margin-top:7px;color:var(--dimmer);font-size:10px;line-height:1.45">This family is infinite. Travel samples qualifying NR grids adaptively while the local Web rebuilds around the camera.</div>` : '') +
       travelButton + dismiss;
   } else {
     const z = cosmos.zones.get(sel.grid), fi = factorInfo(sel.grid);
@@ -1739,7 +1787,7 @@ function loop() {
   const rpOf = new Map();
   for (const z of cosmos.zones.values()) rpOf.set(z.grid, renderPosCam(z, cam.anchor, cam.off));
 
-  // Return Home star lookahead. Sample only a short curved rail around the current ride position,
+  // Web-travel star lookahead. Sample only a short curved rail around the current ride position,
   // expressed camera-relative so it compares directly with rpOf without forming huge grid floats.
   // The sampled route drives visuals only; it never inserts zones or changes planner/solver state.
   let travelStarSamples = [], travelStarRadius = 0, travelStarColor = null;
@@ -1903,7 +1951,9 @@ function loop() {
   drawAgents(basis);   // Collider-Battle ships (over the web, under the picking rings)
   // ── picking: as we draw, note the star/node nearest the cursor and the pinned selection's live pos ──
   const havePtr = mouseX >= 0;
-  let pickNode = null, pickNodeD2 = NODE_HIT * NODE_HIT, pickStar = null, pickStarD2 = Infinity, selPos = null;
+  let pickNode = null, pickNodeD2 = NODE_HIT * NODE_HIT;
+  let pickBloomWeb = null, pickBloomWebD2 = BLOOM_WEB_HIT * BLOOM_WEB_HIT;
+  let pickStar = null, pickStarD2 = Infinity, selPos = null;
 
   // stars, painter's order (far first). A blooming star dissolves into its point cloud (dot alpha ↓).
   const rowActivity = new Map(gridRowVisualState().map(activity => [activity.id, activity]));
@@ -1911,7 +1961,7 @@ function loop() {
   for (const { z, s } of order) {
     const fog = fogAt(s.z); if (fog <= 0) continue;
     // Cache projected motion even while a star is occluded so uncovering it cannot produce a stale,
-    // full-screen streak. Space is the shared free-flight/Return Home boost, so one law serves both.
+    // full-screen streak. Space is the shared free-flight/Web-travel boost, so one law serves both.
     const previousScreen = z._starScreen;
     z._starScreen = { x: s.x, y: s.y, at: now };
     if (!bloomed.has(z.grid) && occluded(s.x, s.y, s.z, z.grid)) continue;   // behind a black-hole blot → no draw, no click
@@ -1960,7 +2010,10 @@ function loop() {
     }
     ctx.globalAlpha = fog * dim; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, 7); ctx.fill();
     if (selected && selected.kind === 'star' && selected.grid === z.grid) selPos = { x: s.x, y: s.y, r };
-    if (havePtr) { const dx = s.x - mouseX, dy = s.y - mouseY, d2 = dx * dx + dy * dy, hit = r + STAR_HIT; if (d2 <= hit * hit && d2 < pickStarD2) { pickStarD2 = d2; pickStar = { kind: 'star', grid: z.grid, z, x: s.x, y: s.y, r }; } }
+    // topmost wins: iteration is far→near (painter's order), so a later hit is drawn OVER any earlier
+    // one and should always take the pick — picking by "closest centre" instead let a farther star's
+    // circle win over a nearer star actually under the cursor. No z-comparison needed; draw order IS depth order.
+    if (havePtr) { const dx = s.x - mouseX, dy = s.y - mouseY, d2 = dx * dx + dy * dy, hit = r + STAR_HIT; if (d2 <= hit * hit) { pickStarD2 = d2; pickStar = { kind: 'star', grid: z.grid, z, x: s.x, y: s.y, r }; } }
   }
 
   // black-hole disks: a soft dark sphere behind each bloom (drawn over the culled background, under the
@@ -1981,6 +2034,9 @@ function loop() {
   // over FOCUS_FILL_MS and re-flow as the lattice grows (recreating the solve animation); each is clickable.
   // Anim state rides on the zone (z._bloom) so it's freed on evict. BLOOM_OMEGA=0 keeps it hit-testable.
   const spin = now / 1000 * BLOOM_OMEGA, cs = Math.cos(spin), sn = Math.sin(spin);
+  // Web travel owns its own immutable curve. While it is active, even an already-open bloom stays
+  // visually lightweight: no rhythm-level fan-out is constructed for a grid the camera merely passes.
+  const bloomWeb = !returnRide && bloomWebId ? activeWebs.get(bloomWebId) : null;
   for (const g of bloomed) {
     const data = bloomCache.get(g), z = cosmos.zones.get(g), rpC = rpOf.get(g);
     if (!data || !data.systems.length || !z || !rpC) continue;
@@ -2004,6 +2060,7 @@ function loop() {
     // rhythm currently has a live/attacking row voice lights up, keyed by the shared canonical rhythm key.
     const act = rowActivity.get(g);
     const nodeSources = act && act.sources ? new Map(act.sources.map(src => [src.key, src])) : null;
+    const renderedNodes = [];
     for (let pi = 0; pi < N; pi++) {
       const p = B.pts[pi];
       const R = rscale * (1 + cardExtent(p.c - data.cmin));    // radial extent = cardinality (soft-kneed spikes)
@@ -2017,6 +2074,58 @@ function loop() {
       const fog = fogAt(sp.z); if (fog <= 0) continue;                    // per-node fog (far side of a big bloom fades)
       const rv = Math.min(1, (now - p.bt) / BLOOM_RV_MS), a0 = fog * rv;   // per-node birth ease
       const r = Math.max(0.4, Math.min(2.6 * focal / sp.z, 6)) * (0.5 + 0.5 * rv);
+      renderedNodes.push({ p, pi, sp, fog, rv, a0, r });
+    }
+
+    // Expand the chosen grid-level Web through the exact rhythm nodes that contain its NR. The centre
+    // hub is the same endpoint used by the off-thread grid Web, so its spokes visually continue the
+    // strand into the bloom and back out again. Membership grows with the bloom as shards arrive.
+    if (bloomWeb?.visible && renderedNodes.length) {
+      const matches = renderedNodes.filter(({ p }) => {
+        if (bloomWeb.dynamic) {
+          if (!p._motifKeys) p._motifKeys = rhythmMotifKeys(p.layers);
+          return p._motifKeys.has(bloomWeb.motifKey);
+        }
+        if (p._motherTag === undefined && indexKeys) p._motherTag = mtagOfKey(p.key) || null;
+        return p._motherTag === bloomWeb.tag;
+      });
+      if (matches.length) {
+        let hub = toScreen(crp, basis);
+        if (!hub) {
+          const sum = matches.reduce((acc, node) => [acc[0] + node.sp.x, acc[1] + node.sp.y], [0, 0]);
+          hub = { x: sum[0] / matches.length, y: sum[1] / matches.length, z: matches[0].sp.z };
+        }
+        const meanFog = matches.reduce((sum, node) => sum + node.fog, 0) / matches.length;
+        ctx.save();
+        ctx.strokeStyle = bloomWeb.color; ctx.fillStyle = bloomWeb.color; ctx.lineCap = 'round';
+        ctx.lineWidth = 1.65;
+        ctx.globalAlpha = Math.max(0.12, 0.44 / Math.max(1, Math.log10(matches.length + 1))) * meanFog;
+        ctx.beginPath();
+        for (const node of matches) {
+          ctx.moveTo(hub.x, hub.y); ctx.lineTo(node.sp.x, node.sp.y);
+          if (havePtr) {
+            const hit = pointSegmentDistance2(mouseX, mouseY, hub, node.sp);
+            if (hit.d2 < pickBloomWebD2) {
+              pickBloomWebD2 = hit.d2;
+              pickBloomWeb = { kind: 'web', webId: bloomWeb.tag, x: hit.x, y: hit.y, r: 2 };
+            }
+          }
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 0.82 * meanFog;
+        ctx.beginPath();
+        for (const node of matches) {
+          const beadR = Math.max(1.1, Math.min(2.2, node.r + 0.55));
+          ctx.moveTo(node.sp.x + beadR, node.sp.y); ctx.arc(node.sp.x, node.sp.y, beadR, 0, 7);
+        }
+        ctx.fill();
+        ctx.beginPath(); ctx.arc(hub.x, hub.y, 2.4, 0, 7); ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // Rhythm nodes remain above the Web detail so every connected rhythm stays legible and clickable.
+    for (const { p, pi, sp, fog, a0, r } of renderedNodes) {
       if (nodeSources) { const src = nodeSources.get(p.key); if (src) drawGridRowAura(ctx, sp, r, fog, src); }
       ctx.globalAlpha = a0; ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, 7); ctx.fill();
       if (p.dense) { ctx.globalAlpha = a0 * 0.5; ctx.strokeStyle = p.col; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sp.x, sp.y, r + 1.6, 0, 7); ctx.stroke(); }
@@ -2027,7 +2136,7 @@ function loop() {
   }
   // resolve hover (a node under the cursor wins — it's the specific target), draw the selection + hover
   // rings on their live screen positions, and drive the tooltip. The detail panel is pinned on click.
-  hover = pickNode || pickStar || hoverWeb;
+  hover = pickNode || pickBloomWeb || pickStar || hoverWeb;
   ringAt(selPos, '#ffffff', 1.6);
   if (hover && hover.kind !== 'web' && !(selected && ((hover.kind === 'star' && selected.kind === 'star' && hover.grid === selected.grid) || (hover.kind === 'node' && selected.kind === 'node' && hover.id === selected.id))))
     ringAt(hover, 'rgba(255,255,255,0.7)', 1.2);
@@ -2055,7 +2164,7 @@ function loop() {
     for (let s = 0; s < WEB_MAX; s++) { const w = bySlot.get(s); if (!w) continue; chips += `<span style="color:${w.color};opacity:${w.visible === false ? 0.35 : 1};font-weight:bold">${s === 9 ? '0' : s + 1}</span>`; }
     webHud = ` · ◈ ${chips}`;
   }
-  const rideHud = returnRide ? ` · <span style="color:${activeWebs.get(returnRide.webId)?.color || 'var(--known)'}">↢ home ${Math.round((activeWebs.get(returnRide.webId)?.rideProgress || 0) * 100)}%</span>` : '';
+  const rideHud = returnRide ? ` · <span style="color:${activeWebs.get(returnRide.webId)?.color || 'var(--known)'}">↢ ${returnRide.destination === 'origin' ? 'origin' : `grid ${returnRide.targetGrid.toLocaleString()}`} ${Math.round((activeWebs.get(returnRide.webId)?.rideProgress || 0) * 100)}%</span>` : '';
   hud.innerHTML = `grid <b>${cam.anchor.toLocaleString()}</b>${focusHud}${webHud}${rideHud}`;
   // live solve queue → the help popup (only while open, so it's free when closed)
   if (helpPanelEl && liveEl && helpPanelEl.classList.contains('open')) {
@@ -2105,10 +2214,11 @@ function bindControls() {
       openCockpit();              // M4: no per-star song solve — the global sky chord tints it (cosmos-audio.js)
     } else if (hover && hover.kind === 'web') {
       selected = { kind: 'web', webId: hover.webId };
+      bloomWebId = hover.webId;
     } else {
       selected = null;
     }
-    webRenderer?.select(selected?.kind === 'web' ? selected.webId : null);
+    webRenderer?.select((selected?.kind === 'web' && selected.webId) || bloomWebId);
     showDetail(selected);
   });
   // right-click a bloom (its star OR any of its nodes) → COLLAPSE it back to a plain dot
