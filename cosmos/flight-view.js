@@ -541,7 +541,7 @@ let hover = null, selected = null;
 let leadVoice = null, muted = false;
 let lrcDivEl = null, lrcHeadEl = null, cockpitPlotEl = null, cockpitPlotCtx = null;
 let cockpitPlotKeyEl = null;
-let lrcPanelToggleEl = null, lrcExitEl = null, lrcEmptyEl = null, rhythmInspectorEl = null;
+let lrcPanelToggleEl = null, lrcEmptyEl = null, rhythmInspectorEl = null;
 let rhythmTitleEl = null, rhythmSubtitleEl = null, rhythmStateEl = null;
 let metricFundamentalEl = null, metricOnsetsEl = null, metricDensityEl = null;
 let structureListEl = null, connectionsEl = null, listenBtnEl = null, loadBtnEl = null;
@@ -636,6 +636,8 @@ export function ensureFlight(canvas, hudEl) {
     helpPanelEl = document.getElementById('cosmos-help-panel');
     const helpBtn = document.getElementById('cosmos-help-btn');
     if (helpBtn && helpPanelEl) helpBtn.addEventListener('click', () => helpPanelEl.classList.toggle('open'));
+    const homeBtn = document.getElementById('cosmos-home-btn');
+    if (homeBtn) homeBtn.addEventListener('click', () => window.exitCosmos());
     if (detailEl) detailEl.addEventListener('click', e => {
       const travel = e.target.closest && e.target.closest('.web-travel-btn');
       if (travel) { beginWebReturn(travel.dataset.id, travel.dataset.destination); return; }
@@ -674,7 +676,7 @@ export function ensureFlight(canvas, hudEl) {
       const cssColor = rootStyle.getPropertyValue(`--layer-${layer.toLowerCase()}`).trim();
       return [layer, cssColor || cockpitLayerColors[layer]];
     }));
-    lrcPanelToggleEl = document.getElementById('lrc-panel-toggle'); lrcExitEl = document.getElementById('lrc-exit-btn');
+    lrcPanelToggleEl = document.getElementById('lrc-panel-toggle');
     lrcEmptyEl = document.getElementById('lrc-empty-state'); rhythmInspectorEl = document.getElementById('lrc-rhythm-inspector');
     rhythmTitleEl = document.getElementById('lrc-rhythm-title'); rhythmSubtitleEl = document.getElementById('lrc-rhythm-subtitle');
     rhythmStateEl = document.getElementById('lrc-rhythm-state');
@@ -700,7 +702,6 @@ export function ensureFlight(canvas, hudEl) {
       const open = lrcDivEl.classList.toggle('open');
       lrcPanelToggleEl.setAttribute('aria-expanded', String(open));
     });
-    if (lrcExitEl) lrcExitEl.addEventListener('click', () => window.exitCosmos());
     if (cockpitPlotKeyEl) cockpitPlotKeyEl.addEventListener('click', e => {
       const button = e.target.closest?.('[data-plot-layer]');
       if (!button || button.disabled) return;
@@ -2246,7 +2247,7 @@ function bindControls() {
   window.addEventListener('keydown', e => {
     if (M.mode !== 'flight' || typing(e.target)) return;
     const k = e.key.toLowerCase(); const firstPress = !keys[k]; keys[k] = true;
-    if (firstPress && k === 'escape') { cancelWebReturn(); e.preventDefault(); }
+    if (firstPress && k === 'escape') { if (returnRide) cancelWebReturn(); else window.exitCosmos(); e.preventDefault(); }
     if (firstPress && /^[0-9]$/.test(k)) { toggleSlot(k === '0' ? 9 : +k - 1); if (selected) showDetail(selected); }   // 1-9,0 → hide/show web slots
     if (firstPress && k === 'b' && swarm) { if (swarm.agents.length) swarm.clear(); else swarm.spawn(AGENT_COUNT, cam.anchor); }   // B → toggle Collider-Battle ships
     if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)

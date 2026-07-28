@@ -1082,12 +1082,21 @@ export function transportPhase() {
   return phase < 0 ? phase + 1 : phase;
 }
 
+// Master-bus fade before the hard teardown/close below. Scheduling a voice release (or an oscillator
+// stop) and closing the AudioContext in the SAME tick cuts everything off before it renders even one
+// frame of audio — that truncation-at-full-volume is the pop on Esc/Home exit, not the release curves
+// themselves (those were already graceful; they just never got a chance to play).
+const STOP_FADE = 0.05;
+
 export function stopAudio() {
   if (schedulerTimer) { clearInterval(schedulerTimer); schedulerTimer = null; }
-  if (liveOscs) { for (const osc of liveOscs) { try { osc.stop(0); } catch {} try { osc.disconnect(); } catch {} } liveOscs.clear(); }
-  if (audioCtx) { for (const bs of bedStars.values()) teardownBedStar(bs, audioCtx.currentTime); for (const bs of dyingStars) teardownBedStar(bs, audioCtx.currentTime); }
-  cosmosMidi?.disable(); cosmosMidi = null;
-  gridRowPlayer?.destroy(); gridRowPlayer = null;
+  const ctx = audioCtx, gain = muteGainNode;
+  // Capture the OLD graph before resetting module state, so a fast re-entry (initAudio right after
+  // exitCosmos) starts clean immediately instead of waiting on this fade.
+  const oldLiveOscs = liveOscs, oldBedStars = bedStars, oldDyingStars = dyingStars;
+  const oldMidi = cosmosMidi, oldRowPlayer = gridRowPlayer, oldRootDetune = rootDetune;
+
+  cosmosMidi = null; gridRowPlayer = null;
   bedStars = new Map(); dyingStars = []; bedOscCount = 0; currentField = [];
   skyChordId = START_CHORD_ID; skyTabu = null; skyStep = -1; lastSyncedChordId = null;
   skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; lastRootLadder = [];
@@ -1095,12 +1104,29 @@ export function stopAudio() {
   rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
   lead = null; schedIdx = 0; schedCycle = 0; transportStart = null; audioEpoch = null;
   chordStartedAt = 0; lastChordSeconds = 0; bedSoundedDegrees = new Set(); scaledMedianGrid = 0; fieldOnsetTicks = 0;
-  try { rootDetune?.stop(); } catch {} rootDetune = null; lastModulationCents = 0;
+  rootDetune = null; lastModulationCents = 0;
   leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1;
-  if (audioCtx) { try { audioCtx.close(); } catch {} }
   audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; outputLimiter = null; liveOscs = null;
   ambientModeGain = null; bedBus = null; reverbConv = null; reverbWet = null;
   audioMode = AUDIO_MODES.AMBIENT_CHORDS;
+
+  const teardown = () => {
+    if (oldLiveOscs) for (const osc of oldLiveOscs) { try { osc.stop(0); } catch {} try { osc.disconnect(); } catch {} }
+    if (ctx) { for (const bs of oldBedStars.values()) teardownBedStar(bs, ctx.currentTime); for (const bs of oldDyingStars) teardownBedStar(bs, ctx.currentTime); }
+    oldMidi?.disable();
+    oldRowPlayer?.destroy();
+    try { oldRootDetune?.stop(); } catch {}
+    if (ctx) { try { ctx.close(); } catch {} }
+  };
+  if (ctx && gain) {
+    const now = ctx.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), now);
+    gain.gain.linearRampToValueAtTime(0.0001, now + STOP_FADE);
+    setTimeout(teardown, STOP_FADE * 1000 + 20);
+  } else {
+    teardown();
+  }
 }
 
 // Jump the scheduler's cursor to the next upcoming note at the current transport phase (used when a

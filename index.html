@@ -620,6 +620,14 @@
         </div>
         <!-- help button (top-right) → toggles an info popup: flight controls + live solve queue (more to come) -->
         <button id="cosmos-help-btn" title="Controls &amp; status" aria-label="Controls and status">?</button>
+        <!-- home button (top-right, right of help) → exits Cosmos back to the main interface (same as Esc) -->
+        <button id="cosmos-home-btn" title="Return to main interface" aria-label="Return to main interface">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 11.5 12 4l8 7.5"></path>
+                <path d="M6 9.5V19a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9.5"></path>
+                <path d="M10 20v-5.5h4V20"></path>
+            </svg>
+        </button>
         <div id="cosmos-help-panel">
             <div class="help-sec">
                 <div class="help-h">Controls</div>
@@ -644,7 +652,6 @@
                     </svg>
                 </button>
                 <button id="lrc-load-btn" class="lrc-head-action lrc-load-action" type="button" aria-label="Load selected rhythm into LRC" title="Load into LRC" disabled>LOAD</button>
-                <button id="lrc-exit-btn" class="lrc-icon-btn" type="button" aria-label="Exit Cosmos" title="Exit Cosmos">×</button>
             </div>
             <div id="lrc-cockpit-body" class="lrc-cockpit-body">
                 <div id="lrc-empty-state" class="lrc-empty-state">
