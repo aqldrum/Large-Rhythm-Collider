@@ -36,14 +36,40 @@ export function divisorsFast(G) {
 // empty — including it wasted a dispatch and, worse, made the largest key == G (breaking any max-layer gate).
 export function shardKeysOf(G) { return divisorsFast(G).filter(a => a >= 2 && a < G); }
 
+// Live-solve policy. A large layer is no longer a reason to paint the whole grid as a monster: deep
+// shards run through a one-at-a-time lane in Cosmos, while the browser worker pool gives them a
+// bounded recovery timeout. The absolute caps remain memory/complexity backstops even for a forced
+// solve. MONSTER_COST was raised after sharding measurements showed that the former 1.2e9 threshold
+// gated ordinary ~2s work; 3e9 still catches genuinely combinatorial grids such as 27,720 (~8.6e9).
+export const MAX_GRID_SHARDS = 260;
+export const MAX_GRID_LAYER = 3_000_000;
+export const HEAVY_SHARD_LAYER = 500_000;
+export const HEAVY_SHARD_TIMEOUT_MS = 10_000;
+export const MONSTER_GRID_COST = 3e9;
+
 // Cheap live-solve COST proxy from the (ascending) shard keys: Σ over shards A of C(#divisorsBelowA, ≤3)·A —
 // combos-per-shard × per-combo deriveScale cost (~A). Predicts BOTH cost drivers without solving: combinatorial
-// (many divisors → big C(...)) and deep (large max-layer → big A). Calibrated: grid 2640 ≈ 61M (ms), 8,081,605
-// ≈ 4.8e9 (3.3s), 27,720 ≈ 1.2e10 (24s). Used to pre-identify "monster" grids gated behind an explicit override.
+// (many divisors → big C(...)) and deep (large max-layer → big A). Current values: grid 2,640 ≈ 37M,
+// 8,081,605 ≈ 1.02e9 (deep despite sparse), and 27,720 ≈ 8.59e9. Used to pre-identify grids whose
+// combinatorial work should remain gated; deep work below that gate is isolated by the heavy-shard lane.
 export function gridCost(keysGe2) {
   let sum = 0;
   for (let i = 0; i < keysGe2.length; i++) { const k = i, combos = 1 + k + (k * (k - 1)) / 2 + (k * (k - 1) * (k - 2)) / 6; sum += combos * keysGe2[i]; }
   return sum;
+}
+
+// Cheap plan/classification shared by the real worker and Node assertions. `force` bypasses only the
+// estimated combinatorial gate; it deliberately cannot bypass either absolute safety backstop.
+export function gridPlan(G, force = false) {
+  const keys = shardKeysOf(G);
+  const divisors = keys.length + 2;                              // restore divisors 1 and G
+  const maxLayer = keys.length ? keys[keys.length - 1] : 0;
+  if (keys.length > MAX_GRID_SHARDS || maxLayer > MAX_GRID_LAYER) {
+    return { tooLarge: true, divisors, maxLayer };
+  }
+  const cost = gridCost(keys);
+  if (!force && cost > MONSTER_GRID_COST) return { monster: true, divisors, cost, maxLayer };
+  return { shards: keys, divisors, cost, maxLayer };
 }
 
 // The tuning-system GROUPS of one shard (max-layer A): enumerate valid layer sets whose max is A,

@@ -144,5 +144,24 @@ check('forceSolve clears the gate and finalizes ratio owners through normal shar
 check('forceSolve advances the zone generation used to reject stale shard/audio work', forcedGeneration > 0 && gatedZone.solveGeneration === forcedGeneration,
   `generation ${forcedGeneration}`);
 
+// (7) a heavy-worker timeout is an observed safety failure, not a zero-count shard. The runtime must
+// return the zone to the explicit monster gate and discard every progressive payload already received.
+console.log('\n[7] Heavy timeout returns the grid to the monster gate');
+const timeoutGrid = 8_081_605;
+const timeoutDispatch = p => {
+  if (p.op === 'plan') return Promise.resolve({ shards: [10, 1_616_321], divisors: 16, cost: 1_017_981_470, maxLayer: 1_616_321 });
+  if (p.A === 10) return Promise.resolve({ count: 2, ratioOwners: [{ fraction: '1/1', cents: 0, key: '10.3', layers: [10, 3], layerSum: 13 }] });
+  return Promise.resolve({ error: 'simulated heavy timeout', timedOut: true, heavy: true });
+};
+const timed = new Cosmos({ poolSize: 2, isValid: () => true, dispatch: timeoutDispatch,
+  neighbors: () => [timeoutGrid], cellDist: () => 0, puffs: false, compete: false });
+timed.setCamera(timeoutGrid);
+for (let t = 0; t < 20; t++) { timed.tick(1 / 60); await flush(); }
+const timedZone = timed.zones.get(timeoutGrid);
+check('timed-out deep work becomes a gated monster instead of a false solved count',
+  timedZone?.monster === true && timedZone.state === 'solved' && timedZone.abundance === 0 && timed.events.timeouts === 1);
+check('partial shard and audio ownership state is discarded on timeout',
+  timedZone?.plan == null && timedZone?.ratioOwners == null && timedZone?.shardsTotal === 0 && timedZone?.partial === 0);
+
 console.log(`\n${PASS ? '✓✓✓ DISTRIBUTED SOLVE PASSES — sharded, progressive, non-blocking, exact' : '✗ DISTRIBUTED SOLVE FAILED'}`);
 process.exit(PASS ? 0 : 1);

@@ -21,6 +21,7 @@ import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREW
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
 import { drawGridRowAura } from './grid-row-aura.js';
+import { SolverWorkerPool } from './cosmos/solver-worker-pool.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
 // Sky Root handoff (cosmos/SKY_ROOT_HANDOFF_2026-07-22.md): anchor-independent root solve, Feature B.
@@ -183,30 +184,6 @@ function factorInfo(n) {
   return { primes, divisors };
 }
 const isValid = g => factorInfo(g).primes >= 2;
-
-// ── Web Worker pool: dispatch(payload) -> Promise<reply>. Payload is an op (plan|shard); the reply
-// is the worker's message. Robust: a worker that throws/errors is RECOVERED (pushed back, its job
-// resolved with {error}) so a crash can never leak a pool slot and stall flight. ──
-class Pool {
-  constructor(url, size) {
-    this.free = []; this.workers = []; this.jobs = new Map(); this.queue = []; this.id = 0; this.errors = 0; this.size = size;
-    for (let i = 0; i < size; i++) {
-      const w = new Worker(url, { type: 'module' });
-      w.onmessage = e => this._settle(w, e.data.id, e.data);
-      w.onerror = ev => { this.errors++; ev.preventDefault && ev.preventDefault(); console.error('[cosmos worker error]', ev.message || ev, 'payload', w._payload); this._settle(w, w._job, { error: ev.message || 'worker error' }); };
-      this.free.push(w); this.workers.push(w);
-    }
-  }
-  all() { return this.workers; }   // every worker (busy or free) — stopFlight() terminates the whole set
-
-  _settle(w, id, data) {
-    const job = id != null && this.jobs.get(id);
-    if (job) { this.jobs.delete(id); job.res(data); }
-    w._job = null; w._payload = null; this.free.push(w); this._drain();
-  }
-  dispatch(payload) { return new Promise(res => { this.queue.push({ payload, res }); this._drain(); }); }
-  _drain() { while (this.queue.length && this.free.length) { const w = this.free.pop(), job = this.queue.shift(), id = ++this.id; this.jobs.set(id, job); w._job = id; w._payload = job.payload; w.postMessage({ id, ...job.payload }); } }
-}
 
 // One worker owns the complete Web pipeline and its transferred overlay canvas. Frames are
 // backpressured: if the worker is still drawing, only the newest camera snapshot is retained.
@@ -696,7 +673,7 @@ export function ensureFlight(canvas, hudEl) {
   // Module-relative Worker URL: `new Worker(relative)` resolves against the DOCUMENT (index.html at root),
   // which breaks under the full-swallow — resolve against this module so it lands on cosmos/cosmos/. The
   // ?v= busts the hard Web-Worker cache — bump it AND the worker's ../grid-core.js?v= on worker edits.
-  pool = new Pool(new URL('./cosmos/abundance-worker.js?v=5', import.meta.url), poolSize);
+  pool = new SolverWorkerPool(new URL('./cosmos/abundance-worker.js?v=6', import.meta.url), poolSize);
   rowCompiler = new ProgramWorkerPool(new URL('./cosmos/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
   rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
   settleSinceSecond = null; lastRootResolveSecond = -Infinity; rootGeographyEpoch = 0; rootPolicyWasSettled = false;
@@ -762,7 +739,7 @@ export function ensureFlight(canvas, hudEl) {
 export function stopFlight() {
   if (!started && !pool) return;
   started = false;
-  if (pool) { for (const w of pool.all()) w.terminate(); pool = null; }   // kill the whole pool — no lingering solve
+  if (pool) { pool.terminate(); pool = null; }   // kill workers, timers, and queued jobs — no lingering solve
   if (rowCompiler) { rowCompiler.terminate(); rowCompiler = null; }
   if (webRenderer) { webRenderer.terminate(); webRenderer = null; }
   webRouteGeneration++; webZoneAdded = []; webZoneRemoved = [];

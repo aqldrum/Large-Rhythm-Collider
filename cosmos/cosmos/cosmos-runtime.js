@@ -9,7 +9,7 @@
 // Coordinate-agnostic generation stays in the injected solve(); positions/precision live here.
 import { computeDistricts } from './gg-core.js';
 import { reparent, stepAttractor, backboneHash, len, sub, absolutePos, scale, slotDirection, rotateY } from './spine.js';
-import { mergeRatioOwners } from '../grid-core.js';
+import { HEAVY_SHARD_LAYER, mergeRatioOwners } from '../grid-core.js';
 
 // district puff: each zone springs to a deterministic 3D slot around its sun; the whole puff
 // spins on the clock. SLOT radius grows with grid-distance to the sun (near hug, far orbit wide).
@@ -67,19 +67,21 @@ export class Cosmos {
   constructor({ reachScale = 0.15, spawnRadius = 60, evictRadius = 90, poolSize = 4,
                 costUnit = 1, solve, cost, isValid, dispatch, restRadius = 40,
                 neighbors = null, cellDist = null, puffs = true, compete = true,
-                onZoneAdded = null, onZoneRemoved = null }) {
-    Object.assign(this, { reachScale, spawnRadius, evictRadius, poolSize, costUnit, solve, cost, isValid, dispatch, restRadius, puffs, compete, onZoneAdded, onZoneRemoved });
+                onZoneAdded = null, onZoneRemoved = null,
+                heavyShardLayer = HEAVY_SHARD_LAYER, heavyShardLimit = 1 }) {
+    Object.assign(this, { reachScale, spawnRadius, evictRadius, poolSize, costUnit, solve, cost, isValid, dispatch, restRadius, puffs, compete, onZoneAdded, onZoneRemoved, heavyShardLayer, heavyShardLimit });
     this.neighbors = neighbors || (cam => { const a = []; for (let g = cam - this.spawnRadius; g <= cam + this.spawnRadius; g++) a.push(g); return a; });
     this.cellDist = cellDist || ((g, cam) => Math.abs(g - cam));
     this.zones = new Map();      // grid -> zone
     this.inFlight = [];          // { grid, doneAt } (virtual mode)
     this.inFlightSet = new Set();// task ids in flight (async mode: plan/shard tasks, not grids)
+    this.inFlightHeavy = new Set();// deep shard task ids; bounded separately so cheap work retains workers
     this._tid = 0;               // task id counter
     this.clock = 0;
     this.cam = 0;
     this.focusGrid = null;       // a clicked grid the UI wants solved NOW — jumps the pump queue (#4)
     this._dirty = false;
-    this.events = { solves: [], reparents: 0, maxStep: 0, spawned: 0, evicted: 0, plans: 0, shards: 0, errors: 0 };
+    this.events = { solves: [], reparents: 0, maxStep: 0, spawned: 0, evicted: 0, plans: 0, shards: 0, heavyShards: 0, timeouts: 0, errors: 0 };
   }
 
   setCamera(grid) { this.cam = Math.round(grid); }
@@ -134,7 +136,10 @@ export class Cosmos {
                       || a.z.grid - b.z.grid);
     for (const w of items) {
       if (this.inFlightSet.size >= this.poolSize) break;
+      const heavy = w.op === 'shard' && w.A > this.heavyShardLayer;
+      if (heavy && this.inFlightHeavy.size >= this.heavyShardLimit) continue;
       const z = w.z, tid = ++this._tid, generation = z.solveGeneration; this.inFlightSet.add(tid);
+      if (heavy) { this.inFlightHeavy.add(tid); this.events.heavyShards++; }
       if (w.op === 'plan') {
         z.state = 'planning';
         this.dispatch({ op: 'plan', grid: z.grid, force: z.force }).then(r => this._onPlan(z, r, tid, generation)).catch(() => this._failTask(z, tid, generation));
@@ -146,21 +151,30 @@ export class Cosmos {
   }
 
   _onPlan(z, r, tid, generation = z.solveGeneration) {
-    this.inFlightSet.delete(tid); this.events.plans++;
+    this.inFlightSet.delete(tid); this.inFlightHeavy.delete(tid); this.events.plans++;
     if (this.zones.get(z.grid) !== z) return;                 // evicted while planning
     if (z.solveGeneration !== generation) return;             // superseded force solve / generation
-    if (r && r.monster) { z.monster = true; z.divisors = r.divisors; z.cost = r.cost; this._finishMonster(z); return; }   // combinatorial black hole — identified, not auto-solved (override forces it)
+    if (r && r.monster) { z.monster = true; z.divisors = r.divisors; z.cost = r.cost; z.maxLayer = r.maxLayer; this._finishMonster(z); return; }   // combinatorial black hole — identified, not auto-solved (override forces it)
+    if (r && r.tooLarge) { z.unsolvable = true; z.divisors = r.divisors; z.maxLayer = r.maxLayer; this._finishZone(z, 1); return; }   // beyond MAX_GRID_SHARDS/MAX_GRID_LAYER → faint frontier dust, not truly solved (abundance 1 is a fallback, not a real count)
     if (!r || r.error || !r.shards) { if (r && r.error) this.events.errors++; z.unsolvable = true; if (r) z.divisors = r.divisors; this._finishZone(z, 1); return; }
-    if (r.tooLarge) { z.unsolvable = true; z.divisors = r.divisors; this._finishZone(z, 1); return; }   // beyond MAX_SHARDS/MAXLAYER_CAP → faint frontier dust, not truly solved (abundance 1 is a fallback, not a real count)
     z.plan = r.shards; z.divisors = r.divisors; z.shardsTotal = r.shards.length; z.dispatchIdx = 0; z.shardsDone = 0; z.partial = 0;
+    z.cost = r.cost; z.maxLayer = r.maxLayer;
     if (z.shardsTotal === 0) this._finishZone(z, 0); else z.state = 'solving';
   }
 
   _onShard(z, r, tid, generation = z.solveGeneration) {
-    this.inFlightSet.delete(tid); this.events.shards++;
+    this.inFlightSet.delete(tid); this.inFlightHeavy.delete(tid); this.events.shards++;
     if (r && r.error) this.events.errors++;
     if (this.zones.get(z.grid) !== z) return;                 // evicted mid-solve
     if (z.solveGeneration !== generation) return;             // superseded force solve / generation
+    if (r && r.timedOut) {
+      this.events.timeouts++;
+      z.solveGeneration++;                                    // invalidate sibling shards already in flight
+      z.monster = true; z.force = false;
+      this._clearSolvePayloads(z);                             // partial ownership must never cross audio/UI gates
+      this._finishMonster(z);
+      return;
+    }
     z.shardsDone++; z.partial += (r && r.count || 0);
     if (r && r.pool) mergeSkyPool(z, r.pool, r.toneCount);     // Full Sky: piggybacked on the abundance solve
     if (r && r.tones) mergeSkyTones(z, r.tones);               // Sky Root B1: anchor-independent tone superset
@@ -177,16 +191,24 @@ export class Cosmos {
   }
 
   _failTask(z, tid, generation = z.solveGeneration) {
-    this.inFlightSet.delete(tid);
+    this.inFlightSet.delete(tid); this.inFlightHeavy.delete(tid);
     if (this.zones.get(z.grid) === z && z.solveGeneration === generation) this._finishZone(z, 1);
   }
 
-  // A monster is pre-identified (cost proxy over the worker's MONSTER_COST) and NOT solved — it just renders big
-  // so the eye finds it, while workers keep flowing the cheap field. abundance is unknown until forceSolve().
+  // A monster is either pre-identified by the combinatorial cost proxy or promoted after an observed heavy
+  // timeout. It is not auto-solved again: render it big while workers keep flowing the cheap field, and leave
+  // its real abundance unknown until the user explicitly retries through forceSolve().
   _finishMonster(z) {
     z.state = 'solved';                 // stop re-planning it
     z.abundance = 0; z.size = 4;        // a red giant on screen (flight tints monsters); real count needs override
     this.events.solves.push({ grid: z.grid, doneAt: this.clock });
+  }
+
+  _clearSolvePayloads(z) {
+    z.plan = undefined; z.shardsTotal = 0; z.dispatchIdx = 0; z.shardsDone = 0; z.partial = 0;
+    z.ratioOwners = undefined; z._ratioOwnerMap = undefined;
+    z.skyPool = undefined; z.skyToneCount = undefined;
+    z.skyTones = undefined; z._skyToneBins = undefined;
   }
 
   // Override: the UI asks to solve a monster anyway. Reset it to pending with `force` so the next plan bypasses
@@ -196,8 +218,7 @@ export class Cosmos {
     z.solveGeneration = (z.solveGeneration || 0) + 1;
     z.monster = false; z.unsolvable = false; z.force = true;
     z.state = 'pending'; z.abundance = 0; z.size = 0;
-    z.plan = undefined; z.shardsTotal = 0; z.dispatchIdx = 0; z.shardsDone = 0; z.partial = 0;
-    z.ratioOwners = undefined; z._ratioOwnerMap = undefined;
+    this._clearSolvePayloads(z);
   }
 
   _completeSolves() {
@@ -275,6 +296,6 @@ export class Cosmos {
   stats() {
     let pending = 0, solving = 0, solved = 0;
     for (const z of this.zones.values()) z.state === 'solved' ? solved++ : z.state === 'pending' ? pending++ : solving++;
-    return { total: this.zones.size, pending, solving, solved, inFlight: this.inFlight.length + this.inFlightSet.size, clock: this.clock };
+    return { total: this.zones.size, pending, solving, solved, inFlight: this.inFlight.length + this.inFlightSet.size, heavyInFlight: this.inFlightHeavy.size, clock: this.clock };
   }
 }
