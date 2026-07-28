@@ -7,7 +7,7 @@ import { M } from './mode.js';
 import { Cosmos } from './cosmos/cosmos-runtime.js';
 import { renderPosCam, setPlacement, macroCell, macroScale, backboneHash, SPACING, CELL } from './cosmos/spine.js';
 import { hilbertDecode, hilbertEncode, neighborGrids, INDEX_COUNT, SIDE } from './cosmos/hilbert.js';
-import { clampHilbertWorld, nearbyHilbertWalls, rebaseHilbertCamera } from './cosmos/hilbert-boundary.js';
+import { clampHilbertWorld, containHilbertSphere, nearbyHilbertWalls, rebaseHilbertCamera } from './cosmos/hilbert-boundary.js';
 import { GOLDEN, cardColor, CHARTED } from './cosmos/bloom-core.js';
 import { rhythmTriples, rhythmDoubles } from './cosmos/mn-core.js';
 import { sampleArcPath } from './cosmos/web-return.js';
@@ -1550,9 +1550,11 @@ function loop() {
     }).map(sample => ({ ...sample, position: sample.position.map((value, i) => value - cameraWorld[i]) }));
   }
 
-  // each bloom's geometry: outer radius (spiky-ball extent), the deformation bubble, and — after projection —
-  // the "black hole" screen disk. rscale matches the render loop so outerR is exact.
+  // Each bloom's geometry: outer radius (spiky-ball extent), the deformation bubble, and — after
+  // projection — the "black hole" screen disk. Near a cube wall, translate the whole deformation
+  // envelope inward; contained blooms retain their exact natural centre and deform space normally.
   const bubbles = [];
+  const frameCameraWorld = placement === 'hilbert' ? cameraAbsolute() : null;
   for (const g of bloomed) {
     const rp = rpOf.get(g), data = bloomCache.get(g);
     if (!rp || !data || !data.systems.length) continue;
@@ -1561,14 +1563,32 @@ function loop() {
     const rscale = Math.min(BLOOM_R, BLOOM_MAX_R / (1 + cardExtent(Math.max(1, data.cmax - data.cmin))));
     const cmaxVis = g === cosmos.focusGrid ? Math.min(data.cmax, cardHi) : data.cmax;   // filter only shrinks the focused bloom
     const outerR = rscale * (1 + cardExtent(Math.max(0, cmaxVis - data.cmin)));
-    bubbles.push({ g, c: rp, outerR, bubbleR: outerR + BUBBLE_MARGIN });
+    const bubbleR = outerR + BUBBLE_MARGIN;
+    let c = rp;
+    if (frameCameraWorld) {
+      const absolute = rp.map((value, axis) => value + frameCameraWorld[axis]);
+      const contained = containHilbertSphere(absolute, bubbleR);
+      c = contained.map((value, axis) => value - frameCameraWorld[axis]);
+    }
+    bubbles.push({ g, c, outerR, bubbleR });
   }
   const deforming = placement === 'hilbert' && bubbles.length > 0;   // cube-only local deformation
+  const bubbleOf = new Map(bubbles.map(bubble => [bubble.g, bubble]));
 
-  // project all zones once (deforming out of bloom bubbles); keep the world-relative rp for bloom offsets
+  // Project all zones once. A bloomed grid starts at its contained centre; every other point starts at
+  // its natural position. Both then compose through the other local bubbles exactly as before.
   const proj = new Map(), placed = new Map();
   for (const z of cosmos.zones.values()) {
-    const rp = deforming ? deform(rpOf.get(z.grid), z.grid, bubbles) : rpOf.get(z.grid);
+    const ownBubble = bubbleOf.get(z.grid);
+    const base = ownBubble ? ownBubble.c : rpOf.get(z.grid);
+    let rp = deforming ? deform(base, z.grid, bubbles) : base;
+    // A second bloom may deform this centre after its initial wall fit. Recontain the visible sphere
+    // without changing ordinary interior deformation.
+    if (frameCameraWorld && ownBubble) {
+      const absolute = rp.map((value, axis) => value + frameCameraWorld[axis]);
+      rp = containHilbertSphere(absolute, ownBubble.outerR)
+        .map((value, axis) => value - frameCameraWorld[axis]);
+    }
     placed.set(z.grid, rp);
     const s = toScreen(rp, basis);
     if (s) proj.set(z.grid, { z, s, rp });
@@ -1761,7 +1781,7 @@ function loop() {
     // Centre world-relative position (deformed like everything else). We render PER NODE and do NOT gate on the
     // centre projecting in front of the camera — so flying INTO or THROUGH a cloud keeps the near-side nodes
     // visible even when the centre is beside/behind you. Each node's own near-plane + fog cull still applies.
-    const crp = deforming ? deform(rpC, g, bubbles) : rpC;
+    const crp = placed.get(g) || rpC;
     let B = z._bloom; if (!B) B = z._bloom = { born: now, pts: [] };
     const len = data.systems.length, reveal = Math.min(len, Math.ceil(len * (now - B.born) / FOCUS_FILL_MS));
     while (B.pts.length < reveal) {                              // instantiate the next rhythm node(s)

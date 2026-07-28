@@ -17,6 +17,15 @@ export function clampHilbertWorld(position, padding = 0) {
   return position.map(value => Math.max(lo, Math.min(hi, value)));
 }
 
+// Translate a spherical envelope inward only when it would cross a wall. Callers can pass the
+// visible radius or a larger interaction radius; an already-contained centre is returned unchanged.
+export function containHilbertSphere(center, radius = 0) {
+  const safeRadius = Number.isFinite(radius)
+    ? Math.max(0, Math.min(radius, HILBERT_WORLD_SIZE * 0.5))
+    : 0;
+  return clampHilbertWorld(center, safeRadius);
+}
+
 export function rebaseHilbertCamera(position, padding = 0) {
   const clamped = clampHilbertWorld(position, padding);
   const cell = clamped.map(value => Math.max(0, Math.min(SIDE - 1, Math.round(value / CELL))));

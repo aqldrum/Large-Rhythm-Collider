@@ -8,7 +8,7 @@ import { computeDistricts } from './gg-core.js';
 import { gridResults } from '../grid-core.js';
 import { setPlacement, macroCell, absolutePos, CELL } from './spine.js';
 import { hilbertDecode, hilbertEncode, neighborGrids, SIDE } from './hilbert.js';
-import { HILBERT_WORLD_MIN, HILBERT_WORLD_MAX, clampHilbertWorld, nearbyHilbertWalls, rebaseHilbertCamera } from './hilbert-boundary.js';
+import { HILBERT_WORLD_MIN, HILBERT_WORLD_MAX, clampHilbertWorld, containHilbertSphere, nearbyHilbertWalls, rebaseHilbertCamera } from './hilbert-boundary.js';
 
 let PASS = true;
 const check = (n, ok, d = '') => { PASS = PASS && ok; console.log(`  ${ok ? '✓' : '✗ FAIL'} ${n}${d ? ' — ' + d : ''}`); };
@@ -49,6 +49,19 @@ check('cube walls sit half a cell beyond the edge centres', HILBERT_WORLD_MIN ==
 const nearCorner = [HILBERT_WORLD_MIN + CELL, HILBERT_WORLD_MIN + CELL, HILBERT_WORLD_MIN + CELL];
 const localWalls = nearbyHilbertWalls(nearCorner, CELL * 2);
 check('only camera-local wall faces are selected for rendering', localWalls.length === 3 && localWalls.every(w => w.side === -1), `${localWalls.length} faces`);
+const bloomRadius = CELL * 3.5;
+const interiorBloom = [CELL * 20, CELL * 30, CELL * 40];
+check('an interior bloom keeps its natural centre', containHilbertSphere(interiorBloom, bloomRadius).every((value, axis) => value === interiorBloom[axis]));
+const cornerBloom = containHilbertSphere(
+  [HILBERT_WORLD_MIN + CELL * 0.5, HILBERT_WORLD_MAX - CELL, HILBERT_WORLD_MIN + CELL * 2],
+  bloomRadius,
+);
+check('a wall-threatening bloom is translated inward on every threatened axis',
+  cornerBloom[0] === HILBERT_WORLD_MIN + bloomRadius &&
+  cornerBloom[1] === HILBERT_WORLD_MAX - bloomRadius &&
+  cornerBloom[2] === HILBERT_WORLD_MIN + bloomRadius);
+check('the translated bloom envelope stays inside all six wall planes',
+  cornerBloom.every(value => value - bloomRadius >= HILBERT_WORLD_MIN && value + bloomRadius <= HILBERT_WORLD_MAX));
 
 // ── set up the cube runtime exactly as flight-view does ──
 setPlacement('hilbert');
