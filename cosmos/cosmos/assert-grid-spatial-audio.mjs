@@ -3,8 +3,9 @@ import { gridRatioOwnerSolve, gridShardSystems, shardKeysOf } from '../grid-core
 import { ProgramWorkerPool } from '../program-worker-pool.js';
 import { selectedGridRatioToneRows } from '../cosmos-audio.js';
 import {
-  CULLED_ROW_FUNDAMENTAL_HZ, CULLED_ROW_MAX_HZ,
+  CULLED_ROW_FUNDAMENTAL_HZ, CULLED_ROW_MAX_HZ, ROW_MICRO_GAP_SECONDS,
   SpatialGridRowPlayer, culledGridRowFrequency, nearestCulledToneVoices,
+  nextRowLayerGapTicks, rowEnvelopePlan,
 } from '../spatial-grid-row-player.js';
 import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP, toAudioListenerPosition } from '../spatial-audio-frame.js';
 import {
@@ -123,6 +124,29 @@ check('register folding leaves already-in-range and sub-fundamental tones unchan
 check('invalid raw ratios cannot reach an oscillator',
   culledGridRowFrequency(0) === null && culledGridRowFrequency(-1) === null && culledGridRowFrequency(Infinity) === null);
 
+console.log('\n  Extreme short-note safety');
+const gapEvents = [
+  { tick: 0, layerActions: [{ layer: 'A', rawFraction: '1/1' }] },
+  { tick: 1, layerActions: [{ layer: 'A', rawFraction: '1/1' }] },
+  { tick: 2, layerActions: [{ layer: 'B', rawFraction: '3/2' }] },
+  { tick: 3, layerActions: [{ layer: 'A', rawFraction: '5/4' }] },
+];
+check('next-layer gap skips silent same-tone holds when repeat-cull is active',
+  nextRowLayerGapTicks(gapEvents, 0, gapEvents[0].layerActions[0], 8, true) === 3);
+check('next-layer gap keeps the immediate articulation when repeat-cull is disabled',
+  nextRowLayerGapTicks(gapEvents, 0, gapEvents[0].layerActions[0], 8, false) === 1);
+check('next-layer gap wraps to the first real layer onset of the next cycle',
+  nextRowLayerGapTicks(gapEvents, 3, gapEvents[3].layerActions[0], 8, true) === 5);
+const fourMsPlan = rowEnvelopePlan(0.004, 48000);
+const tenMsPlan = rowEnvelopePlan(0.010, 48000);
+const normalPlan = rowEnvelopePlan(ROW_MICRO_GAP_SECONDS, 48000);
+check('a micro-gap envelope fits wholly inside its source interval',
+  fourMsPlan.micro && fourMsPlan.duration === 0.004 && Math.abs(fourMsPlan.attack + fourMsPlan.release - 0.004) < 1e-12);
+check('shorter micro notes are attenuated instead of becoming full-level impulses',
+  fourMsPlan.peak < tenMsPlan.peak && tenMsPlan.peak < normalPlan.peak);
+check('events shorter than two samples are suppressed as unrenderable', !rowEnvelopePlan(1 / 48000, 48000).render);
+check('ordinary gaps retain the established fixed pluck envelope', !normalPlan.micro && normalPlan.render);
+
 console.log('\n  Per-tone spatial voice cap');
 const toneVoiceCandidates = [
   { starId: 50, layer: 'A', distance: 500, current: true },
@@ -213,6 +237,29 @@ budgetPlayer._startVoice(deckB, { layer: 'A', rawRatio: 1.25, fraction: '5/4', r
 check('a same-layer steal keeps exactly one live slot', budgetPlayer.logicalVoiceCount === 1);
 stolenOsc.onended();
 check('a stolen voice does not double-free when its oscillator later ends', budgetPlayer.logicalVoiceCount === 1);
+
+const heldTimes = [];
+const holdParam = () => ({
+  value: 0.0001,
+  setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, cancelScheduledValues() {}, setTargetAtTime() {},
+  cancelAndHoldAtTime(when) { heldTimes.push(when); },
+});
+const holdCtx = {
+  sampleRate: 48000, currentTime: 0,
+  createOscillator: () => ({ type: '', frequency: holdParam(), connect() {}, disconnect() {}, start() {}, stop() {}, onended: null }),
+  createGain: () => ({ gain: holdParam(), connect() {}, disconnect() {} }),
+};
+const holdPlayer = Object.create(SpatialGridRowPlayer.prototype);
+holdPlayer.ctx = holdCtx;
+holdPlayer.logicalVoiceCount = 0;
+holdPlayer.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0 };
+holdPlayer.stars = new Map();
+holdPlayer._claimToneVoice = () => true;
+const holdDeck = budgetDeck();
+holdPlayer._startVoice(holdDeck, { layer: 'A', rawRatio: 1, fraction: '1/1', rawFraction: '1/1' }, 0);
+holdPlayer._startVoice(holdDeck, { layer: 'A', rawRatio: 1.25, fraction: '5/4', rawFraction: '5/4' }, 0.002);
+check('an interrupted scheduled envelope holds its exact automation value before fading',
+  heldTimes.length === 1 && heldTimes[0] === 0.002);
 
 console.log('\n  Silent program swap');
 // A deck install must be INAUDIBLE. Under fixed-gate short notes nothing is held across a boundary, so
@@ -318,6 +365,9 @@ check('compiler is a dedicated worker receiving compact finalized ownership',
   worker.includes('compileGridAudioProgram') && flight.includes('ProgramWorkerPool') && flight.includes('ratioOwners: z.ratioOwners'));
 check('main scheduler only schedules precompiled row programs',
   audio.includes('gridRowPlayer?.tick') && !player.includes('buildGridCull2Readout') && !player.includes('ratioOwners'));
+check('every Cosmos dry/wet path reaches the destination through a fast safety limiter',
+  audio.includes('createDynamicsCompressor()') && audio.includes('muteGainNode.connect(outputLimiter)') &&
+  audio.includes('outputLimiter.connect(audioCtx.destination)'));
 check('culled rows use their own tunable voice waveform while ambient keeps the shared contract',
   audio.includes('osc.type = RHYTHM_VOICE_WAVEFORM') && player.includes('osc.type = ROW_WAVEFORM') &&
   player.includes("ROW_WAVEFORM = 'triangle'"));

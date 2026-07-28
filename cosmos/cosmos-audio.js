@@ -120,7 +120,7 @@ export function deriveVoice(rawLayers) {
 }
 
 // ── audio graph: osc -> per-note envelope -> shared panner -> shared distance-gain -> shared mute-gain -> out ──
-let audioCtx = null, pannerNode = null, distGainNode = null, muteGainNode = null, ambientModeGain = null;
+let audioCtx = null, pannerNode = null, distGainNode = null, muteGainNode = null, ambientModeGain = null, outputLimiter = null;
 let liveOscs = null;              // Set of live OscillatorNodes (capacity-capped)
 let schedulerTimer = null;
 let audioMode = AUDIO_MODES.AMBIENT_CHORDS;
@@ -203,7 +203,16 @@ export function initAudio() {
   distGainNode = audioCtx.createGain(); distGainNode.gain.value = 0;
   muteGainNode = audioCtx.createGain(); muteGainNode.gain.value = 1;
   ambientModeGain = audioCtx.createGain(); ambientModeGain.gain.value = 1;
-  pannerNode.connect(distGainNode); distGainNode.connect(ambientModeGain); ambientModeGain.connect(muteGainNode); muteGainNode.connect(audioCtx.destination);
+  // Final safety rail for rare dense-grid/reverb summation. Click prevention belongs to the per-voice
+  // envelopes; this catches only exceptional aggregate peaks after every Cosmos dry/wet path is summed.
+  outputLimiter = audioCtx.createDynamicsCompressor();
+  outputLimiter.threshold.value = -6;
+  outputLimiter.knee.value = 0;
+  outputLimiter.ratio.value = 20;
+  outputLimiter.attack.value = 0.003;
+  outputLimiter.release.value = 0.1;
+  pannerNode.connect(distGainNode); distGainNode.connect(ambientModeGain); ambientModeGain.connect(muteGainNode);
+  muteGainNode.connect(outputLimiter); outputLimiter.connect(audioCtx.destination);
   // Full Sky bed bus: dry sum -> master, plus a shared send through a procedural reverb (no assets).
   bedBus = audioCtx.createGain(); bedBus.gain.value = 1; bedBus.connect(ambientModeGain);
   reverbConv = audioCtx.createConvolver(); reverbConv.buffer = makeImpulse(audioCtx);
@@ -1089,7 +1098,7 @@ export function stopAudio() {
   try { rootDetune?.stop(); } catch {} rootDetune = null; lastModulationCents = 0;
   leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1;
   if (audioCtx) { try { audioCtx.close(); } catch {} }
-  audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; liveOscs = null;
+  audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; outputLimiter = null; liveOscs = null;
   ambientModeGain = null; bedBus = null; reverbConv = null; reverbWet = null;
   audioMode = AUDIO_MODES.AMBIENT_CHORDS;
 }

@@ -33,6 +33,8 @@ const ROW_SUSTAIN = 0.05;           // held level across the gate
 const ROW_PEAK = 0.16;              // envelope peak for a real scheduled attack
 const ROW_GATE = 0.14;              // note length from attack start to release start — DECOUPLED from onsets
 const ROW_RELEASE = 0.09;           // exponential release into the reverb tail (no click)
+export const ROW_MICRO_GAP_SECONDS = 0.012; // below 12ms, separate pitches are no longer cleanly articulated
+const ROW_ENV_FLOOR = 0.0001;
 // Shared reverb send — rows only (the ambient bed owns its own reverb). Pre-delay keeps dry attacks
 // crisp; the wet-side highpass stops dense grids piling into low-end mud; damping darkens the tail.
 const ROW_REVERB_SECONDS = 5;     // impulse length — the apparent "size" of the space
@@ -67,6 +69,102 @@ export function culledGridRowFrequency(rawRatio) {
   const maxRatio = 2 ** CULLED_ROW_MAX_OCTAVES;
   while (registeredRatio > maxRatio) registeredRatio /= 2;
   return CULLED_ROW_FUNDAMENTAL_HZ * registeredRatio;
+}
+
+const actionToneKey = action => action?.rawFraction ?? action?.fraction ?? String(action?.rawRatio);
+
+// Time until this layer will ACTUALLY re-articulate. With repeat-cull enabled, identical tones inside
+// the current cycle are silent holds; the first layer event after the loop wrap articulates because the
+// runtime hold memory clears there. Keeping this calculation pure makes the dense-grid policy testable.
+export function nextRowLayerGapTicks(events, eventIndex, action, grid, repeatCull = true) {
+  if (!Array.isArray(events) || !events.length || !(grid > 0) || !action?.layer) return grid || 1;
+  const startTick = Number(events[eventIndex]?.tick) || 0;
+  const currentTone = actionToneKey(action);
+  for (let i = eventIndex + 1; i < events.length; i++) {
+    const next = events[i].layerActions?.find(candidate => candidate.layer === action.layer);
+    if (next && (!repeatCull || actionToneKey(next) !== currentTone)) return events[i].tick - startTick;
+  }
+  // The hold memory clears at the wrap, so the first matching layer event in the next cycle articulates
+  // even when its tone is identical to this one.
+  for (let i = 0; i <= eventIndex; i++) {
+    const next = events[i].layerActions?.find(candidate => candidate.layer === action.layer);
+    if (next) return grid - startTick + events[i].tick;
+  }
+  return grid;
+}
+
+// Extremely short notes are windowed wholly inside their real onset gap and attenuated in proportion
+// to that gap. This retains the mathematical onset/pitch, but prevents a sub-audio-quantum event from
+// becoming a full-level broadband impulse. Longer notes keep the established fixed pluck envelope.
+export function rowEnvelopePlan(gapSeconds = Infinity, sampleRate = 48000) {
+  const renderFloor = 2 / Math.max(8000, Number(sampleRate) || 48000);
+  if (Number.isFinite(gapSeconds) && gapSeconds <= renderFloor) {
+    return { render: false, micro: true, duration: Math.max(0, gapSeconds), peak: ROW_ENV_FLOOR };
+  }
+  if (Number.isFinite(gapSeconds) && gapSeconds < ROW_MICRO_GAP_SECONDS) {
+    const duration = Math.max(renderFloor, gapSeconds);
+    const attack = duration * 0.4;
+    return {
+      render: true,
+      micro: true,
+      attack,
+      decay: 0,
+      hold: 0,
+      release: duration - attack,
+      duration,
+      sustain: ROW_ENV_FLOOR,
+      peak: Math.max(ROW_ENV_FLOOR * 1.01, ROW_PEAK * (duration / ROW_MICRO_GAP_SECONDS)),
+    };
+  }
+  const attack = ROW_ATTACK;
+  const decay = ROW_DECAY;
+  const holdUntil = Math.max(ROW_GATE, attack + decay);
+  return {
+    render: true,
+    micro: false,
+    attack,
+    decay,
+    hold: holdUntil - attack - decay,
+    release: ROW_RELEASE,
+    duration: holdUntil + ROW_RELEASE,
+    sustain: Math.max(ROW_ENV_FLOOR, ROW_SUSTAIN),
+    peak: ROW_PEAK,
+  };
+}
+
+function exponentialValue(from, to, progress) {
+  if (progress <= 0) return from;
+  if (progress >= 1) return to;
+  return from * ((to / from) ** progress);
+}
+
+// Fallback for engines without AudioParam.cancelAndHoldAtTime(). AudioParam.value is the value at the
+// current render quantum, not at a future scheduled interruption, so it cannot safely seed the release.
+function rowEnvelopeValueAt(voice, when) {
+  const plan = voice.envelopePlan;
+  if (!plan || when <= voice.startTime) return ROW_ENV_FLOOR;
+  const elapsed = when - voice.startTime;
+  if (elapsed < plan.attack) {
+    return ROW_ENV_FLOOR + (plan.peak - ROW_ENV_FLOOR) * (elapsed / plan.attack);
+  }
+  if (plan.micro) return exponentialValue(plan.peak, ROW_ENV_FLOOR, (elapsed - plan.attack) / plan.release);
+  if (elapsed < plan.attack + plan.decay) {
+    return exponentialValue(plan.peak, plan.sustain, (elapsed - plan.attack) / plan.decay);
+  }
+  const releaseStart = plan.attack + plan.decay + plan.hold;
+  if (elapsed < releaseStart) return plan.sustain;
+  return exponentialValue(plan.sustain, ROW_ENV_FLOOR, (elapsed - releaseStart) / plan.release);
+}
+
+function holdEnvelopeAtTime(voice, when) {
+  const param = voice.env.gain;
+  if (typeof param.cancelAndHoldAtTime === 'function') {
+    param.cancelAndHoldAtTime(when);
+    return;
+  }
+  const value = Math.max(ROW_ENV_FLOOR, rowEnvelopeValueAt(voice, when));
+  param.cancelScheduledValues(when);
+  param.setValueAtTime(value, when);
 }
 
 const layerRank = layer => Math.max(0, ['A', 'B', 'C', 'D'].indexOf(layer));
@@ -378,7 +476,8 @@ export class SpatialGridRowPlayer {
           // notes marks a loop-constant layer as all-hold and it never sounds again after its seed blip.)
           if (deck.program.repeatCull && deck.lastToneByLayer.get(action.layer) === action.rawFraction) continue;
           deck.lastToneByLayer.set(action.layer, action.rawFraction);
-          this._startVoice(deck, action, Math.max(now, when));
+          const gapTicks = nextRowLayerGapTicks(events, deck.cursorEvent, action, grid, deck.program.repeatCull);
+          this._startVoice(deck, action, Math.max(now, when), gapTicks / ticksPerSecond);
         }
       }
       deck.cursorEvent++;
@@ -386,9 +485,11 @@ export class SpatialGridRowPlayer {
     }
   }
 
-  _startVoice(deck, action, when) {
+  _startVoice(deck, action, when, gapSeconds = Infinity) {
     const frequencyHz = culledGridRowFrequency(action.rawRatio);
     if (frequencyHz === null) return;
+    const envelopePlan = rowEnvelopePlan(gapSeconds, this.ctx.sampleRate);
+    if (!envelopePlan.render) return;
     this._releaseLayer(deck, action.layer, when, VOICE_RELEASE);
     if (!this._claimToneVoice(deck, action, when)) return;
     if (this.logicalVoiceCount >= MAX_ROW_OSC) { this.stats.budgetMisses++; return; }
@@ -397,22 +498,27 @@ export class SpatialGridRowPlayer {
     osc.type = ROW_WAVEFORM;
     osc.frequency.setValueAtTime(Math.min(this.ctx.sampleRate * 0.45, frequencyHz), when);
     this.rootDetune?.connect(osc.detune);   // shared modulation glide (cents), summed with this pitch
-    // Fixed-gate ADSR: the note lasts ROW_GATE regardless of the next onset, then releases into the
-    // reverb tail. holdUntil is clamped so a very short tuned ROW_GATE can't invert the automation.
-    const sustain = Math.max(0.0001, ROW_SUSTAIN);
-    const holdUntil = when + Math.max(ROW_GATE, ROW_ATTACK + ROW_DECAY);
-    const endAt = holdUntil + ROW_RELEASE;
-    env.gain.setValueAtTime(0.0001, when);
-    env.gain.linearRampToValueAtTime(ROW_PEAK, when + ROW_ATTACK);
-    env.gain.exponentialRampToValueAtTime(sustain, when + ROW_ATTACK + ROW_DECAY);
-    env.gain.setValueAtTime(sustain, holdUntil);
-    env.gain.exponentialRampToValueAtTime(0.0001, endAt);
+    // Normal gaps keep the established fixed pluck. A micro-gap uses a full attack/release window that
+    // reaches the floor before the next onset, so dense spaces cannot accumulate interrupted tails.
+    const attackEnd = when + envelopePlan.attack;
+    const releaseStart = attackEnd + envelopePlan.decay + envelopePlan.hold;
+    const endAt = when + envelopePlan.duration;
+    env.gain.setValueAtTime(ROW_ENV_FLOOR, when);
+    env.gain.linearRampToValueAtTime(envelopePlan.peak, attackEnd);
+    if (envelopePlan.micro) {
+      env.gain.exponentialRampToValueAtTime(ROW_ENV_FLOOR, endAt);
+    } else {
+      env.gain.exponentialRampToValueAtTime(envelopePlan.sustain, attackEnd + envelopePlan.decay);
+      env.gain.setValueAtTime(envelopePlan.sustain, releaseStart);
+      env.gain.exponentialRampToValueAtTime(ROW_ENV_FLOOR, endAt);
+    }
     osc.connect(env);
     env.connect(deck.gain);
     const voice = {
       osc, env, layer: action.layer, fraction: action.fraction,
       rawFraction: action.rawFraction, ratio: action.rawRatio, frequencyHz,
       toneKey: action.fraction || action.rawFraction || String(action.rawRatio), startTime: when,
+      endAt, envelopePlan,
       released: false,   // budget is freed exactly once — by whichever of onended / _releaseLayer runs first
     };
     deck.voices.set(action.layer, voice);
@@ -433,7 +539,7 @@ export class SpatialGridRowPlayer {
     if (Number.isFinite(soundedCents)) this.soundedTones.set(action.fraction, { cents: soundedCents, when });
     this.logicalVoiceCount++;
     osc.start(when);
-    osc.stop(endAt + 0.02);   // self-terminating; a same-layer steal reschedules this earlier in _releaseLayer
+    osc.stop(endAt + (envelopePlan.micro ? 1 / this.ctx.sampleRate : 0.02));
     osc.onended = () => {
       try { this.rootDetune?.disconnect(osc.detune); } catch {}
       deck.oscillators.delete(osc);
@@ -453,10 +559,15 @@ export class SpatialGridRowPlayer {
     if (!voice.released) { voice.released = true; this.logicalVoiceCount = Math.max(0, this.logicalVoiceCount - 1); }
     if (voice.visualLife) voice.visualLife.endTime = Math.min(voice.visualLife.endTime, when + release);
     try {
-      voice.env.gain.cancelScheduledValues(when);
-      voice.env.gain.setValueAtTime(Math.max(0.0001, voice.env.gain.value), when);
-      voice.env.gain.exponentialRampToValueAtTime(0.0001, when + release);
-      voice.osc.stop(when + release + 0.02);
+      holdEnvelopeAtTime(voice, when);
+      // A micro voice is already at the floor when the next articulation arrives. Stop it promptly
+      // instead of manufacturing a 70ms release tail; ordinary interrupted plucks keep the smooth tail.
+      const sampleSeconds = 1 / this.ctx.sampleRate;
+      const releaseTime = voice.envelopePlan?.micro && when >= voice.endAt - sampleSeconds
+        ? sampleSeconds
+        : Math.max(2 / this.ctx.sampleRate, release);
+      voice.env.gain.exponentialRampToValueAtTime(ROW_ENV_FLOOR, when + releaseTime);
+      voice.osc.stop(when + releaseTime + (voice.envelopePlan?.micro ? sampleSeconds : 0.002));
     } catch {}
   }
 
