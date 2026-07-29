@@ -13,12 +13,16 @@ const check = (label, ok, detail = '') => { if (!ok) PASS = false; console.log(`
 console.log('═══ COSMOS RAIL VIEW — assertions ═══');
 
 console.log('\n  The rendered rail + its engine bindings');
-// The safe knobs (no mode side-effect, defaults reproduce today's sound) + MIX, across pitch/harmony/texture.
-const SAFE_KNOBS = ['fundamental', 'richness', 'volume', 'mix', 'space'];
-check('the rail renders the safe knobs + MIX (pitch/harmony/texture)',
-  Array.isArray(RAIL_KNOBS) && RAIL_KNOBS.length === SAFE_KNOBS.length && SAFE_KNOBS.every(n => RAIL_KNOBS.includes(n)));
-check('the time-group knobs (SPEED, DWELL) are NOT wired yet — mode-flip / calibration pending',
-  !RAIL_KNOBS.includes('speed') && !RAIL_KNOBS.includes('dwell'));
+// The safe knobs + MIX + SPEED (now wired for calibration). SPEED's setter (setTargetOnsetRate) intentionally
+// flips the engine into ONSET mode — that behaviour is proven in assert-rail-bindings, here we only pin that
+// SPEED is rendered and DWELL still isn't.
+const RENDERED = ['fundamental', 'speed', 'richness', 'volume', 'mix', 'space'];
+check('the rail renders the safe knobs + MIX + SPEED (pitch/time/harmony/texture)',
+  Array.isArray(RAIL_KNOBS) && RAIL_KNOBS.length === RENDERED.length && RENDERED.every(n => RAIL_KNOBS.includes(n)));
+check('SPEED is wired to setTargetOnsetRate (its ONSET-mode flip is intentional; behaviour in assert-rail-bindings)',
+  typeof ENGINE_SETTERS.speed === 'function');
+check('DWELL is still held back — the last deferred knob (linear-vs-log curve pending calibration)',
+  !RAIL_KNOBS.includes('dwell') && !('dwell' in ENGINE_SETTERS));
 check('every rendered knob is a real param and has a live engine setter (no dangling / silent knobs)',
   RAIL_KNOBS.every(n => RAIL_PARAMS[n] && typeof ENGINE_SETTERS[n] === 'function'));
 check('every ENGINE_SETTERS key is a real param — the map can never bind a name the state layer lacks',
