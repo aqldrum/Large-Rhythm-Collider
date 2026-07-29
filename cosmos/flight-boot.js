@@ -5,6 +5,7 @@
 import { ensureFlight, stopFlight } from './flight-view.js';
 import { M } from './mode.js';
 import { initAudio, resumeAudio } from './cosmos-audio.js';
+import { ensureRail } from './rail-view.js';
 
 // ENTER: swallow the page and start flying. Add the class FIRST so the overlay/canvas have layout before
 // ensureFlight()'s resize() reads clientWidth/Height (the class change forces a synchronous reflow on read).
@@ -16,6 +17,7 @@ function enterCosmos() {
   M.mode = 'flight';
   ensureFlight(canvas, hud);
   initAudio(); resumeAudio();   // user-gesture unlock for the cosmos-audio transport (autoplay policy)
+  ensureRail();                 // mount the performance rail over the live graph (idempotent; gestures-only)
 }
 
 // EXIT: expand the minimized #lrc-div → restore the interface AND terminate every flight worker (no

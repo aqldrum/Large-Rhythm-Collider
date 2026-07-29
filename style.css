@@ -3638,6 +3638,24 @@ body.cosmos-active #cosmos-view {
 #cosmos-help-panel .help-kv b { color: var(--ink); font-family: var(--mono); font-weight: 600; white-space: nowrap; }
 #cosmos-help-panel .help-note { margin-top: 6px; font-size: 10px; color: var(--hud-text-muted); opacity: .7; }
 
+/* Performance RAIL — a persistent control panel, horizontally centred low in the flight view
+   (rail-view.js owns the DOM). Always visible: no collapse, no disappearing tab. It wears the SAME house
+   panel chrome as #lrc-div / .detail3 (rounded rectangle, house border + blur) so it reads as part of the
+   same HUD. The knobs REUSE the site's ADSR knob classes (.knob / .knob-indicator / .knob-label /
+   .knob-value) verbatim, so they look and drag exactly like the Playback envelope knobs. */
+#cosmos-rail {
+    position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 519;
+    display: flex; gap: 26px; align-items: flex-end; justify-content: center;
+    padding: 12px 26px; max-width: min(720px, calc(100vw - 380px));
+    background: var(--hud-bg); border: 1px solid var(--hud-border); border-radius: var(--border-radius);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 2px 10px rgba(0,0,0,.3);
+    font-family: var(--sans);
+}
+#cosmos-rail .rail-group { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+#cosmos-rail .rail-group-label { font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--hud-accent); opacity: .85; }
+#cosmos-rail .rail-knobs { display: flex; gap: 22px; }
+#cosmos-rail .knob-container { margin: 0; }   /* the shared ADSR rule adds 8px vertical margin — unwanted inside the pill */
+
 /* Selected-rhythm inspector. It deliberately uses typography and spacing more than nested boxes: the
    rhythm tuple and spaces plot are the identity, with deep metrics progressively disclosed below. */
 #lrc-div {

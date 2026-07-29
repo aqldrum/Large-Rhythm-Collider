@@ -205,10 +205,10 @@ contract; Phases 3–5 land behind it independently.
 
 ## Progress log (as-built) — updated 2026-07-29
 
-Phases 0–1 plus the engine half of Phase 2 are **complete and headless-guarded**. Everything below is
-additive with defaults that reproduce today's sound; the new rail setters are **dormant until the UI wires
-them**. Test status: **15/16 assert suites green** — the sole failure, `assert-rhythm-inspector`, is
-pre-existing (the `3722ddd` Home-button rename broke an `index.html` structure regex; unrelated to this work).
+Phases 0–1, the engine half of Phase 2, **and the rail-UI skeleton (one live knob)** are **complete and
+headless-guarded**. Everything is additive with defaults that reproduce today's sound. Test status:
+**16/17 assert suites green** — the sole failure, `assert-rhythm-inspector`, is pre-existing (the `3722ddd`
+Home-button rename broke an `index.html` structure regex; unrelated to this work).
 
 ### Done
 
@@ -233,17 +233,38 @@ pre-existing (the `3722ddd` Home-button rename broke an `index.html` structure r
   **RICHNESS/VOLUME/SPACE (2.3)**: `setRichness` (`[0,0.18]`), `setVolume` (master gain inserted
   mute→**masterVolume**→limiter), `setSpace` (one knob → both reverbs, midpoint 0.5 = today's 0.30/0.35;
   added `SpatialGridRowPlayer.setReverbWet`). New `assert-rail-bindings.mjs`.
+- **2 rail UI skeleton (one knob)** ✅ — new `cosmos/rail-view.js` owns the rail DOM (dedicated-module
+  pattern; sibling of `#lrc-div` inside `#cosmos-view`, mounted by `ensureRail()` from `flight-boot.js`
+  after `initAudio()`). One end-to-end knob, **MIX**, as the site's ADSR rotary reused class-for-class
+  (`.knob`/`.knob-indicator`; 270° sweep, 0.005/px drag, dblclick=reset, keyboard fine-adjust) but driven
+  in normalized `[0,1]` via `railParams.setNorm` so it stays engine-agnostic and respects the Playback
+  firewall. Bound **gestures-only (NO `emitNow`)** — persisted values are NOT replayed on entry, so nothing
+  repaints today's sound or flips SPEED into ONSET mode before calibration; the old cockpit controls stay
+  wired. Panel is a persistent rounded-rectangle in the house `#lrc-div` chrome, bottom-centre. Add a param
+  to `RAIL_KNOBS` + its setter to `ENGINE_SETTERS` to grow the rail. New `assert-rail-view.mjs` (17 checks,
+  incl. the `emitNow` anti-regression). **Known consequence of gestures-only**: a persisted knob shows its
+  stored position on entry while the engine sits at its own default until the knob is first touched —
+  resolves when restoration turns on post-calibration.
 
 ### Remaining (needs the browser / Avery's ear)
 
-- **2 — the rail UI**: skinny bottom bar + accessible knobs; wire `railParams.subscribe(...)` → engine
-  setters; `#lrc-div` keeps inspector duties only. Retire the old cockpit controls it absorbs.
+- **2 — fill the rail**: add the remaining knobs (VOLUME/FUNDAMENTAL/SPEED/DWELL/RICHNESS/SPACE + the
+  advanced drawer for MODULATION/MIDI-out and the MUTE button); then flip on `{emitNow}` restoration and
+  retire the old cockpit controls `#lrc-div` still holds. `#lrc-div` keeps inspector duties only.
 - **2.1 / 2.2 / 2.3 calibration by ear**: freeze SPEED's default vs a mid-grid neighborhood; shape DWELL's
   log 1/8→1 curve (engine `setDwell` is linear-ready, `RAIL_PARAMS.dwell` is `linear` for now); confirm
   SPACE feels continuous across the MIX.
-- **2.4 Bed robustness**: the bed lags for a beat after flying fast to a new area (Avery confirmed 2026-07-29).
-  Probe first; expected fix = star entry triggers an immediate swell-in, the `REATTACK_PERIODS` clock only
-  governs re-swells.
+- **2.4 Audio continuity while flying** (was "Bed robustness"): moving to a new area causes audio to
+  **fully drop** during the re-solve, not just a bed beat-lag (Avery confirmed 2026-07-29). Likely **two
+  mechanisms under one item**: (a) the bed swell-clock gap this section already names — `REATTACK_PERIODS`
+  never swells a star that *enters* the audible set mid-period; and (b) a **rows recompile gap** — on a
+  field swap (`setGridSpatialField` → `gridRowPlayer.setField`) the chord re-solves and new star programs
+  must compile (`ROW_COMPILE_WORKERS = 1`, Phase 4) with nothing sustaining across the gap; Avery's read is
+  that culled-grid-row stale notes used to paper over this. MIX makes both worse (crossfading toward the
+  dropping layer). **Probe first** (headless, `_seedDeck` style): simulate a fast field-swap and measure
+  bed voice count/gain AND row scheduling continuity across the re-solve window to pin (a) vs (b) vs both
+  before any engine edit. Expected fixes: bed = immediate swell-in on star entry (clock governs re-swells
+  only); rows = sustain/overlap across recompile.
 - **3 λ freeze**, **4 DENSITY**, **5 ABCD soloing + inspector merge** — unstarted.
 
 ### Implementer's-call decisions already made (veto-able)
