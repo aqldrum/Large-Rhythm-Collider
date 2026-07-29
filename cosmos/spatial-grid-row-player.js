@@ -194,16 +194,17 @@ function setTriplet(node, prefix, values, now, smoothing = 0.04) {
 }
 
 export class SpatialGridRowPlayer {
-  // rootDetune: the audio layer's shared modulation bus (a ConstantSourceNode carrying CENTS). Summed
-  // into every row oscillator's detune param, so a root modulation glides these voices too — including
-  // the ones born mid-glide, which matters here more than anywhere: a row note is a 140ms gate, so by
-  // the time a glide is half over every voice that existed when it started is already gone.
+  // detuneBus: the audio layer's shared detune bus (a GainNode carrying CENTS — the SUM of the fundamental
+  // and modulation offsets). Summed into every row oscillator's detune param, so a fundamental transpose or
+  // a root modulation glides these voices too — including the ones born mid-glide, which matters here more
+  // than anywhere: a row note is a 140ms gate, so by the time a glide is half over every voice that existed
+  // when it started is already gone.
   // midiBridge: optional { note(hz, whenAudio, seconds, gain) } mirror to a DAW. The player stays
   // harmony-blind here too — it reports pitch, time, length and loudness, and the audio layer folds in
-  // the modulation offset, which is the one harmonic fact it does not own.
-  constructor(context, output, rootDetune = null, midiBridge = null) {
+  // the summed detune offset, which is the one harmonic fact it does not own.
+  constructor(context, output, detuneBus = null, midiBridge = null) {
     this.ctx = context;
-    this.rootDetune = rootDetune;
+    this.detuneBus = detuneBus;
     this.midiBridge = midiBridge;
     this.master = context.createGain();
     this.master.gain.value = 0;
@@ -251,6 +252,13 @@ export class SpatialGridRowPlayer {
     this.master.gain.setValueAtTime(Math.max(0, this.master.gain.value), now);
     this.master.gain.linearRampToValueAtTime(this.enabled ? 1 : 0, now + CROSSFADE);
     if (!this.enabled) this.setField([], 0);
+  }
+
+  // SPACE knob: the row half of the shared reverb send. cosmos-audio drives this and the ambient send
+  // together off one control (ROW_REVERB_WET is the default, reproduced at the knob midpoint).
+  setReverbWet(level) {
+    if (!this.reverb) return;
+    this.reverb.wet.gain.setTargetAtTime(Math.max(0, Number(level) || 0), this.ctx.currentTime, 0.1);
   }
 
   setListenerPose(forward, up) {
@@ -497,7 +505,7 @@ export class SpatialGridRowPlayer {
     const env = this.ctx.createGain();
     osc.type = ROW_WAVEFORM;
     osc.frequency.setValueAtTime(Math.min(this.ctx.sampleRate * 0.45, frequencyHz), when);
-    this.rootDetune?.connect(osc.detune);   // shared modulation glide (cents), summed with this pitch
+    this.detuneBus?.connect(osc.detune);   // shared fundamental + modulation glide (cents), summed with this pitch
     // Normal gaps keep the established fixed pluck. A micro-gap uses a full attack/release window that
     // reaches the floor before the next onset, so dense spaces cannot accumulate interrupted tails.
     const attackEnd = when + envelopePlan.attack;
@@ -541,7 +549,7 @@ export class SpatialGridRowPlayer {
     osc.start(when);
     osc.stop(endAt + (envelopePlan.micro ? 1 / this.ctx.sampleRate : 0.02));
     osc.onended = () => {
-      try { this.rootDetune?.disconnect(osc.detune); } catch {}
+      try { this.detuneBus?.disconnect(osc.detune); } catch {}
       deck.oscillators.delete(osc);
       if (deck.voices.get(action.layer)?.osc === osc) deck.voices.delete(action.layer);
       // A voice that plays out its full gate ends HERE, not via _releaseLayer — so free its budget slot

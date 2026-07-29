@@ -27,13 +27,21 @@ const LEAD_MASK_WINDOW = 35;     // cents — a lead onset counts as "in the glo
 // The global ambient bed — nearby stars' degree pools voiced against the one sky-wide chord walk.
 // AUDIBLE_N (which/how-many zones feed the bed) lives in flight-view.js's FLIGHT/LOD KNOBS block —
 // audible-set SELECTION is a camera/projection concern, kept out of this dependency-free audio layer.
-// Sky-clock constants, in SECONDS (see the TWO CLOCKS block). Each is the tick-denominated value it
-// replaces divided by the historical 10 ticks/s default, so behaviour at that rate is unchanged.
-const CHORD_SECONDS = 25.6;      // one chord window (was CHORD_TICKS = 256)
-// "Expose the full quality": hold the chord past its window until every one of its degrees has actually
-// SOUNDED, so a 7th is heard as a 7th rather than as whichever of its tones happened to land. Capped —
-// a degree the local field simply cannot voice must not stall the walk forever.
-const CHORD_MAX_SECONDS = 4 * CHORD_SECONDS;
+// ── CHORD CLOCK (Phase 0.3) ──────────────────────────────────────────────────────────────────────
+// The fixed 25.6s chord window (old CHORD_SECONDS = 256 ticks / 10) is retired. The clock is now three
+// quantities, all in SKY-CLOCK seconds and all derived from the CURRENT grid cycle so harmonic rhythm
+// scales with playback the way the grid does — and it is identical at every MIX position:
+//   • FLOOR   — full exposure is required before any advance (the old "expose the full quality" hold,
+//               now UNCONDITIONAL at every mix; the checkbox is gone — decision 3).
+//   • TARGET  — DWELL sets how long PAST exposure a chord dwells, as a fraction of one cycle. 0 (the
+//               default until the Phase 2.2 knob binds it) = advance the moment it is exposed = today's
+//               full quality. With no rows sounding (no cycle) the fraction maps to a nominal-cycle second.
+//   • ESCAPE  — a cap so a degree the field cannot voice (or a chord flown away from) still releases:
+//               CHORD_ESCAPE_MULT full cycles = 4× the maximum DWELL target, generous headroom below it.
+// Advances quantize to a 1/8-cycle grid so a chord change lands on the form (spirit of ROW_SWITCH_TICKS).
+const NOMINAL_FALLBACK_CYCLE_SECONDS = 24;   // DWELL's cycle reference when no rows sound (≈ the old window)
+const CHORD_QUANTIZE_DIVISIONS = 8;          // advance lands on a 1/8-cycle boundary
+const CHORD_ESCAPE_MULT = 4;                 // escape cap = 4 full cycles (= 4× the max DWELL target)
 const TABU_K = 3;                // sky-walk tabu length (chord-walk.js's exact convention)
 const TUNING_STRENGTH_MAX = 8;
 let LAMBDA_FIELD = 2.0;          // live local-tuning pull, in semitones of voice-leading cost
@@ -47,7 +55,7 @@ let LAMBDA_FIELD = 2.0;          // live local-tuning pull, in semitones of voic
 // It saturates past ~0.12 (leveling the field term leaves triads and 7ths near-tied, so a small nudge
 // moves most of them at once). 0.05 keeps the triad a real home base while making the 7th the sky's
 // common currency; 0 reproduces the previous triad-dominated walk.
-const RICHNESS = 0.05;
+let RICHNESS = 0.05;             // live from Phase 2.3 (setRichness); was a const at the swept knee
 const MAX_BED_OSC = 30;          // bed oscillator budget (≤3 tones/star × AUDIBLE_N=10), alongside MAX_LIVE_OSC
 const BED_ATTACK = 1.5, BED_RELEASE = 2.5;   // seconds — long swells, this is half the product
 const BED_PEAK = 0.12;           // per-voice envelope peak (modest — many sustained voices sum)
@@ -73,9 +81,15 @@ const REATTACK_PERIODS = [4.5, 5.6, 6.4, 8.1, 10];   // SKY-CLOCK seconds; mutua
 // modulation; every tone is octave-folded into a register downstream anyway, so the fold keeps the root
 // on ROOT_HZ's pitch class while bounding the move to a tritone.
 const MODULATION_DEFAULT = false;
+// FUNDAMENTAL is a second, user-driven detune offset, summed with modulation on the same bus (Phase 0.2):
+// two ConstantSourceNodes in CENTS whose sum feeds every oscillator's detune AND the MIDI spelling, so one
+// gesture never overwrites the other's automation. Bounded to ±2 octaves — ample pitch travel while the
+// total (with modulation's ≤-tritone shift) stays inside the ±48-semitone MPE bend range, so a modulated,
+// transposed note still spells at its true sounding pitch. Rides modulation's exact portamento law (glide).
+const FUNDAMENTAL_OFFSET_MAX_CENTS = 2400;
 // Portamento law is the main LRC page's (Playback/ToneRowPlayback.js handleFundamentalChange):
 // setTargetAtTime, an exponential approach with a TIME CONSTANT. Same curve, applied at a different
-// point — see rootDetune in initAudio for why cosmos cannot retune per-voice the way that page does.
+// point — see the detune bus in initAudio for why cosmos cannot retune per-voice the way that page does.
 //
 // Length is measured in ONSETS, converted through the grid clock: glideTicks = onsets × the field's mean
 // onset gap in ticks, then seconds = glideTicks / ticksPerSec. Ticks, not milliseconds, so the glide
@@ -88,14 +102,26 @@ const ROOT_GLIDE_ONSETS = 3;
 const ROOT_GLIDE_MIN_SECONDS = 0.15, ROOT_GLIDE_MAX_SECONDS = 4;   // a fixed-rate monster grid can put 67s
                                   // between onsets; a dense one can put 130ms. Both must still be a glide.
 const ROOT_GLIDE_SECONDS_DEFAULT = 1;   // ambient mode has no onsets to scale against
-const SPEED_MODES = Object.freeze({ FIXED: 'fixed', SCALED: 'scaled' });
+const SPEED_MODES = Object.freeze({ FIXED: 'fixed', SCALED: 'scaled', ONSET: 'onset' });
 const SCALED_CYCLE_DEFAULT = 12;   // seconds per grid cycle — grid 120's cycle at the historical 10 ticks/s
 const SCALED_RATE_MIN = 1, SCALED_RATE_MAX = 8000;   // ticks/s clamp; 8000 covers the largest charted grids
 const SCALED_RATE_HYSTERESIS = 0.06;   // only re-anchor the transport when the target moves >6% — the median
                                   // grid is a discrete step function, and every change re-anchors the epoch
-const REVERB_WET = 0.3;          // shared send level
+// SPEED knob (Phase 2.1, decision 2): denominated in TARGET ONSETS/SEC, log-scaled slow→fast. ticks/s AND
+// cycle-seconds both become DERIVED: ticksPerSec = clamp(targetOnsetRate × fieldOnsetTicks), since
+// onsets/sec × ticks/onset = ticks/sec. The [SCALED_RATE_MIN, MAX] tick clamp stays (a monster grid runs
+// slightly under target at the cap). Range ~today's 12s-cycle scaled feel; the default is frozen by ear in 2.1.
+const SPEED_ONSET_MIN = 0.5, SPEED_ONSET_MAX = 16, SPEED_ONSET_DEFAULT = 2.5;
+const REVERB_WET = 0.3;          // shared send level (also SPACE's ambient send at the knob midpoint — see setSpace)
 const REVERB_SECONDS = 4, REVERB_DECAY = 3;   // procedural impulse: exp-decaying noise burst, no assets
 const ROOT_TOP_K = 8;            // how much of the ranked ladder the debug overlay shows
+// VOLUME knob (Phase 2.3): master gain AHEAD of the safety limiter; mute stays its own button. Engine
+// default is unity so nothing changes until the rail pushes its own value on startup.
+const MASTER_VOLUME_DEFAULT = 1;
+// SPACE knob (Phase 2.3): one knob driving BOTH reverb sends, each calibrated so the knob MIDPOINT (0.5,
+// the rail default) reproduces today's levels — ambient 0.3, rows 0.35 — and travel feels continuous.
+const SPACE_DEFAULT = 0.5, SPACE_AMBIENT_WET_AT_HALF = REVERB_WET, SPACE_ROW_WET_AT_HALF = 0.35;
+const RICHNESS_MAX = 0.18;       // RICHNESS knob (Phase 2.3) ceiling — the top of the swept table above
 
 // One cycle of the rhythm as an ordered list of {t, ratio}: t = onset time as a fraction of the
 // cycle in [0,1); ratio = folded pitch ratio in [1,2) (1/1 = root). Mirrors oracle-core.deriveScale's
@@ -119,11 +145,21 @@ export function deriveVoice(rawLayers) {
   return { notes, grid, cardinality: layers.length ? new Set(notes.map(n => n.ratio.toFixed(6))).size : 0 };
 }
 
-// ── audio graph: osc -> per-note envelope -> shared panner -> shared distance-gain -> shared mute-gain -> out ──
-let audioCtx = null, pannerNode = null, distGainNode = null, muteGainNode = null, ambientModeGain = null, outputLimiter = null;
+// ── audio graph: three independent gain buses → shared mute-gain → limiter → out ──
+// bedGain    — ambient-chord bed (swells, reverb, the sustained pad)
+// rowsGain   — spatial culled-row voices (3D HRTF, the rhythmic chorus)
+// auditionGain — clicked-star lead (the audition arpeggio, independent of mix)
+// MIX crossfades bedGain ↔ rowsGain (constant-power cos/sin); auditionGain is standalone.
+let audioCtx = null, pannerNode = null, distGainNode = null, muteGainNode = null, outputLimiter = null;
+let bedGain = null, rowsGain = null, auditionGain = null;
+let masterVolume = null;          // VOLUME knob: master gain between muteGainNode and the safety limiter
+let lastVolume = MASTER_VOLUME_DEFAULT;   // persisted musical setting (readout + re-entry); node tracks it
+let lastSpace = SPACE_DEFAULT;    // persisted SPACE position; drives both reverb sends (see setSpace)
 let liveOscs = null;              // Set of live OscillatorNodes (capacity-capped)
 let schedulerTimer = null;
-let audioMode = AUDIO_MODES.AMBIENT_CHORDS;
+let mix = 0;                      // 0 = bed, 1 = rows; constant-power crossfade
+let auditionListening = true;     // audition bus on/off (independent of mix)
+let auditionPinned = false;       // pin keeps audition audible after deselection
 let gridRowPlayer = null;
 
 // ── TWO CLOCKS ─────────────────────────────────────────────────────────────────────────────────
@@ -160,21 +196,31 @@ let leadMaskRootKey = -1;         // root swaps independently invalidate the sam
 // ── Full Sky: the global chord walk (online, stateful — not precomputed) + the ambient bed ──
 let skyChordId = START_CHORD_ID, skyTabu = null, skyStep = -1;   // walk state; skyStep=-1 = not yet observed
 let chordStartedAt = 0;           // sky-clock seconds the current chord began — the dwell/exposure origin
-let holdForFullQuality = false;   // "expose the full quality" — hold a chord until every degree has sounded
+let dwellFraction = 0;            // DWELL knob [0,1]: chord dwell as a fraction of the cycle PAST full exposure.
+                                  // 0 = advance the moment exposed (the old full-quality hold, now the default).
+                                  // A persisted musical setting (decision 8); Phase 2.2 binds the knob to setDwell.
 let lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };   // overlay-only snapshot
+let lastChordClock = { cycleSeconds: NOMINAL_FALLBACK_CYCLE_SECONDS, targetSeconds: 0, quantumSeconds: NOMINAL_FALLBACK_CYCLE_SECONDS / CHORD_QUANTIZE_DIVISIONS, escapeSeconds: NOMINAL_FALLBACK_CYCLE_SECONDS * CHORD_ESCAPE_MULT };   // overlay-only
 let lastChordSeconds = 0;         // how long the PREVIOUS chord actually lasted — the pacing readout
 let modulationOn = MODULATION_DEFAULT;
-let rootDetune = null;            // ConstantSourceNode, offset in CENTS, summed into every oscillator's detune
-let lastModulationCents = 0;      // the shift currently gliding to / settled at (overlay + re-derivation)
-// The detune bus is a live signal, so nothing downstream can READ where a glide is partway through.
-// Recording the curve's parameters lets modulationCentsAt() reproduce it exactly — which is what the
-// MIDI mirror needs, since a note scheduled inside the lookahead has to be spelled at the pitch it will
-// actually sound at, not at the glide's start or its destination.
+// Two summed detune offsets on one bus (Phase 0.2). fundamentalOffset = the FUNDAMENTAL knob's global
+// transpose; modulationOffset = the root-modulation glide (was `rootDetune`). Both are ConstantSourceNodes
+// in CENTS; detuneBus is a unity GainNode that SUMS them and is what every oscillator's detune connects to,
+// so the two automations are independent yet the ensemble hears (and MIDI spells) their sum.
+let fundamentalOffset = null, modulationOffset = null, detuneBus = null;
+let lastModulationCents = 0;      // the modulation shift currently gliding to / settled at (overlay + re-derivation)
+let lastFundamentalCents = 0;     // the fundamental offset currently gliding to / settled at (overlay + persistence)
+// A detune bus is a live signal, so nothing downstream can READ where a glide is partway through. Recording
+// each curve's parameters lets modulationCentsAt()/fundamentalCentsAt() (and their sum, totalDetuneCentsAt)
+// reproduce it exactly — which is what the MIDI mirror needs, since a note scheduled inside the lookahead
+// has to be spelled at the pitch it will actually sound at, not at either glide's start or its destination.
 let modulationGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
+let fundamentalGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
 let cosmosMidi = null;
 let bedSoundedDegrees = new Set();   // ambient-mode half of the exposure ledger, cleared at each chord change
 let speedMode = SPEED_MODES.FIXED;
 let scaledCycleSeconds = SCALED_CYCLE_DEFAULT;
+let targetOnsetRate = SPEED_ONSET_DEFAULT;   // SPEED knob: target onsets/sec (ONSET mode); ticks/s derives from it
 let fixedTickRate = 10;           // the raw ticks/s the tempo slider last asked for — restored on leaving scaled mode
 let scaledMedianGrid = 0;         // most recent median sounding grid (overlay + rate derivation)
 let fieldOnsetTicks = 0;          // median ticks between composite onsets across the field (glide length)
@@ -202,7 +248,13 @@ export function initAudio() {
   pannerNode = audioCtx.createStereoPanner();
   distGainNode = audioCtx.createGain(); distGainNode.gain.value = 0;
   muteGainNode = audioCtx.createGain(); muteGainNode.gain.value = 1;
-  ambientModeGain = audioCtx.createGain(); ambientModeGain.gain.value = 1;
+  // Three independent gain buses — MIX crossfades bed ↔ rows (constant-power); audition is standalone.
+  bedGain = audioCtx.createGain(); bedGain.gain.value = 1;        // cos(0·π/2) = 1; mix starts at 0 (bed)
+  rowsGain = audioCtx.createGain(); rowsGain.gain.value = 0;      // sin(0·π/2) = 0
+  auditionGain = audioCtx.createGain(); auditionGain.gain.value = 1;
+  bedGain.connect(muteGainNode);
+  rowsGain.connect(muteGainNode);
+  auditionGain.connect(muteGainNode);
   // Final safety rail for rare dense-grid/reverb summation. Click prevention belongs to the per-voice
   // envelopes; this catches only exceptional aggregate peaks after every Cosmos dry/wet path is summed.
   outputLimiter = audioCtx.createDynamicsCompressor();
@@ -211,30 +263,39 @@ export function initAudio() {
   outputLimiter.ratio.value = 20;
   outputLimiter.attack.value = 0.003;
   outputLimiter.release.value = 0.1;
-  pannerNode.connect(distGainNode); distGainNode.connect(ambientModeGain); ambientModeGain.connect(muteGainNode);
-  muteGainNode.connect(outputLimiter); outputLimiter.connect(audioCtx.destination);
-  // Full Sky bed bus: dry sum -> master, plus a shared send through a procedural reverb (no assets).
-  bedBus = audioCtx.createGain(); bedBus.gain.value = 1; bedBus.connect(ambientModeGain);
+  // VOLUME sits between the mute and the limiter — a musical master trim ahead of the safety catch.
+  masterVolume = audioCtx.createGain(); masterVolume.gain.value = lastVolume;
+  pannerNode.connect(distGainNode); distGainNode.connect(auditionGain);
+  muteGainNode.connect(masterVolume); masterVolume.connect(outputLimiter); outputLimiter.connect(audioCtx.destination);
+  // Full Sky bed bus: dry sum -> bedGain, plus a shared send through a procedural reverb (no assets).
+  bedBus = audioCtx.createGain(); bedBus.gain.value = 1; bedBus.connect(bedGain);
   reverbConv = audioCtx.createConvolver(); reverbConv.buffer = makeImpulse(audioCtx);
   reverbWet = audioCtx.createGain(); reverbWet.gain.value = REVERB_WET;
-  bedBus.connect(reverbConv); reverbConv.connect(reverbWet); reverbWet.connect(ambientModeGain);
+  bedBus.connect(reverbConv); reverbConv.connect(reverbWet); reverbWet.connect(bedGain);
   // One shared detune bus in CENTS, summed into EVERY oscillator's `detune` param. The main LRC page
   // retunes each sounding oscillator's frequency directly, which works there because its voices are held.
   // Cosmos cannot: row voices are a 140ms gate and are constantly reborn, so a per-voice retune would
   // glide only the handful of notes already dying while every new note jumped straight to the target —
   // the ensemble would step, not glide. A live control signal instead glides notes that do not exist yet:
-  // an oscillator born mid-modulation reads the bus at its own start and lands exactly on the curve.
-  rootDetune = audioCtx.createConstantSource();
-  rootDetune.offset.value = 0;
-  rootDetune.start();
+  // an oscillator born mid-glide reads the bus at its own start and lands exactly on the curve.
+  // Two independent sources feed it: fundamentalOffset (the FUNDAMENTAL knob) and modulationOffset (the
+  // root-modulation glide). detuneBus (unity gain) sums them, so oscillators connect the one bus while each
+  // gesture keeps its own automation — and totalDetuneCentsAt reproduces the sum for the MIDI spelling.
+  fundamentalOffset = audioCtx.createConstantSource(); fundamentalOffset.offset.value = 0; fundamentalOffset.start();
+  modulationOffset = audioCtx.createConstantSource(); modulationOffset.offset.value = 0; modulationOffset.start();
+  detuneBus = audioCtx.createGain(); detuneBus.gain.value = 1;
+  fundamentalOffset.connect(detuneBus);
+  modulationOffset.connect(detuneBus);
   cosmosMidi = new CosmosMidiOut(audioCtx);
   // The row player stays harmony-blind: it hands over pitch, time, length and loudness, and this bridge
-  // supplies the one harmonic fact it does not own — where the modulation glide is at that instant.
+  // supplies the one harmonic fact it does not own — where the summed detune (fundamental + modulation) is
+  // at that instant, so the DAW spells the note at the pitch the browser will actually sound.
   const midiBridge = {
-    note: (hz, when, seconds, gain) => cosmosMidi?.note(hz, when, seconds, { cents: modulationCentsAt(when), gain }),
+    note: (hz, when, seconds, gain) => cosmosMidi?.note(hz, when, seconds, { cents: totalDetuneCentsAt(when), gain }),
   };
-  gridRowPlayer = new SpatialGridRowPlayer(audioCtx, muteGainNode, rootDetune, midiBridge);
-  audioMode = AUDIO_MODES.AMBIENT_CHORDS;
+  gridRowPlayer = new SpatialGridRowPlayer(audioCtx, rowsGain, detuneBus, midiBridge);
+  gridRowPlayer.setEnabled(true);   // always on — rowsGain handles the crossfade
+  mix = 0; auditionListening = true; auditionPinned = false;
   skyChordId = START_CHORD_ID; skyTabu = pushTabu([], skyChordId, TABU_K); skyStep = -1; lastSyncedChordId = null;
   skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; lastRootLadder = [];
   rootEstablished = false;
@@ -245,6 +306,7 @@ export function initAudio() {
   audioEpoch = transportStart;             // sky clock shares the origin but is never re-anchored after this
   chordStartedAt = 0; lastChordSeconds = 0; lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };
   lastModulationCents = 0; modulationGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
+  lastFundamentalCents = 0; fundamentalGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   scaledMedianGrid = 0; fieldOnsetTicks = 0;
   liveOscs = new Set();
   schedIdx = 0; schedCycle = 0;
@@ -253,23 +315,36 @@ export function initAudio() {
   // with zero stars clicked, as soon as flight-view starts feeding it setField() each frame.
 }
 
-export function currentAudioMode() { return audioMode; }
+export function currentMix() { return mix; }
 
-export function setAudioMode(mode) {
-  const next = Object.values(AUDIO_MODES).includes(mode) ? mode : AUDIO_MODES.AMBIENT_CHORDS;
-  audioMode = next;
-  if (!audioCtx) return audioMode;
+// Constant-power crossfade between bed (0) and rows (1). Both engines stay warm across the full
+// range — the bed keeps scheduling with gain gated at the rows end, and the row compile/prewarm
+// pipeline continues with attacks gated at the bed end. The knob is responsive in both directions.
+export function setMix(x) {
+  mix = Math.max(0, Math.min(1, +x || 0));
+  if (!audioCtx) return mix;
   const now = audioCtx.currentTime;
-  const ambient = next === AUDIO_MODES.AMBIENT_CHORDS;
-  ambientModeGain.gain.cancelScheduledValues(now);
-  ambientModeGain.gain.setValueAtTime(Math.max(0, ambientModeGain.gain.value), now);
-  ambientModeGain.gain.linearRampToValueAtTime(ambient ? 1 : 0, now + 0.35);
-  gridRowPlayer?.setEnabled(!ambient);
-  if (!ambient) {
-    for (const [id, bs] of bedStars) { bedStars.delete(id); dropBedStar(bs, now); }
-  }
-  return audioMode;
+  const bedLevel = Math.cos(mix * Math.PI / 2);
+  const rowsLevel = Math.sin(mix * Math.PI / 2);
+  bedGain.gain.cancelScheduledValues(now);
+  bedGain.gain.setTargetAtTime(bedLevel, now, 0.05);
+  rowsGain.gain.cancelScheduledValues(now);
+  rowsGain.gain.setTargetAtTime(rowsLevel, now, 0.05);
+  return mix;
 }
+
+export function setAuditionListen(on) {
+  auditionListening = !!on;
+  if (!audioCtx) return auditionListening;
+  const now = audioCtx.currentTime;
+  auditionGain.gain.cancelScheduledValues(now);
+  auditionGain.gain.setTargetAtTime(auditionListening ? 1 : 0, now, 0.05);
+  return auditionListening;
+}
+export function currentAuditionListen() { return auditionListening; }
+
+export function setAuditionPin(on) { auditionPinned = !!on; return auditionPinned; }
+export function currentAuditionPin() { return auditionPinned; }
 
 export function setGridSpatialField(items) {
   if (!audioCtx || !gridRowPlayer) return;
@@ -310,9 +385,21 @@ export function scaledRateFor(grids, cycleSeconds) {
   return { medianGrid, ticksPerSec: Math.max(SCALED_RATE_MIN, Math.min(SCALED_RATE_MAX, medianGrid / cycleSeconds)) };
 }
 
+// SPEED's onset-rate analog of scaledRateFor (Phase 2.1), pure for the same headless guarding. A target
+// note rate in onsets/sec becomes a tick rate through the field's mean onset gap: onsets/sec × ticks/onset
+// = ticks/sec, clamped by the same [SCALED_RATE_MIN, SCALED_RATE_MAX] rail. → null when no onset gap is
+// known yet (no rows sounding), meaning "keep the rate we have", exactly like scaledRateFor.
+export function onsetRateToTickRate(onsetRate, onsetTicks) {
+  if (!(onsetRate > 0) || !(onsetTicks > 0)) return null;
+  return { onsetTicks, ticksPerSec: Math.max(SCALED_RATE_MIN, Math.min(SCALED_RATE_MAX, onsetRate * onsetTicks)) };
+}
+
+// Both SCALED and ONSET re-derive the tick rate as the field churns (same hysteresis band — the median
+// grid and the median onset gap are both discrete step functions, and every change re-anchors the epoch).
 function applyScaledRate() {
-  if (speedMode !== SPEED_MODES.SCALED) return;
-  const derived = scaledRateFor([scaledMedianGrid], scaledCycleSeconds);
+  const derived = speedMode === SPEED_MODES.SCALED ? scaledRateFor([scaledMedianGrid], scaledCycleSeconds)
+    : speedMode === SPEED_MODES.ONSET ? onsetRateToTickRate(targetOnsetRate, fieldOnsetTicks)
+    : null;
   if (!derived) return;
   if (Math.abs(derived.ticksPerSec - ticksPerSec) / Math.max(derived.ticksPerSec, ticksPerSec) > SCALED_RATE_HYSTERESIS) {
     setTickRate(derived.ticksPerSec);
@@ -330,6 +417,19 @@ export function setSpeedMode(mode, cycleSeconds) {
   return { mode: speedMode, cycleSeconds: scaledCycleSeconds, ticksPerSec, medianGrid: scaledMedianGrid };
 }
 
+// SPEED knob binding (Phase 2.1): set the target note rate in onsets/sec, switching speed into ONSET mode
+// (SPEED replaces the fixed/scaled toggle — decision 9). ticks/s re-derives immediately from the current
+// field's onset gap; the readout's cycle is the derived grid/rate. Clamped to the knob's [MIN, MAX] range.
+export function setTargetOnsetRate(rate) {
+  const n = Number(rate);
+  targetOnsetRate = Math.max(SPEED_ONSET_MIN, Math.min(SPEED_ONSET_MAX, Number.isFinite(n) ? n : SPEED_ONSET_DEFAULT));
+  speedMode = SPEED_MODES.ONSET;
+  const derived = onsetRateToTickRate(targetOnsetRate, fieldOnsetTicks);
+  if (derived && audioCtx) setTickRate(derived.ticksPerSec);
+  return targetOnsetRate;
+}
+export function currentTargetOnsetRate() { return targetOnsetRate; }
+
 // MIDI Out. Off by default; enabling asks for Web MIDI access and picks the IAC/loopMIDI bus if one is
 // there. Async because requestMIDIAccess is — the caller gets {ok, port} or {ok:false, reason} to show.
 export async function setMidiOut(on) {
@@ -339,8 +439,19 @@ export async function setMidiOut(on) {
 }
 export function midiOutState() { return cosmosMidi?.debugState() || { enabled: false, supported: false }; }
 
-// "Expose the full quality": hold each chord until every one of its degrees has actually sounded.
-export function setHoldForFullQuality(on) { holdForFullQuality = !!on; return holdForFullQuality; }
+// DEPRECATED (Phase 0.3): full exposure is now an unconditional advance floor at every mix position, so
+// there is nothing to toggle — the checkbox is absorbed into the always-on floor + DWELL (decision 3) and
+// removed with the cockpit in the rail phase. Kept as a no-op so the current UI wiring doesn't throw.
+export function setHoldForFullQuality() { return true; }
+
+// DWELL knob (Phase 0.3 policy; the log knob mapping + persistence arrive in Phase 2.2 / Phase 1). Chord
+// dwell PAST full exposure as a fraction of one cycle, clamped [0,1]; 0 = advance the moment it is exposed.
+export function setDwell(fraction) {
+  const n = Number(fraction);
+  dwellFraction = Math.max(0, Math.min(1, Number.isFinite(n) ? n : 0));
+  return dwellFraction;
+}
+export function currentDwell() { return { fraction: dwellFraction, ...lastChordClock }; }
 
 // Pure: the cent shift that puts a solved root on the fundamental's pitch class, folded to the nearest
 // octave-equivalent so the move is at most a tritone in either direction. Modulation off → 0, which is
@@ -363,30 +474,56 @@ export function rootGlideSeconds(onsetTicks, ticksPerSecond, onsets = ROOT_GLIDE
   return Math.max(ROOT_GLIDE_MIN_SECONDS, Math.min(ROOT_GLIDE_MAX_SECONDS, seconds));
 }
 
-// Glide the shared detune bus to the shift the current root asks for. setTargetAtTime is the main LRC
-// page's law (handleFundamentalChange); its third argument is a TIME CONSTANT, so feeding it a third of
-// the glide length puts the move ~95% home by the time the glide is nominally over.
-function applyRootModulation() {
-  if (!audioCtx || !rootDetune) return;
-  const target = modulationCentsFor(skyRoot.cents, modulationOn);
-  lastModulationCents = target;
+// Glide one of the two summed detune offsets to a target, recording the curve so it can be reproduced.
+// setTargetAtTime is the main LRC page's law (handleFundamentalChange); its third argument is a TIME
+// CONSTANT, so feeding it a third of the glide length puts the move ~95% home by the time the glide is
+// nominally over. The MIDI retune always folds in BOTH offsets (totalDetuneCentsAt): a modulation glide
+// leaves the fundamental constant and vice-versa, but a sustained voice's bend must track the true sum.
+function glideDetune(source, glideRecord, target, setLast) {
   const now = audioCtx.currentTime;
   const seconds = rootGlideSeconds(fieldOnsetTicks, ticksPerSec);
   const timeConstant = Math.max(0.01, seconds / 3);
-  modulationGlide = { from: modulationCentsAt(now), to: target, at: now, timeConstant };
-  rootDetune.offset.cancelScheduledValues(now);
-  rootDetune.offset.setTargetAtTime(target, now, timeConstant);
+  const from = glideCentsAt(glideRecord.current, now);
+  const next = { from, to: target, at: now, timeConstant };
+  glideRecord.set(next);
+  setLast(target);
+  source.offset.cancelScheduledValues(now);
+  source.offset.setTargetAtTime(target, now, timeConstant);
   // Tones already sounding must bend too — a row note is over before the glide is, but a bed voice
   // would otherwise sit at its old pitch for seconds while the browser glided underneath it.
-  cosmosMidi?.retune(elapsed => modulationCentsAt(now + elapsed), seconds);
+  cosmosMidi?.retune(elapsed => totalDetuneCentsAt(now + elapsed), seconds);
 }
 
-// The exact value of the detune bus at an audio time, reproducing setTargetAtTime's exponential
+function applyRootModulation() {
+  if (!audioCtx || !modulationOffset) return;
+  const target = modulationCentsFor(skyRoot.cents, modulationOn);
+  glideDetune(modulationOffset, { current: modulationGlide, set: g => { modulationGlide = g; } },
+    target, v => { lastModulationCents = v; });
+}
+
+// FUNDAMENTAL knob: a user-driven global transpose on the same bus, gliding on modulation's exact law.
+function applyFundamentalGlide() {
+  if (!audioCtx || !fundamentalOffset) return;
+  glideDetune(fundamentalOffset, { current: fundamentalGlide, set: g => { fundamentalGlide = g; } },
+    lastFundamentalCents, v => { lastFundamentalCents = v; });
+}
+
+// The exact value of a recorded glide at an audio time, reproducing setTargetAtTime's exponential
 // approach: v(t) = to + (from − to)·e^(−(t−t0)/τ). Pure given the recorded curve.
-export function modulationCentsAt(audioTime) {
-  const { from, to, at, timeConstant } = modulationGlide;
+export function glideCentsAt(glide, audioTime) {
+  const { from, to, at, timeConstant } = glide;
   if (!Number.isFinite(audioTime) || audioTime <= at) return from;
   return to + (from - to) * Math.exp(-(audioTime - at) / Math.max(1e-6, timeConstant));
+}
+export function modulationCentsAt(audioTime) { return glideCentsAt(modulationGlide, audioTime); }
+export function fundamentalCentsAt(audioTime) { return glideCentsAt(fundamentalGlide, audioTime); }
+// Pure: the total detune the ensemble hears (and the MIDI mirror must spell) is the SUM of the two
+// independent offsets. NaN-guarded so a not-yet-initialised glide contributes 0 rather than poisoning it.
+export function totalDetuneCents(fundamentalCents, modulationCents) {
+  return (Number.isFinite(fundamentalCents) ? fundamentalCents : 0) + (Number.isFinite(modulationCents) ? modulationCents : 0);
+}
+export function totalDetuneCentsAt(audioTime) {
+  return totalDetuneCents(fundamentalCentsAt(audioTime), modulationCentsAt(audioTime));
 }
 
 // Retune the solved root to the fundamental, so a root change is heard as a key change rather than as a
@@ -400,7 +537,57 @@ export function setModulation(on) {
 export function currentModulation() {
   return { on: modulationOn, cents: lastModulationCents, glideSeconds: rootGlideSeconds(fieldOnsetTicks, ticksPerSec), onsetTicks: fieldOnsetTicks };
 }
-export function currentSpeedMode() { return { mode: speedMode, cycleSeconds: scaledCycleSeconds, ticksPerSec, medianGrid: scaledMedianGrid }; }
+
+// FUNDAMENTAL knob (Phase 0.2 bus; the log knob mapping arrives in Phase 2.3). A global transpose in
+// CENTS, clamped to ±FUNDAMENTAL_OFFSET_MAX_CENTS, gliding on modulation's exact portamento law. Setting
+// it never touches the modulation offset — the two automations are independent, they only sum on the bus.
+export function setFundamentalOffset(cents) {
+  const n = Number(cents);
+  lastFundamentalCents = Math.max(-FUNDAMENTAL_OFFSET_MAX_CENTS, Math.min(FUNDAMENTAL_OFFSET_MAX_CENTS, Number.isFinite(n) ? n : 0));
+  applyFundamentalGlide();
+  return lastFundamentalCents;
+}
+export function currentFundamental() {
+  return { cents: lastFundamentalCents, maxCents: FUNDAMENTAL_OFFSET_MAX_CENTS, glideSeconds: rootGlideSeconds(fieldOnsetTicks, ticksPerSec) };
+}
+export function currentSpeedMode() {
+  // In SCALED/ONSET the cycle is DERIVED (grid/rate); the readout shows both "N notes/s · ~Ss cycle".
+  const derivedCycleSeconds = scaledMedianGrid > 0 && ticksPerSec > 0 ? scaledMedianGrid / ticksPerSec : scaledCycleSeconds;
+  return { mode: speedMode, cycleSeconds: scaledCycleSeconds, derivedCycleSeconds, ticksPerSec, medianGrid: scaledMedianGrid, targetOnsetRate };
+}
+
+// RICHNESS knob (Phase 2.3): the live sky-reach weight promoted from a const at the swept knee, clamped to
+// the table's [0, RICHNESS_MAX]. stepSkyWalk reads the live value on its next chord choice.
+export function setRichness(value) {
+  const n = Number(value);
+  RICHNESS = Math.max(0, Math.min(RICHNESS_MAX, Number.isFinite(n) ? n : RICHNESS));
+  return RICHNESS;
+}
+export function currentRichness() { return { value: RICHNESS, max: RICHNESS_MAX }; }
+
+// VOLUME knob (Phase 2.3): master trim ahead of the limiter. Ramped, not stepped, so a knob drag glides.
+export function setVolume(x) {
+  const n = Number(x);
+  lastVolume = Math.max(0, Math.min(1, Number.isFinite(n) ? n : MASTER_VOLUME_DEFAULT));
+  if (masterVolume && audioCtx) masterVolume.gain.setTargetAtTime(lastVolume, audioCtx.currentTime, 0.02);
+  return lastVolume;
+}
+export function currentVolume() { return lastVolume; }
+
+// SPACE knob (Phase 2.3): one control over BOTH reverb sends, each calibrated so the midpoint (0.5)
+// reproduces today's levels and the travel from dry (0) to wash (1) feels continuous across the MIX.
+export function setSpace(x) {
+  const n = Number(x);
+  lastSpace = Math.max(0, Math.min(1, Number.isFinite(n) ? n : SPACE_DEFAULT));
+  const ambientWet = 2 * SPACE_AMBIENT_WET_AT_HALF * lastSpace;   // 0.5 → 0.30 (today's ambient send)
+  const rowWet = 2 * SPACE_ROW_WET_AT_HALF * lastSpace;           // 0.5 → 0.35 (today's row send)
+  if (audioCtx) {
+    reverbWet?.gain.setTargetAtTime(ambientWet, audioCtx.currentTime, 0.1);
+    gridRowPlayer?.setReverbWet(rowWet);
+  }
+  return { space: lastSpace, ambientWet, rowWet };
+}
+export function currentSpace() { return { space: lastSpace, ambientWet: 2 * SPACE_AMBIENT_WET_AT_HALF * lastSpace, rowWet: 2 * SPACE_ROW_WET_AT_HALF * lastSpace }; }
 
 // Read-only bridge for flight visuals. The audio player remains the authority on whether a row star
 // really has live voices and whether a scheduled attack has reached audio-context time.
@@ -463,7 +650,7 @@ export function setSpatial(pan, gain, octaveLift) {
 // -> star's StereoPanner -> star's distance GainNode -> bedBus (dry -> master, wet -> shared reverb).
 // The pure scheduling-decision helpers below (hashId/bedDegreesFor/reattachStepFor) are exported
 // alongside the SKY KNOBS so a headless guard can verify the bed's decisions without a real AudioContext.
-export { CHORD_SECONDS, CHORD_MAX_SECONDS, SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, LAMBDA_FIELD, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_TOP_K };
+export { NOMINAL_FALLBACK_CYCLE_SECONDS, CHORD_QUANTIZE_DIVISIONS, CHORD_ESCAPE_MULT, SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, LAMBDA_FIELD, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_TOP_K };
 
 // User-facing harmonic-policy control. Because candidate field costs are normalized, this has a
 // stable meaning: the best local tuning advantage can justify up to this many semitones of additional
@@ -625,7 +812,7 @@ function createVoice(bs, degree, now) {
   const slot = bs.pool[degree]; if (!slot) return null;
   const ratio = 2 ** (slot.cents / 1200);
   const osc = audioCtx.createOscillator(); osc.type = 'sine'; osc.frequency.value = ROOT_HZ * ratio * (2 ** bs.octave);
-  rootDetune?.connect(osc.detune);   // shared modulation glide — see initAudio
+  detuneBus?.connect(osc.detune);   // shared fundamental + modulation glide — see initAudio
   const env = audioCtx.createGain(); env.gain.value = 0.0001;
   osc.connect(env); env.connect(bs.filter);
   osc.start(now);
@@ -634,7 +821,7 @@ function createVoice(bs, degree, now) {
   // degree only, and a root swap can re-map the same degree to a DIFFERENT tone; syncBedDegrees
   // compares this against the current pool to detect that and release+recreate).
   const v = { osc, env, degree, dev: slot.dev, fraction: slot.fraction };
-  v.midi = cosmosMidi?.noteOn(osc.frequency.value, now, { cents: modulationCentsAt(now), gain: bs.gainNode.gain.value });
+  v.midi = cosmosMidi?.noteOn(osc.frequency.value, now, { cents: totalDetuneCentsAt(now), gain: bs.gainNode.gain.value });
   bs.oscMap.set(degree, v);
   bedSoundedDegrees.add(degree);   // exposure ledger: the bed sounds BY degree, so this is already the answer
   swellEnvelope(env.gain, BED_PEAK * gainForDev(slot.dev), now);
@@ -656,7 +843,7 @@ function releaseVoice(bs, v, now, immediate) {
   } catch {}
   try { v.osc.stop(now + rel + 0.05); } catch {}
   v.osc.onended = () => {
-    try { rootDetune?.disconnect(v.osc.detune); } catch {}
+    try { detuneBus?.disconnect(v.osc.detune); } catch {}
     try { v.osc.disconnect(); } catch {} try { v.env.disconnect(); } catch {}
     if (bs.fadingCount != null) { bs.fadingCount--; if (bs.fadingCount <= 0) finalizeStarChain(bs); }
   };
@@ -724,59 +911,89 @@ function pumpReattacks(now, seconds) {
 function chordExposure(nowSeconds) {
   const chord = CHORDS[skyChordId];
   const sounded = new Set();
-  if (audioMode === AUDIO_MODES.CULLED_GRID_ROWS) {
-    const since = audioEpoch + chordStartedAt;   // ledger times are audio-context times, not sky seconds
-    for (const tone of gridRowPlayer?.soundedSince(since) || []) {
-      const match = ownerChordMatch(tone.cents, skyRoot.cents, chord.semitones);
-      if (match?.selected) sounded.add(match.degree);
-    }
-  } else {
-    // Live voices AND the ledger: the bed is a sustained pad, so a voice that carries across a chord
-    // change never re-enters createVoice — counting only new attacks would leave its degree looking
-    // unexposed forever. The ledger covers the converse case, a voice that swelled and was released
-    // inside this window.
-    for (const bs of bedStars.values()) for (const degree of bs.oscMap.keys()) sounded.add(degree);
-    for (const degree of bedSoundedDegrees) sounded.add(degree);
-    for (const degree of [...sounded]) if (!chord.semitones.includes(degree)) sounded.delete(degree);
+  // Both engines contribute to exposure at every mix position — a degree sounded by either bus counts.
+  // Row player's ledger: maps sounded cents to chord degrees around the live root.
+  const since = audioEpoch + chordStartedAt;
+  for (const tone of gridRowPlayer?.soundedSince(since) || []) {
+    const match = ownerChordMatch(tone.cents, skyRoot.cents, chord.semitones);
+    if (match?.selected) sounded.add(match.degree);
   }
+  // Bed: live voices + the ledger (a sustained voice that carries across a chord change never
+  // re-enters createVoice; the ledger covers voices that swelled and released inside this window).
+  for (const bs of bedStars.values()) for (const degree of bs.oscMap.keys()) sounded.add(degree);
+  for (const degree of bedSoundedDegrees) sounded.add(degree);
+  // Filter to chord degrees only.
+  for (const degree of [...sounded]) if (!chord.semitones.includes(degree)) sounded.delete(degree);
   const missing = chord.semitones.filter(degree => !sounded.has(degree));
   return { degrees: chord.semitones, sounded: [...sounded].sort((a, b) => a - b), missing,
     complete: missing.length === 0, heldSeconds: nowSeconds - chordStartedAt };
 }
 
-// Pure dwell rule, exported so a headless guard can verify it without a live AudioContext.
+// Pure chord-clock policy (Phase 0.3), exported so a headless guard can verify it without a live
+// AudioContext. Identical at every MIX position — the exposure ledger is already mix-wide (rows via
+// soundedSince, bed via bedSoundedDegrees), so this only reads its `complete` verdict.
 //
-// With the hold on, the fixed window stops governing entirely and EXPOSURE becomes the clock: the chord
-// moves the moment its full quality has first been heard. A chord then lasts exactly as long as it takes
-// to say itself — a triad whose three degrees land quickly is brief, a 13th waiting on its last degree
-// dwells — instead of every chord occupying the same 25.6s box. (Holding a fully-exposed chord until the
-// next window boundary was just dead air after the point had been made.)
-//
-// Because voice leading is parsimonious, consecutive chords share most of their degrees, and the shared
-// ones are usually already sounding when the chord arrives. In practice the hold therefore waits on
-// precisely the degrees that make the new chord DIFFERENT — which is the musically useful reading of
-// "expose the quality". The cap still rescues a degree the local field simply cannot voice.
-export function shouldAdvanceChord({ windowElapsed, holding, complete, heldSeconds, maxSeconds = CHORD_MAX_SECONDS }) {
-  if (!holding) return !!windowElapsed;
-  return !!complete || heldSeconds >= maxSeconds;
+//   1. ESCAPE first — a degree the local field cannot voice (or a chord flown away from) can never
+//      complete, so release it after maxSeconds regardless of exposure or the quantize grid.
+//   2. FLOOR — full exposure is required at every mix position. Below it the chord holds however long the
+//      geography needs to say its quality: a sparse field stretches a short DWELL out to the floor.
+//   3. TARGET — DWELL then holds a further targetSeconds past exposure (0 = advance the moment exposed).
+//   4. QUANTIZE — land the change on the first cycle-subdivision boundary after 2+3 are both satisfied,
+//      so chord changes fall on the form. (The escape ignores this — a rescue fires as soon as it is due.)
+export function shouldAdvanceChord({ complete, heldSeconds = 0, targetSeconds = 0, maxSeconds = Infinity, atBoundary = true }) {
+  if (heldSeconds >= maxSeconds) return true;
+  if (!complete) return false;
+  if (heldSeconds < targetSeconds) return false;
+  return !!atBoundary;
 }
 
-// The sky walk's chord clock: a pure step index off the SKY clock, CHORD_SECONDS apart (a chord window
-// is a listening duration — it must not shrink when scaled speed raises the tick rate). Online, not
-// precomputed — advancing past a boundary calls chooseNextChord ONCE against the CURRENT field (no
-// history replay; if the clock jumps far ahead — e.g. a backgrounded tab — the walk just takes one hop
-// and re-anchors, same "don't retroactively replay" spirit as setTickRate).
-//
-// With holdForFullQuality the window stops governing and exposure becomes the clock — see
-// shouldAdvanceChord. skyStep still re-anchors to the CURRENT step on every advance, so a chord that
-// spanned several windows never replays them, and turning the hold back off resumes cleanly from here.
+// One grid cycle in SKY-CLOCK seconds, from the median sounding grid at the live tick rate. With no rows
+// sounding (medianGrid 0 — ambient, or fixed mode where a cycle is not one duration) there is no cycle, so
+// DWELL maps to a nominal fallback instead. Pure, so a guard can check the fallback without an AudioContext.
+export function effectiveCycleSecondsFor(medianGrid, ticksPerSecond) {
+  return (medianGrid > 0 && ticksPerSecond > 0) ? medianGrid / ticksPerSecond : NOMINAL_FALLBACK_CYCLE_SECONDS;
+}
+// DWELL target: a fraction of the cycle held past exposure. cycleSeconds ≤ 0 falls back to the nominal cycle.
+export function chordTargetSeconds(dwellFrac, cycleSeconds) {
+  const f = Math.max(0, Math.min(1, Number.isFinite(dwellFrac) ? dwellFrac : 0));
+  return f * (cycleSeconds > 0 ? cycleSeconds : NOMINAL_FALLBACK_CYCLE_SECONDS);
+}
+// Escape cap: 4 full cycles — 4× the maximum DWELL target, with generous headroom when DWELL is low so an
+// exposure-governed chord in a sparse field is not cut off before it can complete.
+export function chordEscapeSeconds(cycleSeconds) {
+  return CHORD_ESCAPE_MULT * (cycleSeconds > 0 ? cycleSeconds : NOMINAL_FALLBACK_CYCLE_SECONDS);
+}
+// Quantize grid: 1/8 of the cycle, so chord changes land on the form (spirit of ROW_SWITCH_TICKS swaps).
+export function chordQuantumSeconds(cycleSeconds) {
+  return (cycleSeconds > 0 ? cycleSeconds : NOMINAL_FALLBACK_CYCLE_SECONDS) / CHORD_QUANTIZE_DIVISIONS;
+}
+
+// SCALED and ONSET both pin one grid cycle to a wall duration (rate derived from the grid / onset gap), so
+// grid/rate is a meaningful cycle. In FIXED mode grid/rate swings from seconds to hours across grids — the
+// pathology scaled mode exists to avoid — so DWELL falls back to the nominal cycle, exactly as with no rows.
+function effectiveCycleSeconds() {
+  return speedMode !== SPEED_MODES.FIXED ? effectiveCycleSecondsFor(scaledMedianGrid, ticksPerSec) : NOMINAL_FALLBACK_CYCLE_SECONDS;
+}
+
+// The sky walk's chord clock (Phase 0.3). skyStep now tracks the 1/8-cycle QUANTIZE grid off the SKY
+// clock (a listening duration — the grid must not shrink when scaled speed raises the tick rate), updated
+// every tick so `atBoundary` is true only on the single tick that crosses a fresh boundary. The advance
+// decision is the pure shouldAdvanceChord policy: exposure floor + DWELL target, quantized, with an escape.
+// Online, not precomputed — advancing calls chooseNextChord ONCE against the CURRENT field (no history
+// replay; a far clock jump — backgrounded tab — still reads as one crossed boundary and takes one hop).
 function stepSkyWalk(seconds) {
-  const step = chordStepIndex(seconds, CHORD_SECONDS);
+  const cycleSeconds = effectiveCycleSeconds();
+  const targetSeconds = chordTargetSeconds(dwellFraction, cycleSeconds);
+  const quantumSeconds = chordQuantumSeconds(cycleSeconds);
+  const escapeSeconds = chordEscapeSeconds(cycleSeconds);
+  lastChordClock = { cycleSeconds, targetSeconds, quantumSeconds, escapeSeconds };
+  const step = chordStepIndex(seconds, quantumSeconds);
   if (skyStep < 0) { skyStep = step; chordStartedAt = seconds; return; }
+  const atBoundary = step !== skyStep;
+  skyStep = step;
   const exposure = chordExposure(seconds);
   lastChordExposure = exposure;
-  if (!shouldAdvanceChord({ windowElapsed: step !== skyStep, holding: holdForFullQuality, ...exposure })) return;
-  skyStep = step;
+  if (!shouldAdvanceChord({ complete: exposure.complete, heldSeconds: exposure.heldSeconds, targetSeconds, maxSeconds: escapeSeconds, atBoundary })) return;
   lastChordSeconds = seconds - chordStartedAt;
   chordStartedAt = seconds;
   bedSoundedDegrees = new Set();
@@ -1005,11 +1222,16 @@ export function debugSkyState() {
   const ladderTopK = lastRootLadder.slice(0, ROOT_TOP_K).map(r => ({ fraction: r.fraction, cents: Math.round(r.cents * 10) / 10, score: Math.round(r.score * 1000) / 1000 }));
   const gridRows = gridRowPlayer?.debugState() || null;
   return {
-    audioMode,
+    mix,
+    auditionListening,
     tuningStrength: LAMBDA_FIELD,
     speed: { ...currentSpeedMode(), skySeconds: currentSkySeconds() },
-    chordExposure: { ...lastChordExposure, holding: holdForFullQuality, lastChordSeconds },
+    chordExposure: { ...lastChordExposure, lastChordSeconds, dwell: dwellFraction, ...lastChordClock },
     modulation: currentModulation(),
+    fundamental: currentFundamental(),
+    volume: currentVolume(),
+    space: currentSpace(),
+    richness: currentRichness(),
     midi: midiOutState(),
     gridRows,
     rootHz: ROOT_HZ,   // 1/1's fixed fundamental — the root solve only ever picks a RATIO relative to this
@@ -1020,7 +1242,7 @@ export function debugSkyState() {
     tabu: (skyTabu || []).map(id => ({ id, symbol: CHORDS[id].symbol })),
     coverageByTriad: CHORDS.map(t => ({ id: t.id, symbol: t.symbol, coverage: Math.round(skyCoverage(t, audibleStars) * 1000) / 1000 })),
     candidateCosts: candidates,
-    selectedRatioTones: audioMode === AUDIO_MODES.CULLED_GRID_ROWS
+    selectedRatioTones: mix > 0.5
       ? selectedGridRatioToneRows(skyChordId, skyRoot.cents, gridRows?.stars)
       : selectedRatioToneRows(skyChordId, stars),
     audibleCount: currentField.length,
@@ -1036,12 +1258,7 @@ export function setField(items) {
   if (!audioCtx) return;
   const now = audioCtx.currentTime;
   currentField = items;
-  // The chord walk still reads currentField in culled-row mode, but the dormant chord-bed engine
-  // must not keep 30 inaudible oscillators alive beside the row budget.
-  if (audioMode !== AUDIO_MODES.AMBIENT_CHORDS) {
-    for (const [id, bs] of bedStars) { bedStars.delete(id); dropBedStar(bs, now); }
-    return;
-  }
+  // Both engines stay warm at every mix position — bedGain controls audibility, not star presence.
   const seen = new Set();
   for (const item of items) {
     seen.add(item.id);
@@ -1094,7 +1311,8 @@ export function stopAudio() {
   // Capture the OLD graph before resetting module state, so a fast re-entry (initAudio right after
   // exitCosmos) starts clean immediately instead of waiting on this fade.
   const oldLiveOscs = liveOscs, oldBedStars = bedStars, oldDyingStars = dyingStars;
-  const oldMidi = cosmosMidi, oldRowPlayer = gridRowPlayer, oldRootDetune = rootDetune;
+  const oldMidi = cosmosMidi, oldRowPlayer = gridRowPlayer;
+  const oldFundamentalOffset = fundamentalOffset, oldModulationOffset = modulationOffset;
 
   cosmosMidi = null; gridRowPlayer = null;
   bedStars = new Map(); dyingStars = []; bedOscCount = 0; currentField = [];
@@ -1104,18 +1322,23 @@ export function stopAudio() {
   rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
   lead = null; schedIdx = 0; schedCycle = 0; transportStart = null; audioEpoch = null;
   chordStartedAt = 0; lastChordSeconds = 0; bedSoundedDegrees = new Set(); scaledMedianGrid = 0; fieldOnsetTicks = 0;
-  rootDetune = null; lastModulationCents = 0;
+  fundamentalOffset = null; modulationOffset = null; detuneBus = null;
+  lastModulationCents = 0; lastFundamentalCents = 0;
+  modulationGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
+  fundamentalGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1;
   audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; outputLimiter = null; liveOscs = null;
-  ambientModeGain = null; bedBus = null; reverbConv = null; reverbWet = null;
-  audioMode = AUDIO_MODES.AMBIENT_CHORDS;
+  bedGain = null; rowsGain = null; auditionGain = null; masterVolume = null;
+  bedBus = null; reverbConv = null; reverbWet = null;
+  mix = 0; auditionListening = true; auditionPinned = false;
 
   const teardown = () => {
     if (oldLiveOscs) for (const osc of oldLiveOscs) { try { osc.stop(0); } catch {} try { osc.disconnect(); } catch {} }
     if (ctx) { for (const bs of oldBedStars.values()) teardownBedStar(bs, ctx.currentTime); for (const bs of oldDyingStars) teardownBedStar(bs, ctx.currentTime); }
     oldMidi?.disable();
     oldRowPlayer?.destroy();
-    try { oldRootDetune?.stop(); } catch {}
+    try { oldFundamentalOffset?.stop(); } catch {}
+    try { oldModulationOffset?.stop(); } catch {}
     if (ctx) { try { ctx.close(); } catch {} }
   };
   if (ctx && gain) {
@@ -1144,10 +1367,9 @@ function schedulerTick() {
   if (!audioCtx) return;
   const now = audioCtx.currentTime;
   stepSkyWalk(skySeconds(now));   // the sky's own chord clock — independent of any lead (no click gating)
-  if (audioMode === AUDIO_MODES.AMBIENT_CHORDS) pumpReattacks(now, skySeconds(now));
+  pumpReattacks(now, skySeconds(now));   // bed breathes at every mix position (gain gates audibility)
   gridRowPlayer?.tick(now, now + SCHEDULE_AHEAD, transportStart, ticksPerSec);
   ensureLeadMask(false);       // cheap cache-check; recomputes only right after stepSkyWalk changed the chord
-  if (audioMode !== AUDIO_MODES.AMBIENT_CHORDS) return;
   if (!lead || !lead.notes.length) return;
   const horizon = audioCtx.currentTime + SCHEDULE_AHEAD;
   while (true) {
@@ -1166,7 +1388,7 @@ function scheduleNote(note, time, noteIdx) {
   if (liveOscs.size >= MAX_LIVE_OSC) return;
   const freq = ROOT_HZ * note.ratio * (2 ** currentOctaveLift);
   const osc = audioCtx.createOscillator(); osc.type = RHYTHM_VOICE_WAVEFORM; osc.frequency.value = freq;
-  rootDetune?.connect(osc.detune);   // shared modulation glide — see initAudio
+  detuneBus?.connect(osc.detune);   // shared fundamental + modulation glide — see initAudio
   const env = audioCtx.createGain();
   // Full Sky tint: in-(global-)chord onsets play full, out-of-chord onsets duck — the rhythm is
   // sacrosanct, no onset is ever skipped, the sky only tints it (M4 — replaces the per-star Chord Walk).
@@ -1176,7 +1398,7 @@ function scheduleNote(note, time, noteIdx) {
   env.gain.linearRampToValueAtTime(peak, time + ATTACK);
   env.gain.exponentialRampToValueAtTime(0.001, time + ATTACK + DECAY);
   osc.connect(env); env.connect(pannerNode);
-  cosmosMidi?.note(freq, time, ATTACK + DECAY, { cents: modulationCentsAt(time), gain: peak / NOTE_PEAK });
+  cosmosMidi?.note(freq, time, ATTACK + DECAY, { cents: totalDetuneCentsAt(time), gain: peak / NOTE_PEAK });
   osc.start(time); osc.stop(time + ATTACK + DECAY + 0.02);
   liveOscs.add(osc);
   osc.onended = () => { liveOscs.delete(osc); try { osc.disconnect(); } catch {} try { env.disconnect(); } catch {} };

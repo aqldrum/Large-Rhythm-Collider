@@ -16,7 +16,7 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, setHoldForFullQuality, setModulation, currentModulation, setMidiOut, setAudioMode, currentAudioMode, setGridSpatialField, gridRowVisualState, setTuningStrength, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, setHoldForFullQuality, setModulation, currentModulation, setMidiOut, setMix, currentMix, setAuditionListen, setGridSpatialField, gridRowVisualState, setTuningStrength, setRootPolicyContext } from './cosmos-audio.js';
 import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
@@ -1366,14 +1366,9 @@ function renderRhythmInspector(node) {
 }
 
 function changeAudioMode(mode) {
-  const next = setAudioMode(mode);
-  if (audioModeEl && audioModeEl.value !== next) audioModeEl.value = next;
-  rowGeneration++;
-  rowSelectionKey = '';
-  rowActiveIds = new Set();
-  rowPrewarmIds = new Set();
-  rowCompiler?.cancelQueuedExcept(new Set());
-  if (next === AUDIO_MODES.AMBIENT_CHORDS) setGridSpatialField([]);
+  const m = mode === AUDIO_MODES.CULLED_GRID_ROWS ? 1 : 0;
+  setMix(m);
+  if (audioModeEl) audioModeEl.value = mode;
 }
 
 function requestRowProgram(candidate, root, chord, selectionKey, validRequestKeys) {
@@ -1408,7 +1403,7 @@ function requestRowProgram(candidate, root, chord, selectionKey, validRequestKey
     }
     // Every mutable boundary is checked: session, eviction/recreation identity, mode, harmonic
     // generation, and superseding request. A late worker reply can never enter live playback.
-    if (!started || !cosmos || cosmos.zones.get(z.grid) !== zoneIdentity || currentAudioMode() !== AUDIO_MODES.CULLED_GRID_ROWS ||
+    if (!started || !cosmos || cosmos.zones.get(z.grid) !== zoneIdentity ||
         rowGeneration !== reply.result.generation || rowSelectionKey !== reply.result.selectionKey || zoneIdentity._rowAudio?.requestKey !== requestKey) return;
     zoneIdentity._rowAudio.program = reply.result;
     zoneIdentity._rowAudio.programSelectionKey = selectionKey;
@@ -1424,12 +1419,6 @@ function requestRowProgram(candidate, root, chord, selectionKey, validRequestKey
 }
 
 function updateGridRowField(placed, basis) {
-  if (currentAudioMode() !== AUDIO_MODES.CULLED_GRID_ROWS) {
-    rowActiveIds = new Set(); rowPrewarmIds = new Set();
-    rowCompiler?.cancelQueuedExcept(new Set());
-    setGridSpatialField([]);
-    return;
-  }
   const root = currentSkyRoot(), chord = currentSkyChord();
   const selectionKey = harmonicSelectionKey(root.rootKey, chord.id, ROW_CONSONANCE_CENTS);
   if (selectionKey !== rowSelectionKey) {
@@ -1687,7 +1676,7 @@ function renderSkyDebug(now) {
   skyDebugLast = now;
   const s = debugSkyState();
   const lines = [];
-  lines.push(`FULL SKY DEBUG   mode ${s.audioMode}   tuning ${s.tuningStrength.toFixed(2)}st   sounding root ${s.root.fraction} (${s.root.cents}¢, ${s.root.hz}Hz)${s.rootPolicy.pending ? '  [policy decision pending]' : ''}`);
+  lines.push(`FULL SKY DEBUG   mix ${s.mix.toFixed(2)} (${s.mix < 0.01 ? 'bed' : s.mix > 0.99 ? 'rows' : 'crossfade'})   tuning ${s.tuningStrength.toFixed(2)}st   sounding root ${s.root.fraction} (${s.root.cents}¢, ${s.root.hz}Hz)${s.rootPolicy.pending ? '  [policy decision pending]' : ''}`);
   const settleState = settleSinceSecond === null ? 'moving' : `settled ${(Math.max(0, (currentSkySeconds() - settleSinceSecond))).toFixed(1)}/${SETTLE_SECONDS}s`;
   lines.push(`  ${settleState}, camSpeed ${camSpeed.toFixed(1)}u/s (settle<${SETTLE_SPEED})`);
   // Two clocks: the grid clock (ticks/s, scales with speed) and the sky clock (seconds, never does).
@@ -1698,15 +1687,17 @@ function renderSkyDebug(now) {
   lines.push(`modul  ${s.modulation.on
     ? `ON  root → fundamental, shift ${s.modulation.cents >= 0 ? '+' : ''}${s.modulation.cents.toFixed(0)}¢, glide ${s.modulation.glideSeconds.toFixed(2)}s (${s.modulation.onsetTicks.toFixed(0)} ticks/onset)`
     : 'off  (absolute JI against a fixed 1/1 — a root change re-reads, it does not transpose)'}`);
+  if (s.fundamental) lines.push(`fund   ${s.fundamental.cents >= 0 ? '+' : ''}${s.fundamental.cents.toFixed(0)}¢ transpose (summed with modul on one detune bus; ±${s.fundamental.maxCents}¢)`);
   lines.push(`chord  ${s.chord.symbol}  degrees [${s.chord.semitones.join(',')}]`);
   // Exposure: which of the chord's degrees have actually SOUNDED this window. With the hold on, the
   // chord will not move until this is complete (or the cap fires).
   const exposure = s.chordExposure;
   if (exposure) {
     const missing = exposure.degrees.filter(d => !exposure.sounded.includes(d));
-    lines.push(`quality  ${exposure.holding ? 'HOLD' : 'free'}  sounded [${exposure.sounded.join(',')}]` +
+    lines.push(`quality  floor+dwell ${((exposure.dwell ?? 0) * 100).toFixed(0)}%cyc  sounded [${exposure.sounded.join(',')}]` +
       `${missing.length ? `  waiting on [${missing.join(',')}]` : '  ✓ full quality exposed'}` +
-      `  held ${exposure.heldSeconds.toFixed(1)}s · last chord ${exposure.lastChordSeconds.toFixed(1)}s`);
+      `  held ${exposure.heldSeconds.toFixed(1)}s / target ${(exposure.targetSeconds ?? 0).toFixed(1)}s` +
+      `  (cyc ${(exposure.cycleSeconds ?? 0).toFixed(1)}s · esc ${(exposure.escapeSeconds ?? 0).toFixed(0)}s) · last ${exposure.lastChordSeconds.toFixed(1)}s`);
   }
   lines.push(`trail  ${s.tabu.map(c => c.symbol).join(' → ')}`);
   if (s.gridRows) {
@@ -1717,7 +1708,7 @@ function renderSkyDebug(now) {
     for (const star of s.gridRows.stars) lines.push(`  #${star.id} ${star.events} ticks · ${star.selectedRatios} ratios · ${star.voices} voices${star.pendingKey ? ' [swap pending]' : ''}`);
   }
   const ratioTableAt = lines.length;
-  const ratioContext = s.audioMode === AUDIO_MODES.CULLED_GRID_ROWS
+  const ratioContext = s.mix > 0.5
     ? `active grid-star programs; ON = live A–D voices, max ${CULLED_ROW_MAX_VOICES_PER_TONE} per tone`
     : 'audible-star pools; ON = live bed voices';
   const covSorted = [...s.coverageByTriad].sort((a, b) => b.coverage - a.coverage);

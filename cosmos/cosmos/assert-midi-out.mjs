@@ -6,6 +6,9 @@ import {
   CosmosMidiOut, MIDI_BEND_RANGE_SEMITONES, MIDI_MASTER_CHANNEL, MIDI_MEMBER_CHANNELS,
   allocateMemberChannel, bendFromSemitones, freqToMidiFloat, noteAndBend,
 } from '../cosmos-midi-out.js';
+// Phase 0.2: the pitch that reaches the DAW is the SUM of two detune offsets. cosmos-audio owns the sum
+// (totalDetuneCents); here we prove that whatever it computes is exactly what gets spelled onto the wire.
+import { totalDetuneCents } from '../cosmos-audio.js';
 
 let PASS = true;
 const check = (label, ok, detail = '') => { if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail ? ` — ${detail}` : ''}`); };
@@ -134,6 +137,28 @@ sent.length = 0;
 player.allNotesOff();
 check('panic sends a real note-off AND All Notes Off, so nothing can hang in the DAW',
   sent.some(m => (m.bytes[0] & 0xF0) === 0x80) && sent.some(m => m.bytes[1] === 123) && player.live.size === 0);
+
+console.log('\n  Pitch-offset sum reaches MIDI (fundamental + modulation on one detune bus)');
+// A FUNDAMENTAL transpose now rides the same detune bus as modulation, and MIDI must spell each note at the
+// SUM of both — not modulation alone, or a transposed sky plays untransposed in the DAW. cosmos-audio hands
+// this layer that sum as `cents`; these prove the sum is what's spelled, and that BOTH offsets reach it.
+check('cosmos totals the two offsets rather than passing modulation alone',
+  totalDetuneCents(200, 298.045) === 498.045 && totalDetuneCents(600, 0) === 600 && totalDetuneCents(0, 600) === 600);
+const spellNoteAt = cents => { sent.length = 0; player.note(220, 10.5, 0.14, { cents }); return sent[1].bytes[1]; };
+// 220Hz +498.045¢ = 293.33Hz = MIDI 62 (D4). The same note must result whether that shift is all fundamental,
+// all modulation, or split between them — the bus only ever carries, and MIDI only ever spells, their sum.
+const nFund = spellNoteAt(totalDetuneCents(498.045, 0));
+const nMod = spellNoteAt(totalDetuneCents(0, 498.045));
+const nSplit = spellNoteAt(totalDetuneCents(200, 298.045));
+check('a note spells at the summed pitch whether the shift is fundamental, modulation, or split between them',
+  nFund === 62 && nMod === 62 && nSplit === 62, `notes ${nFund}/${nMod}/${nSplit}`);
+const audioSource = readFileSync(new URL('../cosmos-audio.js', import.meta.url), 'utf8');
+check('every MIDI-facing call in cosmos-audio spells at the summed detune (totalDetuneCentsAt), never modulation alone',
+  audioSource.includes('cents: totalDetuneCentsAt(when)') &&              // row/lead worker bridge
+  audioSource.includes('cents: totalDetuneCentsAt(time)') &&              // scheduled lead onset
+  audioSource.includes('cents: totalDetuneCentsAt(now)') &&              // bed voice birth
+  audioSource.includes('elapsed => totalDetuneCentsAt(now + elapsed)') && // sustained-voice retune during a glide
+  !/cents: modulationCentsAt\(/.test(audioSource));
 
 console.log(PASS ? '\n✓✓✓ COSMOS MIDI OUT PASSES' : '\n✗ COSMOS MIDI OUT FAILED');
 process.exit(PASS ? 0 : 1);

@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { gridShardSolve, shardKeysOf, gridShardSystems, divisorsFast, nearestDegree, poolFromRatios, TONE_BIN_CENTS } from '../grid-core.js';
 import { deriveScale } from '../oracle-core.js';
 import { CHORDS, CHORD_QUALITIES, QUALITY_COUNT, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, perDegreeSupport, weakestSupport, chooseNextChord, candidateCosts, pushTabu, chordStepIndex } from '../sky-walk.js';
-import { CHORD_SECONDS, CHORD_MAX_SECONDS, SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState, scaledRateFor, shouldAdvanceChord, modulationCentsFor, rootGlideSeconds } from '../cosmos-audio.js';
+import { SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState, scaledRateFor, modulationCentsFor, rootGlideSeconds } from '../cosmos-audio.js';
 import { poolFromTones, solveRoots, scoreRootAt } from '../sky-root.js';
 import { ratioToCents } from '../oracle-core.js';
 
@@ -227,11 +227,10 @@ check('chordStepIndex is a pure floor(elapsed/window)', clockFail === 0, `${cloc
 // breath and the root solve's settle are listening durations. Every seconds constant below is its old
 // tick value over the historical 10 ticks/s default, so the two clocks agree exactly at that rate.
 console.log('\n  Two clocks: sky constants are rate-independent seconds');
-check('CHORD_SECONDS is the old 256-tick window at the historical 10 ticks/s', CHORD_SECONDS === 256 / 10);
-check('REATTACK_PERIODS are the old tick periods at that same rate',
+// The chord clock (Phase 0.3: exposure floor + DWELL target + escape, all cycle-derived) is proven in
+// assert-chord-clock; here only the REATTACK heritage remains among the sky-clock constants.
+check('REATTACK_PERIODS are the old tick periods at the historical 10 ticks/s rate',
   REATTACK_PERIODS.join(',') === [45, 56, 64, 81, 100].map(t => t / 10).join(','));
-check('the full-quality hold is capped so an unvoiceable degree cannot stall the walk',
-  CHORD_MAX_SECONDS > CHORD_SECONDS && Number.isFinite(CHORD_MAX_SECONDS), `${CHORD_MAX_SECONDS}s`);
 // A rate change must not move the sky clock. currentSkySeconds reads a fixed epoch; currentTicks does not.
 check('speed mode is an explicit two-value enum with a scaled cycle default',
   SPEED_MODES.FIXED === 'fixed' && SPEED_MODES.SCALED === 'scaled' && SCALED_CYCLE_DEFAULT > 0);
@@ -306,22 +305,8 @@ check('the densest scaled grid still glides rather than jumping',
 check('with no onsets to scale against (ambient mode) it falls back to a real glide',
   rootGlideSeconds(0, 10) > 0 && rootGlideSeconds(165, 0) > 0);
 
-console.log('\n  Chord dwell rule (expose the full quality)');
-const dwell = extra => shouldAdvanceChord({ windowElapsed: false, holding: true, complete: false, heldSeconds: 0, maxSeconds: 100, ...extra });
-check('with the hold OFF the fixed window alone governs, exactly as before',
-  shouldAdvanceChord({ windowElapsed: true, holding: false, complete: false, heldSeconds: 0 }) &&
-  !shouldAdvanceChord({ windowElapsed: false, holding: false, complete: true, heldSeconds: 999 }));
-// With the hold on, exposure IS the clock: the chord moves the moment its quality has been heard,
-// rather than sitting out the rest of a window that has already made its point.
-check('with the hold on a fully-exposed chord advances immediately, without waiting for the window',
-  dwell({ complete: true, windowElapsed: false }));
-check('with the hold on an unexposed chord holds even once its window has elapsed',
-  !dwell({ complete: false, windowElapsed: true }));
-check('the cap releases a chord whose degree the local field simply cannot voice',
-  dwell({ complete: false, heldSeconds: 100 }) && dwell({ complete: false, heldSeconds: 250 }));
-check('under the hold the window neither advances nor blocks — only exposure and the cap decide',
-  dwell({ complete: true, windowElapsed: true }) === dwell({ complete: true, windowElapsed: false }) &&
-  dwell({ complete: false, windowElapsed: true }) === dwell({ complete: false, windowElapsed: false }));
+// The chord-clock advance policy (exposure floor / DWELL target / escape / quantize) lives in
+// assert-chord-clock now that it is a self-contained pure module (Phase 0.3).
 
 // ══ M3 — the bed ═════════════════════════════════════════════════════════════════════════════
 console.log('\n── M3: the bed ──');
@@ -389,7 +374,7 @@ console.log('\n  Budget cap');
 check('MAX_BED_OSC is a positive, binding cap (< AUDIBLE_N × 3)', MAX_BED_OSC > 0 && MAX_BED_OSC <= 10 * 3, `MAX_BED_OSC=${MAX_BED_OSC}`);
 
 // knob sanity
-check('CHORD_SECONDS, TABU_K positive', CHORD_SECONDS > 0 && TABU_K > 0);
+check('TABU_K positive', TABU_K > 0);
 check('REATTACK_PERIODS all positive, length > 1', REATTACK_PERIODS.length > 1 && REATTACK_PERIODS.every(p => p > 0));
 
 // ══ M4 — lead integration + cockpit ═════════════════════════════════════════════════════════

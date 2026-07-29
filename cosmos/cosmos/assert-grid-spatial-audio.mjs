@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { gridRatioOwnerSolve, gridShardSystems, shardKeysOf } from '../grid-core.js';
 import { ProgramWorkerPool } from '../program-worker-pool.js';
-import { selectedGridRatioToneRows } from '../cosmos-audio.js';
+import { selectedGridRatioToneRows, setMix, currentMix, setAuditionListen, currentAuditionListen, leadNoteInChord,
+  setFundamentalOffset, currentFundamental, currentModulation, totalDetuneCents, glideCentsAt } from '../cosmos-audio.js';
 import {
   CULLED_ROW_FUNDAMENTAL_HZ, CULLED_ROW_MAX_HZ, ROW_MICRO_GAP_SECONDS,
   SpatialGridRowPlayer, culledGridRowFrequency, nearestCulledToneVoices,
@@ -353,6 +354,57 @@ check('camera-front maps to WebAudio front and screen-right maps to audio +X',
 check('a genuinely rear source remains rear rather than being sign-flipped into view',
   toAudioListenerPosition([-3, 1, -10], basis).join(',') === '-3,1,10');
 
+console.log('\n  Bus split (MIX crossfade + audition independence)');
+check('setMix(0) → bed-only, constant-power cos(0)=1', (() => {
+  setMix(0); return currentMix() === 0;
+})());
+check('setMix(1) → rows-only, constant-power sin(π/2)=1', (() => {
+  setMix(1); return currentMix() === 1;
+})());
+check('setMix clamps to [0,1]', (() => {
+  setMix(-1); const lo = currentMix(); setMix(2); const hi = currentMix();
+  setMix(0); return lo === 0 && hi === 1;
+})());
+check('audition listen is independent of mix', (() => {
+  setMix(1); setAuditionListen(true); const onAtRows = currentAuditionListen();
+  setMix(0); const onAtBed = currentAuditionListen();
+  setAuditionListen(false); const offAtBed = currentAuditionListen();
+  setMix(1); const offAtRows = currentAuditionListen();
+  setAuditionListen(true); setMix(0);
+  return onAtRows && onAtBed && !offAtBed && !offAtRows;
+})());
+check('leadMask is independent of mix (pure function, no AudioContext needed)', (() => {
+  const inChord = leadNoteInChord(1.25, 0, 0);   // 5/4 → 386¢ → degree 4, in [0,4,7]
+  setMix(1); const atRows = leadNoteInChord(1.25, 0, 0);
+  setMix(0); return inChord && atRows;
+})());
+
+console.log('\n  Pitch-offset split (fundamental + modulation summed on one detune bus)');
+// FUNDAMENTAL and modulation are two ConstantSourceNodes summed on one detune bus; the ensemble hears —
+// and the MIDI mirror spells — their SUM, while each keeps its own independent automation.
+check('total detune is the exact sum of the two offsets',
+  totalDetuneCents(200, 298.045) === 498.045 && totalDetuneCents(-50, 50) === 0);
+check('a not-yet-initialised offset contributes 0 rather than poisoning the sum with NaN',
+  totalDetuneCents(NaN, 120) === 120 && totalDetuneCents(120, undefined) === 120 && totalDetuneCents(undefined, undefined) === 0);
+// Two DIFFERENT recorded glides, each reproduced independently — one gesture never reads the other's curve.
+const fundCurve = { from: 0, to: 1200, at: 0, timeConstant: 1 };
+const modCurve = { from: 0, to: -600, at: 0, timeConstant: 1 };
+check('each recorded glide reproduces setTargetAtTime\'s exponential approach independently, and their sum tracks both', (() => {
+  const t = 1;   // one time-constant in → ~63.2% of the way home
+  const f = glideCentsAt(fundCurve, t), m = glideCentsAt(modCurve, t);
+  const expF = 1200 * (1 - Math.exp(-1)), expM = -600 * (1 - Math.exp(-1));
+  return Math.abs(f - expF) < 1e-9 && Math.abs(m - expM) < 1e-9 && Math.abs(totalDetuneCents(f, m) - (expF + expM)) < 1e-9;
+})());
+check('FUNDAMENTAL clamps to ±2 octaves and setting it never disturbs the modulation offset', (() => {
+  const modBefore = currentModulation().cents;
+  const hi = setFundamentalOffset(99999), lo = setFundamentalOffset(-99999), mid = setFundamentalOffset(350);
+  const ok = hi === 2400 && lo === -2400 && mid === 350 &&
+    currentFundamental().cents === 350 && currentFundamental().maxCents === 2400 &&
+    currentModulation().cents === modBefore;
+  setFundamentalOffset(0);   // hygiene: leave the module offset at rest for later suites
+  return ok;
+})());
+
 console.log('\n  Product wiring');
 const audio = readFileSync(new URL('../cosmos-audio.js', import.meta.url), 'utf8');
 const player = readFileSync(new URL('../spatial-grid-row-player.js', import.meta.url), 'utf8');
@@ -365,9 +417,9 @@ check('compiler is a dedicated worker receiving compact finalized ownership',
   worker.includes('compileGridAudioProgram') && flight.includes('ProgramWorkerPool') && flight.includes('ratioOwners: z.ratioOwners'));
 check('main scheduler only schedules precompiled row programs',
   audio.includes('gridRowPlayer?.tick') && !player.includes('buildGridCull2Readout') && !player.includes('ratioOwners'));
-check('every Cosmos dry/wet path reaches the destination through a fast safety limiter',
-  audio.includes('createDynamicsCompressor()') && audio.includes('muteGainNode.connect(outputLimiter)') &&
-  audio.includes('outputLimiter.connect(audioCtx.destination)'));
+check('every Cosmos dry/wet path reaches the destination through a master trim then a fast safety limiter',
+  audio.includes('createDynamicsCompressor()') && audio.includes('muteGainNode.connect(masterVolume)') &&
+  audio.includes('masterVolume.connect(outputLimiter)') && audio.includes('outputLimiter.connect(audioCtx.destination)'));
 check('culled rows use their own tunable voice waveform while ambient keeps the shared contract',
   audio.includes('osc.type = RHYTHM_VOICE_WAVEFORM') && player.includes('osc.type = ROW_WAVEFORM') &&
   player.includes("ROW_WAVEFORM = 'triangle'"));
@@ -396,8 +448,28 @@ check('debug overlay scroll captures the wheel only under the pointer and contai
 check('debug overlay renders a sticky root-policy summary and explainable candidate table',
   flight.includes("className = 'sky-root-policy'") && flight.includes("className = 'sky-root-policy-table'") &&
   flight.includes('ROOT SELECTION · LIVE POLICY') && style.includes('#sky-debug-panel .sky-root-policy') && style.includes('position: sticky'));
-check('cockpit exposes both explicit modes with ambient chords as default',
-  page.includes('id="lrc-audio-mode"') && page.indexOf('value="ambient-chords" selected') < page.indexOf('value="culled-grid-rows"'));
+check('three independent gain buses feed muteGainNode through a constant-power MIX crossfade',
+  audio.includes('bedGain.connect(muteGainNode)') && audio.includes('rowsGain.connect(muteGainNode)') &&
+  audio.includes('auditionGain.connect(muteGainNode)') && audio.includes('Math.cos(mix * Math.PI / 2)') &&
+  audio.includes('Math.sin(mix * Math.PI / 2)'));
+check('audition bus is wired through its own gain, independent of bed/rows crossfade',
+  audio.includes('distGainNode.connect(auditionGain)') && audio.includes('setAuditionListen'));
+check('bed bus feeds bedGain (not the old ambientModeGain)',
+  audio.includes('bedBus.connect(bedGain)') && audio.includes('reverbWet.connect(bedGain)') &&
+  !audio.includes('ambientModeGain'));
+check('row player receives rowsGain as output so the MIX crossfade gates it',
+  audio.includes('SpatialGridRowPlayer(audioCtx, rowsGain,'));
+check('the detune bus sums two independent offset sources — fundamental + modulation — into one bus',
+  audio.includes('fundamentalOffset = audioCtx.createConstantSource()') &&
+  audio.includes('modulationOffset = audioCtx.createConstantSource()') &&
+  audio.includes('detuneBus = audioCtx.createGain()') &&
+  audio.includes('fundamentalOffset.connect(detuneBus)') && audio.includes('modulationOffset.connect(detuneBus)'));
+check('every oscillator (bed, lead, rows) detunes off the summed bus, not a single offset',
+  audio.includes('detuneBus?.connect(osc.detune)') && player.includes('this.detuneBus?.connect(osc.detune)') &&
+  audio.includes('SpatialGridRowPlayer(audioCtx, rowsGain, detuneBus'));
+check('the row register ceiling stays DERIVED from the fundamental anchor, not a re-hardcoded literal',
+  player.includes('CULLED_ROW_MAX_HZ = CULLED_ROW_FUNDAMENTAL_HZ * (2 ** CULLED_ROW_MAX_OCTAVES)') &&
+  !/CULLED_ROW_MAX_HZ\s*=\s*\d/.test(player));
 check('cockpit exposes the live local-tuning weight in voice-leading semitone units',
   page.includes('id="lrc-tuning-slider"') && page.includes('id="lrc-tuning-readout"') &&
   page.indexOf('id="lrc-tempo-slider"') < page.indexOf('id="lrc-tuning-slider"') &&
