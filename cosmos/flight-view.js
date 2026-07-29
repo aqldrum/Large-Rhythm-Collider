@@ -314,8 +314,12 @@ function toggleWeb(tag, srcGrid) {
   const members = mtagGrids && mtagGrids.get(tag);
   if (!members || !members.length) return;
   const slot = claimSlot(); if (slot < 0) return;
+  // Apex = largest member that still lands inside the Hilbert cube (members are sorted ascending, so
+  // scan from the top). Mirrors originGrid (members[0], the smallest) at the other end of the lineage.
+  let apex = members[0];
+  for (let i = members.length - 1; i >= 0; i--) if (members[i] < INDEX_COUNT) { apex = members[i]; break; }
   const web = { tag, slot, visible: true, color: WEB_COLORS[webColorN++ % WEB_COLORS.length],
-    homeGrid: srcGrid, originGrid: members[0], memberCount: members.length, localNodes: members.length, visibleNodes: 0 };
+    homeGrid: srcGrid, originGrid: members[0], apexGrid: apex, memberCount: members.length, localNodes: members.length, visibleNodes: 0 };
   activeWebs.set(tag, web);
   webRenderer?.upsert({ tag, visible: true, dynamic: false, color: web.color,
     homeGrid: srcGrid, originGrid: web.originGrid, members });
@@ -329,7 +333,7 @@ function toggleMNWeb(id, base, srcGrid) {
   if (!(base >= 2)) return;
   const slot = claimSlot(); if (slot < 0) return;
   const web = { tag: id, slot, visible: true, dynamic: true, base, motifKey: id.replace(/^mn:/, ''),
-    homeGrid: srcGrid, originGrid: base,
+    homeGrid: srcGrid, originGrid: base, apexGrid: Math.floor((INDEX_COUNT - 1) / base) * base,
     color: WEB_COLORS[webColorN++ % WEB_COLORS.length], localNodes: 0, visibleNodes: 0 };
   activeWebs.set(id, web);
   webRenderer?.upsert({ tag: id, visible: true, dynamic: true, base, color: web.color,
@@ -391,7 +395,9 @@ function releaseWebReturnLook(ride) {
 
 function beginWebReturn(webId, destination = 'anchor') {
   const web = activeWebs.get(webId);
-  const targetGrid = destination === 'origin' ? web?.originGrid : web?.homeGrid;
+  const targetGrid = destination === 'origin' ? web?.originGrid
+                   : destination === 'apex'   ? web?.apexGrid
+                   : web?.homeGrid;
   if (!web || targetGrid == null || !webRenderer) return;
   bloomWebId = webId;
   const generation = ++webRouteGeneration;
@@ -460,7 +466,7 @@ function stepWebReturn(now, dt) {
   cam.off = [arrival[0] - hc[0] * scale, arrival[1] - hc[1] * scale, arrival[2] - hc[2] * scale];
   cosmos.setCamera(cam.anchor); camSpeed = 0;
   web.rideProgress = 1;
-  web.rideStatus = `${ride.destination === 'origin' ? 'origin' : 'anchor'} reached · grid ${ride.targetGrid.toLocaleString()}`;
+  web.rideStatus = `${ride.destination === 'origin' ? 'origin' : ride.destination === 'apex' ? 'apex' : 'anchor'} reached · grid ${ride.targetGrid.toLocaleString()}`;
   releaseWebReturnLook(ride);
   returnRide = null; webRenderer?.clearRoute(); showDetail(selected);
   return true;
@@ -1102,9 +1108,10 @@ function showDetail(sel) {
   if (sel.kind === 'web') {
     const web = activeWebs.get(sel.webId);
     if (!web) { detailEl.style.display = 'none'; return; }
-    const homeCell = macroCell(web.homeGrid), originCell = macroCell(web.originGrid), camCell = macroCell(cam.anchor);
+    const homeCell = macroCell(web.homeGrid), originCell = macroCell(web.originGrid), apexCell = macroCell(web.apexGrid), camCell = macroCell(cam.anchor);
     const homeDistance = Math.hypot(homeCell[0] - camCell[0], homeCell[1] - camCell[1], homeCell[2] - camCell[2]);
     const originDistance = Math.hypot(originCell[0] - camCell[0], originCell[1] - camCell[1], originCell[2] - camCell[2]);
+    const apexDistance = Math.hypot(apexCell[0] - camCell[0], apexCell[1] - camCell[1], apexCell[2] - camCell[2]);
     const riding = !!(web.routePlanning || (returnRide && returnRide.webId === web.tag));
     const title = web.dynamic ? web.tag.replace(/^mn:/, '') : `mother ${web.tag}`;
     const family = web.dynamic ? 'unbounded' : `${web.memberCount.toLocaleString()} grids`;
@@ -1113,9 +1120,11 @@ function showDetail(sel) {
       : (web.rideStatus || 'ready');
     const travelButton = riding
       ? `<button class="web-cancel-btn" style="width:100%;margin-top:10px;background:rgba(255,255,255,.05);border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-size:11px;padding:7px;border-radius:var(--border-radius);cursor:pointer">cancel Web travel</button>`
-      : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px">` +
-          `<button class="web-travel-btn" data-id="${web.tag}" data-destination="anchor" style="background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Return to grid ${web.homeGrid.toLocaleString()}</button>` +
+      : `<button class="web-travel-btn" data-id="${web.tag}" data-destination="anchor" style="width:100%;margin-top:10px;background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Return to grid ${web.homeGrid.toLocaleString()}</button>` +
+        // Origin (smallest grid in this NR) and Apex (largest grid in the Hilbert cube for this NR) — the two lineage extremes.
+        `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">` +
           `<button class="web-travel-btn" data-id="${web.tag}" data-destination="origin" style="background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Origin · grid ${web.originGrid.toLocaleString()}</button>` +
+          `<button class="web-travel-btn" data-id="${web.tag}" data-destination="apex" style="background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Apex · grid ${web.apexGrid.toLocaleString()}</button>` +
         `</div>`;
     bodyEl.innerHTML =
       `<div class="big" style="color:${web.color}">◈ ${title}</div>` +
@@ -1124,7 +1133,8 @@ function showDetail(sel) {
       (web.dynamic ? `<div class="r"><span>nested-ratio base</span><b>${web.base.toLocaleString()}</b></div>` : '') +
       `<div class="r"><span>first-clicked grid</span><b>${web.homeGrid.toLocaleString()}</b></div>` +
       `<div class="r"><span>origin grid</span><b>${web.originGrid.toLocaleString()}</b></div>` +
-      `<div class="r"><span>anchor / origin distance</span><b>${homeDistance.toFixed(1)} / ${originDistance.toFixed(1)} cells</b></div>` +
+      `<div class="r"><span>apex grid</span><b>${web.apexGrid.toLocaleString()}</b></div>` +
+      `<div class="r"><span>anchor / origin / apex dist</span><b>${homeDistance.toFixed(1)} / ${originDistance.toFixed(1)} / ${apexDistance.toFixed(1)} cells</b></div>` +
       `<div class="r"><span>travel</span><b>${status}</b></div>` +
       (web.dynamic ? `<div style="margin-top:7px;color:var(--dimmer);font-size:10px;line-height:1.45">This family is infinite. Travel samples qualifying NR grids adaptively while the local Web rebuilds around the camera.</div>` : '') +
       travelButton + dismiss;
@@ -2156,7 +2166,7 @@ function loop() {
     for (let s = 0; s < WEB_MAX; s++) { const w = bySlot.get(s); if (!w) continue; chips += `<span style="color:${w.color};opacity:${w.visible === false ? 0.35 : 1};font-weight:bold">${s === 9 ? '0' : s + 1}</span>`; }
     webHud = ` · ◈ ${chips}`;
   }
-  const rideHud = returnRide ? ` · <span style="color:${activeWebs.get(returnRide.webId)?.color || 'var(--known)'}">↢ ${returnRide.destination === 'origin' ? 'origin' : `grid ${returnRide.targetGrid.toLocaleString()}`} ${Math.round((activeWebs.get(returnRide.webId)?.rideProgress || 0) * 100)}%</span>` : '';
+  const rideHud = returnRide ? ` · <span style="color:${activeWebs.get(returnRide.webId)?.color || 'var(--known)'}">↢ ${returnRide.destination === 'anchor' ? `grid ${returnRide.targetGrid.toLocaleString()}` : returnRide.destination} ${Math.round((activeWebs.get(returnRide.webId)?.rideProgress || 0) * 100)}%</span>` : '';
   hud.innerHTML = `grid <b>${cam.anchor.toLocaleString()}</b>${focusHud}${webHud}${rideHud}`;
   // live solve queue → the help popup (only while open, so it's free when closed)
   if (helpPanelEl && liveEl && helpPanelEl.classList.contains('open')) {
