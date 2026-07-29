@@ -275,6 +275,21 @@ Home-button rename broke an `index.html` structure regex; unrelated to this work
   bed voice count/gain AND row scheduling continuity across the re-solve window to pin (a) vs (b) vs both
   before any engine edit. Expected fixes: bed = immediate swell-in on star entry (clock governs re-swells
   only); rows = sustain/overlap across recompile.
+- **Large-grid row audio** (surfaced 2026-07-29 while calibrating): huge grids broke row compile two ways,
+  both now patched — (i) `compositeTape` used a spread `Math.max` over `gaps`, overflowing the stack at
+  large grids ("Maximum call stack size exceeded") so every affected zone's compile threw and went silent
+  (fixed: fold, `0e96450`); (ii) even folded, a rhythm with a huge single layer materializes ~layerSum
+  event objects → worker OOM/pause that kills audio everywhere (interim cap: `audioCompileEligibility`
+  skips owners past `ROW_MAX_COMPOSITE_ONSETS = 20000`, `cec5795`). **Real fix = stream the row compile.**
+  Avery's frame: don't compute the whole ~1e6-tick cycle; compute a wall-clock-local window. Blocker is
+  Cull2 needing "a view from the cycle start" — but that view is **compact and saturates**: the composite
+  tape is periodic, distinct gap values are finite and few, so once the cull vocabulary saturates (a short
+  prefix relative to the grid) every later section culls deterministically. Design: cull-state prefix →
+  saturated snapshot → generate+cull windows keyed to the transport tick (the player already schedules from
+  `absoluteTick` with cursors). Reflection is a pure index symmetry over a palindrome (mirror gap == this
+  gap), so it's per-window computable, not a whole-cycle materialization. Goal: **music wherever you are.**
+  Also: the `tooLarge` divisor cap (`cull2-grid-core.js:69`) is bypassed by `compileGridAudioProgram`'s
+  synthetic `ownerSolve` — revisit when streaming lands.
 - **3 λ freeze**, **4 DENSITY**, **5 ABCD soloing + inspector merge** — unstarted.
 
 ### Implementer's-call decisions already made (veto-able)
