@@ -3,32 +3,41 @@
 // cockpit, grid-row-aura owns the aura — so this owns the rail. Building the DOM here (not in index.html)
 // keeps the markup clean and never touches the #lrc-head region the rhythm-inspector assert scans.
 //
-// It mounts its element as a SIBLING of #lrc-div inside #cosmos-view, constructs accessible knobs (native
-// <input type=range> in normalized [0,1] — keyboard, focus, and a double-click reset come for free),
-// forwards each gesture to the matching engine setter, and renders every readout from railParams.
+// It mounts its element as a SIBLING of #lrc-div inside #cosmos-view, constructs the site's ADSR rotary
+// knobs (reused class-for-class; normalized [0,1] with vertical-drag, a double-click reset, and keyboard
+// fine-adjust), forwards each gesture to the matching engine setter, and renders every readout from
+// railParams. It's the panel-shaped bottom-centre rail, always visible.
 //
-// SKELETON SCOPE — build the interaction model before filling the rail: ONE knob, MIX (the bed↔rows
-// crossfade), wired end-to-end. Gestures drive the engine LIVE, but persisted-value RESTORATION on entry
-// is deliberately OFF (NO {emitNow}). A startup replay would push every stored value through the setters
-// before they are calibrated by ear — flipping SPEED into ONSET mode and repainting today's default sound
-// while the OLD cockpit controls (index.html #lrc-tempo-slider, …) still own it. Restoration turns on
-// later, once SPEED/SPACE/DWELL are calibrated and the legacy controls retire. Add a param to RAIL_KNOBS
-// to give it a knob; add its setter to ENGINE_SETTERS to make that knob audible.
+// SCOPE — the "safe" knobs (FUNDAMENTAL/RICHNESS/VOLUME/SPACE) + MIX, across pitch/harmony/texture. SPEED
+// + DWELL (the time group) are held back for an ears-on calibration pass (SPEED's setter flips FIXED→ONSET
+// mode). Gestures drive the engine LIVE, but persisted-value RESTORATION on entry is deliberately OFF
+// (NO {emitNow}). A startup replay would push every stored value through the setters before they are
+// calibrated by ear — flipping SPEED into ONSET mode and repainting today's default sound while the OLD
+// cockpit controls (index.html #lrc-tempo-slider, …) still own it. Restoration turns on later, once
+// SPEED/DWELL are calibrated and the legacy controls retire. Add a param to RAIL_KNOBS + a setter to
+// ENGINE_SETTERS to grow the rail.
 
 import { railParams } from './rail-params.js';
-import { setMix, setVolume } from './cosmos-audio.js';
+import { setMix, setVolume, setSpace, setRichness, setFundamentalOffset } from './cosmos-audio.js';
 
 // param → engine setter. Each is a thin, guarded, additive setter whose default reproduces today's sound
 // (assert-rail-bindings.mjs). A param with no setter yet (DENSITY, Phase 4) simply stays out of this map
-// and out of RAIL_KNOBS — the optional call in the binding below no-ops rather than throwing.
+// and out of RAIL_KNOBS — the optional call in the binding below no-ops rather than throwing. The value
+// passed is the ENGINE-unit value (railParams.get): cents for FUNDAMENTAL, [0,1] for the rest.
 export const ENGINE_SETTERS = Object.freeze({
-  mix: setMix,
-  volume: setVolume,
+  fundamental: setFundamentalOffset,   // cents (railParams 'fundamental' value is already in cents, ±1200 knob)
+  richness: setRichness,               // [0, 0.18] sky-reach weight
+  volume: setVolume,                   // [0,1] master trim ahead of the limiter
+  mix: setMix,                         // [0,1] constant-power bed↔rows crossfade
+  space: setSpace,                     // [0,1] both reverb sends (0.5 = today's levels)
 });
 
-// The knobs THIS rail build renders, in rail order. Skeleton = MIX only; grow the list as each knob is
-// calibrated and adopted. Visual grouping (pitch / time / harmony / texture) is fixed by GROUP_ORDER.
-export const RAIL_KNOBS = Object.freeze(['mix']);
+// The knobs THIS rail build renders. The four "safe" knobs (no mode side-effect, defaults reproduce
+// today's sound) plus MIX, across pitch / harmony / texture. SPEED + DWELL (the time group) are held back
+// for an ears-on calibration pass — SPEED's setter flips FIXED→ONSET mode. Visual grouping (pitch / time /
+// harmony / texture) is fixed by GROUP_ORDER; order here sets order WITHIN a group. Add a param + its
+// ENGINE_SETTERS entry to grow the rail.
+export const RAIL_KNOBS = Object.freeze(['fundamental', 'richness', 'volume', 'mix', 'space']);
 
 const GROUP_ORDER = ['pitch', 'time', 'harmony', 'texture'];
 

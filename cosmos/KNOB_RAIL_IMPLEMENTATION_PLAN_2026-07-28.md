@@ -245,15 +245,25 @@ Home-button rename broke an `index.html` structure regex; unrelated to this work
   incl. the `emitNow` anti-regression). **Known consequence of gestures-only**: a persisted knob shows its
   stored position on entry while the engine sits at its own default until the knob is first touched —
   resolves when restoration turns on post-calibration.
+- **2 rail UI — the four "safe" knobs** ✅ — FUNDAMENTAL (pitch), RICHNESS (harmony), VOLUME + MIX + SPACE
+  (texture) rendered as ADSR rotaries, grouped, gestures-only. Rail-view builds knobs generically from
+  `RAIL_KNOBS` × `ENGINE_SETTERS`, so each was a declarative add. Verified live (readouts + drag paths, no
+  errors); `assert-rail-view` extended (safe-set present, SPEED/DWELL held back, FUNDAMENTAL cents round-trip).
 
 ### Remaining (needs the browser / Avery's ear)
 
-- **2 — fill the rail**: add the remaining knobs (VOLUME/FUNDAMENTAL/SPEED/DWELL/RICHNESS/SPACE + the
-  advanced drawer for MODULATION/MIDI-out and the MUTE button); then flip on `{emitNow}` restoration and
-  retire the old cockpit controls `#lrc-div` still holds. `#lrc-div` keeps inspector duties only.
-- **2.1 / 2.2 / 2.3 calibration by ear**: freeze SPEED's default vs a mid-grid neighborhood; shape DWELL's
-  log 1/8→1 curve (engine `setDwell` is linear-ready, `RAIL_PARAMS.dwell` is `linear` for now); confirm
-  SPACE feels continuous across the MIX.
+- **2 — finish the rail**: **SPEED + DWELL** knobs (the time group, deferred — SPEED flips FIXED→ONSET), the
+  **MUTE button**, and the **advanced drawer** (MODULATION / MIDI-out); then flip on `{emitNow}` restoration
+  and retire the old cockpit controls `#lrc-div` still holds. `#lrc-div` keeps inspector duties only.
+- **2.1 / 2.2 calibration by ear**: freeze SPEED's default vs a mid-grid neighborhood; shape DWELL's
+  log 1/8→1 curve (engine `setDwell` is linear-ready, `RAIL_PARAMS.dwell` is `linear` for now). SPACE
+  confirmed continuous enough across the MIX in the safe-knob pass.
+- **2.3 RICHNESS is too subtle / not smooth** (Avery, 2026-07-29): hard to tell it's doing anything, and
+  extended chords still appear at low/zero RICHNESS. It reads as **~3–4 discrete musical levels, not a
+  continuum** — L1 basic triads · L2 standard sevenths · L3 full extensions · (L4 dissonant qualities?).
+  Candidate refactor: make RICHNESS a **detent** over those chord-vocabulary tiers rather than the current
+  linear `[0,0.18]` sky-reach weight, so the knob steps through triads→7ths→extensions. Deferred behind
+  SPEED calibration.
 - **2.4 Audio continuity while flying** (was "Bed robustness"): moving to a new area causes audio to
   **fully drop** during the re-solve, not just a bed beat-lag (Avery confirmed 2026-07-29). Likely **two
   mechanisms under one item**: (a) the bed swell-clock gap this section already names — `REATTACK_PERIODS`

@@ -13,8 +13,12 @@ const check = (label, ok, detail = '') => { if (!ok) PASS = false; console.log(`
 console.log('═══ COSMOS RAIL VIEW — assertions ═══');
 
 console.log('\n  The rendered rail + its engine bindings');
-check('the skeleton renders exactly the MIX knob (grow RAIL_KNOBS as knobs are adopted)',
-  Array.isArray(RAIL_KNOBS) && RAIL_KNOBS.length === 1 && RAIL_KNOBS[0] === 'mix');
+// The safe knobs (no mode side-effect, defaults reproduce today's sound) + MIX, across pitch/harmony/texture.
+const SAFE_KNOBS = ['fundamental', 'richness', 'volume', 'mix', 'space'];
+check('the rail renders the safe knobs + MIX (pitch/harmony/texture)',
+  Array.isArray(RAIL_KNOBS) && RAIL_KNOBS.length === SAFE_KNOBS.length && SAFE_KNOBS.every(n => RAIL_KNOBS.includes(n)));
+check('the time-group knobs (SPEED, DWELL) are NOT wired yet — mode-flip / calibration pending',
+  !RAIL_KNOBS.includes('speed') && !RAIL_KNOBS.includes('dwell'));
 check('every rendered knob is a real param and has a live engine setter (no dangling / silent knobs)',
   RAIL_KNOBS.every(n => RAIL_PARAMS[n] && typeof ENGINE_SETTERS[n] === 'function'));
 check('every ENGINE_SETTERS key is a real param — the map can never bind a name the state layer lacks',
@@ -42,6 +46,13 @@ check('setNorm(mix, 0.5) lands at 0.5 and the readout mirrors railParams.get',
   railParams.get('mix') === 0.5 && formatReadout(RAIL_PARAMS.mix, railParams.get('mix')) === '0.50');
 railParams.reset('mix');   // hygiene: back to the shipped default (0 = pure bed)
 check('reset(mix) restores the default 0 (pure bed)', railParams.get('mix') === 0);
+// FUNDAMENTAL is linear-in-cents (±1200 knob): the midpoint is 0¢, and the readout carries the ¢ unit.
+railParams.setNorm('fundamental', 0.5);
+check('setNorm(fundamental, 0.5) lands at 0¢ (knob midpoint = no offset)', railParams.get('fundamental') === 0);
+railParams.setNorm('fundamental', 1);
+check('setNorm(fundamental, 1) lands at the +1200¢ knob ceiling', railParams.get('fundamental') === 1200);
+railParams.reset('fundamental');
+check('reset(fundamental) restores 0¢', railParams.get('fundamental') === 0);
 
 console.log('\n  Product wiring + the critical anti-regression (⚠ gestures only)');
 const src = readFileSync(new URL('../rail-view.js', import.meta.url), 'utf8');
