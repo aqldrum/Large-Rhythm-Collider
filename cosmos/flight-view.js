@@ -17,6 +17,7 @@ import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
 import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, setHoldForFullQuality, setModulation, currentModulation, setMidiOut, setMix, currentMix, setAuditionListen, setGridSpatialField, gridRowVisualState, setTuningStrength, setRootPolicyContext } from './cosmos-audio.js';
+import { sampleRecovery } from './recovery-timing.js';   // TEMP DEBUG (Phase 2.4) — remove with the module
 import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
@@ -1381,6 +1382,8 @@ function changeAudioMode(mode) {
   if (audioModeEl) audioModeEl.value = mode;
 }
 
+const _compileErrSeen = new Set();   // TEMP DEBUG (2.4 worker-err flood) — dedup so a flood collapses to a few lines
+
 function requestRowProgram(candidate, root, chord, selectionKey, validRequestKeys) {
   const { z, distance } = candidate;
   if (!rowCompiler) return;
@@ -1421,6 +1424,18 @@ function requestRowProgram(candidate, root, chord, selectionKey, validRequestKey
     zoneIdentity._rowAudio.state = 'program-ready';
     zoneIdentity._rowAudio.compileMs = reply.compileMs;
   }).catch(error => {
+    // TEMP DEBUG (2.4 worker-err flood) — surface the REAL compileGridAudioProgram throw, deduped so a
+    // flood collapses to one line per distinct message, with the owner/state context to test the
+    // "gate passed but owners cleared by the re-solve race" theory. Toggle: window.DEBUG_COMPILE_ERRORS.
+    if (typeof window !== 'undefined' && window.DEBUG_COMPILE_ERRORS !== false) {
+      const msg = error?.message || String(error);
+      if (!_compileErrSeen.has(msg)) {
+        _compileErrSeen.add(msg);
+        console.error('[compile-error] grid', z.grid, '·', msg,
+          '· ownersNow', Array.isArray(z.ratioOwners) ? z.ratioOwners.length : z.ratioOwners,
+          '· state', z.state, '· monster', z.monster, '· shards', `${z.shardsDone ?? '?'}/${z.shardsTotal ?? '?'}`);
+      }
+    }
     if (zoneIdentity._rowAudio?.requestKey !== requestKey) return;
     zoneIdentity._rowAudio.requestKey = '';
     zoneIdentity._rowAudio.state = zoneIdentity._rowAudio.program ? 'program-ready' : 'compile-error';
@@ -1892,6 +1907,10 @@ function loop() {
   const settled = settleSinceSecond !== null && (skyNow - settleSinceSecond) >= SETTLE_SECONDS;
   if (settled) rootPolicyWasSettled = true;
   setRootPolicyContext({ settled, geographyEpoch: rootGeographyEpoch });
+  // TEMP DEBUG (Phase 2.4 recovery timing) — remove with cosmos/recovery-timing.js. Records the row-voice
+  // trajectory across a window after a stop to expose the recovery shape. Movement is derived from the
+  // camera position (works for WASD + scroll/dolly). Toggle: window.RECOVERY_PROBE.
+  sampleRecovery({ skyNow, camPos: cameraAbsolute(), settled });
   if (settled && (skyNow - lastRootResolveSecond) >= ROOT_RESOLVE_MIN_SECONDS) {
     lastRootResolveSecond = skyNow;
     const rootField = [];
