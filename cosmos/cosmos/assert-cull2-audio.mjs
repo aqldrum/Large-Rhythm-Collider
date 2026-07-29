@@ -25,6 +25,18 @@ check('normalization and grid are deterministic', sample.layers.join('.') === '2
 check('sample has real cull2 work to inspect', sample.summary.baseSurvivors < sample.summary.compositeOnsets && sample.sections.some(s => s.culled),
   `${sample.summary.baseSurvivors}/${sample.summary.compositeOnsets} base survivors`);
 
+// Regression (huge-grid audio-drop bug): the fundamental gap must be found by a FOLD, never
+// Math.max(...gaps) — spreading a grid-sized gaps array as call arguments overflows the stack at large
+// grids ("Maximum call stack size exceeded"), which silently failed every affected zone's row compile.
+const cull2Src = readFileSync(new URL('../cull2-audio-core.js', import.meta.url), 'utf8');
+check('fundamental gap is folded, not spread into Math.max/min (stack-overflow guard for large grids)',
+  !/Math\.(max|min)\(\.\.\./.test(cull2Src));
+// …and the fold still resolves the correct fundamental: the widest gap is the slowest pulse (rawRatio 1).
+const maxGap = sample.events.reduce((m, e) => (e.gap > m ? e.gap : m), 0);
+check('the widest-gap event is the fundamental (rawRatio === 1) — fold matches Math.max semantics',
+  maxGap > 0 && sample.events.filter(e => e.gap === maxGap).every(e => Math.abs(e.rawRatio - 1) < 1e-9),
+  `maxGap ${maxGap}`);
+
 let mirrorInvolutionFail = 0, mirrorGapFail = 0, mirrorRatioFail = 0;
 for (const event of sample.events) {
   const mirror = sample.events[event.mirrorIndex];

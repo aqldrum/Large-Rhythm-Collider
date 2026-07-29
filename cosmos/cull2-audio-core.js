@@ -43,7 +43,12 @@ function compositeTape(rawLayers) {
     const next = nodes[(i + 1) % nodes.length];
     return i + 1 < nodes.length ? next.tick - node.tick : grid - node.tick + next.tick;
   });
-  const fundamentalGap = Math.max(...gaps);
+  // Largest gap = the fundamental (slowest) pulse. Do NOT use a spread Math.max over gaps: spreading a
+  // grid-sized array as call arguments overflows the stack ("Maximum call stack size exceeded") once a
+  // large grid makes `gaps` exceed the engine's argument limit — the huge-grid (e.g. grid ~994855)
+  // audio-drop bug, where every affected zone's row compile threw and produced no program. Fold O(n).
+  let fundamentalGap = 0;
+  for (const gap of gaps) if (gap > fundamentalGap) fundamentalGap = gap;
   const events = nodes.map((node, i) => {
     const next = nodes[(i + 1) % nodes.length];
     const rawRatio = fundamentalGap / gaps[i];
