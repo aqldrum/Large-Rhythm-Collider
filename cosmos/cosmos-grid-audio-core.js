@@ -16,6 +16,13 @@ export const ROW_PREWARM_STARS = 30;
 export const ROW_RADIUS = 5000;
 export const ROW_CONSONANCE_CENTS = 15;
 export const ROW_SWITCH_TICKS = 16;
+// Interim OOM safety cap (until row compile streams huge grids). compositeTape materializes one node/gap/
+// event per composite onset, and a rhythm's onset count is bounded by its layerSum (sum of its layers).
+// A rhythm with a huge single layer (~1e6) makes that ~1e6-object array pause-then-OOM the worker, which
+// kills audio everywhere — not just at that zone. Cap on the ONSET dimension (layerSum), NOT the grid/LCM:
+// a huge LCM from small coprime layers is cheap and must stay eligible. 20000 onsets/cycle is already far
+// past any perceptible rhythm, so this only excludes drone-dense zones. Tunable; the real fix is streaming.
+export const ROW_MAX_COMPOSITE_ONSETS = 20000;
 export const CULLED_ROW_MAX_VOICES_PER_TONE = 4;
 
 const mod = (value, divisor) => ((value % divisor) + divisor) % divisor;
@@ -53,6 +60,12 @@ export function audioCompileEligibility(zone) {
   if (!Number.isInteger(zone.shardsTotal) || zone.shardsTotal <= 0) return { eligible: false, reason: 'no-final-shards' };
   if (zone.shardsDone !== zone.shardsTotal) return { eligible: false, reason: 'partial-ownership' };
   if (!Array.isArray(zone.ratioOwners) || !zone.ratioOwners.length) return { eligible: false, reason: 'no-ratio-owners' };
+  // Interim OOM cap: skip a zone whose densest rhythm would materialize more composite onsets than the
+  // worker can hold. Fold for the max layerSum (never spread — that was the huge-grid stack-overflow bug).
+  // A missing layerSum reads as 0 (fail open: don't wrongly exclude an owner that predates the field).
+  let maxLayerSum = 0;
+  for (const owner of zone.ratioOwners) { const s = Number(owner?.layerSum) || 0; if (s > maxLayerSum) maxLayerSum = s; }
+  if (maxLayerSum > ROW_MAX_COMPOSITE_ONSETS) return { eligible: false, reason: 'too-dense', maxLayerSum };
   return { eligible: true, reason: 'ownership-ready' };
 }
 

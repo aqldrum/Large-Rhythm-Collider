@@ -11,7 +11,7 @@ import {
 import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP, toAudioListenerPosition } from '../spatial-audio-frame.js';
 import {
   AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, RHYTHM_VOICE_WAVEFORM,
-  ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS,
+  ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_MAX_COMPOSITE_ONSETS,
   audioCompileEligibility, chooseSpatialRows, compileGridAudioProgram,
   harmonicSelectionKey, ownerChordMatch, selectedOwnerFractions,
 } from '../cosmos-grid-audio-core.js';
@@ -40,6 +40,13 @@ check('partial ownership is ineligible',
   audioCompileEligibility({ state: 'solved', monster: false, shardsTotal: 3, shardsDone: 2, ratioOwners: owners }).reason === 'partial-ownership');
 check('only all-shards-finalized ownership is compiler eligible',
   audioCompileEligibility({ state: 'solved', monster: false, shardsTotal: 3, shardsDone: 3, ratioOwners: owners }).eligible);
+// Interim OOM cap: a drone-dense rhythm (layerSum over the onset cap) is skipped rather than OOM-compiled;
+// the cap is on ONSETS (layerSum), so a huge-LCM zone built from small coprime layers stays eligible.
+const finalized = { state: 'solved', monster: false, shardsTotal: 1, shardsDone: 1 };
+check('a rhythm past the composite-onset cap is skipped as too-dense (interim OOM guard)',
+  audioCompileEligibility({ ...finalized, ratioOwners: [{ fraction: '1/1', cents: 0, key: 'drone', layers: [ROW_MAX_COMPOSITE_ONSETS + 1], layerSum: ROW_MAX_COMPOSITE_ONSETS + 1 }] }).reason === 'too-dense');
+check('a huge-LCM zone from small coprime layers stays eligible (cap is on onsets, not grid/LCM)',
+  audioCompileEligibility({ ...finalized, ratioOwners: [{ fraction: '1/1', cents: 0, key: 'coprime', layers: [5, 7, 11, 13], layerSum: 36 }] }).eligible);
 
 console.log('\n  Movement field budgets');
 // Sized RELATIVE to the knobs, not to their values: ROW_ACTIVE_STARS/ROW_PREWARM_STARS/ROW_RADIUS are
