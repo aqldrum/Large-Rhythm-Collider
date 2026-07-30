@@ -151,5 +151,52 @@ check('a safety re-run bounds staleness, so an un-enumerated cause delays the fi
 check('a fresh cosmos session always begins with a full membership pass',
   flight.includes('fieldMembershipDirty = true; fieldMembershipAt = -Infinity;'));
 
+console.log('\n  The BED: membership on cause, pose per frame, and a ceiling on REAL nodes');
+// The bed was the churn nobody was watching. Its audible set was built from `proj` (the on-screen zones)
+// sorted by VIEW DEPTH, so merely turning the camera swung stars out of the frustum — where the hysteresis
+// window cannot even see them to protect them — and swung new ones in. Each churn is a release/create cycle:
+// new oscillators, plus a discrete MIDI note-on per voice (cosmos-audio's createVoice calls noteOn), which
+// is why the same bed chord re-struck every frame in a DAW and why sustained rotation buried the audio
+// thread. Rows and the root solver already selected by true 3D distance; the bed now agrees.
+check('the bed selects by TRUE 3D DISTANCE, never from the on-screen projection or view depth',
+  flight.includes('skyCandidates.push({ z, position, distance: Math.hypot(') &&
+  flight.includes('skyCandidates.sort((a, b) => a.distance - b.distance)') &&
+  !/for \(const \{ z, s \} of proj\.values\(\)\) if \(z\.skyPool\)/.test(flight) &&
+  !/pan: clampN\(\(cx - s\.x\) \/ cx, -1, 1\), gain: distGain\(s\.z\)/.test(flight));
+check('pose stays VIEW-relative — turning your head still sweeps a star across the stereo image',
+  flight.includes('function skyPoseFor(position, distance, basis)') &&
+  flight.includes('toAudioListenerPosition(position, basis)') && flight.includes('listener[0] / azimuth'));
+check('membership is gated on the same causes as the row field, plus a root swap',
+  flight.includes('if (bedRootKey !== root.rootKey) { bedRootKey = root.rootKey; markFieldDirty(); }') &&
+  flight.includes('if (fieldMembershipDirty || now - bedMembershipAt >= FIELD_MEMBERSHIP_MAX_INTERVAL_MS)'));
+check('the bed reads the solved root AFTER the root-policy block, so a same-frame swap still lands',
+  flight.indexOf('proposeRoot({') < flight.indexOf('const root = currentSkyRoot();\n  // Full Sky'));
+const audioSrc = audio;
+check('setSkyPose CANNOT create or release a voice — it only automates params',
+  /export function setSkyPose\(items\)/.test(audioSrc) &&
+  !/export function setSkyPose\(items\)[\s\S]{0,600}?(createVoice|releaseVoice|makeBedStar|dropBedStar|syncBedDegrees)/.test(audioSrc));
+check('a star not in the field is never re-aimed (a dropped star must stay dropped while it fades)',
+  audioSrc.includes('const bs = bedStars.get(item.id);\n    if (!bs) continue;'));
+check('setField (membership) and setSkyPose share ONE pose implementation',
+  (audioSrc.match(/applySkyPose\(bs, item, now\)/g) || []).length >= 2);
+check('chord voicing rides the AUDIO clock, so a chord change is not gated by the membership interval',
+  /stepSkyWalk\(skySeconds\(now\)\);[\s\S]{0,900}?syncBedDegrees\(now\);[\s\S]{0,200}?pumpReattacks\(/.test(audioSrc));
+// The logical budget is freed the instant a voice is released, ~2.55s before its oscillator actually stops —
+// deliberately, so a release tail cannot starve incoming voices. That is precisely why it cannot be the
+// ceiling on live nodes, and why a second, real count is needed.
+check('there are TWO counts: the eagerly-freed logical budget and a hard ceiling on live oscillators',
+  audioSrc.includes('const MAX_BED_LIVE_OSC = MAX_BED_OSC * 3') &&
+  audioSrc.includes('if (bedOscCount >= MAX_BED_OSC || bedLiveOscCount >= MAX_BED_LIVE_OSC)'));
+check('the live count is decremented only when the oscillator actually ENDS, not at release',
+  /onended = \(\) => \{\n\s*bedLiveOscCount = Math\.max\(0, bedLiveOscCount - 1\)/.test(audioSrc) &&
+  !/bedLiveOscCount = Math\.max\(0, bedLiveOscCount - 1\)[\s\S]{0,200}?const rel = immediate/.test(audioSrc));
+check('a refused voice is COUNTED — the pathology reports itself instead of the sound merely dying',
+  audioSrc.includes('bedCounters.refused++') && audioSrc.includes('export function bedStats()'));
+check('both counts reset with the graph, in initAudio and stopAudio',
+  (audioSrc.match(/bedLiveOscCount = 0/g) || []).length >= 3);
+check('the panel now watches the bed: rates for churn, a GAUGE for the level that buries the audio thread',
+  flight.includes("audioTelemetry.gauge('bedLiveOscs', bed.liveOscs)") &&
+  flight.includes('bedCreated: bed?.created') && flight.includes('bedRefused: bed?.refused'));
+
 console.log(PASS ? '\n✓✓✓ COSMOS TRANSPORT CLOCK PASSES' : '\n✗ COSMOS TRANSPORT CLOCK FAILED');
 process.exit(PASS ? 0 : 1);

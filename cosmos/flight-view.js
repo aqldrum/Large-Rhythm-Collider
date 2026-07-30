@@ -16,7 +16,7 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, gridRowVisualState, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
 // The RAIL owns the engine's user-facing state (rail-view.js mounts it; flight-boot restores it on entry).
 // Every parameter BOTH surfaces express — mute, mix, modulation, MIDI out — is written through railParams so
 // there is exactly one owner and the two surfaces cannot disagree. See the audio-lab section below.
@@ -158,7 +158,29 @@ const AUDIBLE_MARGIN = 4;     // hysteresis: a currently-audible star stays audi
                                // flickers in/out of the field every frame while flying (churns cosmos-audio's
                                // bed voices constantly — part of the "flight cuts the bed" fix).
 const distCutoff = z => mapRange(z, FOG_NEAR, FOG_FAR, 8000, 600);   // near→open, far→muffled lowpass (Hz)
-let audibleIds = new Set();   // previous frame's audible-set membership, for the hysteresis above
+let audibleIds = new Set();   // current audible-set membership, for the hysteresis above
+let bedMembershipAt = -Infinity, bedRootKey = -1;   // bed membership runs on cause, not per frame (see the block)
+
+// The bed's POSE for one star: view-relative stereo placement + distance-derived loudness/brightness. Split
+// out because both the membership pass and the per-frame pose pass must derive it identically.
+//
+// PAN is the azimuth sine in the listener frame (x / hypot(x, z)): hard left/right when the star is directly
+// beside you, centre when it is straight ahead — or straight behind, which a StereoPanner cannot distinguish
+// (the row field uses a real HRTF panner; the bed is a wash and does not need to). The old law was
+// screen-space ((cx - s.x) / cx), which simply does not exist for a star outside the frustum — that is why
+// membership had to be view-dependent, and now it doesn't.
+//
+// GAIN / CUTOFF / OCTAVE take TRUE 3D distance where they used to take view depth. Same units (FOG_NEAR /
+// FOG_FAR), so the curves are unchanged; what changes is that a star beside or behind you is now placed by
+// how far away it actually is instead of by how far down the view axis it happens to project.
+function skyPoseFor(position, distance, basis) {
+  const listener = toAudioListenerPosition(position, basis);
+  const azimuth = Math.hypot(listener[0], listener[2]);
+  return {
+    pan: azimuth > 1e-6 ? clampN(listener[0] / azimuth, -1, 1) : 0,
+    gain: distGain(distance), octave: distOctave(distance), cutoff: distCutoff(distance),
+  };
+}
 
 // Cull2 grid-row mode: true-3D, head-turn-independent movement field. Only this nearest prewarm set
 // is allowed to touch the dedicated audio compiler; the thousands of other loaded zones remain pure
@@ -796,6 +818,7 @@ export function ensureFlight(canvas, hudEl) {
   rowCompiler = new ProgramWorkerPool(new URL('./cosmos/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
   rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
   fieldMembershipDirty = true; fieldMembershipAt = -Infinity;   // a fresh session always does a full pass first
+  bedMembershipAt = -Infinity; bedRootKey = -1;
   settleSinceSecond = null; lastRootResolveSecond = -Infinity; rootGeographyEpoch = 0; rootPolicyWasSettled = false;
   // OWNERSHIP: the entry sound is the RAIL's, not this overlay's. flight-boot calls applyRailToEngine()
   // right after initAudio(), which pushes MIX · SPEED · DWELL · FUNDAMENTAL · RICHNESS · VOLUME · SPACE ·
@@ -1967,22 +1990,6 @@ function loop() {
       else setSpatial(0, 0, 0);   // flew out of view (still loaded) → silence via gain 0, don't crash
     }
   }
-  // Full Sky: the ambient bed's audible set — EVERY solved zone with a degree pool is eligible (not
-  // just bloomed/clicked stars, see cosmos/FULL_SKY_HANDOFF.md), nearest AUDIBLE_N by view depth wins.
-  // No lead required — this is the un-gated bed, live from cosmos entry (flight-boot.js's unlock).
-  // Hysteresis (AUDIBLE_MARGIN): pick from the wider N+margin window, but a star already in the field
-  // keeps its seat over that same window — only genuinely falling further behind drops it. Plain
-  // nearest-N-every-frame flickered stars near the boundary in/out constantly while flying, which
-  // cosmos-audio.js heard as the bed cutting out (each flicker = a full voice release/re-attack cycle).
-  const skyCandidates = [];
-  for (const { z, s } of proj.values()) if (z.skyPool) skyCandidates.push({ z, s });
-  skyCandidates.sort((a, b) => a.s.z - b.s.z);
-  const skyWindow = skyCandidates.slice(0, AUDIBLE_N + AUDIBLE_MARGIN);
-  const skyKept = skyWindow.filter(c => audibleIds.has(c.z.grid));
-  const skyFresh = skyWindow.filter(c => !audibleIds.has(c.z.grid));
-  const skyChosen = [...skyKept, ...skyFresh].slice(0, AUDIBLE_N);
-  audibleIds = new Set(skyChosen.map(c => c.z.grid));
-
   // Sky Root handoff B3: settle trigger — solve when camera speed has stayed below SETTLE_SPEED for
   // SETTLE_SECONDS (the SKY clock, read via cosmos-audio's currentSkySeconds so "settled" means the same
   // duration at any tempo or scaled speed), rate-limited to one solve per ROOT_RESOLVE_MIN_SECONDS.
@@ -2024,16 +2031,58 @@ function loop() {
     });
   }
 
-  // Re-anchored playback: each zone lazily caches its re-folded pool at the CURRENT solved root,
-  // invalidated by rootKey (a swap is rare — most frames every chosen zone's cache just hits).
   const root = currentSkyRoot();
-  setField(skyChosen.map(({ z, s }) => {
-    if (!z.skyPoolAt || z.skyPoolAt.rootKey !== root.rootKey) z.skyPoolAt = { rootKey: root.rootKey, pool: poolFromTones(z.skyTones || [], root.cents) };
-    return {
-      id: z.grid, pool: z.skyPoolAt.pool,
-      pan: clampN((cx - s.x) / cx, -1, 1), gain: distGain(s.z), octave: distOctave(s.z), cutoff: distCutoff(s.z),
-    };
-  }));
+  // Full Sky: the ambient bed's audible set — EVERY solved zone with a degree pool is eligible (not
+  // just bloomed/clicked stars, see cosmos/FULL_SKY_HANDOFF.md), nearest AUDIBLE_N wins.
+  // No lead required — this is the un-gated bed, live from cosmos entry (flight-boot.js's unlock).
+  // Hysteresis (AUDIBLE_MARGIN): pick from the wider N+margin window, but a star already in the field
+  // keeps its seat over that same window — only genuinely falling further behind drops it. Plain
+  // nearest-N-every-frame flickered stars near the boundary in/out constantly while flying, which
+  // cosmos-audio.js heard as the bed cutting out (each flicker = a full voice release/re-attack cycle).
+  //
+  // ⚠ TRUE 3D DISTANCE, NOT VIEW DEPTH (2026-07-29). This set used to be built from `proj` — the zones that
+  // PROJECT ONTO THE SCREEN — sorted by view depth. That made the bed's membership view-dependent, so simply
+  // turning the camera swung stars out of the frustum entirely (where the hysteresis window cannot even see
+  // them to protect them) and swung new ones in. Every such churn is a full release/create cycle: new
+  // oscillators, and a discrete MIDI note-on per voice, which is why the same bed chord re-struck on every
+  // frame of rotation in a DAW and why sustained rotation buried the audio thread in overlapping release
+  // tails. The row field and the root solver already select by true 3D distance for exactly this reason
+  // ("the root must not change on turning your head", ROOT_RADIUS above). The bed now agrees.
+  //
+  // Pan / gain / cutoff stay VIEW-derived, per frame (setSkyPose below) — turning your head must still sweep
+  // a star across the stereo image. Pose is view-relative; membership is not.
+  if (bedRootKey !== root.rootKey) { bedRootKey = root.rootKey; markFieldDirty(); }   // a root swap re-folds every pool
+  if (fieldMembershipDirty || now - bedMembershipAt >= FIELD_MEMBERSHIP_MAX_INTERVAL_MS) {
+    bedMembershipAt = now;
+    const skyCandidates = [];
+    for (const z of cosmos.zones.values()) {
+      if (!z.skyPool) continue;
+      const position = placed.get(z.grid); if (!position) continue;
+      skyCandidates.push({ z, position, distance: Math.hypot(position[0], position[1], position[2]) });
+    }
+    skyCandidates.sort((a, b) => a.distance - b.distance);
+    const skyWindow = skyCandidates.slice(0, AUDIBLE_N + AUDIBLE_MARGIN);
+    const skyKept = skyWindow.filter(c => audibleIds.has(c.z.grid));
+    const skyFresh = skyWindow.filter(c => !audibleIds.has(c.z.grid));
+    const skyChosen = [...skyKept, ...skyFresh].slice(0, AUDIBLE_N);
+    audibleIds = new Set(skyChosen.map(c => c.z.grid));
+    // Re-anchored playback: each zone lazily caches its re-folded pool at the CURRENT solved root,
+    // invalidated by rootKey (a swap is rare — most passes every chosen zone's cache just hits).
+    setField(skyChosen.map(({ z, position, distance }) => {
+      if (!z.skyPoolAt || z.skyPoolAt.rootKey !== root.rootKey) z.skyPoolAt = { rootKey: root.rootKey, pool: poolFromTones(z.skyTones || [], root.cents) };
+      return { id: z.grid, pool: z.skyPoolAt.pool, ...skyPoseFor(position, distance, basis) };
+    }));
+  } else {
+    // POSE-ONLY frame: re-aim what is already sounding. No star can enter or leave here, so no voice can be
+    // created or released — which is the entire point.
+    const pose = [];
+    for (const id of audibleIds) {
+      const position = placed.get(id); if (!position) continue;
+      pose.push({ id, ...skyPoseFor(position, Math.hypot(position[0], position[1], position[2]), basis) });
+    }
+    setSkyPose(pose);
+  }
+
   // translationRate is Infinity on an anchor hop; either way, only translation can change the selection.
   updateGridRowField(placed, basis, translationRate > 0, now);
   phase('field');
@@ -2294,12 +2343,16 @@ function loop() {
   }
   // ── audio-clock telemetry: fold this frame's external counters in, then close the frame ──────────────
   // Per frame, not per second, so each count lands in the motion bucket it actually happened in.
-  const rowStats = rowPlayerStats(), midi = midiOutState(), compile = rowCompiler?.snapshot();
+  const rowStats = rowPlayerStats(), midi = midiOutState(), compile = rowCompiler?.snapshot(), bed = bedStats();
   audioTelemetry.counters({
     installs: rowStats?.installs, entries: rowStats?.entries, exits: rowStats?.exits,
     midiNotes: midi?.notes, midiSteals: midi?.steals, midiDropped: midi?.dropped,
     compiles: compile?.completed,
+    bedCreated: bed?.created, bedReleased: bed?.released, bedRefused: bed?.refused,
   });
+  // A LEVEL, not a rate: live oscillators are what actually buries the audio thread, and the logical voice
+  // budget cannot see them (it is freed eagerly, ~2.55s before the node stops).
+  if (bed) audioTelemetry.gauge('bedLiveOscs', bed.liveOscs);
   phase('draw');
   audioTelemetry.frameEnd(performance.now() - phaseAt);
 }

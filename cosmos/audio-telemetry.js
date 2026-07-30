@@ -89,9 +89,15 @@ class ModeBucket {
     this.phases = new Map();                         // phase name → Samples of ms
     this.lateness = new Samples();                   // ms an event was late when the scheduler reached it
     this.tickGap = new Samples();                    // ms between consecutive scheduler ticks
-    this.counts = { clamped: 0, dropped: 0, installs: 0, entries: 0, exits: 0, midiNotes: 0, midiSteals: 0, midiDropped: 0, compiles: 0 };
+    this.gauges = new Map();                         // name → Samples of an instantaneous level
+    // bed* were added after the bed turned out to be the churn nobody was watching: it has no worker and no
+    // pool, so every existing meter read zero while sustained rotation was burying the audio thread in
+    // oscillators. `bedLiveOscs` is the one that matters — a GAUGE, because the danger is a level, not a rate.
+    this.counts = { clamped: 0, dropped: 0, installs: 0, entries: 0, exits: 0, midiNotes: 0, midiSteals: 0, midiDropped: 0, compiles: 0,
+      bedCreated: 0, bedReleased: 0, bedRefused: 0 };
   }
   phase(name) { let s = this.phases.get(name); if (!s) this.phases.set(name, s = new Samples()); return s; }
+  gauge(name) { let s = this.gauges.get(name); if (!s) this.gauges.set(name, s = new Samples()); return s; }
   perSecond(key) { return this.seconds > 0 ? this.counts[key] / this.seconds : 0; }
 }
 
@@ -116,6 +122,10 @@ export class AudioTelemetry {
   frameEnd(frameMs) { this.bucket().frame.add(frameMs); }
 
   phase(name, ms) { this.bucket().phase(name).add(ms); }
+
+  // An instantaneous LEVEL rather than a count — live oscillators, voices held. Reported as p95/max, since
+  // what matters is the worst level reached in this mode, not its average.
+  gauge(name, value) { this.bucket().gauge(name).add(value); }
 
   // A scheduler tick's arrival: gapMs is the wall gap since the previous tick. The interval is nominal, so
   // gap − nominal is starvation, which is the mechanism's first link.
@@ -154,12 +164,15 @@ export class AudioTelemetry {
           mode, seconds: b.seconds, frames: b.frames,
           frameP50: b.frame.p50, frameP95: b.frame.p95, frameMax: b.frame.max,
           phases: [...b.phases].map(([name, s]) => ({ name, p50: s.p50, p95: s.p95 })),
+          gauges: [...b.gauges].map(([name, s]) => ({ name, p95: s.p95, max: s.max })),
           tickGapP95: b.tickGap.p95, tickGapMax: b.tickGap.max,
           latenessP50: b.lateness.p50, latenessP95: b.lateness.p95, latenessMax: b.lateness.max,
           clampedPerSec: b.perSecond('clamped'), droppedPerSec: b.perSecond('dropped'),
           installsPerSec: b.perSecond('installs'), entriesPerSec: b.perSecond('entries'), exitsPerSec: b.perSecond('exits'),
           midiNotesPerSec: b.perSecond('midiNotes'), midiStealsPerSec: b.perSecond('midiSteals'), midiDroppedPerSec: b.perSecond('midiDropped'),
           compilesPerSec: b.perSecond('compiles'),
+          bedCreatedPerSec: b.perSecond('bedCreated'), bedReleasedPerSec: b.perSecond('bedReleased'), bedRefusedPerSec: b.perSecond('bedRefused'),
+          bedLiveOscP95: b.gauge('bedLiveOscs').p95, bedLiveOscMax: b.gauge('bedLiveOscs').max,
         };
       }),
     };
@@ -183,20 +196,23 @@ export function formatLive(report) {
     ` · tick-gap p95 ${n1(row.tickGapP95)}ms · late p95 ${n1(row.latenessP95)}ms` +
     ` · clamped ${n1(row.clampedPerSec)}/s dropped ${n1(row.droppedPerSec)}/s` +
     ` · midi ${n1(row.midiNotesPerSec)}n ${n1(row.midiStealsPerSec)}steal ${n1(row.midiDroppedPerSec)}drop /s` +
-    ` · installs ${n1(row.installsPerSec)}/s · compiles ${n1(row.compilesPerSec)}/s`;
+    ` · installs ${n1(row.installsPerSec)}/s · compiles ${n1(row.compilesPerSec)}/s` +
+    ` · bed ${n1(row.bedCreatedPerSec)}new ${n1(row.bedReleasedPerSec)}rel ${n1(row.bedRefusedPerSec)}refused /s` +
+    ` · bed-oscs p95 ${n1(row.bedLiveOscP95)} max ${n1(row.bedLiveOscMax)}`;
 }
 
 // The comparison table — the actual experiment. Sit still, steer, fly, then dump this: the prediction is
 // that `installs` and `compiles` stay 0.0 across all three rows while `late`/`clamped`/`steal` climb from
 // still → steer → fly.
 export function formatTable(report) {
-  const head = 'mode   dwell  frames  frame-p50  frame-p95  tick-p95  late-p95  clamped/s  dropped/s  installs/s  compiles/s  midi-steal/s';
+  const head = 'mode   dwell  frames  frame-p50  frame-p95  tick-p95  late-p95  clamped/s  dropped/s  installs/s  compiles/s  midi-steal/s  bed-new/s  bed-refused/s  bed-oscs-max';
   const lines = report.rows.filter(row => row.frames > 0).map(row => [
     row.mode.padEnd(6), `${n1(row.seconds)}s`.padStart(6), String(row.frames).padStart(7),
     `${n1(row.frameP50)}ms`.padStart(10), `${n1(row.frameP95)}ms`.padStart(10),
     `${n1(row.tickGapP95)}ms`.padStart(9), `${n1(row.latenessP95)}ms`.padStart(9),
     n1(row.clampedPerSec).padStart(10), n1(row.droppedPerSec).padStart(10),
     n1(row.installsPerSec).padStart(11), n1(row.compilesPerSec).padStart(11), n1(row.midiStealsPerSec).padStart(13),
+    n1(row.bedCreatedPerSec).padStart(10), n1(row.bedRefusedPerSec).padStart(14), n1(row.bedLiveOscMax).padStart(13),
   ].join(' '));
   const phaseLines = report.rows.filter(row => row.phases.length).map(row =>
     `  ${row.mode.padEnd(6)} phases p95: ${row.phases.map(p => `${p.name} ${n1(p.p95)}ms`).join(' · ')}`);

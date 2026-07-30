@@ -69,7 +69,15 @@ let LAMBDA_FIELD = LAMBDA_FIELD_FROZEN;   // live only so the lab probe can swee
 // moves most of them at once). 0.05 keeps the triad a real home base while making the 7th the sky's
 // common currency; 0 reproduces the previous triad-dominated walk.
 let RICHNESS = 0.05;             // live from Phase 2.3 (setRichness); was a const at the swept knee
-const MAX_BED_OSC = 30;          // bed oscillator budget (≤3 tones/star × AUDIBLE_N=10), alongside MAX_LIVE_OSC
+const MAX_BED_OSC = 30;          // LOGICAL bed voice budget (≤3 tones/star × AUDIBLE_N=10), freed eagerly on
+                                  // release so a release tail can't starve incoming voices — see releaseVoice.
+// …and the backstop that budget cannot provide. Because the logical count is freed the instant a voice is
+// released, while its oscillator keeps running for BED_RELEASE + 0.05 ≈ 2.55s, MAX_BED_OSC does NOT bound the
+// number of nodes actually rendering. Under churn that gap is unbounded: the eager free was the right fix for
+// "the bed gets quieter while moving", but it removed the only ceiling on live nodes, and a few seconds of
+// churn could bury the audio thread (which no main-thread meter can see — it is a different thread). This is
+// a hard ceiling on REAL oscillators, generous enough to hold the legitimate release overlap and no more.
+const MAX_BED_LIVE_OSC = MAX_BED_OSC * 3;
 const BED_ATTACK = 1.5, BED_RELEASE = 2.5;   // seconds — long swells, this is half the product
 const BED_PEAK = 0.12;           // per-voice envelope peak (modest — many sustained voices sum)
 const BED_SUSTAIN_FRAC = 0.4;    // a swell settles to this fraction of its peak, not to silence (held pad)
@@ -256,7 +264,11 @@ let rootPolicyContext = { settled: false, currentEpoch: 0 };
 let lastRootDecision = null;
 let lastSyncedChordId = null;     // so syncBedDegrees only re-swells CONTINUING voices on an actual change
 let bedStars = new Map();         // id (a star's grid) -> { filter, panner, gainNode, oscMap, octave, pool, reattachStep }
-let bedOscCount = 0;
+let bedOscCount = 0;              // LOGICAL voices (freed eagerly at release, so the tail can't starve)
+let bedLiveOscCount = 0;          // REAL oscillators still rendering (freed in onended) — the hard ceiling
+// Bed counters for the telemetry panel. The bed has no worker and had no meters, which is exactly why
+// rotation could kill the audio while every existing meter read zero.
+const bedCounters = { created: 0, released: 0, refused: 0 };
 let bedBus = null, reverbConv = null, reverbWet = null;   // bedBus -> muteGainNode (dry) and -> reverb -> muteGainNode (wet)
 
 export function initAudio() {
@@ -318,7 +330,7 @@ export function initAudio() {
   rootEstablished = false;
   rootPhraseTracker = resetPhraseTracker(skyRoot.rootKey, skyChordId, skyTabu);
   recentSkyRoots = []; lastRootPolicyProposal = null; rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
-  bedStars = new Map(); bedOscCount = 0; currentField = [];
+  bedStars = new Map(); bedOscCount = 0; bedLiveOscCount = 0; currentField = [];
   transportStart = audioCtx.currentTime;   // grid clock starts here; lead swaps ride the same phase
   audioEpoch = transportStart;             // sky clock shares the origin but is never re-anchored after this
   chordStartedAt = 0; lastChordSeconds = 0; lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };
@@ -855,7 +867,10 @@ function finalizeStarChain(bs) {
 // New voice for one (star, degree): true JI cents of that pool slot (NOT the 12TET degree pitch),
 // scaled by gainForDev, register-spread by the star's distance octave. Silent-born, swells in.
 function createVoice(bs, degree, now) {
-  if (bedOscCount >= MAX_BED_OSC) return null;
+  // Two ceilings: the logical budget (eagerly freed, keeps a release tail from starving new voices) and the
+  // real-node backstop. A refusal is COUNTED rather than silent — if this ever fires, something upstream is
+  // churning membership and the panel will say so instead of the sound merely dying.
+  if (bedOscCount >= MAX_BED_OSC || bedLiveOscCount >= MAX_BED_LIVE_OSC) { bedCounters.refused++; return null; }
   const slot = bs.pool[degree]; if (!slot) return null;
   const ratio = 2 ** (slot.cents / 1200);
   const osc = audioCtx.createOscillator(); osc.type = 'sine'; osc.frequency.value = ROOT_HZ * ratio * (2 ** bs.octave);
@@ -863,7 +878,7 @@ function createVoice(bs, degree, now) {
   const env = audioCtx.createGain(); env.gain.value = 0.0001;
   osc.connect(env); env.connect(bs.filter);
   osc.start(now);
-  bedOscCount++;
+  bedOscCount++; bedLiveOscCount++; bedCounters.created++;
   // Sky Root B3: stamp the voice with its slot's fraction (voice-identity gotcha — voices key by
   // degree only, and a root swap can re-map the same degree to a DIFFERENT tone; syncBedDegrees
   // compares this against the current pool to detect that and release+recreate).
@@ -882,6 +897,7 @@ function releaseVoice(bs, v, now, immediate) {
   // (several stars releasing at once while flying) starves incoming voices of MAX_BED_OSC headroom
   // for the whole release tail, which read as "the bed gets quieter while moving" (part of the same bug).
   bedOscCount = Math.max(0, bedOscCount - 1);
+  bedCounters.released++;
   const rel = immediate ? 0.05 : BED_RELEASE;
   try {
     v.env.gain.cancelScheduledValues(now);
@@ -890,6 +906,7 @@ function releaseVoice(bs, v, now, immediate) {
   } catch {}
   try { v.osc.stop(now + rel + 0.05); } catch {}
   v.osc.onended = () => {
+    bedLiveOscCount = Math.max(0, bedLiveOscCount - 1);   // the REAL node is gone only now, ~2.55s after release
     try { detuneBus?.disconnect(v.osc.detune); } catch {}
     try { v.osc.disconnect(); } catch {} try { v.env.disconnect(); } catch {}
     if (bs.fadingCount != null) { bs.fadingCount--; if (bs.fadingCount <= 0) finalizeStarChain(bs); }
@@ -910,10 +927,11 @@ export function voiceToneChanged(voiceFraction, pool, degree) {
   return !!(slot && slot.fraction !== voiceFraction);
 }
 
-// Reconcile every bed star's voices against the CURRENT chord's 3 degrees ∩ its pool coverage. Called
-// every frame (from setField) so newly-landed pool coverage and newly-audible stars pick up promptly;
+// Reconcile every bed star's voices against the CURRENT chord's 3 degrees ∩ its pool coverage. Called from
+// the SCHEDULER TICK (the audio clock, so a chord change is voiced promptly) and once more at the end of a
+// membership change (setField), so a newly-audible star and newly-landed pool coverage pick up immediately;
 // only re-swells a CONTINUING voice when the chord itself just changed (lastSyncedChordId guard) — a
-// bare pool/field refresh must never re-trigger every voice's envelope every frame. On a tone-changed
+// bare pool/field refresh must never re-trigger every voice's envelope. On a tone-changed
 // mismatch, release (normal BED_RELEASE fade) and let the loop's own "no voice at this degree" branch
 // recreate it — the overlapping release+attack IS the crossfade (should sound like weather, not a
 // cut), never an immediate cut.
@@ -1301,6 +1319,11 @@ export function debugSkyState() {
 // non-empty skyPool — see its FLIGHT/LOD KNOBS). items = [{ id, pool, pan, gain, octave, cutoff }];
 // pool is the zone's 12-slot degree pool (z.skyPool), reused as-is (no copy). No lead required — this
 // is the un-gated ambient bed, live from cosmos entry.
+// BED MEMBERSHIP — which stars are in the ambient field, and what pool each one voices. Every entry here
+// creates oscillators (and a MIDI note-on per voice); every exit releases them. So this must be called only
+// when membership can actually have CHANGED — never once per rendered frame. flight-view gates it on the
+// same causes as the row field: translation, zone spawn/evict, a new chord key, a landed compile, a root
+// swap. Rotation is deliberately not one of them.
 export function setField(items) {
   if (!audioCtx) return;
   const now = audioCtx.currentTime;
@@ -1312,12 +1335,44 @@ export function setField(items) {
     let bs = bedStars.get(item.id);
     if (!bs) { bs = makeBedStar(item.id); bedStars.set(item.id, bs); }
     bs.pool = item.pool; bs.octave = item.octave || 0;
-    bs.filter.frequency.setTargetAtTime(item.cutoff, now, 0.3);
-    bs.panner.pan.setTargetAtTime(item.pan, now, 0.3);
-    bs.gainNode.gain.setTargetAtTime(item.gain, now, 0.3);
+    applySkyPose(bs, item, now);
   }
   for (const [id, bs] of bedStars) if (!seen.has(id)) { bedStars.delete(id); dropBedStar(bs, now); }
   syncBedDegrees(now);
+}
+
+// BED POSE — where each star already in the field sits in the stereo field, how loud, how bright. Safe to
+// call every frame: AudioParam automation only, no voice can be created or released by it. This is what
+// lets a star sweep across the stereo image as the camera turns WITHOUT the turn re-triggering its chord —
+// the defect that made the same bed chord re-strike every frame in a DAW over MIDI out, and that buried the
+// audio thread in oscillators after a few seconds of sustained rotation.
+//
+// `octave` is accepted but only takes effect on the NEXT voice created at this star (createVoice bakes
+// frequency at birth and never retunes in place), which is exactly the pre-split behaviour.
+export function setSkyPose(items) {
+  if (!audioCtx) return;
+  const now = audioCtx.currentTime;
+  for (const item of items || []) {
+    const bs = bedStars.get(item.id);
+    if (!bs) continue;   // not in the field (or already dropped and fading) — never re-aim a dying star
+    bs.octave = item.octave || 0;
+    applySkyPose(bs, item, now);
+  }
+}
+
+function applySkyPose(bs, item, now) {
+  bs.filter.frequency.setTargetAtTime(item.cutoff, now, 0.3);
+  bs.panner.pan.setTargetAtTime(item.pan, now, 0.3);
+  bs.gainNode.gain.setTargetAtTime(item.gain, now, 0.3);
+}
+
+// Bed counters + live gauges for the telemetry panel (see the bedCounters declaration).
+export function bedStats() {
+  return {
+    ...bedCounters,
+    liveOscs: bedLiveOscCount, logicalVoices: bedOscCount,
+    stars: bedStars.size, dying: dyingStars.length,
+  };
 }
 
 // Ticks per second (the universal clock's rate). Re-anchors the transport epoch so the CURRENT
@@ -1363,7 +1418,7 @@ export function stopAudio() {
   const oldFundamentalOffset = fundamentalOffset, oldModulationOffset = modulationOffset;
 
   cosmosMidi = null; gridRowPlayer = null;
-  bedStars = new Map(); dyingStars = []; bedOscCount = 0; currentField = [];
+  bedStars = new Map(); dyingStars = []; bedOscCount = 0; bedLiveOscCount = 0; currentField = [];
   skyChordId = START_CHORD_ID; skyTabu = null; skyStep = -1; lastSyncedChordId = null;
   skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; lastRootLadder = [];
   rootEstablished = false; rootPhraseTracker = null; recentSkyRoots = []; lastRootPolicyProposal = null;
@@ -1423,6 +1478,11 @@ function schedulerTick() {
   lastSchedulerTickAt = wall;
   const now = audioCtx.currentTime;
   stepSkyWalk(skySeconds(now));   // the sky's own chord clock — independent of any lead (no click gating)
+  // Voice the bed against the CURRENT chord on the AUDIO clock, not the render frame. Membership moved
+  // behind a change-gate (setField), so if this still rode the frame a chord change or root swap would wait
+  // on the next membership pass to be heard. Cheap and idempotent: with a stable field and chord it compares
+  // ≤10 stars × ≤3 degrees and does nothing.
+  syncBedDegrees(now);
   pumpReattacks(now, skySeconds(now));   // bed breathes at every mix position (gain gates audibility)
   gridRowPlayer?.tick(now, now + SCHEDULE_AHEAD, transportStart, ticksPerSec);
   ensureLeadMask(false);       // cheap cache-check; recomputes only right after stepSkyWalk changed the chord
