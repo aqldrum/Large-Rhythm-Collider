@@ -280,44 +280,52 @@ Home-button rename broke an `index.html` structure regex; unrelated to this work
 
 ### Remaining (needs the browser / Avery's ear)
 
-- **2.1 / 2.2 by ear, now that the rail owns the sound**: SPEED's default is still the placeholder 2.5
-  notes/s and DWELL's curve is still linear — both are live on the rail and persist, so calibration is now
-  just "fly, twist, and leave it where it sounds right".
-- **2.1 / 2.2 calibration targets**: freeze SPEED's default vs a mid-grid neighborhood; shape DWELL's
-  log 1/8→1 curve (engine `setDwell` is linear-ready, `RAIL_PARAMS.dwell` is `linear` for now). SPACE
-  confirmed continuous enough across the MIX in the safe-knob pass.
+> The next thread is **knob refinement** (Avery, 2026-07-30). The three items below are the agenda, and all
+> three are now easy to work on: the rail owns the engine and persists, so calibration is fly-twist-leave.
+> Audio-side churn is out of the way — see `AUDIO_CHURN_INVESTIGATION_2026-07-30.md` for what was fixed and
+> for the **T** telemetry table, which is the tool to reach for if a knob ever *sounds* like a performance
+> problem rather than a mapping problem.
+
+- **2.1 / 2.2 by ear**: freeze SPEED's default against a mid-grid neighborhood (still the placeholder 2.5
+  notes/s) and shape DWELL's log 1/8→1 curve (engine `setDwell` is linear-ready; `RAIL_PARAMS.dwell` is
+  `linear` for now). Both are live on the rail and persist, so this is fly-twist-leave. SPACE was confirmed
+  continuous enough across the MIX in the safe-knob pass.
 - **2.3 RICHNESS is too subtle / not smooth** (Avery, 2026-07-29): hard to tell it's doing anything, and
   extended chords still appear at low/zero RICHNESS. It reads as **~3–4 discrete musical levels, not a
   continuum** — L1 basic triads · L2 standard sevenths · L3 full extensions · (L4 dissonant qualities?).
   Candidate refactor: make RICHNESS a **detent** over those chord-vocabulary tiers rather than the current
   linear `[0,0.18]` sky-reach weight, so the knob steps through triads→7ths→extensions. Deferred behind
   SPEED calibration.
-- **2.4 Audio continuity while flying** (was "Bed robustness"): moving to a new area causes audio to
-  **fully drop** during the re-solve, not just a bed beat-lag (Avery confirmed 2026-07-29). Likely **two
-  mechanisms under one item**: (a) the bed swell-clock gap this section already names — `REATTACK_PERIODS`
-  never swells a star that *enters* the audible set mid-period; and (b) a **rows recompile gap** — on a
-  field swap (`setGridSpatialField` → `gridRowPlayer.setField`) the chord re-solves and new star programs
-  must compile (`ROW_COMPILE_WORKERS = 1`, Phase 4) with nothing sustaining across the gap; Avery's read is
-  that culled-grid-row stale notes used to paper over this. MIX makes both worse (crossfading toward the
-  dropping layer). **Probe first** (headless, `_seedDeck` style): simulate a fast field-swap and measure
-  bed voice count/gain AND row scheduling continuity across the re-solve window to pin (a) vs (b) vs both
-  before any engine edit. Expected fixes: bed = immediate swell-in on star entry (clock governs re-swells
-  only); rows = sustain/overlap across recompile.
+- **2.4 Audio continuity while flying** ✅ **LARGELY RESOLVED 2026-07-30** — "smooth transitions everywhere"
+  (Avery). Neither candidate mechanism in the original write-up was the cause. Probing first was right, but
+  the decisive evidence was an *input*, not a probe: the symptom appeared under the ARROW keys, which are
+  pure rotation and therefore involve no re-solve, no recompile and no field swap at all. What it actually
+  was: a transport sharing a thread with the per-frame field rebuild, late notes clamped into a flam instead
+  of dropped, and — the big one — the BED's audible set being built from the on-screen projection sorted by
+  view depth, so turning your head churned membership and re-struck the chord every frame. Full record in
+  `AUDIO_CHURN_INVESTIGATION_2026-07-30.md` (`10feedf` · `2d5ba31` · `88410c1`).
+  **The one part of the original diagnosis still standing:** `REATTACK_PERIODS` governs re-swells only, so a
+  star entering the audible set mid-period still waits for the clock rather than swelling in immediately.
+  Much rarer now that rotation cannot cause an entry — worth an ears-on check before spending anything on it.
 - **Large-grid row audio** (surfaced 2026-07-29 while calibrating): huge grids broke row compile two ways,
   both now patched — (i) `compositeTape` used a spread `Math.max` over `gaps`, overflowing the stack at
   large grids ("Maximum call stack size exceeded") so every affected zone's compile threw and went silent
   (fixed: fold, `0e96450`); (ii) even folded, a rhythm with a huge single layer materializes ~layerSum
   event objects → worker OOM/pause that kills audio everywhere (interim cap: `audioCompileEligibility`
   skips owners past `ROW_MAX_COMPOSITE_ONSETS = 20000`, `cec5795`). **Real fix = stream the row compile.**
-  Avery's frame: don't compute the whole ~1e6-tick cycle; compute a wall-clock-local window. Blocker is
-  Cull2 needing "a view from the cycle start" — but that view is **compact and saturates**: the composite
-  tape is periodic, distinct gap values are finite and few, so once the cull vocabulary saturates (a short
-  prefix relative to the grid) every later section culls deterministically. Design: cull-state prefix →
-  saturated snapshot → generate+cull windows keyed to the transport tick (the player already schedules from
-  `absoluteTick` with cursors). Reflection is a pure index symmetry over a palindrome (mirror gap == this
-  gap), so it's per-window computable, not a whole-cycle materialization. Goal: **music wherever you are.**
+  Avery's frame: don't compute the whole ~1e6-tick cycle; compute a wall-clock-local window, keyed to the
+  transport tick (the player already schedules from `absoluteTick` with cursors).
+  **⚠ TWO CORRECTIONS since this was written.** (1) The "vocabulary saturates in a short prefix" hope does
+  not survive contact with the invariant: **all polyrhythms are palindromes**, so every novel gap value has
+  appeared by the midpoint and there is no test that says "saturated" before `cycle/2` is computed. Nor can
+  the inventory be capped — the gaps *are* the pitches, so a cap distorts the tuning system. Reflection is
+  what keeps the back half sounding rather than silent. (2) **The urgency dropped** (Avery, 2026-07-30):
+  "music wherever you are" turned out to be a churn problem, now fixed, so streaming's justification narrows
+  to the OOM alone and the interim cap is a legitimate permanent tier to consider. Decide on a count of how
+  many charted grids the cap actually silences. Both corrections are recorded in
+  `AUDIO_WORKERS_STREAMING_PLANNING_2026-07-29.md` §5 and `AUDIO_CHURN_INVESTIGATION_2026-07-30.md` §6.
   Also: the `tooLarge` divisor cap (`cull2-grid-core.js:69`) is bypassed by `compileGridAudioProgram`'s
-  synthetic `ownerSolve` — revisit when streaming lands.
+  synthetic `ownerSolve` — revisit if streaming lands.
 - **4 DENSITY**, **5 ABCD soloing + inspector merge** — unstarted. (**3 λ freeze** is done — see above; the
   12-location sweep was skipped by decision, not deferred.)
 

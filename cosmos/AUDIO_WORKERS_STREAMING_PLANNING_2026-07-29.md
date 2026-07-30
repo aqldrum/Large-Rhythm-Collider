@@ -4,6 +4,13 @@ Prep for a planning discussion on (a) re-prioritizing the worker system and (b) 
 large-grid row audio ("music wherever you are"). Not a spec — a shared starting point. Companion to
 `KNOB_RAIL_IMPLEMENTATION_PLAN_2026-07-28.md` (the UI-feature ledger).
 
+> **⚠ READ `AUDIO_CHURN_INVESTIGATION_2026-07-30.md` FIRST.** Most of §3's symptoms turned out to be three
+> unrelated defects — a transport sharing a thread with the renderer, late notes displaced instead of
+> dropped, and two view-dependent membership sets — none of them about grid size. They are fixed
+> (`10feedf` · `2d5ba31` · `88410c1`) and transitions are smooth. **Streaming's justification narrows to the
+> OOM alone** (Avery, 2026-07-30: *"I'm not even convinced the high grid saturation is as much of an issue
+> now"*), so read §5 and §6 below as the open design space they always were, not as a queued project.
+
 ---
 
 ## 1. Current progress — the knob rail (UI feature)
@@ -21,7 +28,8 @@ that is *thin UI over its own state module* — no audio-engine logic in the vie
   localStorage persistence. Headless-guarded (`assert-rail-params`, `assert-rail-bindings`, `assert-rail-view`).
 - **THE RAIL OWNS THE ENGINE** (2026-07-29) — restoration runs on every entry via `applyRailToEngine()`, and
   the audio lab is a dev-only mirror behind `?audioLab=1` / Z. See §3's resolved ownership bullet.
-- **Remaining:** SPEED + DWELL calibration by ear (both live and persisting now), DENSITY (Phase 4).
+- **Remaining:** SPEED + DWELL calibration by ear (both live and persisting now), RICHNESS's detent question,
+  DENSITY (Phase 4). Knob refinement is Avery's next thread (2026-07-30).
 
 ---
 
@@ -43,9 +51,12 @@ Telemetry line: `[cosmos] zones N · solved S (+r/s) · solving · pending · ta
 
 ## 3. Symptoms (observed)
 
-- **Post-move audio dropouts** — intermittent, "finicky." **Web travel triggers a dropout more than
-  scrolling/flying** (Avery, 2026-07-29). Hypothesis: web travel jumps the whole field at once, so the
-  solve+compile burst is larger and more simultaneous than incremental flight. Not yet measured.
+- **~~Post-move audio dropouts~~ RESOLVED 2026-07-30** — intermittent, "finicky"; web travel worse than
+  flying. The hypothesis here (a bigger, more simultaneous solve+compile burst) was **wrong**, and the
+  arrow keys proved it: the symptom appeared under PURE ROTATION, which changes no membership, no distance
+  and no `programKey`, so no solve or compile is involved at all. Measured cause: per-frame field rebuilds
+  starving a main-thread transport, late events clamped into a flam, and two view-dependent membership sets.
+  See `AUDIO_CHURN_INVESTIGATION_2026-07-30.md` §3.
 - **Huge-grid stack overflow** — `compositeTape` used `Math.max(...gaps)`; at large grids the spread
   overflowed the stack ("Maximum call stack size exceeded"), so every affected zone's compile threw and
   went silent (err count climbing past 2k). **FIXED** — fold instead of spread (`0e96450`).
@@ -56,10 +67,11 @@ Telemetry line: `[cosmos] zones N · solved S (+r/s) · solving · pending · ta
 - **Onset sparsity at low tick rate** — rows are near-silent because onset cadence scales with the tick
   rate (measured: first row voice at +0.02s @ 3735 t/s vs +1.37s @ 100 t/s; trajectory flat-near-zero at
   low fixed rates). SPEED/ONSET mode is the cure (targets notes/sec, not ticks/sec) and is **now the mode the
-  engine starts in** on every entry, at the placeholder 2.5 notes/s — so this wants an ears-on re-check.
+  engine starts in** on every entry, at the placeholder 2.5 notes/s — calibration is Avery's knob thread.
 - **Post-move recovery is part tick-clocked, part wall-clock** — camera settle is wall-clock (`SETTLE_SECONDS
   = 3`, rate-independent); the tick-clocked tail is the row install boundary (`ROW_SWITCH_TICKS = 16`) plus
-  onset cadence. Slower ticks ⇒ longer real-world recovery.
+  onset cadence. Slower ticks ⇒ longer real-world recovery. (Still true, but no longer a dropout source:
+  the recovery the ear was hearing was mostly churn, not this.)
 - **~~Ownership conflict: knobs ↔ audio-lab selectors.~~ RESOLVED 2026-07-29 — the rail owns the engine.**
   Both surfaces used to write the same engine state (MIX knob and audio-mode `<select>` both called `setMix`;
   SPEED knob and `scaled speed` checkbox both set the speed mode), so with knobs gesture-only the *proper*
@@ -83,21 +95,28 @@ Telemetry line: `[cosmos] zones N · solved S (+r/s) · solving · pending · ta
   unaccounted for (lingering audio-service process? incomplete quit? mis-timed perception?) — flagged, not
   chased. **Never observed in main-page playback** (which has no flight enter/exit teardown lifecycle). If it
   recurs: check whether bed oscillators are being left unreleased when the rAF loop or context tears down
-  outside the Home/Esc path.
+  outside the Home/Esc path. **2026-07-30 update:** more plausible than it looked — the bed's node accounting
+  let a page die holding *hundreds* of unreleased oscillators rather than the ~30 the budget implied
+  (`88410c1`; investigation doc §3.4), which fits an orphaned audio-service stream better than the old
+  accounting did. Bounded now, but the `pagehide` `audioCtx.close()` + release-all-on-exit hygiene is still
+  worth doing: never rely on process death for silence.
 
 ---
 
 ## 4. Known issues / open questions
 
 - **`ROW_COMPILE_WORKERS = 1`** is the row throughput bottleneck; scaling with distance/density is part of
-  the prioritization rethink. Does the compile parallelize safely?
+  the prioritization rethink. Does the compile parallelize safely? **Measure first now:** the post-fix table
+  shows 208 compiles/s while flying and 9.3/s at rest, so the question is no longer "is one worker enough"
+  but "why is there that much work to do" (investigation doc §6).
 - **The two pools don't coordinate.** A move floods both independently; there's no *global* nearest-first
   priority spanning solve + compile, and no cross-pool backpressure.
 - **`tooLarge` divisor cap is bypassed** — `compileGridAudioProgram` passes a synthetic `ownerSolve` with
   `tooLarge:false`, so the `cull2-grid-core.js:69` guard never fires (the interim onset cap covers it for
   now). Revisit when streaming lands.
 - **Web-travel burst** — should the destination's solve/compile be pre-warmed *during* the travel
-  animation rather than all at arrival?
+  animation rather than all at arrival? (Still a good latency win; no longer a dropout fix, since web travel
+  was never the mechanism.)
 
 ---
 
@@ -160,3 +179,10 @@ Decisions to make:
 - **Web-travel pre-warm:** kick the destination's solve/compile during the travel animation.
 - **Streaming fits here:** a streamed row compiler changes the unit of work from "whole grid" to "window,"
   which is itself a prioritization lever (compile only the window the playhead needs next).
+
+**Status 2026-07-30.** Instrumentation exists (`cosmos/audio-telemetry.js`; **T** dumps a per-motion-mode
+table) — build on it rather than re-deriving it. The transport is off the main thread and the per-frame field
+rebuild is gone, so the two pools no longer contend with the clock at all; what remains is the **work itself**:
+150 installs/s and 208 compiles/s while flying, 6.2/9.3 at rest. That is the next thing to chase, and it is
+upstream of every question in this section — a unified priority score matters much less once there is less to
+prioritize. `_seedDeck` walking the event list twice per install is the first place to look.
