@@ -44,7 +44,15 @@ const CHORD_QUANTIZE_DIVISIONS = 8;          // advance lands on a 1/8-cycle bou
 const CHORD_ESCAPE_MULT = 4;                 // escape cap = 4 full cycles (= 4× the max DWELL target)
 const TABU_K = 3;                // sky-walk tabu length (chord-walk.js's exact convention)
 const TUNING_STRENGTH_MAX = 8;
-let LAMBDA_FIELD = 2.0;          // live local-tuning pull, in semitones of voice-leading cost
+// LOCAL-TUNING PULL (λ), in semitones of voice-leading cost the best local tuning advantage can justify.
+// FROZEN at the ceiling by Avery's call (2026-07-29, ownership-transfer session): "I prefer if larger jumps
+// are sometimes chosen." This deliberately supersedes plan decision 4 ("freeze at the knee of a 12-location
+// sweep, not at the max") — the knee is where tuning influence stops buying vocabulary, but the leaps it
+// buys past that point are wanted, not avoided. The Phase-3 sweep is therefore skipped, not deferred.
+// The rail has NO λ knob (decision 4 stands on that): `setTuningStrength` survives as a dev-only probe on
+// the audio-lab overlay, which can only explore DOWNWARD from here since TUNING_STRENGTH_MAX is 8.
+const LAMBDA_FIELD_FROZEN = 8.0;
+let LAMBDA_FIELD = LAMBDA_FIELD_FROZEN;   // live only so the lab probe can sweep it; production never moves it
 // How far the sky reaches past the triad, in semitones of voice-leading cost — earned, so the walk
 // scales it by the chord's weakest-supported degree: extensions are cheap where the sky is well tuned
 // across all of the chord's degrees and full price where the extra degree has nothing to sound on.
@@ -80,7 +88,11 @@ const REATTACK_PERIODS = [4.5, 5.6, 6.4, 8.1, 10];   // SKY-CLOCK seconds; mutua
 // would drop the sky by up to a full octave for a high-cents root and leap back up on the next
 // modulation; every tone is octave-folded into a register downstream anyway, so the fold keeps the root
 // on ROOT_HZ's pitch class while bounding the move to a tritone.
-const MODULATION_DEFAULT = false;
+// Default ON since the ownership transfer (2026-07-29): the audio-lab entry defaults had been shipping
+// modulation on since `f54198c` and that is what Avery has been listening to, so the rail's default
+// (RAIL_PARAMS.modulation) and the engine's own agree rather than splitting. Decision 7's "opt-in" now
+// means "switchable in the rail's advanced drawer", not "off until asked".
+const MODULATION_DEFAULT = true;
 // FUNDAMENTAL is a second, user-driven detune offset, summed with modulation on the same bus (Phase 0.2):
 // two ConstantSourceNodes in CENTS whose sum feeds every oscillator's detune AND the MIDI spelling, so one
 // gesture never overwrites the other's automation. Bounded to ±2 octaves — ample pitch travel while the
@@ -658,12 +670,14 @@ export function setSpatial(pan, gain, octaveLift) {
 // alongside the SKY KNOBS so a headless guard can verify the bed's decisions without a real AudioContext.
 export { NOMINAL_FALLBACK_CYCLE_SECONDS, CHORD_QUANTIZE_DIVISIONS, CHORD_ESCAPE_MULT, SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, LAMBDA_FIELD, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_TOP_K };
 
-// User-facing harmonic-policy control. Because candidate field costs are normalized, this has a
-// stable meaning: the best local tuning advantage can justify up to this many semitones of additional
-// voice-leading motion. Higher values are intentionally ready for sevenths/extensions.
+// DEV PROBE ONLY (decision 4 + the LAMBDA_FIELD_FROZEN note above). λ is frozen at 8.0 in production and
+// no rail knob binds it; this setter exists so the audio-lab overlay can sweep it by ear. Because candidate
+// field costs are normalized it has a stable meaning: the best local tuning advantage can justify up to this
+// many semitones of additional voice-leading motion. A non-finite input holds the current value rather than
+// snapping to the old 2.0 default — a garbled probe read must never quietly retune the sky.
 export function setTuningStrength(value) {
   const n = Number(value);
-  LAMBDA_FIELD = Math.max(0, Math.min(TUNING_STRENGTH_MAX, Number.isFinite(n) ? n : 2));
+  LAMBDA_FIELD = Math.max(0, Math.min(TUNING_STRENGTH_MAX, Number.isFinite(n) ? n : LAMBDA_FIELD));
   return LAMBDA_FIELD;
 }
 

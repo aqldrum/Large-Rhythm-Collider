@@ -18,12 +18,16 @@ headless guard before the UI that depends on it.
    Knob max = one full cycle per chord.
 4. **The gravity/tuning-strength knob is removed.** `LAMBDA_FIELD` gets frozen at the knee of a
    12-location sweep (Phase 3), not at the max. `setTuningStrength` survives as a debug-only probe.
+   → **AMENDED 2026-07-29 (Avery):** frozen **at the max, 8.0** — the bigger voice-leading jumps the ceiling
+   buys are wanted, so the sweep was skipped. The knob's removal and the debug-probe survival both stand.
 5. **DENSITY = top-N ratio owners, detents 1/2/3.** No "ALL" detent — a genuinely unculled full-row
    mode is a separate later experiment.
 6. **ABCD layer toggles drive audition playback with mute semantics** — the composite's gap-derived
    pitches are kept; onsets whose owners are all toggled off are *skipped at schedule time*, never
    removed from `lead.notes` (index stability — see Phase 5).
 7. **Modulation stays opt-in** until the settled-while-flying phrase-exhaustion question is resolved.
+   → **AMENDED 2026-07-29 (Avery):** default **ON** — "opt-in" now means "switchable in the advanced drawer",
+   carrying the `f54198c` lab entry default forward. The phrase-exhaustion question is still open.
 8. **Persistence**: musical knob settings persist (localStorage); MIDI-enabled, mute, and transient
    selection state (including ABCD toggles — reset to all-on per selection) do not.
 9. **Shipped rail**: `VOLUME · FUNDAMENTAL · DENSITY 1–3 · SPEED · DWELL · RICHNESS · BED/ROWS · SPACE`,
@@ -250,12 +254,36 @@ Home-button rename broke an `index.html` structure regex; unrelated to this work
   `RAIL_KNOBS` × `ENGINE_SETTERS`, so each was a declarative add. Verified live (readouts + drag paths, no
   errors); `assert-rail-view` extended (safe-set present, SPEED/DWELL held back, FUNDAMENTAL cents round-trip).
 
+- **2 — the rail is complete + THE OWNERSHIP TRANSFER** ✅ (2026-07-29) — DWELL joins the time group, MUTE is a
+  transport button, and MODULATION / MIDI-out live in an `<details>` **advanced drawer**. Every decision-9
+  control with an engine setter is now on the rail; only DENSITY is absent (Phase 4 has no setter).
+  **Restoration is ON**, but as a repeatable `applyRailToEngine()` that flight-boot calls on EVERY entry —
+  *not* `subscribe({emitNow})`. The gotcha: `ensureRail()` is `built`-guarded to the first entry while
+  `stopAudio()` destroys the graph on every exit and `initAudio()` rebuilds it at the engine's own defaults
+  (`mix = 0`, unity volume), so a one-shot replay would have restored the rail exactly once per page load.
+  Verified live: exit → re-enter comes back up at the rail's own MIX/SPEED, not the engine's.
+  The **audio lab is demoted to a dev mirror** (unchanged gating: `?audioLab=1` seeds it, Z toggles — the same
+  shape as `?skyDebug=1` / C, per Avery). It applies **nothing** at entry and paints itself FROM the engine;
+  mute · audio-mode · modulation · MIDI-out write **through `railParams`** so there is exactly one owner,
+  while ticks/s · scaled-speed · cycle · λ stay raw **dev probes** that override the rail until the next
+  entry. The retired full-quality checkbox is gone from the markup too. `RAIL_SCHEMA_VERSION → 2`, since
+  every v1 blob was stored while the lab owned the engine (a v1 `mix: 0` would now come up ambient-only).
+  Entry defaults, Avery's calls: **MIX 0.8** (rows-forward, bed underneath) and **MODULATION ON** (carries
+  `f54198c` forward; decision 7's "opt-in" now means "switchable in the drawer"). `#lrc-div` keeps inspector
+  duties only. Guards: `assert-rail-view` gained two ownership sections (restoration-not-emitNow; the lab
+  imports no rail-owned setter, applies nothing at entry, stays dev-gated).
+- **3 — λ FROZEN at 8.0, sweep SKIPPED** ✅ (2026-07-29, Avery: *"I prefer if larger jumps are sometimes
+  chosen"*). This overrides decision 4's "freeze at the knee, not the max": the knee is where tuning
+  influence stops buying vocabulary, and the leaps past it are wanted. `LAMBDA_FIELD_FROZEN = 8.0`;
+  `setTuningStrength` survives as the lab's dev probe (which can therefore only explore *downward*, since
+  `TUNING_STRENGTH_MAX` is also 8).
+
 ### Remaining (needs the browser / Avery's ear)
 
-- **2 — finish the rail**: **SPEED + DWELL** knobs (the time group, deferred — SPEED flips FIXED→ONSET), the
-  **MUTE button**, and the **advanced drawer** (MODULATION / MIDI-out); then flip on `{emitNow}` restoration
-  and retire the old cockpit controls `#lrc-div` still holds. `#lrc-div` keeps inspector duties only.
-- **2.1 / 2.2 calibration by ear**: freeze SPEED's default vs a mid-grid neighborhood; shape DWELL's
+- **2.1 / 2.2 by ear, now that the rail owns the sound**: SPEED's default is still the placeholder 2.5
+  notes/s and DWELL's curve is still linear — both are live on the rail and persist, so calibration is now
+  just "fly, twist, and leave it where it sounds right".
+- **2.1 / 2.2 calibration targets**: freeze SPEED's default vs a mid-grid neighborhood; shape DWELL's
   log 1/8→1 curve (engine `setDwell` is linear-ready, `RAIL_PARAMS.dwell` is `linear` for now). SPACE
   confirmed continuous enough across the MIX in the safe-knob pass.
 - **2.3 RICHNESS is too subtle / not smooth** (Avery, 2026-07-29): hard to tell it's doing anything, and
@@ -290,12 +318,17 @@ Home-button rename broke an `index.html` structure regex; unrelated to this work
   gap), so it's per-window computable, not a whole-cycle materialization. Goal: **music wherever you are.**
   Also: the `tooLarge` divisor cap (`cull2-grid-core.js:69`) is bypassed by `compileGridAudioProgram`'s
   synthetic `ownerSolve` — revisit when streaming lands.
-- **3 λ freeze**, **4 DENSITY**, **5 ABCD soloing + inspector merge** — unstarted.
+- **4 DENSITY**, **5 ABCD soloing + inspector merge** — unstarted. (**3 λ freeze** is done — see above; the
+  12-location sweep was skipped by decision, not deferred.)
 
 ### Implementer's-call decisions already made (veto-able)
 
 - FUNDAMENTAL: engine clamp ±2400¢ (`FUNDAMENTAL_OFFSET_MAX_CENTS`); **knob range ±1200¢** (`RAIL_PARAMS`).
 - Chord clock: `NOMINAL_FALLBACK_CYCLE_SECONDS = 24`, `CHORD_QUANTIZE_DIVISIONS = 8`, `CHORD_ESCAPE_MULT = 4`.
 - SPEED: `RAIL_PARAMS.speed` default 2.5 notes/s, range 0.5–16, **log** (recalibrate by ear in 2.1).
-- VOLUME default 0.85 (rail) / unity (engine); SPACE default 0.5; RICHNESS 0.05; MIX 0; modulation off.
-- `RAIL_SCHEMA_VERSION = 1`, storage key `lrc.cosmos.rail.v1`.
+- VOLUME default 0.85 (rail) / unity (engine); SPACE default 0.5; RICHNESS 0.05. **MIX 0.8 and modulation ON**
+  are Avery's calls (2026-07-29), not implementer's — they are the entry sound now that the rail restores.
+- `RAIL_SCHEMA_VERSION = 2` (bumped at the ownership transfer), storage key `lrc.cosmos.rail.v1` (a stable
+  namespace; the blob's `v` field is the schema gate).
+- The advanced drawer is a native `<details>`; MIDI-out is kept OUT of `ENGINE_SETTERS` (async + gesture-gated
+  + must roll the param back on failure, so it has its own applier and entry restoration skips it).

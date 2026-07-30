@@ -20,9 +20,14 @@ check('every param initialises to its declared default',
 // Decision 9's shipped rail must all be present and persisted; the transient toggles must not persist.
 check('the shipped musical knobs are all present and persisted',
   ['volume', 'fundamental', 'density', 'speed', 'dwell', 'richness', 'mix', 'space'].every(n => RAIL_PARAMS[n]?.persist === true));
-check('modulation persists (opt-in, default off) while mute and MIDI-out are transient (decision 8)',
-  RAIL_PARAMS.modulation.persist === true && RAIL_PARAMS.modulation.default === false &&
+check('modulation persists (default ON since the ownership transfer) while mute and MIDI-out are transient (decision 8)',
+  RAIL_PARAMS.modulation.persist === true && RAIL_PARAMS.modulation.default === true &&
   RAIL_PARAMS.mute.persist === false && RAIL_PARAMS.midiOut.persist === false);
+// The entry sound is now the RAIL's: MIX 0.8 is rows-forward with the bed audible underneath (Avery,
+// 2026-07-29), replacing the pure-rows entry the audio lab's mode select used to impose.
+check('MIX defaults to the rows-forward blend the rail restores on entry', RAIL_PARAMS.mix.default === 0.8);
+// v1 blobs were written while the LAB still owned the engine — a stored `mix: 0` would come up ambient-only.
+check('the schema version was bumped past the pre-transfer (v1) layout', RAIL_SCHEMA_VERSION >= 2);
 check('a shared singleton is exported for the running instrument', railParams instanceof RailParams);
 
 console.log('\n  Clamps (the stored form is always legal)');

@@ -3645,16 +3645,51 @@ body.cosmos-active #cosmos-view {
    .knob-value) verbatim, so they look and drag exactly like the Playback envelope knobs. */
 #cosmos-rail {
     position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); z-index: 519;
-    display: flex; gap: 26px; align-items: flex-end; justify-content: center;
-    padding: 12px 26px; max-width: min(720px, calc(100vw - 380px));
+    display: flex; gap: 26px; align-items: flex-start; justify-content: center;   /* one common label row across the groups */
+    padding: 12px 26px; max-width: min(880px, calc(100vw - 340px));   /* fits transport + 7 knobs + the adv drawer */
     background: var(--hud-bg); border: 1px solid var(--hud-border); border-radius: var(--border-radius);
     -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 2px 10px rgba(0,0,0,.3);
     font-family: var(--sans);
 }
 #cosmos-rail .rail-group { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 #cosmos-rail .rail-group-label { font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--hud-accent); opacity: .85; }
-#cosmos-rail .rail-knobs { display: flex; gap: 22px; }
+/* flex-start, so a two-line readout ("2.5 notes/s") hangs below its dial instead of shoving the dial up out
+   of line with its neighbour in the same group. */
+#cosmos-rail .rail-knobs { display: flex; gap: 22px; align-items: flex-start; }
 #cosmos-rail .knob-container { margin: 0; }   /* the shared ADSR rule adds 8px vertical margin — unwanted inside the pill */
+
+/* MUTE — a latching button that sits in a knob's footprint so the transport column lines up with the
+   rotaries beside it. Engaged state borrows the house accent-inverted treatment. */
+#cosmos-rail .rail-button-wrap { display: flex; align-items: center; min-height: 62px; }
+#cosmos-rail .rail-button {
+    padding: 7px 11px; border: 1px solid var(--hud-border); border-radius: 4px; cursor: pointer;
+    background: rgba(255,255,255,.035); color: var(--hud-text-muted);
+    font: 600 9px var(--sans); letter-spacing: 1.1px; text-transform: uppercase;
+    transition: color var(--transition-speed), border-color var(--transition-speed), background var(--transition-speed);
+}
+#cosmos-rail .rail-button:hover { color: var(--hud-text); border-color: var(--hud-accent); }
+#cosmos-rail .rail-button.active { color: #0b0d10; background: var(--hud-accent); border-color: var(--hud-accent); }
+
+/* ADVANCED drawer — settings rather than performance gestures (decision 9). A native <details>, so it
+   opens on click/Enter with no state of its own; the panel floats ABOVE the rail so opening it never
+   reflows the knobs. */
+#cosmos-rail .rail-advanced { position: relative; align-self: stretch; display: flex; align-items: center; }
+#cosmos-rail .rail-advanced-summary {
+    list-style: none; cursor: pointer; padding: 5px 8px; border: 1px solid var(--hud-border); border-radius: 4px;
+    color: var(--hud-text-muted); font: 600 9px var(--sans); letter-spacing: 1.1px; text-transform: uppercase;
+}
+#cosmos-rail .rail-advanced-summary::-webkit-details-marker { display: none; }
+#cosmos-rail .rail-advanced-summary:hover { color: var(--hud-text); border-color: var(--hud-accent); }
+#cosmos-rail .rail-advanced[open] .rail-advanced-summary { color: var(--hud-accent); border-color: var(--hud-accent); }
+#cosmos-rail .rail-switches {
+    position: absolute; right: 0; bottom: calc(100% + 10px); min-width: 190px; display: flex; flex-direction: column; gap: 8px;
+    padding: 10px 12px; background: var(--hud-bg); border: 1px solid var(--hud-border); border-radius: var(--border-radius);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 2px 10px rgba(0,0,0,.3);
+}
+#cosmos-rail .rail-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; font: 10px var(--sans); color: var(--hud-text-muted); }
+#cosmos-rail .rail-switch-label { flex: 0 0 auto; letter-spacing: .6px; text-transform: uppercase; font-size: 9px; }
+#cosmos-rail .rail-switch input { margin: 0; accent-color: var(--hud-accent); }
+#cosmos-rail .rail-switch-readout { margin-left: auto; color: var(--hud-accent); font: 9px var(--mono); text-align: right; }
 
 /* Selected-rhythm inspector. It deliberately uses typography and spacing more than nested boxes: the
    rhythm tuple and spaces plot are the identity, with deep metrics progressively disclosed below. */

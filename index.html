@@ -714,9 +714,13 @@
             </div>
         </div>
 
-        <!-- Development-only Cosmos audio controls. Z gates this overlay independently of the inspector. -->
+        <!-- DEV-ONLY Cosmos audio lab (?audioLab=1 seeds it open; Z toggles — same shape as ?skyDebug=1 / C).
+             The performance RAIL owns the engine (cosmos/rail-view.js); this overlay MIRRORS engine state and
+             only writes on a gesture. Mute / audio mode / modulation / MIDI out route through railParams so
+             both surfaces stay one state; ticks-per-second, scaled speed, grid cycle and tuning λ are debug
+             PROBES with no rail control, and they override the rail until the next cosmos entry. -->
         <aside id="lrc-audio-lab" class="lrc-audio-lab" aria-label="Cosmos audio lab" hidden>
-                    <div class="lrc-audio-lab-head"><span>Audio lab</span><kbd>Z</kbd></div>
+                    <div class="lrc-audio-lab-head"><span>Audio lab · dev</span><kbd>Z</kbd></div>
                     <div class="lrc-chord-readout" id="lrc-chord-readout"></div>
                     <label class="lrc-audio-mode-row" for="lrc-audio-mode">
                         <span>audio</span>
@@ -733,8 +737,8 @@
                     </div>
                     <label class="lrc-tuning-row" for="lrc-tuning-slider">
                         <span>local tuning</span>
-                        <input type="range" id="lrc-tuning-slider" min="0" max="8" step="0.25" value="2" aria-label="local tuning strength in semitones of voice-leading cost">
-                        <b id="lrc-tuning-readout">2.0 st</b>
+                        <input type="range" id="lrc-tuning-slider" min="0" max="8" step="0.25" value="8" aria-label="local tuning strength in semitones of voice-leading cost">
+                        <b id="lrc-tuning-readout">8.0 st</b>
                     </label>
                     <label class="lrc-tuning-row" for="lrc-scaled-speed">
                         <span>scaled speed</span>
@@ -755,11 +759,6 @@
                         <span>modulation</span>
                         <input type="checkbox" id="lrc-modulation" checked aria-label="retune each newly solved root to the fundamental">
                         <b id="lrc-modulation-readout">on</b>
-                    </label>
-                    <label class="lrc-tuning-row" for="lrc-full-quality">
-                        <span>full quality</span>
-                        <input type="checkbox" id="lrc-full-quality" aria-label="hold each chord until every chord tone has sounded">
-                        <b id="lrc-quality-readout">off</b>
                     </label>
         </aside>
     </div>

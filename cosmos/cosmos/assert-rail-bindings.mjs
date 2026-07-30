@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import {
   onsetRateToTickRate, setTargetOnsetRate, currentTargetOnsetRate, currentSpeedMode,
   setRichness, currentRichness, setVolume, currentVolume, setSpace, currentSpace,
+  setDwell, currentDwell, setTuningStrength, currentTuningStrength, currentModulation,
 } from '../cosmos-audio.js';
 
 let PASS = true;
@@ -25,6 +26,26 @@ check('setTargetOnsetRate clamps to the knob range and switches speed into ONSET
   setTargetOnsetRate(3) === 3 && currentSpeedMode().mode === 'onset' && currentTargetOnsetRate() === 3 &&
   setTargetOnsetRate(9999) === 16 && setTargetOnsetRate(0.01) === 0.5);
 setTargetOnsetRate(2.5);   // hygiene: back to the calibrated default
+
+console.log('\n  DWELL — chord dwell past full exposure, in cycle fractions (0 = advance at exposure)');
+check('setDwell clamps to [0,1] and currentDwell reports the fraction alongside the live clock',
+  setDwell(2) === 1 && setDwell(-1) === 0 && setDwell(0.25) === 0.25 && currentDwell().fraction === 0.25 &&
+  Number.isFinite(currentDwell().cycleSeconds));
+setDwell(0);   // hygiene: back to the exposure-floor-only default
+check('the knob\'s default is a no-op — DWELL 0 reproduces the pre-rail advance rule', currentDwell().fraction === 0);
+
+console.log('\n  λ — frozen at the ceiling, and the lab probe cannot corrupt it');
+// Avery's call (2026-07-29): frozen at 8.0 because the bigger voice-leading jumps it buys are wanted.
+// No rail knob binds it; setTuningStrength is the audio lab's dev probe.
+check('LAMBDA_FIELD starts frozen at 8.0 — production never moves it', currentTuningStrength() === 8);
+check('the probe clamps to [0, 8] and a garbled read HOLDS the current value instead of snapping to 2.0',
+  setTuningStrength(99) === 8 && setTuningStrength(-1) === 0 && setTuningStrength('nonsense') === 0);
+setTuningStrength(8);   // hygiene: back to the frozen value
+check('the probe restores exactly the frozen λ', currentTuningStrength() === 8);
+
+console.log('\n  MODULATION — default ON since the ownership transfer (carries f54198c forward)');
+check('the engine\'s own default agrees with the rail\'s, so the two surfaces cannot disagree at entry',
+  currentModulation().on === true);
 
 console.log('\n  RICHNESS — live sky-reach weight (promoted from the swept const)');
 check('setRichness clamps to the table\'s [0, 0.18] and currentRichness reports value + ceiling',
@@ -61,6 +82,9 @@ check('SPACE drives BOTH reverb sends — the ambient send here and the row send
   player.includes('setReverbWet(level)') && player.includes('this.reverb.wet.gain.setTargetAtTime'));
 check('RICHNESS is a live setter, not a frozen const, and the walk reads the live value',
   audio.includes('let RICHNESS = 0.05') && audio.includes('richness: RICHNESS'));
+check('λ is a named frozen constant the walk reads live (so the lab probe still works)',
+  audio.includes('const LAMBDA_FIELD_FROZEN = 8.0') && audio.includes('let LAMBDA_FIELD = LAMBDA_FIELD_FROZEN') &&
+  audio.includes('lambdaField: LAMBDA_FIELD'));
 
 console.log(PASS ? '\n✓✓✓ COSMOS RAIL BINDINGS PASSES' : '\n✗ COSMOS RAIL BINDINGS FAILED');
 process.exit(PASS ? 0 : 1);

@@ -112,11 +112,13 @@ check('gainForDev(0) === 1', gainForDev(0) === 1);
 check(`gainForDev(±${GAIN_CEILING_CENTS}) ≈ 0`, Math.abs(gainForDev(GAIN_CEILING_CENTS)) < 1e-9 && Math.abs(gainForDev(-GAIN_CEILING_CENTS)) < 1e-9);
 check('gainForDev is symmetric in dev sign', [0, 10, 22, 44].every(d => gainForDev(d) === gainForDev(-d)));
 
-console.log('\n  Live local-tuning policy weight');
-check('local tuning strength defaults to 2 semitones of voice-leading cost', currentTuningStrength() === 2);
-check('local tuning strength is continuously adjustable', setTuningStrength(3.25) === 3.25 && currentTuningStrength() === 3.25);
+console.log('\n  Local-tuning policy weight (λ — FROZEN at the ceiling, dev-probe adjustable)');
+// Frozen at 8.0 by Avery's call (2026-07-29): the bigger voice-leading jumps the ceiling buys are wanted.
+// No rail knob binds it; setTuningStrength is the audio lab's dev probe. See LAMBDA_FIELD_FROZEN.
+check('local tuning strength is frozen at 8 semitones of voice-leading cost', currentTuningStrength() === 8);
+check('the dev probe is still continuously adjustable', setTuningStrength(3.25) === 3.25 && currentTuningStrength() === 3.25);
 check('local tuning strength clamps to its supported 0–8 range', setTuningStrength(-1) === 0 && setTuningStrength(99) === 8);
-setTuningStrength(2);
+setTuningStrength(8);
 
 // Chord vocabulary — ported Consonant (11) + Specialized (18) qualities × 12 roots. Scale modes deferred.
 console.log('\n  Chord vocabulary (ported catalog)');

@@ -6,8 +6,12 @@
 // This module imports nothing from cosmos-audio so it stays pure and headless-testable; flight-view (Phase 2)
 // forwards changes to the engine setters via subscribe(), and reads values back for each knob's readout.
 
-export const RAIL_SCHEMA_VERSION = 1;              // bump to discard incompatible stored state
-export const RAIL_STORAGE_KEY = 'lrc.cosmos.rail.v1';
+// Bump to discard incompatible stored state. v2 (2026-07-29, the ownership transfer): every v1 blob was
+// written while the AUDIO LAB still owned the engine and the rail was gestures-only, so its stored values
+// are not what the rail now RESTORES on entry — a v1 `mix: 0` (the old pure-bed default) would come up
+// ambient-only, and a v1 SPEED was stored against an uncalibrated knob. Discarding is the point of the key.
+export const RAIL_SCHEMA_VERSION = 2;
+export const RAIL_STORAGE_KEY = 'lrc.cosmos.rail.v1';   // storage NAMESPACE (stable); the blob's `v` field gates schema
 
 // curve: how a normalized knob position [0,1] maps to the engine VALUE this module stores.
 //   linear — even in value. (Cents are already log-of-frequency, so FUNDAMENTAL is linear-in-cents, which
@@ -24,9 +28,13 @@ export const RAIL_PARAMS = Object.freeze({
   speed:       { default: 2.5,  min: 0.5,   max: 16,   curve: 'log',    persist: true,  unit: ' notes/s', group: 'time',      label: 'SPEED' },
   dwell:       { default: 0,    min: 0,     max: 1,    curve: 'linear', persist: true,  unit: '×cyc',     group: 'time',      label: 'DWELL' },
   richness:    { default: 0.05, min: 0,     max: 0.18, curve: 'linear', persist: true,  unit: '',         group: 'harmony',   label: 'RICHNESS' },
-  mix:         { default: 0,    min: 0,     max: 1,    curve: 'linear', persist: true,  unit: '',         group: 'texture',   label: 'BED/ROWS' },
+  // MIX 0.8 = rows-forward blend (Avery, 2026-07-29): rows are the identity, the bed audible underneath as a
+  // wash. The pre-transfer engine came up at 1.0 (pure rows) because the audio lab's entry default selected
+  // culled-grid-rows; 0.8 is the deliberate replacement now that the rail owns entry state.
+  mix:         { default: 0.8,  min: 0,     max: 1,    curve: 'linear', persist: true,  unit: '',         group: 'texture',   label: 'BED/ROWS' },
   space:       { default: 0.5,  min: 0,     max: 1,    curve: 'linear', persist: true,  unit: '',         group: 'texture',   label: 'SPACE' },
-  modulation:  { default: false,                       curve: 'bool',   persist: true,                    group: 'advanced',  label: 'MODULATION' },
+  // Default ON — carries the `f54198c` lab entry default forward (see MODULATION_DEFAULT in cosmos-audio.js).
+  modulation:  { default: true,                        curve: 'bool',   persist: true,                    group: 'advanced',  label: 'MODULATION' },
   // ── transient (decision 8: MIDI-enabled and mute do NOT persist) ──
   mute:        { default: false,                       curve: 'bool',   persist: false,                   group: 'transport', label: 'MUTE' },
   midiOut:     { default: false,                       curve: 'bool',   persist: false,                   group: 'advanced',  label: 'MIDI OUT' },

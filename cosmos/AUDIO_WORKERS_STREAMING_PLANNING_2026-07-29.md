@@ -13,15 +13,15 @@ that is *thin UI over its own state module* — no audio-engine logic in the vie
 
 - **Built + committed** (`fb5e59f` → `cec5795` on `cosmos-flight-poc`): `cosmos/rail-view.js` owns the rail
   DOM and builds knobs generically from `RAIL_KNOBS` × `ENGINE_SETTERS`, grouped pitch/time/harmony/texture.
-- **Knobs live:** FUNDAMENTAL · SPEED · RICHNESS · VOLUME · BED/ROWS (MIX) · SPACE — the site's ADSR rotary
-  reused class-for-class (270° sweep, vertical drag, dblclick-reset, keyboard fine-adjust), driven in
-  normalized `[0,1]` via `railParams.setNorm` (engine-agnostic; respects the Playback firewall).
+- **Controls live:** MUTE · FUNDAMENTAL · SPEED · DWELL · RICHNESS · VOLUME · BED/ROWS (MIX) · SPACE, plus an
+  advanced drawer (MODULATION · MIDI OUT) — the site's ADSR rotary reused class-for-class (270° sweep,
+  vertical drag, dblclick-reset, keyboard fine-adjust), driven in normalized `[0,1]` via `railParams.setNorm`
+  (engine-agnostic; respects the Playback firewall). Only DENSITY is missing (Phase 4 has no setter).
 - **State layer:** `cosmos/rail-params.js` — defaults, clamps, curve mappings, change-listeners, versioned
   localStorage persistence. Headless-guarded (`assert-rail-params`, `assert-rail-bindings`, `assert-rail-view`).
-- **Bound gestures-only (no `emitNow`)** — persisted values are NOT replayed on entry, so nothing repaints
-  today's sound before calibration and the old audio-lab controls still own the engine.
-- **Remaining:** SPEED calibration (ears-on; knob wired in ONSET mode), DWELL, MUTE button, advanced drawer
-  (MODULATION/MIDI-out), then flip on `emitNow` restoration and **retire the audio lab**.
+- **THE RAIL OWNS THE ENGINE** (2026-07-29) — restoration runs on every entry via `applyRailToEngine()`, and
+  the audio lab is a dev-only mirror behind `?audioLab=1` / Z. See §3's resolved ownership bullet.
+- **Remaining:** SPEED + DWELL calibration by ear (both live and persisting now), DENSITY (Phase 4).
 
 ---
 
@@ -55,17 +55,22 @@ Telemetry line: `[cosmos] zones N · solved S (+r/s) · solving · pending · ta
   Real fix = streaming (§5).
 - **Onset sparsity at low tick rate** — rows are near-silent because onset cadence scales with the tick
   rate (measured: first row voice at +0.02s @ 3735 t/s vs +1.37s @ 100 t/s; trajectory flat-near-zero at
-  low fixed rates). SPEED/ONSET mode is the intended cure (targets notes/sec, not ticks/sec).
+  low fixed rates). SPEED/ONSET mode is the cure (targets notes/sec, not ticks/sec) and is **now the mode the
+  engine starts in** on every entry, at the placeholder 2.5 notes/s — so this wants an ears-on re-check.
 - **Post-move recovery is part tick-clocked, part wall-clock** — camera settle is wall-clock (`SETTLE_SECONDS
   = 3`, rate-independent); the tick-clocked tail is the row install boundary (`ROW_SWITCH_TICKS = 16`) plus
   onset cadence. Slower ticks ⇒ longer real-world recovery.
-- **Ownership conflict: knobs ↔ audio-lab selectors.** Both surfaces write the same engine state — the MIX
-  knob and the audio-mode `<select>` both call `setMix`; the SPEED knob and the `scaled speed` checkbox both
-  set the speed mode. Because knobs are gestures-only (no `emitNow`) and the lab is a separate surface, the
-  *proper* mode/speed sometimes doesn't register until a knob/selector is twisted. **Interim:** audio-lab
-  entry defaults set to culled-grid-rows · scaled · modulation on. **Resolution:** retire the lab once the
-  knobs own the surface (flip `emitNow` restoration). Also note the MIX knob reads `0.00` on entry while the
-  engine starts at rows — the same gestures-only mismatch.
+- **~~Ownership conflict: knobs ↔ audio-lab selectors.~~ RESOLVED 2026-07-29 — the rail owns the engine.**
+  Both surfaces used to write the same engine state (MIX knob and audio-mode `<select>` both called `setMix`;
+  SPEED knob and `scaled speed` checkbox both set the speed mode), so with knobs gesture-only the *proper*
+  mode/speed sometimes didn't register until something was twisted — and no dropout report could be trusted,
+  because you couldn't know which surface the engine was obeying. Now: the rail restores its full state into
+  the freshly built graph on **every** entry (`applyRailToEngine()` from flight-boot), the lab is a **dev
+  mirror** (`?audioLab=1` / Z) that applies nothing at entry, and every shared parameter is written *through*
+  `railParams` — one owner. Its remaining raw controls (ticks/s, scaled speed, cycle, λ) are probes that
+  deliberately override the rail until the next entry. Entry sound: MIX 0.8 · SPEED 2.5 notes/s (ONSET) ·
+  DWELL 0 · modulation on · λ 8.0 frozen. See `KNOB_RAIL_IMPLEMENTATION_PLAN_2026-07-28.md`'s as-built log.
+  **This unblocks the rest of this document** — from here, an audio symptom has exactly one explanation.
 - **⚠ UNRESOLVED — phantom sustained bed (watch-item).** The ambient chord bed kept ringing after a hard
   refresh, tab close, and — reportedly — after fully quitting Chrome (Avery, 2026-07-29). **Not MIDI**: no
   DAW/receiver was open, toggling the IAC driver's "Device is Online" did nothing, and it was the *same Web
@@ -113,6 +118,25 @@ The real fix for OOM and for "music wherever you are." Key insight from this ses
 2. Generate + cull a wall-clock window `[t, t+Δ]` on demand from the snapshot, keyed to the transport tick
    (`SpatialGridRowPlayer` already schedules from `absoluteTick` with per-deck cursors — see `_syncCursor`).
 3. Stream windows as the playhead advances; retire old ones.
+
+**⚠ AMENDMENT — Avery on the saturation claim (2026-07-29).** Two corrections that constrain the design:
+
+1. **Saturation cannot be *detected* before half the cycle.** Every polyrhythm is a **palindrome** — that is
+   an invariant property, not a tendency — so all novel gap content has appeared by the midpoint. There is
+   therefore no test that says "the vocabulary is saturated" until at least half the tone row is computed.
+   "A short prefix relative to the grid" is not available as a cheap detector: the honest bound is `cycle/2`.
+2. **Caps are not on the table.** Capping the gap inventory would distort the tuning system, since the gaps
+   *are* the pitches. Any "cap" tier is a silence policy (skip this owner), never a truncation of the row.
+3. **The back half must still SOUND.** Culling everything after the novelty ends is exactly what reflection
+   already prevents (`reflect:true`): notes on in the first half are mirrored into the second regardless, so a
+   star is not silent for half its cycle. **Worth verifying the mirror is actually holding** — it is the thing
+   that makes a streamed tail musical rather than empty. Immersive streaming needs sound *everywhere*, so
+   "the tail culls deterministically" is a statement about *cheapness*, not about silence.
+
+So the streaming contract is a snapshot taken over a **`cycle/2` prefix** (where the vocabulary is provably
+complete), with the second half generated by index symmetry — which is per-window computable and needs no
+detector at all. The open question is not "how short is the prefix" but **how to compute a half-cycle prefix
+without materializing it** (the composite tape, not the cull state, is the ~1e6-object OOM driver).
 
 **Open questions:** window size Δ + prefetch lead; interaction with program swaps at `ROW_SWITCH_TICKS`
 boundaries; per-star vs global streaming; whether the bed's `skyPool` needs analogous windowing at huge

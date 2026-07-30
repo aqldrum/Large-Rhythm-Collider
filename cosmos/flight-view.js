@@ -16,7 +16,11 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, setMuted, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, setHoldForFullQuality, setModulation, currentModulation, setMidiOut, setMix, currentMix, setAuditionListen, setGridSpatialField, gridRowVisualState, setTuningStrength, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, gridRowVisualState, setTuningStrength, currentTuningStrength, midiOutState, setRootPolicyContext } from './cosmos-audio.js';
+// The RAIL owns the engine's user-facing state (rail-view.js mounts it; flight-boot restores it on entry).
+// Every parameter BOTH surfaces express — mute, mix, modulation, MIDI out — is written through railParams so
+// there is exactly one owner and the two surfaces cannot disagree. See the audio-lab section below.
+import { railParams } from './rail-params.js';
 import { sampleRecovery } from './recovery-timing.js';   // TEMP DEBUG (Phase 2.4) — remove with the module
 import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
@@ -545,7 +549,7 @@ let hover = null, selected = null;
 // Cosmos-audio cockpit: the lead voice currently sounding (node's own tuning, from cosmos-audio.deriveVoice)
 // + the DOM refs for the collapsible #lrc-div inspector (Linear Plot + scale table). `leadVoice.node.grid`
 // is the star whose live screen projection drives spatialization each frame (see the `loop()` proj block).
-let leadVoice = null, muted = false;
+let leadVoice = null;   // mute state lives in railParams ('mute') — one owner for the rail, the lab and M
 let lrcDivEl = null, lrcHeadEl = null, cockpitPlotEl = null, cockpitPlotCtx = null;
 let cockpitPlotKeyEl = null;
 let lrcPanelToggleEl = null, lrcEmptyEl = null, rhythmInspectorEl = null;
@@ -563,7 +567,7 @@ let audioLabEl = null, audioLabOn = false;
 let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, chordReadoutEl = null, audioModeEl = null;
 let tuningSliderEl = null, tuningReadoutEl = null;
 let scaledSpeedEl = null, scaledReadoutEl = null, cycleSliderEl = null, cycleReadoutEl = null;
-let fullQualityEl = null, qualityReadoutEl = null;
+// (the full-quality checkbox is gone — Phase 0.3 made full exposure an unconditional advance floor)
 let modulationEl = null, modulationReadoutEl = null;
 let midiOutEl = null, midiReadoutEl = null;
 // Cardinality band filter: only nodes with cardinality in [cardLo, cardHi] render + hit-test (isolate radial
@@ -702,7 +706,6 @@ export function ensureFlight(canvas, hudEl) {
     tuningReadoutEl = document.getElementById('lrc-tuning-readout');
     scaledSpeedEl = document.getElementById('lrc-scaled-speed'); scaledReadoutEl = document.getElementById('lrc-scaled-readout');
     cycleSliderEl = document.getElementById('lrc-cycle-slider'); cycleReadoutEl = document.getElementById('lrc-cycle-readout');
-    fullQualityEl = document.getElementById('lrc-full-quality'); qualityReadoutEl = document.getElementById('lrc-quality-readout');
     modulationEl = document.getElementById('lrc-modulation'); modulationReadoutEl = document.getElementById('lrc-modulation-readout');
     midiOutEl = document.getElementById('lrc-midi-out'); midiReadoutEl = document.getElementById('lrc-midi-readout');
     if (lrcPanelToggleEl) lrcPanelToggleEl.addEventListener('click', () => {
@@ -738,35 +741,37 @@ export function ensureFlight(canvas, hudEl) {
       const motif = event.target.closest?.('[data-rhythm-mn]');
       if (motif && inspectedNode) { toggleMNWeb(motif.dataset.rhythmMn, +motif.dataset.base, inspectedNode.grid); renderRhythmConnections(); }
     });
+    // ── AUDIO LAB — a DEV overlay (?audioLab=1, or Z), no longer the engine's owner ────────────────────
+    // The RAIL owns every user-facing engine parameter (rail-view.js; restored on entry by flight-boot).
+    // Two kinds of control remain here:
+    //   MIRRORS — mute · audio mode (= MIX) · modulation · MIDI out write THROUGH railParams, so these
+    //     controls and the rail's knobs/switches are one state that repaints both surfaces (see syncAudioLab).
+    //   PROBES  — ticks/s · scaled speed · cycle seconds · tuning λ have no rail control BY DESIGN (SPEED
+    //     absorbed the first three — decision 9; λ is frozen, see LAMBDA_FIELD_FROZEN in cosmos-audio.js).
+    //     They write the engine DIRECTLY and deliberately override the rail for the rest of the session; the
+    //     next entry's restoration wins again. A probe twist is therefore visible in the lab's own live
+    //     readouts, not in the rail's — that asymmetry is the point of a debug surface.
+    // Nothing here applies anything at entry any more (see the per-session block below).
     if (muteBtnEl) muteBtnEl.addEventListener('click', toggleMute);
+    if (audioModeEl) audioModeEl.addEventListener('change', () => changeAudioMode(audioModeEl.value));
+    if (modulationEl) modulationEl.addEventListener('change', () => railParams.set('modulation', modulationEl.checked));
+    // Web MIDI's async enable (permission gesture + port name + failure rollback) is owned by rail-view's
+    // applyMidiOut; this checkbox only expresses the intent and syncAudioLab paints the outcome back.
+    if (midiOutEl) midiOutEl.addEventListener('change', () => railParams.set('midiOut', midiOutEl.checked));
     if (tempoSliderEl) tempoSliderEl.addEventListener('input', () => {
       const rate = +tempoSliderEl.value; setTickRate(rate, true);   // fromUser: scaled mode restores this on exit
       if (tempoReadoutEl) tempoReadoutEl.textContent = rate + '/s';
     });
     if (scaledSpeedEl) scaledSpeedEl.addEventListener('change', applySpeedControls);
     if (cycleSliderEl) cycleSliderEl.addEventListener('input', applySpeedControls);
-    if (fullQualityEl) fullQualityEl.addEventListener('change', () => {
-      const on = setHoldForFullQuality(fullQualityEl.checked);
-      if (qualityReadoutEl) qualityReadoutEl.textContent = on ? 'hold' : 'off';
-    });
-    if (modulationEl) modulationEl.addEventListener('change', () => {
-      setModulation(modulationEl.checked);
-      drawModulationReadout();
-    });
-    // Web MIDI permission needs the user gesture, and the port name is only known after it resolves —
-    // so the readout reports the real outcome (or why it failed) rather than assuming success.
-    if (midiOutEl) midiOutEl.addEventListener('change', async () => {
-      if (midiReadoutEl) midiReadoutEl.textContent = midiOutEl.checked ? '…' : 'off';
-      const result = await setMidiOut(midiOutEl.checked);
-      if (!result.ok) { midiOutEl.checked = false; if (midiReadoutEl) midiReadoutEl.textContent = result.reason; return; }
-      if (midiReadoutEl) midiReadoutEl.textContent = result.port ? `MPE → ${result.port}` : 'off';
-    });
-    if (audioModeEl) audioModeEl.addEventListener('change', () => changeAudioMode(audioModeEl.value));
     if (tuningSliderEl) tuningSliderEl.addEventListener('input', () => {
       const strength = setTuningStrength(tuningSliderEl.value);
       if (tuningReadoutEl) tuningReadoutEl.textContent = strength.toFixed(2).replace(/0$/, '') + ' st';
     });
     if (audioLabEl) audioLabEl.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
+    // Any rail gesture repaints the lab's mirrors, so the two surfaces can never drift apart. syncAudioLab
+    // early-returns while the overlay is hidden, so a knob drag costs nothing in the normal (no-lab) case.
+    railParams.subscribe(() => syncAudioLab());
     // Full Sky debug overlay: seeded once from ?skyDebug=1 (so a bookmarked link opens straight into
     // it); the C key (bindControls, below) is the primary toggle from here on. Seeding this per-session
     // instead would stomp a manual C-toggle every time you exit/re-enter cosmos.
@@ -785,17 +790,13 @@ export function ensureFlight(canvas, hudEl) {
   rowCompiler = new ProgramWorkerPool(new URL('./cosmos/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
   rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
   settleSinceSecond = null; lastRootResolveSecond = -Infinity; rootGeographyEpoch = 0; rootPolicyWasSettled = false;
-  // Audio-lab entry defaults now match its HTML control state (culled-grid-rows · scaled speed · modulation
-  // on) — the interim control surface while the knob rail is built. Applied here, not just shown, so the
-  // engine actually starts in that mode instead of waiting for a knob/selector twist to register.
-  if (audioModeEl) audioModeEl.value = AUDIO_MODES.CULLED_GRID_ROWS;
-  if (tuningSliderEl) setTuningStrength(tuningSliderEl.value);
-  setTickRate(tempoSliderEl ? +tempoSliderEl.value : 10, true);
-  if (fullQualityEl) setHoldForFullQuality(fullQualityEl.checked);
-  if (modulationEl) setModulation(modulationEl.checked);
-  applySpeedControls();
-  drawModulationReadout();
-  changeAudioMode(AUDIO_MODES.CULLED_GRID_ROWS);
+  // OWNERSHIP: the entry sound is the RAIL's, not this overlay's. flight-boot calls applyRailToEngine()
+  // right after initAudio(), which pushes MIX · SPEED · DWELL · FUNDAMENTAL · RICHNESS · VOLUME · SPACE ·
+  // MUTE · MODULATION into the freshly built graph. What used to live here — a tuning-λ write, a ticks/s
+  // write, a scaled-speed apply, a modulation apply, a changeAudioMode(CULLED_GRID_ROWS) — was the
+  // split-brain that made dropout reports untrustworthy: you could not tell which surface the engine was
+  // actually obeying. The lab now only READS at entry.
+  syncAudioLab();
   // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
   placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
   setPlacement(placement);
@@ -1175,17 +1176,48 @@ function showDetail(sel) {
   }
 }
 
-// One handler for both speed controls: the mode and the target cycle are a single decision, and the
-// tempo slider stays meaningful because leaving scaled mode restores exactly the rate it last set.
+// AUDIO LAB ← engine. The lab is a dev MIRROR now, so it paints itself from live engine state instead of
+// pushing its HTML control values into the engine. Called on every entry, whenever Z reveals it, and from
+// the railParams subscription (so a rail gesture repaints it). Early-returns while hidden — the rail's own
+// controls are the visible ones, and a knob drag must not pay for DOM the player cannot see.
+function syncAudioLab() {
+  if (!audioLabOn) return;
+  const mix = currentMix(), speed = currentSpeedMode(), midi = midiOutState();
+  const mute = railParams.get('mute');
+  if (muteBtnEl) {
+    muteBtnEl.classList.toggle('muted', mute);
+    muteBtnEl.setAttribute('aria-pressed', String(mute)); muteBtnEl.title = mute ? 'Unmute' : 'Mute';
+  }
+  // A coarse mirror by design: the select has only the two ENDS of a continuous crossfade, so it reads as
+  // whichever end the MIX knob is nearer. The knob's own readout is the exact value.
+  if (audioModeEl) audioModeEl.value = mix >= 0.5 ? AUDIO_MODES.CULLED_GRID_ROWS : AUDIO_MODES.AMBIENT_CHORDS;
+  if (modulationEl) modulationEl.checked = railParams.get('modulation');
+  drawModulationReadout();
+  if (midiOutEl) midiOutEl.checked = railParams.get('midiOut');
+  if (midiReadoutEl) midiReadoutEl.textContent = midi.enabled ? (midi.port ? `MPE → ${midi.port}` : 'on') : 'off';
+  // The λ probe's own position IS the engine's λ, so mirroring it is a no-op except after a rail-driven
+  // change — but never while it has focus, or the write-back would fight the drag.
+  if (tuningSliderEl && document.activeElement !== tuningSliderEl) tuningSliderEl.value = String(currentTuningStrength());
+  if (tuningReadoutEl) tuningReadoutEl.textContent = currentTuningStrength().toFixed(2).replace(/0$/, '') + ' st';
+  // SPEED lives on the rail, so the probes report the DERIVED transport in their READOUTS — a rail SPEED
+  // change and a probe twist are both visible. Their slider POSITIONS are inputs (a target the dev sets)
+  // and are deliberately never written back from engine state: ticks/s is derived in onset/scaled mode, and
+  // the cycle slider's target is not the derived cycle. `scaled` is checked for either derived mode.
+  if (tempoSliderEl) tempoSliderEl.disabled = speed.mode !== 'fixed';
+  if (tempoReadoutEl) tempoReadoutEl.textContent = Math.round(speed.ticksPerSec) + '/s';
+  if (scaledSpeedEl) scaledSpeedEl.checked = speed.mode !== 'fixed';
+  if (scaledReadoutEl) scaledReadoutEl.textContent = speed.mode === 'fixed' ? 'off'
+    : speed.medianGrid ? `${speed.mode} · ${Math.round(speed.ticksPerSec)}/s @ ${speed.medianGrid.toLocaleString()}`
+    : `${speed.mode} · waiting for rows`;
+  if (cycleReadoutEl) cycleReadoutEl.textContent = `${speed.cycleSeconds.toFixed(1)} s target · ${speed.derivedCycleSeconds.toFixed(1)} s now`;
+}
+
+// One handler for both speed PROBE controls (dev): the mode and the target cycle are a single decision, and
+// the tempo slider stays meaningful because leaving scaled mode restores exactly the rate it last set. This
+// deliberately overrides the rail's SPEED (ONSET) mode until the next entry — see the audio-lab note.
 function applySpeedControls() {
-  const scaled = !!scaledSpeedEl?.checked;
-  const cycleSeconds = cycleSliderEl ? +cycleSliderEl.value : undefined;
-  const state = setSpeedMode(scaled ? 'scaled' : 'fixed', cycleSeconds);
-  if (cycleReadoutEl) cycleReadoutEl.textContent = state.cycleSeconds.toFixed(1) + ' s';
-  if (scaledReadoutEl) scaledReadoutEl.textContent = scaled
-    ? (state.medianGrid ? `${Math.round(state.ticksPerSec)}/s @ ${state.medianGrid.toLocaleString()}` : 'waiting for rows')
-    : 'off';
-  if (tempoSliderEl) tempoSliderEl.disabled = scaled;
+  setSpeedMode(scaledSpeedEl?.checked ? 'scaled' : 'fixed', cycleSliderEl ? +cycleSliderEl.value : undefined);
+  syncAudioLab();   // one painter for the whole overlay — no second copy of the readout formats
 }
 
 // The modulation shift follows the solved root and the glide length follows the tick rate, so this
@@ -1379,10 +1411,10 @@ function renderRhythmInspector(node) {
   drawCockpitPlot();
 }
 
+// The lab's audio-mode select is a dev shortcut to the two ENDS of the MIX crossfade. It writes through
+// railParams, so the rail's MIX knob (the owner) moves with it and the engine hears exactly one command.
 function changeAudioMode(mode) {
-  const m = mode === AUDIO_MODES.CULLED_GRID_ROWS ? 1 : 0;
-  setMix(m);
-  if (audioModeEl) audioModeEl.value = mode;
+  railParams.set('mix', mode === AUDIO_MODES.CULLED_GRID_ROWS ? 1 : 0);
 }
 
 const _compileErrSeen = new Set();   // TEMP DEBUG (2.4 worker-err flood) — dedup so a flood collapses to a few lines
@@ -1483,13 +1515,11 @@ function updateGridRowField(placed, basis) {
 }
 
 // Master mute only — the transport keeps ticking (playhead keeps sweeping, notes keep scheduling) so
-// unmuting resumes in sync rather than restarting the cycle. Shared by the cockpit button and the M key.
+// unmuting resumes in sync rather than restarting the cycle. The M key, the rail's MUTE button and the
+// lab's M button all flip the SAME railParams param, so the three can never disagree: rail-view's
+// subscriber calls setMuted and repaints its button, and syncAudioLab repaints the lab's.
 function toggleMute() {
-  muted = !muted; setMuted(muted);
-  if (muteBtnEl) {
-    muteBtnEl.textContent = 'M'; muteBtnEl.classList.toggle('muted', muted);
-    muteBtnEl.setAttribute('aria-pressed', String(muted)); muteBtnEl.title = muted ? 'Unmute' : 'Mute';
-  }
+  railParams.set('mute', !railParams.get('mute'));
 }
 
 // Selected rhythm's real spaces plot: horizontal position is the attack's true transport phase and
@@ -1527,18 +1557,17 @@ function drawCockpitPlot() {
 // song strip. Shows regardless of whether a star is clicked (the bed plays from cosmos entry). Sky
 // Root B3: Roman numerals are relative to the solved root, so the root fraction sits beside them —
 // "I" beside "1/1" reads as the v1 default; once a swap lands, the root fraction itself changes.
+let labSyncLast = 0;
+const LAB_SYNC_MS = 200;   // mirror-refresh cadence, matching the sky-debug overlay's throttle
+
 function drawChordReadout() {
   if (!chordReadoutEl || !audioLabOn) return;
   chordReadoutEl.innerHTML = `♪ <b>${currentSkyRoot().fraction}</b> <b class="cur">${currentSkyChord().symbol}</b>`;
-  // The scaled rate is derived from the live field, so its readout has to follow the field, not the
-  // control that switched the mode on.
-  drawModulationReadout();
-  if (scaledSpeedEl?.checked && scaledReadoutEl) {
-    const speed = currentSpeedMode();
-    scaledReadoutEl.textContent = speed.medianGrid
-      ? `${Math.round(speed.ticksPerSec)}/s @ ${speed.medianGrid.toLocaleString()}` : 'waiting for rows';
-    if (tempoReadoutEl) tempoReadoutEl.textContent = Math.round(speed.ticksPerSec) + '/s';
-  }
+  // The derived rate, the modulation shift and the MIDI port all follow the live FIELD rather than the
+  // control that set them, so the whole mirror has to re-read the engine — throttled like the sky-debug
+  // overlay so an open lab doesn't rewrite a dozen readouts every frame.
+  const now = performance.now();
+  if (now - labSyncLast >= LAB_SYNC_MS) { labSyncLast = now; syncAudioLab(); }
 }
 
 // ── Full Sky DEBUG OVERLAY (dev-only, ?skyDebug=1) ──────────────────────────────────────────────
@@ -2275,7 +2304,14 @@ function bindControls() {
     if (firstPress && k === 'b' && swarm) { if (swarm.agents.length) swarm.clear(); else swarm.spawn(AGENT_COUNT, cam.anchor); }   // B → toggle Collider-Battle ships
     if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)
     if (firstPress && k === 'c') { skyDebugOn = !skyDebugOn; if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none'; }   // C → toggle the Full Sky debug overlay (dev)
-    if (firstPress && k === 'z' && !e.metaKey && !e.ctrlKey && !e.altKey) { audioLabOn = !audioLabOn; if (audioLabEl) audioLabEl.hidden = !audioLabOn; }   // Z → toggle the audio debug overlay
+    // Z → toggle the audio LAB (dev overlay; ?audioLab=1 seeds it open, exactly like ?skyDebug=1 / C).
+    // Revealing it syncs it FROM the engine first, so a dev surface never shows a stale picture of state
+    // the rail has since moved.
+    if (firstPress && k === 'z' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      audioLabOn = !audioLabOn;
+      if (audioLabEl) audioLabEl.hidden = !audioLabOn;
+      if (audioLabOn) syncAudioLab();
+    }
     if (k.startsWith('arrow') || k === ' ') e.preventDefault();   // don't scroll the page
   });
   window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
