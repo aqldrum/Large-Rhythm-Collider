@@ -78,6 +78,10 @@ for (let r = 0; r < 12; r++) {
       tier: q.tier,
       cardinality: semitones.length,
       semitones,
+      // The SOUNDING identity: a 12-bit pitch-class set. Two chords with the same mask are the same
+      // sound under two names — nothing downstream reads rootSemitone, only semitones — so this is what
+      // the walk compares to know whether a move is a move. See NO RENAMES in rankCandidates.
+      pcMask: semitones.reduce((m, d) => m | (1 << d), 0),
       symbol: chordSymbol(r, q),
     });
   }
@@ -245,7 +249,25 @@ export function weakestSupport(chord, perDegree) {
 //      notes must earn their place on voice leading and field support alone. A linear (cardinality−3)
 //      instead gives a 13th three times the discount of a 7th, and measured over real codex fields that
 //      runs away completely: even richness 0.15 put the walk on six-note chords 58% of the time.
-// 0. CEILING — `maxCardinality` removes every larger quality from the candidate set outright (the RICHNESS
+// 0a. NO RENAMES — a candidate whose pitch-class set equals the current chord's is refused outright
+//    (Avery, 2026-07-30: "the system loves to rename a chord for a zero-cost move, like Iaug to IIIaug").
+//    The walk was taking those constantly because they are free: an argmin over `parsimony + field −
+//    richness` is handed a cost of exactly 0 by a chord that changes nothing, and the tabu could not stop
+//    it because a rename has a DIFFERENT id. So a chord boundary would pass, the symbol on the overlay
+//    would change, and not one pitch would move.
+//
+//    This is far broader than the augmented triads it was noticed on: **144 of the 396 chords are a
+//    rename of some other chord** — only 313 distinct pitch-class sets exist in the vocabulary — and it is
+//    not confined to the symmetric qualities. Im7 IS bIII6. Isus4 IS Vq. I6 IS VIm7. Twelve qualities are
+//    affected. Nothing downstream distinguishes them: only `semitones` reaches the bed, the rows and the
+//    row-tone selection, so `rootSemitone` and the display symbol are the entire difference.
+//
+//    Comparing masks is exactly Avery's "the pitch class must change by at least one semitone": over
+//    integer pitch classes, `vlParsimony(a, b) === 0` if and only if the two sets are equal (a zero-cost
+//    injection forces S ⊆ L, and a leftover that cost nothing would have to duplicate an element of L).
+//    So refusing equal masks refuses precisely the zero-motion moves, and every surviving candidate moves
+//    at least one semitone. The guard pins that equivalence rather than trusting the argument.
+// 0b. CEILING — `maxCardinality` removes every larger quality from the candidate set outright (the RICHNESS
 //    detent, 2026-07-30). This is a different kind of control from the incentive in step 3 and the two are
 //    not interchangeable: the incentive can only re-WEIGHT a vocabulary it cannot shrink, which is why the
 //    swept table still shows 8% 11th–13th chords at richness 0.00 and why the knob never read as a
@@ -261,7 +283,7 @@ function rankCandidates(currentId, tabu, fieldCoverage, opts = {}) {
   // The ceiling is applied BEFORE the tabu can starve it. 72 chords survive even at the tightest stop
   // against a tabu of 3, so the fallback is unreachable in production — it exists so a caller that pairs a
   // tight ceiling with a huge tabu degrades to the full vocabulary instead of returning no chord at all.
-  let pool = CHORDS.filter(next => !tabu.includes(next.id) && next.cardinality <= maxCardinality);
+  let pool = CHORDS.filter(next => !tabu.includes(next.id) && next.cardinality <= maxCardinality && next.pcMask !== current.pcMask);
   if (!pool.length) pool = CHORDS.filter(next => !tabu.includes(next.id));
   const raw = [];
   for (const next of pool) raw.push({ chord: next, coverage: fieldCoverage(next) });

@@ -595,7 +595,9 @@ check('the ceiling REMOVES chords — something no value of the incentive can do
     const at = level => candidateCosts(chI.id, noTabu, () => 0.5,
       { lambdaField: 1, richness: 0, perDegree: flatSupport, maxCardinality: maxCardinalityForRichness(level) }).length;
     // 12 roots × qualities of each size: 6 three-note, 14 four-note, 9 five-note, 4 six-note = 33.
-    return at(1) === 72 && at(2) === 240 && at(3) === 348 && at(4) === 12 * QUALITY_COUNT;
+    // Each count is one short of the full class because the current chord (I) is its own rename and the
+    // no-renames rule refuses it — with an empty tabu that is the only thing standing the walk still.
+    return at(1) === 71 && at(2) === 239 && at(3) === 347 && at(4) === 12 * QUALITY_COUNT - 1;
   })());
 // A ceiling that merely made big chords expensive would still let one through on a strong enough field.
 // This is the guarantee the knob is actually making, and it has to hold at every field shape.
@@ -611,7 +613,7 @@ check('removing a class does not disturb the costs of the classes that remain',
     return capped.every(c => Math.abs(c.cost - full.find(f => f.id === c.id).cost) < 1e-12);
   })());
 check('an absent ceiling is the full vocabulary — every existing caller and guard is unaffected',
-  candidateCosts(chI.id, noTabu, () => 0.5, { lambdaField: 1, richness: 0 }).length === 12 * QUALITY_COUNT);
+  candidateCosts(chI.id, noTabu, () => 0.5, { lambdaField: 1, richness: 0 }).length === 12 * QUALITY_COUNT - 1);
 // Defensive only: 72 chords survive the tightest stop against a tabu of 3, so production never reaches it.
 // But a walk that returns no chord at all would stop the sky, which is worse than a momentarily wide one.
 check('a ceiling starved by an oversized tabu falls back to the vocabulary rather than returning nothing',
@@ -621,6 +623,53 @@ check('the level table is the four stops, ascending, spanning triads through the
   RICHNESS_LEVELS.length === 4 &&
   RICHNESS_LEVELS.every((s, i) => s.level === i + 1 && s.maxCardinality === i + 3 && !!s.label) &&
   maxCardinalityForRichness(0) === 3 && maxCardinalityForRichness(99) === 6);
+
+// ══ A move must MOVE — no renames (2026-07-30) ══════════════════════════════════════════════════
+console.log('\n── The walk cannot rename a chord in place ──');
+// Avery: "the system loves to rename a chord for a zero-cost move, like Iaug to IIIaug". It did, because
+// such a move costs exactly 0 in an argmin and the tabu cannot catch it — a rename has a different id.
+const maskOf = c => c.semitones.reduce((m, d) => m | (1 << d), 0);
+const bySet = new Map();
+for (const c of CHORDS) { const m = maskOf(c); if (!bySet.has(m)) bySet.set(m, []); bySet.get(m).push(c); }
+const renameGroups = [...bySet.values()].filter(g => g.length > 1);
+check('pcMask is the sounding identity, precomputed on every chord',
+  CHORDS.every(c => c.pcMask === maskOf(c)));
+// The scope is the finding: this is not just the symmetric qualities. Im7 IS bIII6; Isus4 IS Vq.
+check('the vocabulary really does contain duplicate-sounding names, and widely',
+  bySet.size === 313 && renameGroups.reduce((s, g) => s + g.length, 0) === 144 &&
+  new Set(renameGroups.flat().map(c => c.quality)).size === 12,
+  `${bySet.size} distinct sets, ${renameGroups.reduce((s, g) => s + g.length, 0)}/396 chords are a rename across ${new Set(renameGroups.flat().map(c => c.quality)).size} qualities`);
+// The equivalence the mask test rests on, checked rather than argued: over integer pitch classes a
+// zero voice-leading cost happens exactly when the two sets are equal. So "mask differs" IS Avery's
+// "the pitch class must change by at least one semitone", and every survivor moves by ≥ 1.
+let equivFail = 0;
+for (const a of CHORDS) for (const b of CHORDS) if ((vlParsimony(a, b) === 0) !== (a.pcMask === b.pcMask)) equivFail++;
+check('vlParsimony === 0 exactly when the pitch-class sets are equal (all 396² pairs)', equivFail === 0, `${equivFail} mismatches`);
+// The rule itself, at the place it has to hold: the argmin.
+const augI = findT('Iaug'), augIII = findT('IIIaug');
+check('the motivating case is real — Iaug and IIIaug are one sound, at zero cost',
+  augI.pcMask === augIII.pcMask && vlParsimony(augI, augIII) === 0);
+check('a rename is refused even when the field makes it the only zero-cost option',
+  (() => {
+    // Field loves ONLY the aug set; tabu everything but the two renames and one genuine move.
+    const genuine = findT('I');
+    const keep = new Set([augIII.id, genuine.id]);
+    const tabu = CHORDS.map(c => c.id).filter(id => !keep.has(id));
+    const chosen = chooseNextChord(augI.id, tabu, c => c.pcMask === augI.pcMask ? 1 : 0, { lambdaField: 8, richness: 0 });
+    return chosen && chosen.id === genuine.id;
+  })(), 'the walk must take the real move, not the free relabel');
+check('no candidate the walk is ever offered shares the current chord\'s sound',
+  CHORDS.every(c => candidateCosts(c.id, [], () => 0.5, { lambdaField: 1, richness: 0 })
+    .every(r => CHORDS[r.id].pcMask !== c.pcMask)));
+// A welcome consequence: the walk moving was previously a caller contract (the tabu must hold the current
+// chord). It is now structural — even a caller that forgets cannot get a standstill.
+check('the walk always moves even if the caller forgets to tabu the current chord',
+  CHORDS.every(c => chooseNextChord(c.id, [], () => 0.5, { lambdaField: 1, richness: 0 }).pcMask !== c.pcMask));
+// Nothing can be starved: the largest rename group is 4 (dim7), so at worst 3 siblings leave a pool of 68.
+check('the tightest stop still leaves a wide vocabulary after renames are removed',
+  Math.max(...renameGroups.map(g => g.length)) === 4 &&
+  CHORDS.filter(c => c.cardinality === 3).every(c =>
+    candidateCosts(c.id, [], () => 0.5, { lambdaField: 1, richness: 0, maxCardinality: 3 }).length >= 68));
 
 // ══ Sky Root handoff, B1 — anchor-independent tone lists ═══════════════════════════════════════
 console.log('\n── B1: anchor-independent tone lists ──');

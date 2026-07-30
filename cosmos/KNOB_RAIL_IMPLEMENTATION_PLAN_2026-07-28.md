@@ -336,6 +336,25 @@ Home-button rename broke an `index.html` structure regex; unrelated to this work
   if the whole vocabulary should be on by default instead.
   `RAIL_SCHEMA_VERSION` 2 → 3: RICHNESS changed UNITS into an overlapping domain, so a stored `0.05` would
   otherwise have restored as stop 1 — triads only — for every returning listener.
+- **A move must MOVE — no renames** ✅ **2026-07-30** (Avery: *"the system loves to rename a chord for a
+  zero-cost move, like Iaug to IIIaug"*). It did, and for a structural reason: such a move costs **exactly
+  0** in an argmin over `parsimony + field − richness`, and the tabu cannot catch it because a rename has a
+  different **id**. A chord boundary would pass, the overlay symbol would change, and not one pitch moved.
+  **The scope was far wider than the augmented triads it was noticed on: 144 of the 396 chords are a rename
+  of some other chord** — only 313 distinct pitch-class sets exist — across 12 qualities, and not only the
+  symmetric ones. `Im7` *is* `bIII6`. `Isus4` *is* `Vq`. `I6` *is* `VIm7`. Nothing downstream can tell them
+  apart: only `semitones` reaches the bed, the rows and the row-tone selection, so `rootSemitone` and the
+  printed symbol are the entire difference. `rankCandidates` now refuses any candidate whose pitch-class
+  mask equals the current chord's, which over integer pitch classes is exactly Avery's "must change by at
+  least one semitone" (`vlParsimony === 0` ⟺ equal sets — pinned over all 396² pairs).
+
+  Measured over the same 12 real codex locations × 200 chords: **24.7% of chord changes moved no pitch at
+  all → 0%**, smallest surviving move 1 semitone. Cycle structure is essentially unchanged (length 4–14 →
+  4–17, avg 5.7 → 5.4). Distinct *sounds* visited across the static corpus went 36 → 29 — renames were
+  incidentally shuffling the tabu and shaking the walk into regions it now can't reach. **Worth an ear
+  check**, but the harness holds the field static and runs neither root modulation nor field drift, which
+  are the two mechanisms that actually supply variety in flight, so treat 29 as a floor. Free bonus: the
+  walk moving used to be a caller contract (the tabu must hold the current chord) and is now structural.
 - **2.4 Audio continuity while flying** ✅ **LARGELY RESOLVED 2026-07-30** — "smooth transitions everywhere"
   (Avery). Neither candidate mechanism in the original write-up was the cause. Probing first was right, but
   the decisive evidence was an *input*, not a probe: the symptom appeared under the ARROW keys, which are
