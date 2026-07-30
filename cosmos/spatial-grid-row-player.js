@@ -657,6 +657,21 @@ export class SpatialGridRowPlayer {
     return out;
   }
 
+  // How many active stars hold a program that can actually articulate — an installed deck with events, or
+  // one pending at the next switch boundary. The sky's exposure floor asks this to tell two situations
+  // apart that produce the identical empty ledger: "the rows have not finished saying this chord yet" and
+  // "there are no rows here to say it". Pending counts, so the install boundary is not a hole in which the
+  // floor briefly reads as vacuous. Independent of the mix — a silenced row still articulates and still
+  // exposes (see chordExposure in cosmos-audio.js).
+  soundingStarCount() {
+    let n = 0;
+    for (const star of this.stars.values()) {
+      if (!star.active) continue;
+      if (star.currentDeck?.program.events.length || star.pending?.program.events.length) n++;
+    }
+    return n;
+  }
+
   debugState() {
     return {
       enabled: this.enabled,

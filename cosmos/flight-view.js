@@ -1815,15 +1815,18 @@ function renderSkyDebug(now) {
     : 'off  (absolute JI against a fixed 1/1 — a root change re-reads, it does not transpose)'}`);
   if (s.fundamental) lines.push(`fund   ${s.fundamental.cents >= 0 ? '+' : ''}${s.fundamental.cents.toFixed(0)}¢ transpose (summed with modul on one detune bus; ±${s.fundamental.maxCents}¢)`);
   lines.push(`chord  ${s.chord.symbol}  degrees [${s.chord.semitones.join(',')}]`);
-  // Exposure: which of the chord's degrees have actually SOUNDED this window. With the hold on, the
-  // chord will not move until this is complete (or the cap fires).
+  // Exposure: which of the chord's degrees the ROWS have actually SOUNDED this window (the bed does not
+  // expose — see chordExposure). The chord will not move until this is complete (or the cap fires); with
+  // no row source in the field the floor reads `no rows` and goes vacuous, leaving DWELL to pace the walk.
   const exposure = s.chordExposure;
   if (exposure) {
     const missing = exposure.degrees.filter(d => !exposure.sounded.includes(d));
-    lines.push(`quality  floor+dwell ${((exposure.dwell ?? 0) * 100).toFixed(0)}%cyc  sounded [${exposure.sounded.join(',')}]` +
-      `${missing.length ? `  waiting on [${missing.join(',')}]` : '  ✓ full quality exposed'}` +
+    const floor = !exposure.rowsPresent ? '  ⊘ no rows — floor vacuous'
+      : missing.length ? `  waiting on [${missing.join(',')}]`
+      : '  ✓ full quality exposed';
+    lines.push(`quality  rows-only floor + dwell ${((exposure.dwell ?? 0) * 100).toFixed(0)}%cyc  sounded [${exposure.sounded.join(',')}]${floor}` +
       `  held ${exposure.heldSeconds.toFixed(1)}s / target ${(exposure.targetSeconds ?? 0).toFixed(1)}s` +
-      `  (cyc ${(exposure.cycleSeconds ?? 0).toFixed(1)}s · esc ${(exposure.escapeSeconds ?? 0).toFixed(0)}s) · last ${exposure.lastChordSeconds.toFixed(1)}s`);
+      `  (cyc ${(exposure.cycleSeconds ?? 0).toFixed(1)}s · quant ${(exposure.quantumSeconds ?? 0).toFixed(1)}s · esc ${(exposure.escapeSeconds ?? 0).toFixed(0)}s) · last ${exposure.lastChordSeconds.toFixed(1)}s`);
   }
   lines.push(`trail  ${s.tabu.map(c => c.symbol).join(' → ')}`);
   if (s.gridRows) {
@@ -1841,7 +1844,12 @@ function renderSkyDebug(now) {
   lines.push(`coverage (best→worst)  ${covSorted.map(c => `${c.symbol}:${c.coverage.toFixed(2)}`).join('  ')}`);
   if (s.candidateCosts.length) {   // Sky Root Feature A: why the walk picked what it's about to pick
     // fieldCost is normalized within the candidate's own cardinality class; richness is the earned
-    // extension incentive (weakest supported degree × RICHNESS), so it reads as a subtraction.
+    // extension incentive (weakest supported degree × EXTENSION_INCENTIVE), so it reads as a subtraction.
+    // The RICHNESS knob is upstream of all of it — larger qualities are not scored and lost, they are
+    // never candidates — so the line states the ceiling and how much of the vocabulary it leaves.
+    const r = s.richness;
+    lines.push(`RICHNESS  stop ${r.level}/${r.max} "${r.label}" — chords up to ${r.maxCardinality} notes · ${s.candidateCosts.length} candidates`);
+    lines.push(`  ${r.detail}`);
     lines.push(`candidates (cost = parsimony + field − richness, best→worst, top 6)`);
     lines.push('  ' + s.candidateCosts.slice(0, 6).map(c =>
       `${c.symbol}[${c.cardinality}]:${c.cost.toFixed(2)}(${c.parsimony}+${c.fieldCost.toFixed(2)}${c.richness ? `−${c.richness.toFixed(2)}` : ''})`).join('  '));

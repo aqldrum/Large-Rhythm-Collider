@@ -7,7 +7,8 @@
 import { normalizeLayers, lcmAll, ratioToCents } from './oracle-core.js';
 import { nearestDegree } from './grid-core.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): the global progression + its one gain law. Pure, no DOM.
-import { CHORDS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, coverage as skyCoverage, perDegreeSupport, gainForDev } from './sky-walk.js';
+import { CHORDS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, coverage as skyCoverage, perDegreeSupport, gainForDev,
+  RICHNESS_LEVELS, RICHNESS_LEVEL_MIN, RICHNESS_LEVEL_MAX, maxCardinalityForRichness } from './sky-walk.js';
 import { normalizeRootLadder, resetPhraseTracker, observePhraseBoundary, pushRecentRoot,
   classifyRootDestinations, rankModulationDestinations, decideRootAtBoundary } from './sky-modulation.js';
 import { AUDIO_MODES, RHYTHM_VOICE_WAVEFORM, ownerChordMatch } from './cosmos-grid-audio-core.js';
@@ -36,8 +37,10 @@ const LEAD_MASK_WINDOW = 35;     // cents — a lead onset counts as "in the glo
 // The fixed 25.6s chord window (old CHORD_SECONDS = 256 ticks / 10) is retired. The clock is now three
 // quantities, all in SKY-CLOCK seconds and all derived from the CURRENT grid cycle so harmonic rhythm
 // scales with playback the way the grid does — and it is identical at every MIX position:
-//   • FLOOR   — full exposure is required before any advance (the old "expose the full quality" hold,
-//               now UNCONDITIONAL at every mix; the checkbox is gone — decision 3).
+//   • FLOOR   — full exposure BY THE CULLED ROWS is required before any advance (the old "expose the full
+//               quality" hold, now UNCONDITIONAL at every mix; the checkbox is gone — decision 3). The bed
+//               does not expose: it voices the whole pool at once, so counting it made every chord exposed
+//               at t≈0. Rows articulate at every mix position, so a silenced row still exposes.
 //   • TARGET  — DWELL sets how long PAST exposure a chord dwells, as a fraction of one cycle. 0 (the
 //               default until the Phase 2.2 knob binds it) = advance the moment it is exposed = today's
 //               full quality. With no rows sounding (no cycle) the fraction maps to a nominal-cycle second.
@@ -68,7 +71,18 @@ let LAMBDA_FIELD = LAMBDA_FIELD_FROZEN;   // live only so the lab probe can swee
 // It saturates past ~0.12 (leveling the field term leaves triads and 7ths near-tied, so a small nudge
 // moves most of them at once). 0.05 keeps the triad a real home base while making the 7th the sky's
 // common currency; 0 reproduces the previous triad-dominated walk.
-let RICHNESS = 0.05;             // live from Phase 2.3 (setRichness); was a const at the swept knee
+// RICHNESS is now the vocabulary CEILING (a 1–4 detent; see RICHNESS_LEVELS in sky-walk.js), not a weight.
+// Default stop 3 (≤5-note) is the closest reproduction of the shipped 0.05 weight's measured distribution —
+// that sweep ran 20/50/25/5 triad/7th/9th/11–13, so capping at 9ths drops only its 5% tail. To ship the
+// whole vocabulary by default instead, move this to 4; nothing else changes.
+const RICHNESS_LEVEL_DEFAULT = 3;
+let richnessLevel = RICHNESS_LEVEL_DEFAULT;
+// …and the earned extension incentive goes back to being a constant at the swept knee. It still has a job
+// UNDER the ceiling: it is what lets a well-supported 7th beat its triad at all (levelling the field term
+// alone only makes them tie). What it cannot do is what the knob now does — it never removes a quality, so
+// on its own it left 8% 11th–13th chords in the walk even at 0.00. Ceiling chooses the vocabulary; this
+// chooses within it, and the geography still earns every extension via weakestSupport.
+const EXTENSION_INCENTIVE = 0.05;
 const MAX_BED_OSC = 30;          // LOGICAL bed voice budget (≤3 tones/star × AUDIBLE_N=10), freed eagerly on
                                   // release so a release tail can't starve incoming voices — see releaseVoice.
 // …and the backstop that budget cannot provide. Because the logical count is freed the instant a voice is
@@ -146,7 +160,7 @@ const MASTER_VOLUME_DEFAULT = 1;
 // SPACE knob (Phase 2.3): one knob driving BOTH reverb sends, each calibrated so the knob MIDPOINT (0.5,
 // the rail default) reproduces today's levels — ambient 0.3, rows 0.35 — and travel feels continuous.
 const SPACE_DEFAULT = 0.5, SPACE_AMBIENT_WET_AT_HALF = REVERB_WET, SPACE_ROW_WET_AT_HALF = 0.35;
-const RICHNESS_MAX = 0.18;       // RICHNESS knob (Phase 2.3) ceiling — the top of the swept table above
+// (RICHNESS is the vocabulary ceiling — see RICHNESS_LEVEL_DEFAULT with the walk state above.)
 
 // One cycle of the rhythm as an ordered list of {t, ratio}: t = onset time as a fraction of the
 // cycle in [0,1); ratio = folded pitch ratio in [1,2) (1/1 = root). Mirrors oracle-core.deriveScale's
@@ -224,7 +238,7 @@ let chordStartedAt = 0;           // sky-clock seconds the current chord began �
 let dwellFraction = 0;            // DWELL knob [0,1]: chord dwell as a fraction of the cycle PAST full exposure.
                                   // 0 = advance the moment exposed (the old full-quality hold, now the default).
                                   // A persisted musical setting (decision 8); Phase 2.2 binds the knob to setDwell.
-let lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };   // overlay-only snapshot
+let lastChordExposure = { degrees: [], sounded: [], missing: [], rowsPresent: false, exposed: true, complete: true, heldSeconds: 0 };   // overlay-only snapshot
 let lastChordClock = { cycleSeconds: NOMINAL_FALLBACK_CYCLE_SECONDS, targetSeconds: 0, quantumSeconds: NOMINAL_FALLBACK_CYCLE_SECONDS / CHORD_QUANTIZE_DIVISIONS, escapeSeconds: NOMINAL_FALLBACK_CYCLE_SECONDS * CHORD_ESCAPE_MULT };   // overlay-only
 let lastChordSeconds = 0;         // how long the PREVIOUS chord actually lasted — the pacing readout
 let modulationOn = MODULATION_DEFAULT;
@@ -242,7 +256,6 @@ let lastFundamentalCents = 0;     // the fundamental offset currently gliding to
 let modulationGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
 let fundamentalGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
 let cosmosMidi = null;
-let bedSoundedDegrees = new Set();   // ambient-mode half of the exposure ledger, cleared at each chord change
 let speedMode = SPEED_MODES.FIXED;
 let scaledCycleSeconds = SCALED_CYCLE_DEFAULT;
 let targetOnsetRate = SPEED_ONSET_DEFAULT;   // SPEED knob: target onsets/sec (ONSET mode); ticks/s derives from it
@@ -333,7 +346,7 @@ export function initAudio() {
   bedStars = new Map(); bedOscCount = 0; bedLiveOscCount = 0; currentField = [];
   transportStart = audioCtx.currentTime;   // grid clock starts here; lead swaps ride the same phase
   audioEpoch = transportStart;             // sky clock shares the origin but is never re-anchored after this
-  chordStartedAt = 0; lastChordSeconds = 0; lastChordExposure = { degrees: [], sounded: [], complete: true, heldSeconds: 0 };
+  chordStartedAt = 0; lastChordSeconds = 0; lastChordExposure = { degrees: [], sounded: [], missing: [], rowsPresent: false, exposed: true, complete: true, heldSeconds: 0 };
   lastModulationCents = 0; modulationGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   lastFundamentalCents = 0; fundamentalGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   scaledMedianGrid = 0; fieldOnsetTicks = 0;
@@ -609,14 +622,20 @@ export function currentSpeedMode() {
   return { mode: speedMode, cycleSeconds: scaledCycleSeconds, derivedCycleSeconds, ticksPerSec, medianGrid: scaledMedianGrid, targetOnsetRate };
 }
 
-// RICHNESS knob (Phase 2.3): the live sky-reach weight promoted from a const at the swept knee, clamped to
-// the table's [0, RICHNESS_MAX]. stepSkyWalk reads the live value on its next chord choice.
-export function setRichness(value) {
-  const n = Number(value);
-  RICHNESS = Math.max(0, Math.min(RICHNESS_MAX, Number.isFinite(n) ? n : RICHNESS));
-  return RICHNESS;
+// RICHNESS knob: an integer DETENT 1–4 setting the largest chord the walk may reach for (the old linear
+// [0,0.18] weight is retired — it could only re-weight a vocabulary it could not shrink, which is why it
+// never read as a continuum). Rounds rather than truncates so a knob position between stops lands on the
+// nearer one. stepSkyWalk reads the live level on its next chord choice; nothing sounding is disturbed.
+export function setRichness(level) {
+  const n = Math.round(Number(level));
+  richnessLevel = Math.max(RICHNESS_LEVEL_MIN, Math.min(RICHNESS_LEVEL_MAX, Number.isFinite(n) ? n : richnessLevel));
+  return richnessLevel;
 }
-export function currentRichness() { return { value: RICHNESS, max: RICHNESS_MAX }; }
+export function currentRichness() {
+  const stop = RICHNESS_LEVELS[richnessLevel - 1];
+  return { level: richnessLevel, min: RICHNESS_LEVEL_MIN, max: RICHNESS_LEVEL_MAX,
+    maxCardinality: stop.maxCardinality, label: stop.label, detail: stop.detail };
+}
 
 // VOLUME knob (Phase 2.3): master trim ahead of the limiter. Ramped, not stepped, so a knob drag glides.
 export function setVolume(x) {
@@ -707,7 +726,7 @@ export function setSpatial(pan, gain, octaveLift) {
 // -> star's StereoPanner -> star's distance GainNode -> bedBus (dry -> master, wet -> shared reverb).
 // The pure scheduling-decision helpers below (hashId/bedDegreesFor/reattachStepFor) are exported
 // alongside the SKY KNOBS so a headless guard can verify the bed's decisions without a real AudioContext.
-export { NOMINAL_FALLBACK_CYCLE_SECONDS, CHORD_QUANTIZE_DIVISIONS, CHORD_ESCAPE_MULT, SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, LAMBDA_FIELD, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_TOP_K };
+export { NOMINAL_FALLBACK_CYCLE_SECONDS, CHORD_QUANTIZE_DIVISIONS, CHORD_ESCAPE_MULT, SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, LAMBDA_FIELD, EXTENSION_INCENTIVE, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, ROOT_TOP_K };
 
 // DEV PROBE ONLY (decision 4 + the LAMBDA_FIELD_FROZEN note above). λ is frozen at 8.0 in production and
 // no rail knob binds it; this setter exists so the audio-lab overlay can sweep it by ear. Because candidate
@@ -885,7 +904,6 @@ function createVoice(bs, degree, now) {
   const v = { osc, env, degree, dev: slot.dev, fraction: slot.fraction };
   v.midi = cosmosMidi?.noteOn(osc.frequency.value, now, { cents: totalDetuneCentsAt(now), gain: bs.gainNode.gain.value });
   bs.oscMap.set(degree, v);
-  bedSoundedDegrees.add(degree);   // exposure ledger: the bed sounds BY degree, so this is already the answer
   swellEnvelope(env.gain, BED_PEAK * gainForDev(slot.dev), now);
   return v;
 }
@@ -968,40 +986,58 @@ function pumpReattacks(now, seconds) {
   }
 }
 
-// Which of the CURRENT chord's degrees have actually been sounded since it began. Row mode reads the
-// player's ledger and folds each sounded tone's absolute cents to a degree around the live root; the
-// bed sounds by degree already. Deliberately NOT the pool's per-degree best tone: any valid tone inside
-// the consonance window exposes that degree — the pool keeps only the min-|dev| representative per
-// degree, and requiring that one would refuse to count a perfectly good third the field really played.
+// Which of the CURRENT chord's degrees have actually been sounded since it began.
+//
+// THE ROWS ALONE EXPOSE A CHORD. The floor's promise is that no chord is left behind before the culled
+// tone rows have articulated every interval slot in its quality — root, third, fifth, seventh, ninth —
+// so exposure reads the row player's ledger and nothing else. The bed is deliberately excluded even
+// though it is audible: it voices the whole pool the instant the chord changes, so counting it made every
+// chord fully exposed at t≈0 and reduced the floor to the quantize grid. (This is the weld that was never
+// made when the ambient chords and the culled grid rows were brought together — the bed's own
+// `bedSoundedDegrees` ledger has been removed with this, since nothing else read it.)
+//
+// Silence is not the test — articulation is. Rows keep scheduling at every MIX position (the crossfade
+// lives in rowsGain, and gridRowPlayer is enabled unconditionally in initAudio), so a chord in full
+// ambient still exposes on the rhythms the geography is playing, inaudibly. That is what keeps the
+// harmonic rhythm identical across the crossfade instead of doubling when you turn the rows up.
+//
+// Deliberately NOT the pool's per-degree best tone: any valid tone inside the consonance window exposes
+// that degree — the pool keeps only the min-|dev| representative per degree, and requiring that one would
+// refuse to count a perfectly good third the field really played.
+//
+// `rowsPresent` separates "the rows have not finished yet" from "there are no rows here" — the same empty
+// ledger, opposite musical situations. With no row source in the field the floor has nothing to promise,
+// so it goes VACUOUS rather than unsatisfiable: DWELL and the quantize grid alone pace the walk, which is
+// what an ambient-only region did before rows existed. Without that, deep space would strand every chord
+// on the escape cap (4 cycles ≈ 96s) and read as the walk having died.
 function chordExposure(nowSeconds) {
   const chord = CHORDS[skyChordId];
   const sounded = new Set();
-  // Both engines contribute to exposure at every mix position — a degree sounded by either bus counts.
-  // Row player's ledger: maps sounded cents to chord degrees around the live root.
+  // The row player's ledger, folded to chord degrees around the live root.
   const since = audioEpoch + chordStartedAt;
   for (const tone of gridRowPlayer?.soundedSince(since) || []) {
     const match = ownerChordMatch(tone.cents, skyRoot.cents, chord.semitones);
     if (match?.selected) sounded.add(match.degree);
   }
-  // Bed: live voices + the ledger (a sustained voice that carries across a chord change never
-  // re-enters createVoice; the ledger covers voices that swelled and released inside this window).
-  for (const bs of bedStars.values()) for (const degree of bs.oscMap.keys()) sounded.add(degree);
-  for (const degree of bedSoundedDegrees) sounded.add(degree);
   // Filter to chord degrees only.
   for (const degree of [...sounded]) if (!chord.semitones.includes(degree)) sounded.delete(degree);
   const missing = chord.semitones.filter(degree => !sounded.has(degree));
-  return { degrees: chord.semitones, sounded: [...sounded].sort((a, b) => a - b), missing,
-    complete: missing.length === 0, heldSeconds: nowSeconds - chordStartedAt };
+  const rowsPresent = (gridRowPlayer?.soundingStarCount() || 0) > 0;
+  return { degrees: chord.semitones, sounded: [...sounded].sort((a, b) => a - b), missing, rowsPresent,
+    exposed: missing.length === 0,                        // the rows have said every degree
+    complete: !rowsPresent || missing.length === 0,       // the FLOOR verdict — vacuous where no row can speak
+    heldSeconds: nowSeconds - chordStartedAt };
 }
 
 // Pure chord-clock policy (Phase 0.3), exported so a headless guard can verify it without a live
-// AudioContext. Identical at every MIX position — the exposure ledger is already mix-wide (rows via
-// soundedSince, bed via bedSoundedDegrees), so this only reads its `complete` verdict.
+// AudioContext. Identical at every MIX position — the exposure ledger it reads is ROWS-ONLY and the rows
+// articulate at every crossfade position (chordExposure), so this only reads its `complete` verdict.
 //
 //   1. ESCAPE first — a degree the local field cannot voice (or a chord flown away from) can never
 //      complete, so release it after maxSeconds regardless of exposure or the quantize grid.
-//   2. FLOOR — full exposure is required at every mix position. Below it the chord holds however long the
-//      geography needs to say its quality: a sparse field stretches a short DWELL out to the floor.
+//   2. FLOOR — full exposure by the ROWS is required at every mix position. Below it the chord holds
+//      however long the geography needs to say its quality: a sparse field stretches a short DWELL out to
+//      the floor. Where no row source exists at all the floor is vacuous, not unsatisfiable.
 //   3. TARGET — DWELL then holds a further targetSeconds past exposure (0 = advance the moment exposed).
 //   4. QUANTIZE — land the change on the first cycle-subdivision boundary after 2+3 are both satisfied,
 //      so chord changes fall on the form. (The escape ignores this — a rescue fires as soon as it is due.)
@@ -1061,10 +1097,9 @@ function stepSkyWalk(seconds) {
   if (!shouldAdvanceChord({ complete: exposure.complete, heldSeconds: exposure.heldSeconds, targetSeconds, maxSeconds: escapeSeconds, atBoundary })) return;
   lastChordSeconds = seconds - chordStartedAt;
   chordStartedAt = seconds;
-  bedSoundedDegrees = new Set();
   const audibleStars = currentField.map(it => ({ pool: it.pool, weight: it.gain }));
   const next = chooseNextChord(skyChordId, skyTabu, t => skyCoverage(t, audibleStars),
-    { lambdaField: LAMBDA_FIELD, richness: RICHNESS, perDegree: perDegreeSupport(audibleStars) });
+    { lambdaField: LAMBDA_FIELD, richness: EXTENSION_INCENTIVE, maxCardinality: maxCardinalityForRichness(richnessLevel), perDegree: perDegreeSupport(audibleStars) });
   skyChordId = next.id; pushTabu(skyTabu, skyChordId, TABU_K);
   rootPhraseTracker = observePhraseBoundary(rootPhraseTracker,
     { rootKey: skyRoot.rootKey, chordId: skyChordId, tabu: skyTabu }).tracker;
@@ -1274,7 +1309,7 @@ export function debugSkyState() {
   // to move (parsimony + normalized field cost, not just raw coverage).
   const candidates = (skyTabu || []).length
     ? candidateCosts(skyChordId, skyTabu, t => skyCoverage(t, audibleStars),
-      { lambdaField: LAMBDA_FIELD, richness: RICHNESS, perDegree: perDegreeSupport(audibleStars) })
+      { lambdaField: LAMBDA_FIELD, richness: EXTENSION_INCENTIVE, maxCardinality: maxCardinalityForRichness(richnessLevel), perDegree: perDegreeSupport(audibleStars) })
         .map(c => ({ ...c, coverage: Math.round(c.coverage * 1000) / 1000, parsimony: Math.round(c.parsimony * 1000) / 1000,
           fieldCost: Math.round(c.fieldCost * 1000) / 1000, richness: Math.round(c.richness * 1000) / 1000,
           weakest: Math.round(c.weakest * 1000) / 1000, cost: Math.round(c.cost * 1000) / 1000 }))
@@ -1424,7 +1459,7 @@ export function stopAudio() {
   rootEstablished = false; rootPhraseTracker = null; recentSkyRoots = []; lastRootPolicyProposal = null;
   rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
   lead = null; schedIdx = 0; schedCycle = 0; transportStart = null; audioEpoch = null;
-  chordStartedAt = 0; lastChordSeconds = 0; bedSoundedDegrees = new Set(); scaledMedianGrid = 0; fieldOnsetTicks = 0;
+  chordStartedAt = 0; lastChordSeconds = 0; scaledMedianGrid = 0; fieldOnsetTicks = 0;
   fundamentalOffset = null; modulationOffset = null; detuneBus = null;
   lastModulationCents = 0; lastFundamentalCents = 0;
   modulationGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };

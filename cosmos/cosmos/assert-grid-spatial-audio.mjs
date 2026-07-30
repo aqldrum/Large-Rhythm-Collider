@@ -328,6 +328,25 @@ ledgerPlayer.ctx.currentTime = 400;
 ledgerPlayer.soundedSince(0);
 check('entries age out on read so the ledger cannot grow without bound', ledgerPlayer.soundedTones.size === 0);
 
+// An empty ledger means two opposite things, and the sky's exposure floor has to tell them apart: the
+// rows have not finished saying this chord yet (hold), or there is no row source here to say it (the
+// floor is vacuous — see chordExposure). soundingStarCount is that predicate. A pending deck counts, so
+// the install boundary is not a hole in which a field full of rows briefly reports none.
+const countPlayer = Object.create(SpatialGridRowPlayer.prototype);
+const withEvents = { program: { events: [{ tick: 0 }] } };
+countPlayer.stars = new Map([
+  [1, { active: true, currentDeck: withEvents, pending: null }],
+  [2, { active: true, currentDeck: null, pending: withEvents }],
+  [3, { active: true, currentDeck: null, pending: null }],                              // no program yet
+  [4, { active: true, currentDeck: { program: { events: [] } }, pending: null }],       // program, no onsets
+  [5, { active: false, currentDeck: withEvents, pending: null }],                       // left the field, fading
+]);
+check('soundingStarCount counts only active stars that can actually articulate',
+  countPlayer.soundingStarCount() === 2, `got ${countPlayer.soundingStarCount()}`);
+countPlayer.stars = new Map();
+check('an empty field reports no row source, so the floor can go vacuous instead of unsatisfiable',
+  countPlayer.soundingStarCount() === 0);
+
 console.log('\n  Audio-time visual activity');
 const visualPlayer = Object.create(SpatialGridRowPlayer.prototype);
 visualPlayer.enabled = true;

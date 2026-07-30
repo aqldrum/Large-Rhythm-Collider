@@ -23,7 +23,8 @@ check('an unexposed chord never advances on the normal path, at any DWELL or hel
 check('a fully-exposed chord at DWELL 0 advances the moment it is exposed (today\'s full quality)',
   shouldAdvanceChord({ complete: true, heldSeconds: 0, targetSeconds: 0 }));
 // The policy reads only `complete`, never the mix — moving the crossfade cannot change the decision, and
-// the exposure ledger that feeds `complete` is already mix-wide (bed + rows both contribute; see wiring).
+// the ledger that feeds `complete` is ROWS-ONLY but mix-independent: rows articulate at every crossfade
+// position (rowsGain carries the fade; the player is enabled unconditionally), so a silenced row exposes.
 check('the advance decision is mix-independent — the same inputs decide the same at bed and at rows', (() => {
   const inputs = { complete: true, heldSeconds: 3, targetSeconds: 2, maxSeconds: 100, atBoundary: true };
   setMix(0); const atBed = shouldAdvanceChord(inputs);
@@ -79,8 +80,34 @@ check('stepSkyWalk runs the pure policy off the cycle-derived clock, quantized e
   audio.includes('const atBoundary = step !== skyStep'));
 check('the full-quality toggle is a no-op deprecation shim, absorbed into the always-on floor',
   audio.includes('export function setHoldForFullQuality() { return true; }'));
-check('exposure stays mix-wide — both engines feed the floor at every crossfade position',
-  audio.includes('gridRowPlayer?.soundedSince(since)') && audio.includes('for (const degree of bedSoundedDegrees)'));
+
+console.log('\n  The rows alone expose a chord');
+// The floor's promise is about the CULLED TONE ROWS: no chord is left behind until the rows have
+// articulated every interval slot in its quality. The bed voices its whole pool the instant the chord
+// changes, so while it fed the ledger every chord read as fully exposed at t≈0 and the floor collapsed
+// to the quantize grid — the weld that was never made when the ambient chords and the culled rows were
+// brought together. Exposure is mix-INDEPENDENT but not mix-wide: rows keep articulating while silent.
+// Scan chordExposure's own body: the ONE thing that may enter the sounded set is a row-ledger tone.
+const exposureBody = audioCode.slice(audioCode.indexOf('function chordExposure('),
+  audioCode.indexOf('export function shouldAdvanceChord'));
+const soundedAdds = exposureBody.match(/sounded\.add\([^)]*\)/g) || [];
+check('the exposure ledger reads the row player and nothing else',
+  exposureBody.includes('gridRowPlayer?.soundedSince(since)') &&
+  soundedAdds.length === 1 && soundedAdds[0] === 'sounded.add(match.degree)',
+  soundedAdds.join(' · '));
+check('the bed contributes nothing to exposure — its degree ledger is gone, live voices are not counted',
+  !audioCode.includes('bedSoundedDegrees') && !exposureBody.includes('bedStars'));
+check('the floor separates "the rows have not finished" from "there are no rows here"',
+  audioCode.includes('gridRowPlayer?.soundingStarCount()') &&
+  audioCode.includes('complete: !rowsPresent || missing.length === 0'));
+// Vacuous, not unsatisfiable. Deep space has no row source, so the floor has nothing to promise there —
+// DWELL and the quantize grid pace the walk, exactly as an ambient-only region did before rows existed.
+// Without this the escape cap (4 cycles ≈ 96s) would be the only exit and the walk would read as dead.
+check('with no rows the floor is vacuous, so DWELL alone paces the walk',
+  shouldAdvanceChord({ complete: true, heldSeconds: 0, targetSeconds: 0 }) &&
+  !shouldAdvanceChord({ complete: true, heldSeconds: 1, targetSeconds: 6, maxSeconds: 100 }));
+check('rows articulate at every mix position, so exposure cannot depend on audibility',
+  audioCode.includes('gridRowPlayer.setEnabled(true)'));
 
 console.log(PASS ? '\n✓✓✓ COSMOS CHORD CLOCK PASSES' : '\n✗ COSMOS CHORD CLOCK FAILED');
 process.exit(PASS ? 0 : 1);
