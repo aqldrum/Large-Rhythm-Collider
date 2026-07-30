@@ -47,7 +47,7 @@ export const ENGINE_SETTERS = Object.freeze({
   fundamental: setFundamentalOffset,   // cents (railParams 'fundamental' value is already in cents, ±1200 knob)
   speed: setTargetOnsetRate,           // notes/sec — puts the engine in ONSET mode (SPEED replaces fixed/scaled)
   dwell: setDwell,                     // [0,1] chord dwell past full exposure, in cycles (0 = advance at exposure)
-  richness: setRichness,               // [0, 0.18] sky-reach weight
+  richness: setRichness,               // detent 1–4 — the largest chord the walk may reach for
   volume: setVolume,                   // [0,1] master trim ahead of the limiter
   mix: setMix,                         // [0,1] constant-power bed↔rows crossfade
   space: setSpace,                     // [0,1] both reverb sends (0.5 = today's levels)
@@ -69,7 +69,9 @@ const GROUP_ORDER = ['transport', 'pitch', 'time', 'harmony', 'texture'];
 export function formatReadout(spec, value) {
   if (!spec) return '';
   if (spec.curve === 'bool') return value ? 'ON' : 'OFF';
-  if (spec.curve === 'detent') return String(value);
+  // A detent with `stops` reads its stop's NAME — a rail knob's readout is the only thing telling the
+  // listener what a stop means, and "9ths" says it where "3" does not. Unnamed detents still read numeric.
+  if (spec.curve === 'detent') return spec.stops?.[value - spec.min] ?? String(value);
   const digits = spec.unit === '¢' ? 0 : Math.abs(spec.max) <= 1 ? 2 : 1;   // cents are ints; unit-fractions read to 2dp
   return `${(+value).toFixed(digits)}${spec.unit || ''}`;
 }

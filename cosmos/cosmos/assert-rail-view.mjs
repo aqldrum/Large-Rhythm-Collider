@@ -41,7 +41,12 @@ check('DENSITY stays unbound (Phase 4, no setter) — absent from the setter map
 console.log('\n  Readout formatting (spec + engine value → string)');
 check('booleans read ON / OFF',
   formatReadout(RAIL_PARAMS.modulation, true) === 'ON' && formatReadout(RAIL_PARAMS.mute, false) === 'OFF');
-check('detents read as integer stops', formatReadout(RAIL_PARAMS.density, 2) === '2');
+check('an unnamed detent reads as an integer stop', formatReadout(RAIL_PARAMS.density, 2) === '2');
+// A rail readout is the only thing telling the listener what a stop MEANS. "3" says nothing; "9ths" says
+// where the vocabulary ceiling is without opening the debug overlay.
+check('a detent with named stops reads its stop\'s name (RICHNESS)',
+  formatReadout(RAIL_PARAMS.richness, 1) === 'triads' && formatReadout(RAIL_PARAMS.richness, 3) === '9ths' &&
+  formatReadout(RAIL_PARAMS.richness, 4) === '11–13');
 check('cents read as a signed integer with the ¢ unit',
   formatReadout(RAIL_PARAMS.fundamental, -700) === '-700¢' && formatReadout(RAIL_PARAMS.fundamental, 0) === '0¢');
 check('unit-fraction knobs read to two decimals (MIX / VOLUME / SPACE)',

@@ -84,6 +84,33 @@ for (let r = 0; r < 12; r++) {
 }
 export const START_CHORD_ID = 0;   // I major — the frame's anchor chord (root at degree 0 = 1/1), id 0
 
+// ── RICHNESS: the vocabulary CEILING (2026-07-30) ────────────────────────────────────────────────────
+// Four stops, one axis: the largest chord the walk is allowed to reach for. Avery, 2026-07-29, on the old
+// linear [0,0.18] weight: it "reads as ~3–4 discrete musical levels, not a continuum", and the measured
+// sweep shows why — even at richness 0.00 the walk still ran 29% sevenths / 19% ninths / 8% 11th–13th,
+// because that number is an incentive and an incentive cannot remove a chord from the candidate set.
+//
+// The axis is PURE CARDINALITY (Avery's call, 2026-07-30). It is not the only way to tier this vocabulary —
+// dim/aug/quartal are dissonant three-note qualities that land at the lowest stop, and 7alt/7b9 are
+// five-note qualities that land beside maj9 — but "how big" and "how spicy" are genuinely different axes,
+// and one knob should travel along one of them. The dissonance axis, if it ever gets a control, is its own.
+//
+// The counts are uneven because the vocabulary is: stop 2 admits 14 new qualities, stop 4 only 4.
+export const RICHNESS_LEVELS = Object.freeze([
+  { level: 1, maxCardinality: 3, label: 'triads',  detail: 'maj · m · sus4 · dim · aug · quartal' },
+  { level: 2, maxCardinality: 4, label: '7ths',    detail: '+ 7ths, 6ths, add9, dim7, m7b5, augMaj7, It6, Fr6' },
+  { level: 3, maxCardinality: 5, label: '9ths',    detail: '+ 9ths, 9sus4, 13sus4, and the altered dominants' },
+  { level: 4, maxCardinality: 6, label: '11–13',   detail: '+ 11ths and 13ths — the whole vocabulary' },
+]);
+export const RICHNESS_LEVEL_MIN = 1, RICHNESS_LEVEL_MAX = RICHNESS_LEVELS.length;
+// Level → the ceiling rankCandidates filters on. Out-of-range clamps rather than throwing, so a stale
+// persisted value or a bad caller degrades to a legal stop instead of silently emptying the vocabulary.
+export function maxCardinalityForRichness(level) {
+  const n = Math.round(Number(level));
+  const i = Math.max(0, Math.min(RICHNESS_LEVELS.length - 1, (Number.isFinite(n) ? n : RICHNESS_LEVEL_MAX) - 1));
+  return RICHNESS_LEVELS[i].maxCardinality;
+}
+
 const DEFAULTS = { tabuK: 3, lambdaField: 2.0, richness: 0.45 };
 export const GAIN_CEILING_CENTS = 45;   // full at 0¢, ~half-power ~20¢, 0 by here — the ONE playability law
 // Sky Root handoff Feature A: floor under the candidate set's raw coverage spread (maxCov-minCov) when
@@ -218,13 +245,26 @@ export function weakestSupport(chord, perDegree) {
 //      notes must earn their place on voice leading and field support alone. A linear (cardinality−3)
 //      instead gives a 13th three times the discount of a 7th, and measured over real codex fields that
 //      runs away completely: even richness 0.15 put the walk on six-note chords 58% of the time.
+// 0. CEILING — `maxCardinality` removes every larger quality from the candidate set outright (the RICHNESS
+//    detent, 2026-07-30). This is a different kind of control from the incentive in step 3 and the two are
+//    not interchangeable: the incentive can only re-WEIGHT a vocabulary it cannot shrink, which is why the
+//    swept table still shows 8% 11th–13th chords at richness 0.00 and why the knob never read as a
+//    continuum. A ceiling is the only thing that can actually say "no 13ths here". It composes cleanly with
+//    the per-class normalization below — the removed classes simply do not exist, so the classes that remain
+//    keep exactly the field costs they would have had.
 function rankCandidates(currentId, tabu, fieldCoverage, opts = {}) {
   const lambda = opts.lambdaField ?? DEFAULTS.lambdaField;
   const richnessWeight = opts.richness ?? DEFAULTS.richness;
+  const maxCardinality = opts.maxCardinality ?? Infinity;
   const perDegree = opts.perDegree || null;
   const current = CHORDS[currentId];
+  // The ceiling is applied BEFORE the tabu can starve it. 72 chords survive even at the tightest stop
+  // against a tabu of 3, so the fallback is unreachable in production — it exists so a caller that pairs a
+  // tight ceiling with a huge tabu degrades to the full vocabulary instead of returning no chord at all.
+  let pool = CHORDS.filter(next => !tabu.includes(next.id) && next.cardinality <= maxCardinality);
+  if (!pool.length) pool = CHORDS.filter(next => !tabu.includes(next.id));
   const raw = [];
-  for (const next of CHORDS) if (!tabu.includes(next.id)) raw.push({ chord: next, coverage: fieldCoverage(next) });
+  for (const next of pool) raw.push({ chord: next, coverage: fieldCoverage(next) });
   const byCardinality = new Map();
   for (const r of raw) {
     let bounds = byCardinality.get(r.chord.cardinality);

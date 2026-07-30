@@ -3,8 +3,8 @@
 import { readFileSync } from 'fs';
 import { gridShardSolve, shardKeysOf, gridShardSystems, divisorsFast, nearestDegree, poolFromRatios, TONE_BIN_CENTS } from '../grid-core.js';
 import { deriveScale } from '../oracle-core.js';
-import { CHORDS, CHORD_QUALITIES, QUALITY_COUNT, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, perDegreeSupport, weakestSupport, chooseNextChord, candidateCosts, pushTabu, chordStepIndex } from '../sky-walk.js';
-import { SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, RICHNESS, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState, scaledRateFor, modulationCentsFor, rootGlideSeconds } from '../cosmos-audio.js';
+import { CHORDS, CHORD_QUALITIES, QUALITY_COUNT, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, perDegreeSupport, weakestSupport, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, RICHNESS_LEVELS, maxCardinalityForRichness } from '../sky-walk.js';
+import { SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, EXTENSION_INCENTIVE, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState, scaledRateFor, modulationCentsFor, rootGlideSeconds } from '../cosmos-audio.js';
 import { poolFromTones, solveRoots, scoreRootAt } from '../sky-root.js';
 import { ratioToCents } from '../oracle-core.js';
 
@@ -574,8 +574,53 @@ check('the constructed pair really does tie on cost (same parsimony, same field 
 check('an exact tie now goes to the richer chord, and the triad no longer wins by id',
   chooseNextChord(chI.id, tabuTie, () => 0.5, { lambdaField: 2, richness: 0 }).id === chImaj7.id,
   `chose ${chooseNextChord(chI.id, tabuTie, () => 0.5, { lambdaField: 2, richness: 0 }).symbol}`);
-check('production RICHNESS is a small positive incentive, not a thumb on the scale',
-  RICHNESS > 0 && RICHNESS < 1, `RICHNESS=${RICHNESS}`);
+check('the production extension incentive is small and positive, not a thumb on the scale',
+  EXTENSION_INCENTIVE > 0 && EXTENSION_INCENTIVE < 1, `EXTENSION_INCENTIVE=${EXTENSION_INCENTIVE}`);
+
+// ══ RICHNESS — the vocabulary CEILING (2026-07-30) ══════════════════════════════════════════════
+console.log('\n── RICHNESS: a ceiling, not a weight ──');
+// The whole point of the refactor. The old knob at its LOWEST setting still ran 29% sevenths / 19% ninths
+// / 8% 11th–13th over real fields, because an incentive re-weights a vocabulary it cannot shrink. So the
+// first thing to prove is that the ceiling does what no value of the weight could: remove qualities.
+const noTabu = [];
+const cardsAt = level => new Set(candidateCosts(chI.id, noTabu, () => 0.5,
+  { lambdaField: 1, richness: 0.5, perDegree: flatSupport, maxCardinality: maxCardinalityForRichness(level) })
+  .map(r => r.cardinality));
+check('each stop admits exactly the cardinalities at or below its ceiling',
+  [...cardsAt(1)].sort().join() === '3' && [...cardsAt(2)].sort().join() === '3,4' &&
+  [...cardsAt(3)].sort().join() === '3,4,5' && [...cardsAt(4)].sort().join() === '3,4,5,6',
+  [1, 2, 3, 4].map(l => `${l}:[${[...cardsAt(l)].sort()}]`).join(' '));
+check('the ceiling REMOVES chords — something no value of the incentive can do',
+  (() => {
+    const at = level => candidateCosts(chI.id, noTabu, () => 0.5,
+      { lambdaField: 1, richness: 0, perDegree: flatSupport, maxCardinality: maxCardinalityForRichness(level) }).length;
+    // 12 roots × qualities of each size: 6 three-note, 14 four-note, 9 five-note, 4 six-note = 33.
+    return at(1) === 72 && at(2) === 240 && at(3) === 348 && at(4) === 12 * QUALITY_COUNT;
+  })());
+// A ceiling that merely made big chords expensive would still let one through on a strong enough field.
+// This is the guarantee the knob is actually making, and it has to hold at every field shape.
+check('at stop 1 the walk cannot choose an extended chord no matter how well the field supports one',
+  [0, 0.5, 5].every(rich => chooseNextChord(chI.id, [chI.id], next => next.cardinality > 3 ? 1 : 0,
+    { lambdaField: 8, richness: rich, perDegree: flatSupport, maxCardinality: 3 }).cardinality === 3));
+// Per-class normalization is what makes the ceiling musically inert on the classes that survive: each
+// chord is scored against its OWN size's spread, so removing the 6-note class cannot move a 4-note cost.
+check('removing a class does not disturb the costs of the classes that remain',
+  (() => {
+    const full = candidateCosts(chI.id, noTabu, c => c.cardinality / 10, { lambdaField: 2, richness: 0.5, perDegree: flatSupport });
+    const capped = candidateCosts(chI.id, noTabu, c => c.cardinality / 10, { lambdaField: 2, richness: 0.5, perDegree: flatSupport, maxCardinality: 4 });
+    return capped.every(c => Math.abs(c.cost - full.find(f => f.id === c.id).cost) < 1e-12);
+  })());
+check('an absent ceiling is the full vocabulary — every existing caller and guard is unaffected',
+  candidateCosts(chI.id, noTabu, () => 0.5, { lambdaField: 1, richness: 0 }).length === 12 * QUALITY_COUNT);
+// Defensive only: 72 chords survive the tightest stop against a tabu of 3, so production never reaches it.
+// But a walk that returns no chord at all would stop the sky, which is worse than a momentarily wide one.
+check('a ceiling starved by an oversized tabu falls back to the vocabulary rather than returning nothing',
+  chooseNextChord(chI.id, CHORDS.filter(c => c.cardinality === 3).map(c => c.id), () => 0.5,
+    { lambdaField: 1, richness: 0, maxCardinality: 3 }) !== null);
+check('the level table is the four stops, ascending, spanning triads through the whole vocabulary',
+  RICHNESS_LEVELS.length === 4 &&
+  RICHNESS_LEVELS.every((s, i) => s.level === i + 1 && s.maxCardinality === i + 3 && !!s.label) &&
+  maxCardinalityForRichness(0) === 3 && maxCardinalityForRichness(99) === 6);
 
 // ══ Sky Root handoff, B1 — anchor-independent tone lists ═══════════════════════════════════════
 console.log('\n── B1: anchor-independent tone lists ──');

@@ -77,6 +77,17 @@ current pitch anchors are `ROOT_HZ` (`cosmos-audio.js`) and `CULLED_ROW_FUNDAMEN
 The exposure ledger is already mix-wide: rows via `soundedSince` (`cosmos-audio.js:729`), bed via
 `bedSoundedDegrees` (`:175`). Codify the policy as a pure exported function so a guard can check it:
 
+> **Amended 2026-07-30 — the rows alone expose a chord.** "Mix-wide" was the wrong reading of
+> "mix-independent". The bed voices its whole pool the instant the chord changes, so while it fed the
+> ledger *every chord read as fully exposed at t≈0* and the floor collapsed to the quantize grid — DWELL 0
+> was pacing on `cycle/8`, not on the music. Exposure now reads the row ledger only; `bedSoundedDegrees` is
+> deleted. It stays mix-independent because rows articulate at every crossfade position (`rowsGain` carries
+> the fade, the player is enabled unconditionally), so a *silent* row still exposes. Where no row source
+> exists at all the floor is **vacuous, not unsatisfiable** — otherwise deep space would strand every chord
+> on the escape cap. This is the weld that was never made when the ambient chords and the culled grid rows
+> were brought together.
+
+
 - Full exposure is the advance floor at every mix position (this subsumes `holdForFullQuality`).
 - Target duration comes from DWELL (Phase 2.2). When no grid cycle exists (`scaledRateFor` → null:
   no rows sounding), DWELL maps to absolute seconds against a nominal fallback cycle (implementer's
@@ -140,8 +151,8 @@ guarded headlessly like the current law.
 The bed goes silent for long stretches while flying — probe first (headless, in the style of the
 `_seedDeck` probe): likely the coprime `REATTACK_PERIODS` clock never triggers a swell for stars
 that *enter* the audible set mid-period while departed stars release. Expected fix: star entry
-triggers an immediate swell-in; the period clock only governs re-swells. Verify the bed also
-interacts correctly with the exposure floor (it already feeds `bedSoundedDegrees`).
+triggers an immediate swell-in; the period clock only governs re-swells. The bed no longer touches the exposure floor at
+all (see the 0.3 amendment), so bed robustness and the chord clock are now independent concerns.
 
 ## Phase 3 — freeze LAMBDA_FIELD (headless study, parallelizable with Phase 2)
 
@@ -296,6 +307,35 @@ Home-button rename broke an `index.html` structure regex; unrelated to this work
   Candidate refactor: make RICHNESS a **detent** over those chord-vocabulary tiers rather than the current
   linear `[0,0.18]` sky-reach weight, so the knob steps through triads→7ths→extensions. Deferred behind
   SPEED calibration.
+  **✅ DONE 2026-07-30 — the detent shipped, on the CARDINALITY axis (Avery's call).** The ear report was
+  literally right and the sweep table above proves the mechanism: at richness **0.00** the walk still ran
+  29% sevenths / 19% ninths / 8% 11th–13th, because that number is an *incentive* and an incentive can only
+  re-weight a vocabulary it cannot shrink. RICHNESS is now a 1–4 stop setting the largest chord the walk may
+  reach for — a hard ceiling applied in `rankCandidates` before scoring, so bigger qualities are never
+  candidates rather than expensive ones. The earned extension incentive returns to a constant at the swept
+  knee (`EXTENSION_INCENTIVE = 0.05`): the ceiling picks the vocabulary, the incentive chooses within it.
+  Two axes were available and only one is a size: dim/aug/quartal are dissonant THREE-note qualities and
+  7alt/7b9 are five-note ones, so "how big" and "how spicy" cannot both ride this knob. Cardinality won; a
+  dissonance control, if it is ever wanted, is its own knob.
+
+  Measured over 12 real codex locations × 200 chords (λ=8, incentive 0.05, tabuK 3):
+
+  ```
+  stop  ceiling  label    triad   7th   9th  11-13
+    1     ≤3     triads    100%    0%    0%     0%
+    2     ≤4     7ths        7%   93%    0%     0%
+    3     ≤5     9ths        4%   63%   32%     0%
+    4     ≤6     11–13       4%   48%   25%    23%
+  ```
+
+  **Two things for the ear, both open.** (i) Stop 2 is **93% sevenths** — triads all but vanish the moment
+  four-note chords are admitted, because the incentive plus the higher-cardinality tie-break both push
+  upward and there is now nothing above to absorb them. If "standard sevenths" should still breathe against
+  triads, `EXTENSION_INCENTIVE` is the lever (or make it scale with the stop). (ii) Default is stop **3**,
+  the closest reproduction of the shipped 0.05 weight's distribution; `RICHNESS_LEVEL_DEFAULT` is one line
+  if the whole vocabulary should be on by default instead.
+  `RAIL_SCHEMA_VERSION` 2 → 3: RICHNESS changed UNITS into an overlapping domain, so a stored `0.05` would
+  otherwise have restored as stop 1 — triads only — for every returning listener.
 - **2.4 Audio continuity while flying** ✅ **LARGELY RESOLVED 2026-07-30** — "smooth transitions everywhere"
   (Avery). Neither candidate mechanism in the original write-up was the cause. Probing first was right, but
   the decisive evidence was an *input*, not a probe: the symptom appeared under the ARROW keys, which are

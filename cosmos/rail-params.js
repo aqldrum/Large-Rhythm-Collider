@@ -10,7 +10,11 @@
 // written while the AUDIO LAB still owned the engine and the rail was gestures-only, so its stored values
 // are not what the rail now RESTORES on entry — a v1 `mix: 0` (the old pure-bed default) would come up
 // ambient-only, and a v1 SPEED was stored against an uncalibrated knob. Discarding is the point of the key.
-export const RAIL_SCHEMA_VERSION = 2;
+// v3 (2026-07-30, the RICHNESS detent): RICHNESS changed UNITS, from a [0,0.18] sky-reach weight to a 1–4
+// vocabulary-ceiling stop. A stored v2 `richness: 0.05` is a legal-looking number in the new domain that
+// clamps to stop 1 — triads only — so a returning listener would silently come up with the narrowest
+// vocabulary they never chose. A unit change with an overlapping domain is exactly what this key is for.
+export const RAIL_SCHEMA_VERSION = 3;
 export const RAIL_STORAGE_KEY = 'lrc.cosmos.rail.v1';   // storage NAMESPACE (stable); the blob's `v` field gates schema
 
 // curve: how a normalized knob position [0,1] maps to the engine VALUE this module stores.
@@ -27,7 +31,12 @@ export const RAIL_PARAMS = Object.freeze({
   density:     { default: 1,    min: 1,     max: 3,    curve: 'detent', persist: true,  unit: '',         group: 'harmony',   label: 'DENSITY' },
   speed:       { default: 2.5,  min: 0.5,   max: 16,   curve: 'log',    persist: true,  unit: ' notes/s', group: 'time',      label: 'SPEED' },
   dwell:       { default: 0,    min: 0,     max: 1,    curve: 'linear', persist: true,  unit: '×cyc',     group: 'time',      label: 'DWELL' },
-  richness:    { default: 0.05, min: 0,     max: 0.18, curve: 'linear', persist: true,  unit: '',         group: 'harmony',   label: 'RICHNESS' },
+  // RICHNESS is a DETENT over the chord vocabulary's cardinality tiers (2026-07-30), not a weight — Avery
+  // heard the old linear knob as "~3–4 discrete musical levels, not a continuum", and it was, because an
+  // incentive can only re-weight a vocabulary it cannot shrink. `stops` are the readout labels; the engine's
+  // RICHNESS_LEVELS (sky-walk.js) is the authority on what each one admits.
+  richness:    { default: 3,    min: 1,     max: 4,    curve: 'detent', persist: true,  unit: '',         group: 'harmony',   label: 'RICHNESS',
+                 stops: ['triads', '7ths', '9ths', '11–13'] },
   // MIX 0.8 = rows-forward blend (Avery, 2026-07-29): rows are the identity, the bed audible underneath as a
   // wash. The pre-transfer engine came up at 1.0 (pure rows) because the audio lab's entry default selected
   // culled-grid-rows; 0.8 is the deliberate replacement now that the rail owns entry state.

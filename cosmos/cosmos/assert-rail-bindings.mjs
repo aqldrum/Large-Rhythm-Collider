@@ -47,11 +47,13 @@ console.log('\n  MODULATION — default ON since the ownership transfer (carries
 check('the engine\'s own default agrees with the rail\'s, so the two surfaces cannot disagree at entry',
   currentModulation().on === true);
 
-console.log('\n  RICHNESS — live sky-reach weight (promoted from the swept const)');
-check('setRichness clamps to the table\'s [0, 0.18] and currentRichness reports value + ceiling',
-  setRichness(0.5) === 0.18 && setRichness(-1) === 0 && setRichness(0.1) === 0.1 &&
-  currentRichness().value === 0.1 && currentRichness().max === 0.18);
-setRichness(0.05);   // hygiene: back to the swept knee default
+console.log('\n  RICHNESS — a vocabulary-ceiling DETENT, not a weight');
+check('setRichness snaps to an integer stop and clamps to 1–4',
+  setRichness(9) === 4 && setRichness(-3) === 1 && setRichness(2.4) === 2 && setRichness(2.6) === 3);
+check('currentRichness reports the stop, its ceiling and a name the readout can show',
+  setRichness(1) === 1 && currentRichness().maxCardinality === 3 && currentRichness().label === 'triads' &&
+  setRichness(4) === 4 && currentRichness().maxCardinality === 6 && currentRichness().max === 4);
+setRichness(3);   // hygiene: back to the default stop
 
 console.log('\n  VOLUME — master trim ahead of the limiter');
 check('setVolume clamps to [0,1] and currentVolume reports it',
@@ -80,8 +82,14 @@ check('SPEED\'s ONSET mode re-derives the tick rate as the field churns, under t
 check('SPACE drives BOTH reverb sends — the ambient send here and the row send on the player',
   audio.includes('reverbWet?.gain.setTargetAtTime') && audio.includes('gridRowPlayer?.setReverbWet(') &&
   player.includes('setReverbWet(level)') && player.includes('this.reverb.wet.gain.setTargetAtTime'));
-check('RICHNESS is a live setter, not a frozen const, and the walk reads the live value',
-  audio.includes('let RICHNESS = 0.05') && audio.includes('richness: RICHNESS'));
+// The knob and the incentive are now two different mechanisms and must stay that way: the detent removes
+// qualities from the candidate set, the constant decides between what is left. Collapsing them back into
+// one number is what made the knob feel like nothing was happening.
+check('RICHNESS drives the walk\'s vocabulary CEILING, live, on the next chord choice',
+  audio.includes('let richnessLevel = RICHNESS_LEVEL_DEFAULT') &&
+  audio.includes('maxCardinality: maxCardinalityForRichness(richnessLevel)'));
+check('the earned extension incentive is a separate frozen constant at the swept knee',
+  audio.includes('const EXTENSION_INCENTIVE = 0.05') && audio.includes('richness: EXTENSION_INCENTIVE'));
 check('λ is a named frozen constant the walk reads live (so the lab probe still works)',
   audio.includes('const LAMBDA_FIELD_FROZEN = 8.0') && audio.includes('let LAMBDA_FIELD = LAMBDA_FIELD_FROZEN') &&
   audio.includes('lambdaField: LAMBDA_FIELD'));
