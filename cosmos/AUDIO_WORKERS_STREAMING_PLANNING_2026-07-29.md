@@ -66,6 +66,19 @@ Telemetry line: `[cosmos] zones N · solved S (+r/s) · solving · pending · ta
   entry defaults set to culled-grid-rows · scaled · modulation on. **Resolution:** retire the lab once the
   knobs own the surface (flip `emitNow` restoration). Also note the MIX knob reads `0.00` on entry while the
   engine starts at rows — the same gestures-only mismatch.
+- **⚠ UNRESOLVED — phantom sustained bed (watch-item).** The ambient chord bed kept ringing after a hard
+  refresh, tab close, and — reportedly — after fully quitting Chrome (Avery, 2026-07-29). **Not MIDI**: no
+  DAW/receiver was open, toggling the IAC driver's "Device is Online" did nothing, and it was the *same Web
+  Audio bed sound as the main site* — so the `pagehide` MIDI flush (`614ac64`) is retained as hygiene but is
+  NOT the fix for this. **Avery's read:** the voices were scheduled/sustained and only exhausted at ~a
+  grid-cycle boundary — consistent with the bed envelope being a *held pad* (`BED_SUSTAIN_FRAC`, settles to a
+  floor, never decays to silence) whose oscillators are only stopped on explicit release (chord change /
+  departure / `stopAudio` teardown). It stopped either as the flush work landed or on its own. **Unexplained:**
+  in-page Web Audio cannot outlive the browser process, so the "survived quitting Chrome" aspect is
+  unaccounted for (lingering audio-service process? incomplete quit? mis-timed perception?) — flagged, not
+  chased. **Never observed in main-page playback** (which has no flight enter/exit teardown lifecycle). If it
+  recurs: check whether bed oscillators are being left unreleased when the rAF loop or context tears down
+  outside the Home/Esc path.
 
 ---
 
