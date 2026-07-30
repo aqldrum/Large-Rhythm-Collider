@@ -13,6 +13,9 @@ import { normalizeRootLadder, resetPhraseTracker, observePhraseBoundary, pushRec
 import { AUDIO_MODES, RHYTHM_VOICE_WAVEFORM, ownerChordMatch } from './cosmos-grid-audio-core.js';
 import { SpatialGridRowPlayer } from './spatial-grid-row-player.js';
 import { CosmosMidiOut } from './cosmos-midi-out.js';
+// The audio clock's instrument panel (pure meters; see that module's header for the mechanism it measures).
+// This module owns the transport, so it is the only honest place to time the scheduler's own arrival.
+import { audioTelemetry } from './audio-telemetry.js';
 
 const ROOT_HZ = 220;             // Phase 0: one root for every voice (per-star root is a later phase)
 const LOOKAHEAD_MS = 25;         // scheduler tick cadence
@@ -305,7 +308,7 @@ export function initAudio() {
   const midiBridge = {
     note: (hz, when, seconds, gain) => cosmosMidi?.note(hz, when, seconds, { cents: totalDetuneCentsAt(when), gain }),
   };
-  gridRowPlayer = new SpatialGridRowPlayer(audioCtx, rowsGain, detuneBus, midiBridge);
+  gridRowPlayer = new SpatialGridRowPlayer(audioCtx, rowsGain, detuneBus, midiBridge, audioTelemetry);
   gridRowPlayer.setEnabled(true);   // always on — rowsGain handles the crossfade
   mix = 0; auditionListening = true; auditionPinned = false;
   skyChordId = START_CHORD_ID; skyTabu = pushTabu([], skyChordId, TABU_K); skyStep = -1; lastSyncedChordId = null;
@@ -612,6 +615,10 @@ export function currentSpace() { return { space: lastSpace, ambientWet: 2 * SPAC
 export function gridRowVisualState() {
   return gridRowPlayer?.visualState() || [];
 }
+
+// Row-player counters for the telemetry panel (installs / star entries / exits / voice-budget misses).
+// Monotonic within a session; the meter folds them in as deltas. Null before initAudio.
+export function rowPlayerStats() { return gridRowPlayer?.stats || null; }
 
 // Procedurally generated impulse response for the bed's shared reverb send: an exponentially decaying
 // noise burst. No assets, respects the separation rule (pure WebAudio buffer synthesis).
@@ -1327,6 +1334,7 @@ const STOP_FADE = 0.05;
 
 export function stopAudio() {
   if (schedulerTimer) { clearInterval(schedulerTimer); schedulerTimer = null; }
+  lastSchedulerTickAt = null;   // don't charge the next session's first tick with the whole exit gap
   const ctx = audioCtx, gain = muteGainNode;
   // Capture the OLD graph before resetting module state, so a fast re-entry (initAudio right after
   // exitCosmos) starts clean immediately instead of waiting on this fade.
@@ -1383,8 +1391,16 @@ function resyncSchedulePointer() {
   if (idx === -1) { schedIdx = 0; schedCycle = cycleNow + 1; } else { schedIdx = idx; schedCycle = cycleNow; }
 }
 
+let lastSchedulerTickAt = null;   // wall clock of the previous tick — its GAP is main-thread starvation
+
 function schedulerTick() {
   if (!audioCtx) return;
+  // The gap between ticks is the first link in the flam mechanism: this is a main-thread setInterval, so a
+  // frame that overruns delays it, and every event that came due in the meantime is already late when the
+  // scheduler finally reaches it. Nominal is LOOKAHEAD_MS; anything well above that is starvation.
+  const wall = performance.now();
+  if (lastSchedulerTickAt !== null) audioTelemetry.tick(wall - lastSchedulerTickAt);
+  lastSchedulerTickAt = wall;
   const now = audioCtx.currentTime;
   stepSkyWalk(skySeconds(now));   // the sky's own chord clock — independent of any lead (no click gating)
   pumpReattacks(now, skySeconds(now));   // bed breathes at every mix position (gain gates audibility)

@@ -16,11 +16,15 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, gridRowVisualState, setTuningStrength, currentTuningStrength, midiOutState, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, gridRowVisualState, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
 // The RAIL owns the engine's user-facing state (rail-view.js mounts it; flight-boot restores it on entry).
 // Every parameter BOTH surfaces express — mute, mix, modulation, MIDI out — is written through railParams so
 // there is exactly one owner and the two surfaces cannot disagree. See the audio-lab section below.
 import { railParams } from './rail-params.js';
+// Audio-clock instrument panel. flight-view owns the frame, so it times the frame's phases and classifies
+// the camera's motion; cosmos-audio times the transport. See audio-telemetry.js for the mechanism under
+// investigation (motion → main-thread jank → late events clamped into a flam → MIDI channel steals).
+import { audioTelemetry, formatLive, formatTable } from './audio-telemetry.js';
 import { sampleRecovery } from './recovery-timing.js';   // TEMP DEBUG (Phase 2.4) — remove with the module
 import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
@@ -550,6 +554,8 @@ let hover = null, selected = null;
 // + the DOM refs for the collapsible #lrc-div inspector (Linear Plot + scale table). `leadVoice.node.grid`
 // is the star whose live screen projection drives spatialization each frame (see the `loop()` proj block).
 let leadVoice = null;   // mute state lives in railParams ('mute') — one owner for the rail, the lab and M
+// Previous frame's camera pose, for the audio telemetry's motion classification (rotation vs translation).
+let telemetryYaw = 0, telemetryPitch = 0, telemetryOff = [0, 0, 0], telemetryAnchor = 0;
 let lrcDivEl = null, lrcHeadEl = null, cockpitPlotEl = null, cockpitPlotCtx = null;
 let cockpitPlotKeyEl = null;
 let lrcPanelToggleEl = null, lrcEmptyEl = null, rhythmInspectorEl = null;
@@ -819,7 +825,7 @@ export function ensureFlight(canvas, hudEl) {
     const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['arrows', 'steer'], ['scroll', 'dolly'],
                   ['click star', 'bloom'], ['click node', 'inspect / apply'], ['click Web', 'inspect / return'],
                   ['Esc', 'cancel Web travel'], ['right-click', 'collapse'], ['1–0', 'toggle webs'],
-                  ['Z', 'audio lab'], ['C', 'full sky debug']];
+                  ['Z', 'audio lab'], ['C', 'full sky debug'], ['T', 'audio clock table']];
     controlsEl.innerHTML = rows.map(([k, v]) => `<div class="help-kv"><span>${k}</span><b>${v}</b></div>`).join('') +
       `<div class="help-note">${placement === 'hilbert' ? 'cube' : 'spine'} placement</div>`;
   }
@@ -1809,7 +1815,20 @@ function loop() {
   const now = performance.now(); let dt = (now - last) / 1000; last = now; dt = Math.min(dt, 0.05);
   const ridingWeb = stepWebReturn(now, dt);
   stepControls(dt, !ridingWeb);
+  // Motion mode for the audio telemetry, measured AFTER the camera has been stepped. Rotation and
+  // translation are separated deliberately: the arrow keys only rotate (stepControls touches cam.yaw /
+  // cam.pitch alone), which changes no zone membership, distance or programKey — so a symptom that shows
+  // up under `steer` cannot be caused by solving or compiling. That is the whole experiment.
+  const rotationRate = dt > 0 ? (Math.abs(cam.yaw - telemetryYaw) + Math.abs(cam.pitch - telemetryPitch)) / dt : 0;
+  const translationRate = dt > 0 ? Math.hypot(cam.off[0] - telemetryOff[0], cam.off[1] - telemetryOff[1], cam.off[2] - telemetryOff[2]) / dt
+    + (cam.anchor !== telemetryAnchor ? Infinity : 0) : 0;   // an anchor hop IS translation, however small the offset moved
+  telemetryYaw = cam.yaw; telemetryPitch = cam.pitch; telemetryOff = [...cam.off]; telemetryAnchor = cam.anchor;
+  audioTelemetry.frame({ rotationRate, translationRate, dtSeconds: dt });
+  const phaseAt = performance.now();
+  let phaseMark = phaseAt;
+  const phase = name => { const t = performance.now(); audioTelemetry.phase(name, t - phaseMark); phaseMark = t; };
   cosmos.tick(dt);
+  phase('zones');
   if (webZoneAdded.length || webZoneRemoved.length) {
     const added = webZoneAdded; const removed = webZoneRemoved; webZoneAdded = []; webZoneRemoved = [];
     webRenderer?.zones(added, removed);
@@ -1824,6 +1843,7 @@ function loop() {
     now, anchor: cam.anchor, off: [...cam.off], d: basis.d, r: basis.r, u: basis.u,
     mouseX, mouseY, cx, cy, focal, fogNear: FOG_NEAR, fogFar: FOG_FAR, tailFrac: webTailFrac,
   });
+  phase('web');
 
   // bloom bookkeeping: drop any bloomed star that flew out of the world; keep the rest streaming their FULL
   // clouds (runtime priority-solves the most-recent click via setFocus; we stream all of them here).
@@ -1896,6 +1916,7 @@ function loop() {
     const s = toScreen(rp, basis);
     if (s) proj.set(z.grid, { z, s, rp });
   }
+  phase('proj');
 
   // cosmos-audio: drive the lead voice's spatialization from its star's live projection this frame.
   if (leadVoice) {
@@ -1974,6 +1995,7 @@ function loop() {
     };
   }));
   updateGridRowField(placed, basis);
+  phase('field');   // ← the suspect: this runs EVERY frame, and on pure rotation it recomputes the same selection
   drawCockpitPlot();
   drawChordReadout();
   renderSkyDebug(now);
@@ -2202,6 +2224,7 @@ function loop() {
   // heartbeat: log solve throughput once/sec so stalls are visible (which op is flowing, worker errors)
   if (now - hbLast > 1000) {
     console.log(`[cosmos] zones ${st.total} · solved ${st.solved} (+${st.solved - hbSolved}/s) · solving ${st.solving} · pending ${st.pending} · tasks/s: plan ${ev.plans - hbPlans} shard ${ev.shards - hbShards} · inflight ${st.inFlight}/${pool.size} · worker-err ${pool.errors} · task-err ${ev.errors} · blooms ${bloomCache.size}`);
+    console.log(formatLive(audioTelemetry.report()));   // audio clock, current motion mode (T dumps the table)
     hbLast = now; hbPlans = ev.plans; hbShards = ev.shards; hbSolved = st.solved;
     for (const g of bloomCache.keys()) if (!cosmos.zones.has(g)) bloomCache.delete(g);   // drop evicted blooms
     if (selected && (selected.kind === 'star' || selected.kind === 'web')) showDetail(selected);   // refresh live abundance/state / visible Web count
@@ -2228,6 +2251,16 @@ function loop() {
       `<div class="help-kv"><span>pending</span><b>${st.pending}</b></div>` +
       `<div class="help-kv"><span>tasks</span><b>${st.inFlight}/${pool.size}</b></div>` + errRow;
   }
+  // ── audio-clock telemetry: fold this frame's external counters in, then close the frame ──────────────
+  // Per frame, not per second, so each count lands in the motion bucket it actually happened in.
+  const rowStats = rowPlayerStats(), midi = midiOutState(), compile = rowCompiler?.snapshot();
+  audioTelemetry.counters({
+    installs: rowStats?.installs, entries: rowStats?.entries, exits: rowStats?.exits,
+    midiNotes: midi?.notes, midiSteals: midi?.steals, midiDropped: midi?.dropped,
+    compiles: compile?.completed,
+  });
+  phase('draw');
+  audioTelemetry.frameEnd(performance.now() - phaseAt);
 }
 
 function resize() {
@@ -2304,6 +2337,9 @@ function bindControls() {
     if (firstPress && k === 'b' && swarm) { if (swarm.agents.length) swarm.clear(); else swarm.spawn(AGENT_COUNT, cam.anchor); }   // B → toggle Collider-Battle ships
     if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)
     if (firstPress && k === 'c') { skyDebugOn = !skyDebugOn; if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none'; }   // C → toggle the Full Sky debug overlay (dev)
+    // T → dump the audio-clock table (one row per motion mode) and start a fresh window. The protocol:
+    // sit still ~10s, steer ~10s, fly ~10s, press T — the three rows are then directly comparable.
+    if (firstPress && k === 't') { console.log(formatTable(audioTelemetry.report())); audioTelemetry.reset(); }
     // Z → toggle the audio LAB (dev overlay; ?audioLab=1 seeds it open, exactly like ?skyDebug=1 / C).
     // Revealing it syncs it FROM the engine first, so a dev surface never shows a stale picture of state
     // the rail has since moved.

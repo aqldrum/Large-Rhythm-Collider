@@ -12,6 +12,13 @@ export const CULLED_ROW_MAX_OCTAVES = 3;
 export const CULLED_ROW_MAX_HZ = CULLED_ROW_FUNDAMENTAL_HZ * (2 ** CULLED_ROW_MAX_OCTAVES);
 const CROSSFADE = 0.35;
 const VOICE_RELEASE = 0.07;
+// How late an event may be and still be sounded. The transport is a 25ms setInterval on the main thread,
+// so a janky frame routinely delivers a tick after its events were due; this window forgives that much and
+// emits them clamped to `now` (see _scheduleDeck). ⚠ That clamp is a FLAM: a spread of events that arrive
+// together all attack at the same instant, and past this window they are dropped silently instead. Both
+// outcomes are now COUNTED (telemetry.lateEvent) so the cost of main-thread contention is visible rather
+// than merely audible — see cosmos/audio-telemetry.js for the mechanism this measures.
+export const LATE_EVENT_TOLERANCE_SECONDS = 0.03;
 // DERIVED, not a literal: the active-star count is tuned by ear, and a hardcoded ceiling silently
 // starves it the moment the field widens — attacks just stop being scheduled and turn up only as
 // stats.budgetMisses. Active stars × A–D, doubled for one transient crossfade deck per star. (At the
@@ -202,10 +209,13 @@ export class SpatialGridRowPlayer {
   // midiBridge: optional { note(hz, whenAudio, seconds, gain) } mirror to a DAW. The player stays
   // harmony-blind here too — it reports pitch, time, length and loudness, and the audio layer folds in
   // the summed detune offset, which is the one harmonic fact it does not own.
-  constructor(context, output, detuneBus = null, midiBridge = null) {
+  // telemetry: an optional sink with lateEvent(latenessMs, emitted) — cosmos/audio-telemetry.js's meter.
+  // Optional so the headless guards can build a player without one.
+  constructor(context, output, detuneBus = null, midiBridge = null, telemetry = null) {
     this.ctx = context;
     this.detuneBus = detuneBus;
     this.midiBridge = midiBridge;
+    this.telemetry = telemetry;
     this.master = context.createGain();
     this.master.gain.value = 0;
     this.master.connect(output);                    // dry path
@@ -473,7 +483,13 @@ export class SpatialGridRowPlayer {
       const eventTick = deck.cursorCycle * grid + event.tick;
       const when = transportStart + eventTick / ticksPerSecond;
       if (when > horizon) break;
-      if (when >= Math.max(deck.startTime, now - 0.03)) {
+      // Count lateness before acting on it. `when < deck.startTime` is the deliberate pre-install
+      // suppression (a deck must not sound the loop it was seeded from), NOT a late event — measuring it
+      // would report a dropout every install and bury the real signal.
+      if (this.telemetry && when < now && when >= deck.startTime) {
+        this.telemetry.lateEvent((now - when) * 1000, when >= now - LATE_EVENT_TOLERANCE_SECONDS);
+      }
+      if (when >= Math.max(deck.startTime, now - LATE_EVENT_TOLERANCE_SECONDS)) {
         for (const action of event.layerActions) {
           if (!LAYERS.has(action.layer)) continue;
           // Silent hold, re-derived per loop: suppress a re-strike only when this layer's IMMEDIATELY
