@@ -137,6 +137,20 @@ sent.length = 0;
 player.allNotesOff();
 check('panic sends a real note-off AND All Notes Off, so nothing can hang in the DAW',
   sent.some(m => (m.bytes[0] & 0xF0) === 0x80) && sent.some(m => m.bytes[1] === 123) && player.live.size === 0);
+// Hardened panic (stuck-note-after-refresh bug): All Sound Off (120) + All Notes Off (123) must blanket the
+// master AND every member channel, so a note hangs nowhere even on an untracked channel or an abrupt unload.
+const panicChannels = ch => sent.filter(m => (m.bytes[0] & 0xF0) === 0xB0 && m.bytes[1] === ch).map(m => m.bytes[0] & 0x0F);
+check('panic blankets All Sound Off (120) across master + every member channel',
+  [MIDI_MASTER_CHANNEL, ...MIDI_MEMBER_CHANNELS].every(c => panicChannels(120).includes(c)));
+check('panic blankets All Notes Off (123) across master + every member channel',
+  [MIDI_MASTER_CHANNEL, ...MIDI_MEMBER_CHANNELS].every(c => panicChannels(123).includes(c)));
+check('allNotesOff no-ops safely when there is no output (unenabled unload flush cannot throw)',
+  (() => { const p = new CosmosMidiOut({ currentTime: 0, getOutputTimestamp: () => ({ contextTime: 0, performanceTime: 0 }) }); try { p.allNotesOff(); return true; } catch { return false; } })());
+// The unload flush must actually be wired: cosmos-audio exports a synchronous panic, flight-boot fires it on pagehide.
+const bootSource = readFileSync(new URL('../flight-boot.js', import.meta.url), 'utf8');
+check('page-unload MIDI flush is wired (panicMidiOut export + flight-boot pagehide listener)',
+  /export function panicMidiOut/.test(readFileSync(new URL('../cosmos-audio.js', import.meta.url), 'utf8')) &&
+  bootSource.includes("addEventListener('pagehide', panicMidiOut)"));
 
 console.log('\n  Pitch-offset sum reaches MIDI (fundamental + modulation on one detune bus)');
 // A FUNDAMENTAL transpose now rides the same detune bus as modulation, and MIDI must spell each note at the

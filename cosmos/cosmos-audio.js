@@ -439,6 +439,12 @@ export async function setMidiOut(on) {
 }
 export function midiOutState() { return cosmosMidi?.debugState() || { enabled: false, supported: false }; }
 
+// Synchronous MIDI panic for page-unload (pagehide/beforeunload): a hard refresh, tab close, or Chrome
+// quit never calls stopAudio, so held MIDI notes would hang forever on the receiving DAW/synth — the sound
+// outlives the browser process because it's the RECEIVER holding them. Must be synchronous (no fade / no
+// setTimeout — the page is dying). No-op if MIDI-out was never enabled. flight-boot wires the listener.
+export function panicMidiOut() { try { cosmosMidi?.allNotesOff(); } catch {} }
+
 // DEPRECATED (Phase 0.3): full exposure is now an unconditional advance floor at every mix position, so
 // there is nothing to toggle — the checkbox is absorbed into the always-on floor + DWELL (decision 3) and
 // removed with the cockpit in the rail phase. Kept as a no-op so the current UI wiring doesn't throw.

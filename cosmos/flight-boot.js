@@ -4,7 +4,7 @@
 // the full-canvas #cosmos-view. It never touches the engine modules (LRCModule/LRCSearch/LRCHudController).
 import { ensureFlight, stopFlight } from './flight-view.js';
 import { M } from './mode.js';
-import { initAudio, resumeAudio } from './cosmos-audio.js';
+import { initAudio, resumeAudio, panicMidiOut } from './cosmos-audio.js';
 import { ensureRail } from './rail-view.js';
 
 // ENTER: swallow the page and start flying. Add the class FIRST so the overlay/canvas have layout before
@@ -38,5 +38,12 @@ function wire() {
   const icon = document.getElementById('cosmos-enter-btn');
   if (icon && !icon._cosmosWired) { icon._cosmosWired = true; icon.addEventListener('click', enterCosmos); }
 }
+
+// MIDI stuck-note guard: a hard refresh / tab close / Chrome quit never calls exitCosmos → stopAudio, so
+// held MIDI notes would hang on the receiving DAW/synth (audio outliving the browser — the receiver holds
+// them). pagehide fires synchronously on all of those; panicMidiOut blasts All-Sound/Notes-Off. No-op when
+// MIDI-out is off. (Home/Esc already flush via stopAudio; visibilitychange is deliberately NOT used —
+// switching tabs must not cut the performance.)
+window.addEventListener('pagehide', panicMidiOut);
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
 else wire();

@@ -194,14 +194,22 @@ export class CosmosMidiOut {
     }
   }
 
+  // True panic — safe to call synchronously from a page-unload handler (see panicMidiOut / flight-boot's
+  // pagehide). Releases every tracked note, then blankets All Sound Off (120) + All Notes Off (123) across
+  // the master and every member channel, so nothing can hang in the DAW even if a note's channel wasn't
+  // tracked or the page is torn down mid-sustain (the "bed kept playing after quitting Chrome" bug).
   allNotesOff() {
+    if (!this.output) return;
     const ts = performance.now();
     for (const [channel, entry] of this.live) {
       clearTimeout(entry.offTimer);
       this._send([0x80 | channel, entry.note, 0], ts);
-      this._send([0xB0 | channel, 123, 0], ts);   // All Notes Off, so nothing can hang in the DAW
     }
     this.live.clear();
+    for (const channel of [MIDI_MASTER_CHANNEL, ...MIDI_MEMBER_CHANNELS]) {
+      this._send([0xB0 | channel, 120, 0], ts);   // All Sound Off — cuts even sustained/releasing voices
+      this._send([0xB0 | channel, 123, 0], ts);   // All Notes Off
+    }
   }
 
   debugState() {
