@@ -107,11 +107,11 @@ check('a shared singleton is exported for the running instrument', audioTelemetr
 
 console.log('\n  What the panel measures in the player (source scan — the flam it is built to expose)');
 const player = readFileSync(new URL('../spatial-grid-row-player.js', import.meta.url), 'utf8');
-check('the 30ms late tolerance is a NAMED constant, not a literal buried in the scheduler',
-  LATE_EVENT_TOLERANCE_SECONDS === 0.03 && player.includes('LATE_EVENT_TOLERANCE_SECONDS') &&
-  !/now - 0\.03/.test(player));
-check('late events are counted before the clamp acts on them, split by emitted-vs-dropped',
-  player.includes('this.telemetry.lateEvent((now - when) * 1000, when >= now - LATE_EVENT_TOLERANCE_SECONDS)'));
+check('the late tolerance is a named constant from the shared policy, not a literal in the scheduler',
+  LATE_EVENT_TOLERANCE_SECONDS === 0.012 && !/now - 0\.03/.test(player) &&
+  player.includes('classifyLateEvent, LATE_CLAMP_TOLERANCE_SECONDS'));
+check('late events are counted as the policy classified them, split by emitted-vs-dropped',
+  player.includes("this.telemetry.lateEvent(late.latenessSeconds * 1000, late.action === 'emit')"));
 // A deck must not sound the loop tail it was seeded from; counting that as a dropout would report one every
 // install and drown the real signal in exactly the condition (flight churn) under investigation.
 check('the deliberate pre-install suppression is NOT counted as a dropout',

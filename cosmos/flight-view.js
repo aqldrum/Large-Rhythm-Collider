@@ -16,7 +16,7 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, gridRowVisualState, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, gridRowVisualState, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
 // The RAIL owns the engine's user-facing state (rail-view.js mounts it; flight-boot restores it on entry).
 // Every parameter BOTH surfaces express — mute, mix, modulation, MIDI out — is written through railParams so
 // there is exactly one owner and the two surfaces cannot disagree. See the audio-lab section below.
@@ -795,6 +795,7 @@ export function ensureFlight(canvas, hudEl) {
   pool = new SolverWorkerPool(new URL('./cosmos/abundance-worker.js?v=6', import.meta.url), poolSize);
   rowCompiler = new ProgramWorkerPool(new URL('./cosmos/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
   rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
+  fieldMembershipDirty = true; fieldMembershipAt = -Infinity;   // a fresh session always does a full pass first
   settleSinceSecond = null; lastRootResolveSecond = -Infinity; rootGeographyEpoch = 0; rootPolicyWasSettled = false;
   // OWNERSHIP: the entry sound is the RAIL's, not this overlay's. flight-boot calls applyRailToEngine()
   // right after initAudio(), which pushes MIX · SPEED · DWELL · FUNDAMENTAL · RICHNESS · VOLUME · SPACE ·
@@ -830,7 +831,12 @@ export function ensureFlight(canvas, hudEl) {
       `<div class="help-note">${placement === 'hilbert' ? 'cube' : 'spine'} placement</div>`;
   }
   BLOOM_MAX_R = placement === 'hilbert' ? BLOOM_MAX_R_FRAC * CELL : Infinity;   // keep clouds inside their cell
-  const zoneHooks = { onZoneAdded: grid => webZoneAdded.push(grid), onZoneRemoved: grid => webZoneRemoved.push(grid) };
+  // markFieldDirty: a spawned zone can enter the audible set and an evicted one must leave it, so both are
+  // membership events even when the camera itself has not moved (the frontier streams in on its own).
+  const zoneHooks = {
+    onZoneAdded: grid => { webZoneAdded.push(grid); markFieldDirty(); },
+    onZoneRemoved: grid => { webZoneRemoved.push(grid); markFieldDirty(); },
+  };
   if (placement === 'hilbert') {
     // 3D-proximity frontier: spawn/evict by cell distance; grids rest at their own cells (no puffs).
     FOG_NEAR = HIL_SPAWN * CELL * 0.4; FOG_FAR = HIL_EVICT * CELL;   // fade right up to the evict shell
@@ -1464,6 +1470,7 @@ function requestRowProgram(candidate, root, chord, selectionKey, validRequestKey
     zoneIdentity._rowAudio.requestKey = '';
     zoneIdentity._rowAudio.state = 'program-ready';
     zoneIdentity._rowAudio.compileMs = reply.compileMs;
+    markFieldDirty();   // a prewarm star just became able to sound — membership has to re-select
   }).catch(error => {
     // TEMP DEBUG (2.4 worker-err flood) — surface the REAL compileGridAudioProgram throw, deduped so a
     // flood collapses to one line per distinct message, with the owner/state context to test the
@@ -1484,14 +1491,47 @@ function requestRowProgram(candidate, root, chord, selectionKey, validRequestKey
   });
 }
 
-function updateGridRowField(placed, basis) {
+// ── POSE vs MEMBERSHIP ────────────────────────────────────────────────────────────────────────────────
+// Rebuilding the audio field every frame was the per-frame cost that starved the transport (arrow-key
+// rotation showed it best: it recomputed an IDENTICAL selection, because rotation changes no distance, no
+// zone membership and no programKey). Split in two:
+//   POSE       — every frame. Where each sounding star sits, how loud, how bright. AudioParams only.
+//   MEMBERSHIP — only when something that can change the selection has happened: the camera TRANSLATED, a
+//                zone spawned/evicted, the harmonic selection key moved, or a compile landed (a prewarm
+//                star became eligible to sound). Marked by markFieldDirty() from each of those sites.
+// A safety re-run bounds staleness regardless, so an un-enumerated cause can only ever delay the field by
+// one interval rather than strand it — at 250ms that is 4 passes/sec while turning instead of 60+.
+let fieldMembershipDirty = true, fieldMembershipAt = -Infinity;
+const FIELD_MEMBERSHIP_MAX_INTERVAL_MS = 250;
+
+function markFieldDirty() { fieldMembershipDirty = true; }
+
+function updateGridRowField(placed, basis, translated, nowMs) {
   const root = currentSkyRoot(), chord = currentSkyChord();
   const selectionKey = harmonicSelectionKey(root.rootKey, chord.id, ROW_CONSONANCE_CENTS);
   if (selectionKey !== rowSelectionKey) {
     rowSelectionKey = selectionKey;
     rowGeneration++;
     rowCompiler?.cancelQueuedExcept(new Set());
+    markFieldDirty();               // a new chord re-selects every star's tones
   }
+  if (translated) markFieldDirty();   // distance drives selection; rotation does not
+  // POSE-ONLY frame: re-aim the stars already in the field and return. rowActiveIds is the membership the
+  // last full pass installed, so this stays exactly in step with what the player actually holds.
+  if (!fieldMembershipDirty && nowMs - fieldMembershipAt < FIELD_MEMBERSHIP_MAX_INTERVAL_MS) {
+    const pose = [];
+    for (const id of rowActiveIds) {
+      const position = placed.get(id);
+      if (!position) continue;       // evicted between passes — its zone hook already marked us dirty
+      const distance = Math.hypot(position[0], position[1], position[2]);
+      pose.push({ id, position: toAudioListenerPosition(position, basis), distance,
+        gain: rowDistanceGain(distance), cutoff: rowDistanceCutoff(distance) });
+    }
+    setGridSpatialPose(pose);
+    return;
+  }
+  fieldMembershipDirty = false;
+  fieldMembershipAt = nowMs;
   const candidates = [];
   for (const [grid, position] of placed) {
     const z = cosmos.zones.get(grid);
@@ -1994,8 +2034,9 @@ function loop() {
       pan: clampN((cx - s.x) / cx, -1, 1), gain: distGain(s.z), octave: distOctave(s.z), cutoff: distCutoff(s.z),
     };
   }));
-  updateGridRowField(placed, basis);
-  phase('field');   // ← the suspect: this runs EVERY frame, and on pure rotation it recomputes the same selection
+  // translationRate is Infinity on an anchor hop; either way, only translation can change the selection.
+  updateGridRowField(placed, basis, translationRate > 0, now);
+  phase('field');
   drawCockpitPlot();
   drawChordReadout();
   renderSkyDebug(now);

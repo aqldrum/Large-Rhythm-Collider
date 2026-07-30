@@ -5,6 +5,7 @@ import {
   CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_SWITCH_TICKS,
 } from './cosmos-grid-audio-core.js';
 import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP } from './spatial-audio-frame.js';
+import { classifyLateEvent, LATE_CLAMP_TOLERANCE_SECONDS } from './transport-clock.js';
 
 const LAYERS = new Set(['A', 'B', 'C', 'D']);
 export const CULLED_ROW_FUNDAMENTAL_HZ = 220;
@@ -12,13 +13,13 @@ export const CULLED_ROW_MAX_OCTAVES = 3;
 export const CULLED_ROW_MAX_HZ = CULLED_ROW_FUNDAMENTAL_HZ * (2 ** CULLED_ROW_MAX_OCTAVES);
 const CROSSFADE = 0.35;
 const VOICE_RELEASE = 0.07;
-// How late an event may be and still be sounded. The transport is a 25ms setInterval on the main thread,
-// so a janky frame routinely delivers a tick after its events were due; this window forgives that much and
-// emits them clamped to `now` (see _scheduleDeck). ⚠ That clamp is a FLAM: a spread of events that arrive
-// together all attack at the same instant, and past this window they are dropped silently instead. Both
-// outcomes are now COUNTED (telemetry.lateEvent) so the cost of main-thread contention is visible rather
-// than merely audible — see cosmos/audio-telemetry.js for the mechanism this measures.
-export const LATE_EVENT_TOLERANCE_SECONDS = 0.03;
+// How late an event may be and still be sounded, and what happens past that — now one exported POLICY
+// (transport-clock.js's classifyLateEvent) rather than a bare `Math.max(now, when)` in the scheduler. The
+// old 30ms clamp turned a starved pulse into a FLAM: a spread of onsets all attacking at the same instant,
+// which is what made MIDI "drag" while the camera moved. A rhythm IS its spacing, so past the threshold
+// where two attacks stop being separately articulated (ROW_MICRO_GAP_SECONDS, 12ms) the honest outcome is
+// silence — counted as a drop, never displaced into the wrong place. Both outcomes feed the telemetry.
+export const LATE_EVENT_TOLERANCE_SECONDS = LATE_CLAMP_TOLERANCE_SECONDS;
 // DERIVED, not a literal: the active-star count is tuned by ear, and a hardcoded ceiling silently
 // starves it the moment the field widens — attacks just stop being scheduled and turn up only as
 // stats.budgetMisses. Active stars × A–D, doubled for one transient crossfade deck per star. (At the
@@ -308,6 +309,29 @@ export class SpatialGridRowPlayer {
     };
   }
 
+  // POSE only: where a star already in the field sits, how loud and how bright it is. Cheap and safe to run
+  // every frame — it touches AudioParams and nothing else. No membership bookkeeping, no program installs,
+  // no compile requests. This is the half of the old per-frame field rebuild that actually has to be
+  // per-frame: rotating the camera moves every star in listener space and changes nothing else.
+  setPose(items) {
+    const now = this.ctx.currentTime;
+    for (const item of items || []) {
+      const star = this.stars.get(item.id);
+      if (!star || !star.active) continue;   // a star that has left the field is fading out; don't re-aim it
+      this._applyPose(star, item, now);
+    }
+  }
+
+  _applyPose(star, item, now) {
+    star.distance = Number.isFinite(item.distance) ? item.distance
+      : (Array.isArray(item.position) && item.position.length >= 3 ? Math.hypot(...item.position) : Infinity);
+    setParam(star.filter.frequency, item.cutoff, now, 0.18);
+    if (!setTriplet(star.panner, 'position', item.position, now, 0.035)) star.panner.setPosition?.(...item.position);
+    star.gain.gain.cancelScheduledValues(now);
+    star.gain.gain.setValueAtTime(Math.max(0.0001, star.gain.gain.value), now);
+    star.gain.gain.linearRampToValueAtTime(Math.max(0, item.gain), now + CROSSFADE);
+  }
+
   setField(items, absoluteTick) {
     const now = this.ctx.currentTime;
     const seen = new Set();
@@ -317,13 +341,7 @@ export class SpatialGridRowPlayer {
       if (!star) { star = this._makeStar(item.id); this.stars.set(item.id, star); }
       star.active = true;
       star.removeAt = Infinity;
-      star.distance = Number.isFinite(item.distance) ? item.distance
-        : (Array.isArray(item.position) && item.position.length >= 3 ? Math.hypot(...item.position) : Infinity);
-      setParam(star.filter.frequency, item.cutoff, now, 0.18);
-      if (!setTriplet(star.panner, 'position', item.position, now, 0.035)) star.panner.setPosition?.(...item.position);
-      star.gain.gain.cancelScheduledValues(now);
-      star.gain.gain.setValueAtTime(Math.max(0.0001, star.gain.gain.value), now);
-      star.gain.gain.linearRampToValueAtTime(Math.max(0, item.gain), now + CROSSFADE);
+      this._applyPose(star, item, now);
       const installedKey = star.currentDeck?.program.programKey;
       if (item.program && item.program.programKey !== installedKey && item.program.programKey !== star.pending?.program.programKey) {
         const boundaryTick = Math.ceil((absoluteTick + 1e-7) / ROW_SWITCH_TICKS) * ROW_SWITCH_TICKS;
@@ -483,13 +501,20 @@ export class SpatialGridRowPlayer {
       const eventTick = deck.cursorCycle * grid + event.tick;
       const when = transportStart + eventTick / ticksPerSecond;
       if (when > horizon) break;
-      // Count lateness before acting on it. `when < deck.startTime` is the deliberate pre-install
-      // suppression (a deck must not sound the loop it was seeded from), NOT a late event — measuring it
-      // would report a dropout every install and bury the real signal.
-      if (this.telemetry && when < now && when >= deck.startTime) {
-        this.telemetry.lateEvent((now - when) * 1000, when >= now - LATE_EVENT_TOLERANCE_SECONDS);
+      // `when < deck.startTime` is the deliberate pre-install suppression (a deck must not sound the loop
+      // tail it was seeded from) — not lateness, and excluded from the meters, or every install would
+      // report a dropout and bury the real signal.
+      const afterInstall = when >= deck.startTime;
+      const late = classifyLateEvent(when, now);
+      if (this.telemetry && afterInstall && late.latenessSeconds > 0) {
+        this.telemetry.lateEvent(late.latenessSeconds * 1000, late.action === 'emit');
       }
-      if (when >= Math.max(deck.startTime, now - LATE_EVENT_TOLERANCE_SECONDS)) {
+      // A DROPPED event still happened musically: its layer memory must advance anyway, or the repeat-cull
+      // comparison would measure against a stale tone and change which LATER notes re-strike. Dropping a
+      // note must cost exactly that note — never a divergence in the sequence that follows it. (This is
+      // also what lets a streamed window be compared against a full compile: same state, whatever sounded.)
+      if (afterInstall) {
+        const sounding = late.action === 'emit';
         for (const action of event.layerActions) {
           if (!LAYERS.has(action.layer)) continue;
           // Silent hold, re-derived per loop: suppress a re-strike only when this layer's IMMEDIATELY
@@ -500,7 +525,10 @@ export class SpatialGridRowPlayer {
           // notes marks a loop-constant layer as all-hold and it never sounds again after its seed blip.)
           if (deck.program.repeatCull && deck.lastToneByLayer.get(action.layer) === action.rawFraction) continue;
           deck.lastToneByLayer.set(action.layer, action.rawFraction);
+          if (!sounding) continue;   // audibly late — the memory advanced, the note does not sound
           const gapTicks = nextRowLayerGapTicks(events, deck.cursorEvent, action, grid, deck.program.repeatCull);
+          // Math.max clamps by at most LATE_CLAMP_TOLERANCE_SECONDS now (12ms — under the threshold where
+          // two attacks are separately articulated), so this can no longer stack a spread into a flam.
           this._startVoice(deck, action, Math.max(now, when), gapTicks / ticksPerSecond);
         }
       }

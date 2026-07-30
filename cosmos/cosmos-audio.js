@@ -16,10 +16,12 @@ import { CosmosMidiOut } from './cosmos-midi-out.js';
 // The audio clock's instrument panel (pure meters; see that module's header for the mechanism it measures).
 // This module owns the transport, so it is the only honest place to time the scheduler's own arrival.
 import { audioTelemetry } from './audio-telemetry.js';
+// The transport's pulse + how far ahead it commits. Off the main thread deliberately — see that header.
+import { TransportClock, TRANSPORT_TICK_MS, SCHEDULE_AHEAD_SECONDS } from './transport-clock.js';
 
 const ROOT_HZ = 220;             // Phase 0: one root for every voice (per-star root is a later phase)
-const LOOKAHEAD_MS = 25;         // scheduler tick cadence
-const SCHEDULE_AHEAD = 0.1;      // seconds — schedule any note landing within this horizon
+const LOOKAHEAD_MS = TRANSPORT_TICK_MS;      // scheduler tick cadence (the pulse now comes from a worker)
+const SCHEDULE_AHEAD = SCHEDULE_AHEAD_SECONDS;   // seconds — schedule any note landing within this horizon
 const MAX_LIVE_OSC = 48;         // defensive cap so a pathological dense grid can't runaway
 const ATTACK = 0.008, DECAY = 0.22;   // soft short envelope so a busy melody (option A) doesn't smear
 const NOTE_PEAK = 0.32;          // per-note envelope peak (kept modest — dense grids stack many notes)
@@ -171,7 +173,7 @@ let masterVolume = null;          // VOLUME knob: master gain between muteGainNo
 let lastVolume = MASTER_VOLUME_DEFAULT;   // persisted musical setting (readout + re-entry); node tracks it
 let lastSpace = SPACE_DEFAULT;    // persisted SPACE position; drives both reverb sends (see setSpace)
 let liveOscs = null;              // Set of live OscillatorNodes (capacity-capped)
-let schedulerTimer = null;
+let schedulerClock = null;        // TransportClock — the worker-driven pulse (see transport-clock.js)
 let mix = 0;                      // 0 = bed, 1 = rows; constant-power crossfade
 let auditionListening = true;     // audition bus on/off (independent of mix)
 let auditionPinned = false;       // pin keeps audition audible after deselection
@@ -325,7 +327,16 @@ export function initAudio() {
   scaledMedianGrid = 0; fieldOnsetTicks = 0;
   liveOscs = new Set();
   schedIdx = 0; schedCycle = 0;
-  schedulerTimer = setInterval(schedulerTick, LOOKAHEAD_MS);
+  // The pulse comes from a worker timer, not this thread: the flight loop's per-frame work would otherwise
+  // starve it (and a hidden tab clamps main-thread timers to 1Hz outright — measured 1001ms vs 25ms
+  // nominal). The worker URL resolves against THIS module, not the document, or it breaks under the
+  // full-swallow the way the other cosmos workers would. Falls back to setInterval if a Worker can't be
+  // built, so the transport always runs.
+  schedulerClock = new TransportClock({
+    intervalMs: LOOKAHEAD_MS,
+    workerFactory: () => new Worker(new URL('./cosmos/transport-clock-worker.js?v=1', import.meta.url)),
+  });
+  schedulerClock.start(schedulerTick);
   // No click gating (Avery, planning session): the bed is audible from here — cosmos entry + unlock —
   // with zero stars clicked, as soon as flight-view starts feeding it setField() each frame.
 }
@@ -366,6 +377,15 @@ export function setGridSpatialField(items) {
   noteFieldStats(items);           // always — the glide scales to the field even in fixed-rate mode
   applyScaledRate();               // before setField: the boundary tick it stamps must use the new rate
   gridRowPlayer.setField(items || [], currentTicks());
+}
+
+// The per-frame half of the field update: re-aim the stars already sounding, without touching membership,
+// program installs or the derived tick rate. Those all depend on WHICH stars are in the field and which
+// programs they hold, and neither changes when the camera merely turns — so re-deriving them every frame
+// was pure cost, and cost is what starves the transport (see transport-clock.js / audio-telemetry.js).
+export function setGridSpatialPose(items) {
+  if (!audioCtx || !gridRowPlayer) return;
+  gridRowPlayer.setPose(items || []);
 }
 
 // What the sounding field looks like, independent of speed mode: its median grid (scaled speed's input)
@@ -1333,7 +1353,7 @@ export function transportPhase() {
 const STOP_FADE = 0.05;
 
 export function stopAudio() {
-  if (schedulerTimer) { clearInterval(schedulerTimer); schedulerTimer = null; }
+  if (schedulerClock) { schedulerClock.stop(); schedulerClock = null; }   // terminates the pulse worker too
   lastSchedulerTickAt = null;   // don't charge the next session's first tick with the whole exit gap
   const ctx = audioCtx, gain = muteGainNode;
   // Capture the OLD graph before resetting module state, so a fast re-entry (initAudio right after
