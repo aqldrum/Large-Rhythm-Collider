@@ -785,14 +785,17 @@ export function ensureFlight(canvas, hudEl) {
   rowCompiler = new ProgramWorkerPool(new URL('./cosmos/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
   rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
   settleSinceSecond = null; lastRootResolveSecond = -Infinity; rootGeographyEpoch = 0; rootPolicyWasSettled = false;
-  if (audioModeEl) audioModeEl.value = AUDIO_MODES.AMBIENT_CHORDS;
+  // Audio-lab entry defaults now match its HTML control state (culled-grid-rows · scaled speed · modulation
+  // on) — the interim control surface while the knob rail is built. Applied here, not just shown, so the
+  // engine actually starts in that mode instead of waiting for a knob/selector twist to register.
+  if (audioModeEl) audioModeEl.value = AUDIO_MODES.CULLED_GRID_ROWS;
   if (tuningSliderEl) setTuningStrength(tuningSliderEl.value);
   setTickRate(tempoSliderEl ? +tempoSliderEl.value : 10, true);
   if (fullQualityEl) setHoldForFullQuality(fullQualityEl.checked);
   if (modulationEl) setModulation(modulationEl.checked);
   applySpeedControls();
   drawModulationReadout();
-  changeAudioMode(AUDIO_MODES.AMBIENT_CHORDS);
+  changeAudioMode(AUDIO_MODES.CULLED_GRID_ROWS);
   // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
   placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
   setPlacement(placement);
