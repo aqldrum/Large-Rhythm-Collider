@@ -173,6 +173,11 @@ check('every MIDI-facing call in cosmos-audio spells at the summed detune (total
   audioSource.includes('cents: totalDetuneCentsAt(now)') &&              // bed voice birth
   audioSource.includes('elapsed => totalDetuneCentsAt(now + elapsed)') && // sustained-voice retune during a glide
   !/cents: modulationCentsAt\(/.test(audioSource));
+const rowSource = readFileSync(new URL('../spatial-grid-row-player.js', import.meta.url), 'utf8');
+check('ROW 1/1 uses one schedule predicate ahead of the shared WebAudio+MIDI voice start',
+  rowSource.includes('if (!shouldScheduleRowAction(action, this.rowFundamental)) continue;') &&
+  rowSource.indexOf('if (!shouldScheduleRowAction(action, this.rowFundamental)) continue;') < rowSource.indexOf('this._startVoice(deck, action') &&
+  rowSource.includes('this.midiBridge?.note(frequencyHz'));
 
 console.log(PASS ? '\n✓✓✓ COSMOS MIDI OUT PASSES' : '\n✗ COSMOS MIDI OUT FAILED');
 process.exit(PASS ? 0 : 1);

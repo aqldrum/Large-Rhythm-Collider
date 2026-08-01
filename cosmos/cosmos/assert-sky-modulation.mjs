@@ -149,6 +149,15 @@ check('zero local-tuning strength chooses the preferred moderate motion', motion
 check('strong local tuning can spend extra motion on a better-tuned destination', tuningStrong[0].fraction === '3/2');
 check('ranking exposes inspectable motion/tuning/arrival cost components',
   ['arrivalCoverage', 'arrivalFitness', 'goalFitness', 'motionCents', 'motionCost', 'tuningCost', 'cost'].every(key => Number.isFinite(tuningStrong[0][key])));
+const centTargetLadder = normalizeRootLadder([
+  { fraction: '5/4', cents: 300, score: 0.8, perDegree: degrees(0), perTarget: [0.2, 0.4, 0.6] },
+  { fraction: '3/2', cents: 500, score: 0.8, perDegree: degrees(0), perTarget: [0.9, 0.9, 0.9] },
+  { fraction: '1/1', cents: 0, score: 0.7, perDegree: degrees(0), perTarget: [0.1, 0.1, 0.1] },
+], { fraction: '1/1', cents: 0, score: 0.7 });
+const centTargetRanking = rankModulationDestinations(centTargetLadder, rankTrigger,
+  { harmonyTargets: [0, 386.314, 701.955], tuningStrength: 8 }, { topBandWidth: 1 });
+check('root destination arrival coverage consumes generic cent-target support when supplied',
+  centTargetRanking.find(row => row.fraction === '3/2').arrivalCoverage === 0.9);
 
 const tieRankLadder = normalizeRootLadder([
   { fraction: '5/3', cents: 200, score: 0.8, perDegree: degrees(0.7) },

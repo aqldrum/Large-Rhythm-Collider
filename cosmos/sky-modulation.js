@@ -236,7 +236,10 @@ export function evaluateBootstrapSelection(normalized, context = {}, opts = {}) 
   };
 }
 
-function arrivalCoverage(row, chordDegrees) {
+function arrivalCoverage(row, chordDegrees, harmonyTargets) {
+  if (Array.isArray(harmonyTargets) && harmonyTargets.length && Array.isArray(row.perTarget)) {
+    return row.perTarget.reduce((sum, value) => sum + finite(value), 0) / row.perTarget.length;
+  }
   const degrees = [...new Set((chordDegrees || []).filter(d => Number.isInteger(d) && d >= 0 && d < 12))];
   if (!degrees.length || !Array.isArray(row.perDegree)) return 0;
   return degrees.reduce((sum, degree) => sum + finite(row.perDegree[degree]), 0) / degrees.length;
@@ -248,6 +251,7 @@ function arrivalCoverage(row, chordDegrees) {
 // `tuningStrength` semitones of departure from the preferred root-motion distance.
 export function rankModulationDestinations(normalized, trigger, {
   chordDegrees = [],
+  harmonyTargets = [],
   recentRoots = [],
   tuningStrength = 2,
 } = {}, opts = {}) {
@@ -267,7 +271,7 @@ export function rankModulationDestinations(normalized, trigger, {
   const arrivalWeight = Math.max(0, finite(opts.arrivalFitnessWeight, ROOT_POLICY_DEFAULTS.arrivalFitnessWeight));
   const weightSum = rootWeight + arrivalWeight || 1;
 
-  const withArrival = rows.map(row => ({ ...row, arrivalCoverage: arrivalCoverage(row, chordDegrees) }));
+  const withArrival = rows.map(row => ({ ...row, arrivalCoverage: arrivalCoverage(row, chordDegrees, harmonyTargets) }));
   const maxArrival = Math.max(...withArrival.map(row => row.arrivalCoverage));
   const minArrival = Math.min(...withArrival.map(row => row.arrivalCoverage));
   const arrivalSpread = maxArrival - minArrival;
@@ -297,6 +301,7 @@ export function rankModulationDestinations(normalized, trigger, {
 export function decideRootAtBoundary(normalized, tracker, context, {
   established = false,
   chordDegrees = [],
+  harmonyTargets = [],
   recentRoots = [],
   tuningStrength = 2,
 } = {}, opts = {}) {
@@ -304,7 +309,7 @@ export function decideRootAtBoundary(normalized, tracker, context, {
     ? evaluateModulationTrigger(normalized, tracker, { ...context, recentRoots }, opts)
     : evaluateBootstrapSelection(normalized, { ...context, recentRoots }, opts);
   const ranking = rankModulationDestinations(normalized, trigger,
-    { chordDegrees, recentRoots, tuningStrength }, opts);
+    { chordDegrees, harmonyTargets, recentRoots, tuningStrength }, opts);
   const winner = ranking[0] || null;
   return {
     trigger,

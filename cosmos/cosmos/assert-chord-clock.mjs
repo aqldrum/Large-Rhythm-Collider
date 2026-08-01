@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import {
   shouldAdvanceChord, chordTargetSeconds, chordEscapeSeconds, chordQuantumSeconds, effectiveCycleSecondsFor,
-  setDwell, currentDwell, setMix,
+  setDwell, currentDwell, setMix, setHarmonyHold, currentHarmonyHold,
   NOMINAL_FALLBACK_CYCLE_SECONDS, CHORD_QUANTIZE_DIVISIONS, CHORD_ESCAPE_MULT,
 } from '../cosmos-audio.js';
 
@@ -80,6 +80,8 @@ check('stepSkyWalk runs the pure policy off the cycle-derived clock, quantized e
   audio.includes('const atBoundary = step !== skyStep'));
 check('the full-quality toggle is a no-op deprecation shim, absorbed into the always-on floor',
   audio.includes('export function setHoldForFullQuality() { return true; }'));
+check('HOLD is an independent latched state and gates harmonic decisions after exposure continues',
+  setHarmonyHold(true) === true && currentHarmonyHold() === true && setHarmonyHold(false) === false);
 
 console.log('\n  The rows alone expose a chord');
 // The floor's promise is about the CULLED TONE ROWS: no chord is left behind until the rows have
@@ -93,8 +95,16 @@ const exposureBody = audioCode.slice(audioCode.indexOf('function chordExposure('
 const soundedAdds = exposureBody.match(/sounded\.add\([^)]*\)/g) || [];
 check('the exposure ledger reads the row player and nothing else',
   exposureBody.includes('gridRowPlayer?.soundedSince(since)') &&
-  soundedAdds.length === 1 && soundedAdds[0] === 'sounded.add(match.degree)',
+  soundedAdds.length === 1 && soundedAdds[0] === 'sounded.add(match.targetCents)',
   soundedAdds.join(' · '));
+check('HOLD freezes both chord and root decisions while transport/exposure work remains live',
+  audio.includes('lastChordExposure = exposure;') && audio.includes('if (harmonyHold) return;') &&
+  audio.indexOf('lastChordExposure = exposure;') < audio.indexOf('if (harmonyHold) return;') &&
+  audio.indexOf('if (harmonyHold) return;') < audio.indexOf('applyRootPolicyAtBoundary()'));
+check('releasing HOLD resets the decision baseline instead of catching up stale timers',
+  audio.includes('const releasing = harmonyHold && !next') && audio.includes('if (releasing) resetHarmonyDecisionBaseline()'));
+check('muted literal 1/1 is removed from required exposure targets without removing octave target membership from the policy',
+  exposureBody.includes('policy.targets.filter(target => rowFundamental || target !== 0)'));
 check('the bed contributes nothing to exposure — its degree ledger is gone, live voices are not counted',
   !audioCode.includes('bedSoundedDegrees') && !exposureBody.includes('bedStars'));
 check('the floor separates "the rows have not finished" from "there are no rows here"',

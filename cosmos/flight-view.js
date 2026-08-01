@@ -16,7 +16,7 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
 // The RAIL owns the engine's user-facing state (rail-view.js mounts it; flight-boot restores it on entry).
 // Every parameter BOTH surfaces express — mute, mix, modulation, MIDI out — is written through railParams so
 // there is exactly one owner and the two surfaces cannot disagree. See the audio-lab section below.
@@ -27,6 +27,7 @@ import { railParams } from './rail-params.js';
 import { audioTelemetry, formatLive, formatTable } from './audio-telemetry.js';
 import { sampleRecovery } from './recovery-timing.js';   // TEMP DEBUG (Phase 2.4) — remove with the module
 import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
+import { harmonyPolicyDefinitionKey } from './harmony-policy.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
 import { drawGridRowAura } from './grid-row-aura.js';
@@ -35,7 +36,7 @@ import { SolverWorkerPool } from './cosmos/solver-worker-pool.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
 // Sky Root handoff (cosmos/SKY_ROOT_HANDOFF_2026-07-22.md): anchor-independent root solve, Feature B.
-import { solveRoots, scoreRootAt, poolFromTones } from './sky-root.js';
+import { solveRoots, scoreRootAt, poolFromTones, rootCompetitionTones } from './sky-root.js';
 
 const STAR_SCALE = 4, NEAR = 5;
 // ══ FLIGHT / LOD KNOBS ═══════════════════════════════════════════════════════════════════════
@@ -208,6 +209,8 @@ let camSpeed = 0;                // this frame's actual world-space translation 
 let settleSinceSecond = null;    // sky second when speed first dropped below SETTLE_SPEED, or null (moving)
 let lastRootResolveSecond = -Infinity;   // sky second of the last proposed solve (rate limit)
 let rootGeographyEpoch = 0;      // invalidates a settled solve once meaningful movement resumes
+let lastRootHarmonyPolicyKey = null;
+let lastRootFundamentalPolicy = true;
 let rootPolicyWasSettled = false;
 
 // ── number theory (frontier validity + solve cost proxy) ──
@@ -820,6 +823,7 @@ export function ensureFlight(canvas, hudEl) {
   fieldMembershipDirty = true; fieldMembershipAt = -Infinity;   // a fresh session always does a full pass first
   bedMembershipAt = -Infinity; bedRootKey = -1;
   settleSinceSecond = null; lastRootResolveSecond = -Infinity; rootGeographyEpoch = 0; rootPolicyWasSettled = false;
+  lastRootHarmonyPolicyKey = null; lastRootFundamentalPolicy = railParams.get('rowFundamental');
   // OWNERSHIP: the entry sound is the RAIL's, not this overlay's. flight-boot calls applyRailToEngine()
   // right after initAudio(), which pushes MIX · SPEED · DWELL · FUNDAMENTAL · RICHNESS · VOLUME · SPACE ·
   // MUTE · MODULATION into the freshly built graph. What used to live here — a tuning-λ write, a ticks/s
@@ -1454,7 +1458,7 @@ function changeAudioMode(mode) {
 
 const _compileErrSeen = new Set();   // TEMP DEBUG (2.4 worker-err flood) — dedup so a flood collapses to a few lines
 
-function requestRowProgram(candidate, root, chord, selectionKey, validRequestKeys) {
+function requestRowProgram(candidate, root, policy, selectionKey, validRequestKeys) {
   const { z, distance } = candidate;
   if (!rowCompiler) return;
   if (!z._rowAudio) z._rowAudio = { program: null, programSelectionKey: '', requestKey: '', state: 'ownership-ready', compileMs: 0 };
@@ -1465,7 +1469,7 @@ function requestRowProgram(candidate, root, chord, selectionKey, validRequestKey
   if (state.requestKey === requestKey && state.state === 'program-compiling') return;
   state.requestKey = requestKey;
   state.state = 'program-compiling';
-  const selectedFractions = selectedOwnerFractions(z.ratioOwners, root.cents, chord.semitones, ROW_CONSONANCE_CENTS);
+  const selectedFractions = selectedOwnerFractions(z.ratioOwners, root.cents, policy, ROW_CONSONANCE_CENTS);
   const zoneIdentity = z;
   rowCompiler.request({
     grid: z.grid,
@@ -1530,8 +1534,8 @@ const FIELD_MEMBERSHIP_MAX_INTERVAL_MS = 250;
 function markFieldDirty() { fieldMembershipDirty = true; }
 
 function updateGridRowField(placed, basis, translated, nowMs) {
-  const root = currentSkyRoot(), chord = currentSkyChord();
-  const selectionKey = harmonicSelectionKey(root.rootKey, chord.id, ROW_CONSONANCE_CENTS);
+  const root = currentSkyRoot(), policy = currentHarmonyPolicy();
+  const selectionKey = harmonicSelectionKey(root, policy, ROW_CONSONANCE_CENTS);
   if (selectionKey !== rowSelectionKey) {
     rowSelectionKey = selectionKey;
     rowGeneration++;
@@ -1565,7 +1569,7 @@ function updateGridRowField(placed, basis, translated, nowMs) {
   let selection = chooseSpatialRows(candidates, rowActiveIds);
   rowPrewarmIds = new Set(selection.prewarm.map(candidate => candidate.id));
   const validRequestKeys = new Set();
-  for (const candidate of selection.prewarm) requestRowProgram(candidate, root, chord, selectionKey, validRequestKeys);
+  for (const candidate of selection.prewarm) requestRowProgram(candidate, root, policy, selectionKey, validRequestKeys);
   rowCompiler?.cancelQueuedExcept(validRequestKeys);
 
   // A completed older program stays active while its current-chord replacement compiles. This is
@@ -1589,6 +1593,10 @@ function updateGridRowField(placed, basis, translated, nowMs) {
 // subscriber calls setMuted and repaints its button, and syncAudioLab repaints the lab's.
 function toggleMute() {
   railParams.set('mute', !railParams.get('mute'));
+}
+
+function toggleHarmonyHold() {
+  railParams.set('hold', !railParams.get('hold'));
 }
 
 // Selected rhythm's real spaces plot: horizontal position is the attack's true transport phase and
@@ -1820,11 +1828,11 @@ function renderSkyDebug(now) {
   // no row source in the field the floor reads `no rows` and goes vacuous, leaving DWELL to pace the walk.
   const exposure = s.chordExposure;
   if (exposure) {
-    const missing = exposure.degrees.filter(d => !exposure.sounded.includes(d));
+    const missing = exposure.missing || [];
     const floor = !exposure.rowsPresent ? '  ⊘ no rows — floor vacuous'
       : missing.length ? `  waiting on [${missing.join(',')}]`
       : '  ✓ full quality exposed';
-    lines.push(`quality  rows-only floor + dwell ${((exposure.dwell ?? 0) * 100).toFixed(0)}%cyc  sounded [${exposure.sounded.join(',')}]${floor}` +
+    lines.push(`quality  rows-only floor + dwell ${((exposure.dwell ?? 0) * 100).toFixed(0)}%cyc  sounded¢ [${exposure.sounded.join(',')}]${floor}` +
       `  held ${exposure.heldSeconds.toFixed(1)}s / target ${(exposure.targetSeconds ?? 0).toFixed(1)}s` +
       `  (cyc ${(exposure.cycleSeconds ?? 0).toFixed(1)}s · quant ${(exposure.quantumSeconds ?? 0).toFixed(1)}s · esc ${(exposure.escapeSeconds ?? 0).toFixed(0)}s) · last ${exposure.lastChordSeconds.toFixed(1)}s`);
   }
@@ -2014,6 +2022,16 @@ function loop() {
   }
   const settled = settleSinceSecond !== null && (skyNow - settleSinceSecond) >= SETTLE_SECONDS;
   if (settled) rootPolicyWasSettled = true;
+  const rootHarmonyPolicy = currentHarmonyPolicy();
+  const rootHarmonyPolicyKey = harmonyPolicyDefinitionKey(rootHarmonyPolicy);
+  const rootFundamentalPolicy = railParams.get('rowFundamental');
+  if (lastRootHarmonyPolicyKey === null) lastRootHarmonyPolicyKey = rootHarmonyPolicyKey;
+  if (rootHarmonyPolicyKey !== lastRootHarmonyPolicyKey || rootFundamentalPolicy !== lastRootFundamentalPolicy) {
+    rootGeographyEpoch++;
+    lastRootResolveSecond = -Infinity;
+    lastRootHarmonyPolicyKey = rootHarmonyPolicyKey;
+    lastRootFundamentalPolicy = rootFundamentalPolicy;
+  }
   setRootPolicyContext({ settled, geographyEpoch: rootGeographyEpoch });
   // TEMP DEBUG (Phase 2.4 recovery timing) — remove with cosmos/recovery-timing.js. Records the row-voice
   // trajectory across a window after a stop to expose the recovery shape. Movement is derived from the
@@ -2027,15 +2045,18 @@ function loop() {
       const rp = rpOf.get(z.grid); if (!rp) continue;
       const d = Math.hypot(rp[0], rp[1], rp[2]);
       if (d > ROOT_RADIUS) continue;
-      rootField.push({ tones: z.skyTones, weight: distGain(d) });
+      const tones = rootCompetitionTones(z.skyTones, rootFundamentalPolicy);
+      if (tones.length) rootField.push({ tones, weight: distGain(d) });
     }
-    const ladder = solveRoots(rootField);
+    const rootScoreOptions = { targetsCents: rootHarmonyPolicy.targets, toleranceCents: rootHarmonyPolicy.toleranceCents };
+    const ladder = solveRoots(rootField, rootScoreOptions);
     const currentRoot = currentSkyRoot();
-    const incumbentResult = scoreRootAt(currentRoot.cents, rootField);
+    const incumbentResult = scoreRootAt(currentRoot.cents, rootField, rootScoreOptions);
     proposeRoot({
       ladder,
       incumbent: { fraction: currentRoot.fraction, cents: currentRoot.cents, score: incumbentResult.score, perDegree: incumbentResult.perDegree },
       proposalEpoch: rootGeographyEpoch,
+      policyKey: rootHarmonyPolicyKey,
     });
   }
 
@@ -2438,6 +2459,7 @@ function bindControls() {
     if (firstPress && /^[0-9]$/.test(k)) { toggleSlot(k === '0' ? 9 : +k - 1); if (selected) showDetail(selected); }   // 1-9,0 → hide/show web slots
     if (firstPress && k === 'b' && swarm) { if (swarm.agents.length) swarm.clear(); else swarm.spawn(AGENT_COUNT, cam.anchor); }   // B → toggle Collider-Battle ships
     if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)
+    if (firstPress && k === 'h') toggleHarmonyHold();   // H → freeze/release chord + solved root; transport keeps running
     if (firstPress && k === 'c') { skyDebugOn = !skyDebugOn; if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none'; }   // C → toggle the Full Sky debug overlay (dev)
     // T → dump the audio-clock table (one row per motion mode) and start a fresh window. The protocol:
     // sit still ~10s, steer ~10s, fly ~10s, press T — the three rows are then directly comparable.

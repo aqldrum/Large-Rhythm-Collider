@@ -11,8 +11,13 @@ import { CHORDS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chor
   RICHNESS_LEVELS, RICHNESS_LEVEL_MIN, RICHNESS_LEVEL_MAX, maxCardinalityForRichness } from './sky-walk.js';
 import { normalizeRootLadder, resetPhraseTracker, observePhraseBoundary, pushRecentRoot,
   classifyRootDestinations, rankModulationDestinations, decideRootAtBoundary } from './sky-modulation.js';
-import { AUDIO_MODES, RHYTHM_VOICE_WAVEFORM, ownerChordMatch } from './cosmos-grid-audio-core.js';
+import { AUDIO_MODES, RHYTHM_VOICE_WAVEFORM, ownerHarmonyMatch } from './cosmos-grid-audio-core.js';
 import { SpatialGridRowPlayer } from './spatial-grid-row-player.js';
+import {
+  DEFAULT_HARMONY_SOURCE, DEFAULT_HARMONY_TOLERANCE_CENTS, DEFAULT_SCALE_POLICY,
+  HARMONY_SOURCES, SCALE_POLICIES, bedTargetsForPolicy, harmonyPolicyDefinitionKey,
+  matchHarmonyTarget, normalizeHarmonyPolicy,
+} from './harmony-policy.js';
 import { CosmosMidiOut } from './cosmos-midi-out.js';
 // The audio clock's instrument panel (pure meters; see that module's header for the mechanism it measures).
 // This module owns the transport, so it is the only honest place to time the scheduler's own arrival.
@@ -118,7 +123,7 @@ const REATTACK_PERIODS = [4.5, 5.6, 6.4, 8.1, 10];   // SKY-CLOCK seconds; mutua
 // Default ON since the ownership transfer (2026-07-29): the audio-lab entry defaults had been shipping
 // modulation on since `f54198c` and that is what Avery has been listening to, so the rail's default
 // (RAIL_PARAMS.modulation) and the engine's own agree rather than splitting. Decision 7's "opt-in" now
-// means "switchable in the rail's advanced drawer", not "off until asked".
+// means "switchable on the rail's harmony face", not "off until asked".
 const MODULATION_DEFAULT = true;
 // FUNDAMENTAL is a second, user-driven detune offset, summed with modulation on the same bus (Phase 0.2):
 // two ConstantSourceNodes in CENTS whose sum feeds every oscillator's detune AND the MIDI spelling, so one
@@ -235,6 +240,10 @@ let leadMaskRootKey = -1;         // root swaps independently invalidate the sam
 // ── Full Sky: the global chord walk (online, stateful — not precomputed) + the ambient bed ──
 let skyChordId = START_CHORD_ID, skyTabu = null, skyStep = -1;   // walk state; skyStep=-1 = not yet observed
 let chordStartedAt = 0;           // sky-clock seconds the current chord began — the dwell/exposure origin
+let harmonySource = DEFAULT_HARMONY_SOURCE;
+let harmonyScale = DEFAULT_SCALE_POLICY;
+let harmonyHold = false;
+let rowFundamental = true;
 let dwellFraction = 0;            // DWELL knob [0,1]: chord dwell as a fraction of the cycle PAST full exposure.
                                   // 0 = advance the moment exposed (the old full-quality hold, now the default).
                                   // A persisted musical setting (decision 8); Phase 2.2 binds the knob to setDwell.
@@ -337,16 +346,18 @@ export function initAudio() {
   };
   gridRowPlayer = new SpatialGridRowPlayer(audioCtx, rowsGain, detuneBus, midiBridge, audioTelemetry);
   gridRowPlayer.setEnabled(true);   // always on — rowsGain handles the crossfade
+  gridRowPlayer.setRowFundamental(rowFundamental);
   mix = 0; auditionListening = true; auditionPinned = false;
   skyChordId = START_CHORD_ID; skyTabu = pushTabu([], skyChordId, TABU_K); skyStep = -1; lastSyncedChordId = null;
+  harmonySource = DEFAULT_HARMONY_SOURCE; harmonyScale = DEFAULT_SCALE_POLICY; harmonyHold = false; rowFundamental = true;
   skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; lastRootLadder = [];
   rootEstablished = false;
-  rootPhraseTracker = resetPhraseTracker(skyRoot.rootKey, skyChordId, skyTabu);
+  rootPhraseTracker = resetPhraseTracker(skyRoot.rootKey, currentHarmonyPolicy().id, skyTabu);
   recentSkyRoots = []; lastRootPolicyProposal = null; rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
   bedStars = new Map(); bedOscCount = 0; bedLiveOscCount = 0; currentField = [];
   transportStart = audioCtx.currentTime;   // grid clock starts here; lead swaps ride the same phase
   audioEpoch = transportStart;             // sky clock shares the origin but is never re-anchored after this
-  chordStartedAt = 0; lastChordSeconds = 0; lastChordExposure = { degrees: [], sounded: [], missing: [], rowsPresent: false, exposed: true, complete: true, heldSeconds: 0 };
+  chordStartedAt = 0; lastChordSeconds = 0; lastChordExposure = { targets: [], degrees: [], sounded: [], missing: [], rowsPresent: false, exposed: true, complete: true, heldSeconds: 0 };
   lastModulationCents = 0; modulationGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   lastFundamentalCents = 0; fundamentalGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   scaledMedianGrid = 0; fieldOnsetTicks = 0;
@@ -518,6 +529,55 @@ export function setDwell(fraction) {
   return dwellFraction;
 }
 export function currentDwell() { return { fraction: dwellFraction, ...lastChordClock }; }
+
+function resetHarmonyDecisionBaseline() {
+  if (!audioCtx || audioEpoch == null) return;
+  const seconds = skySeconds(audioCtx.currentTime);
+  chordStartedAt = seconds;
+  skyStep = chordStepIndex(seconds, chordQuantumSeconds(effectiveCycleSeconds()));
+  lastChordExposure = { targets: [], sounded: [], missing: [], rowsPresent: false, exposed: true, complete: true, heldSeconds: 0 };
+  lastSyncedChordId = null;
+  leadMaskChordId = -1;
+}
+
+export function setHarmonyHold(on) {
+  const next = !!on;
+  const releasing = harmonyHold && !next;
+  harmonyHold = next;
+  if (releasing) resetHarmonyDecisionBaseline();
+  return harmonyHold;
+}
+export function currentHarmonyHold() { return harmonyHold; }
+
+export function setHarmonySource(source) {
+  const next = source === HARMONY_SOURCES.SCALE ? HARMONY_SOURCES.SCALE : HARMONY_SOURCES.CHORD_WALK;
+  if (next === harmonySource) return harmonySource;
+  harmonySource = next;
+  resetHarmonyDecisionBaseline();
+  rootPhraseTracker = resetPhraseTracker(skyRoot.rootKey, currentHarmonyPolicy().id,
+    harmonySource === HARMONY_SOURCES.CHORD_WALK ? skyTabu : []);
+  return harmonySource;
+}
+
+export function setHarmonyScale(scaleId) {
+  const next = SCALE_POLICIES[scaleId] ? scaleId : DEFAULT_SCALE_POLICY;
+  if (next === harmonyScale) return harmonyScale;
+  harmonyScale = next;
+  if (harmonySource === HARMONY_SOURCES.SCALE) {
+    resetHarmonyDecisionBaseline();
+    rootPhraseTracker = resetPhraseTracker(skyRoot.rootKey, currentHarmonyPolicy().id, []);
+  }
+  return harmonyScale;
+}
+
+export function setRowFundamental(on) {
+  const next = on !== false;
+  const changed = next !== rowFundamental;
+  rowFundamental = next;
+  gridRowPlayer?.setRowFundamental(next);
+  if (changed) resetHarmonyDecisionBaseline();
+  return rowFundamental;
+}
 
 // Pure: the cent shift that puts a solved root on the fundamental's pitch class, folded to the nearest
 // octave-equivalent so the move is at most a tritone in either direction. Modulation off → 0, which is
@@ -702,13 +762,20 @@ export function leadNoteInChord(ratio, chordId, rootCents = 0) {
   return CHORDS[chordId].semitones.includes(d) && Math.abs(dev) <= LEAD_MASK_WINDOW;
 }
 
+export function leadNoteInHarmony(ratio, rootCents, policy) {
+  const widened = { ...policy, toleranceCents: LEAD_MASK_WINDOW };
+  return !!matchHarmonyTarget(ratioToCents(ratio), rootCents, widened)?.selected;
+}
+
 // Recompute leadMask against the CURRENT global sky chord. Cheap (≤ lead cardinality), so it's called
 // lazily (skyChordId cache-check) rather than threaded through every stepSkyWalk call.
 function ensureLeadMask(force) {
   if (!lead) { leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1; return; }
-  if (!force && leadMaskChordId === skyChordId && leadMaskRootKey === skyRoot.rootKey) return;
-  leadMask = lead.notes.map(n => leadNoteInChord(n.ratio, skyChordId, skyRoot.cents));
-  leadMaskChordId = skyChordId;
+  const policy = currentHarmonyPolicy();
+  const policyKey = harmonyPolicyDefinitionKey(policy);
+  if (!force && leadMaskChordId === policyKey && leadMaskRootKey === skyRoot.rootKey) return;
+  leadMask = lead.notes.map(n => leadNoteInHarmony(n.ratio, skyRoot.cents, policy));
+  leadMaskChordId = policyKey;
   leadMaskRootKey = skyRoot.rootKey;
 }
 
@@ -741,6 +808,27 @@ export function setTuningStrength(value) {
 
 export function currentTuningStrength() { return LAMBDA_FIELD; }
 const currentChordSemitones = () => CHORDS[skyChordId].semitones;
+const currentChordTargets = () => currentChordSemitones().map(degree => degree * 100);
+
+export function currentHarmonyPolicy() {
+  return normalizeHarmonyPolicy({
+    source: harmonySource,
+    scaleId: harmonyScale,
+    chordId: skyChordId,
+    chordTargets: currentChordTargets(),
+    toleranceCents: DEFAULT_HARMONY_TOLERANCE_CENTS,
+  });
+}
+
+export function currentHarmonyState() {
+  return {
+    source: harmonySource,
+    scale: harmonyScale,
+    hold: harmonyHold,
+    rowFundamental,
+    policy: currentHarmonyPolicy(),
+  };
+}
 
 // small deterministic integer hash (Avery: REATTACK_PERIODS[hash(grid) % n] — a plain mod would
 // correlate neighbouring grids' reattack phase; this scrambles it).
@@ -757,6 +845,17 @@ export function hashId(n) {
 // mask-silence correctness directly.
 export function bedDegreesFor(chordId, pool) {
   return CHORDS[chordId].semitones.filter(d => pool && pool[d]);
+}
+
+export function bedDegreesForPolicy(policy, rootCents, pool) {
+  if (!pool) return [];
+  const bedPolicy = { ...policy, targets: bedTargetsForPolicy(policy) };
+  const degrees = [];
+  for (let degree = 0; degree < pool.length; degree++) {
+    const slot = pool[degree];
+    if (slot && ownerHarmonyMatch(slot.cents, rootCents, bedPolicy)?.selected) degrees.push(degree);
+  }
+  return degrees;
 }
 
 // Debug-table model for the chromatic material the bed is ACTUALLY holding right now. There is no
@@ -954,11 +1053,13 @@ export function voiceToneChanged(voiceFraction, pool, degree) {
 // recreate it — the overlapping release+attack IS the crossfade (should sound like weather, not a
 // cut), never an immediate cut.
 function syncBedDegrees(now) {
-  const chordChanged = lastSyncedChordId !== skyChordId;
-  lastSyncedChordId = skyChordId;
+  const policy = currentHarmonyPolicy();
+  const policyKey = harmonyPolicyDefinitionKey(policy);
+  const chordChanged = lastSyncedChordId !== policyKey;
+  lastSyncedChordId = policyKey;
   for (const bs of bedStars.values()) {
     if (!bs.pool) continue;
-    const desired = new Set(bedDegreesFor(skyChordId, bs.pool));
+    const desired = new Set(bedDegreesForPolicy(policy, skyRoot.cents, bs.pool));
     for (const v of [...bs.oscMap.values()]) {
       if (!desired.has(v.degree)) { releaseVoice(bs, v, now, false); continue; }
       if (voiceToneChanged(v.fraction, bs.pool, v.degree)) releaseVoice(bs, v, now, false);
@@ -1011,19 +1112,18 @@ function pumpReattacks(now, seconds) {
 // what an ambient-only region did before rows existed. Without that, deep space would strand every chord
 // on the escape cap (4 cycles ≈ 96s) and read as the walk having died.
 function chordExposure(nowSeconds) {
-  const chord = CHORDS[skyChordId];
+  const policy = currentHarmonyPolicy();
+  const requiredTargets = policy.targets.filter(target => rowFundamental || target !== 0);
   const sounded = new Set();
-  // The row player's ledger, folded to chord degrees around the live root.
+  // The row player's ledger, matched directly to octave-relative cent targets around the live root.
   const since = audioEpoch + chordStartedAt;
   for (const tone of gridRowPlayer?.soundedSince(since) || []) {
-    const match = ownerChordMatch(tone.cents, skyRoot.cents, chord.semitones);
-    if (match?.selected) sounded.add(match.degree);
+    const match = ownerHarmonyMatch(tone.cents, skyRoot.cents, policy);
+    if (match?.selected && requiredTargets.includes(match.targetCents)) sounded.add(match.targetCents);
   }
-  // Filter to chord degrees only.
-  for (const degree of [...sounded]) if (!chord.semitones.includes(degree)) sounded.delete(degree);
-  const missing = chord.semitones.filter(degree => !sounded.has(degree));
+  const missing = requiredTargets.filter(target => !sounded.has(target));
   const rowsPresent = (gridRowPlayer?.soundingStarCount() || 0) > 0;
-  return { degrees: chord.semitones, sounded: [...sounded].sort((a, b) => a - b), missing, rowsPresent,
+  return { targets: requiredTargets, degrees: requiredTargets.map(target => target / 100), sounded: [...sounded].sort((a, b) => a - b), missing, rowsPresent,
     exposed: missing.length === 0,                        // the rows have said every degree
     complete: !rowsPresent || missing.length === 0,       // the FLOOR verdict — vacuous where no row can speak
     heldSeconds: nowSeconds - chordStartedAt };
@@ -1094,15 +1194,19 @@ function stepSkyWalk(seconds) {
   skyStep = step;
   const exposure = chordExposure(seconds);
   lastChordExposure = exposure;
+  if (harmonyHold) return;
   if (!shouldAdvanceChord({ complete: exposure.complete, heldSeconds: exposure.heldSeconds, targetSeconds, maxSeconds: escapeSeconds, atBoundary })) return;
   lastChordSeconds = seconds - chordStartedAt;
   chordStartedAt = seconds;
-  const audibleStars = currentField.map(it => ({ pool: it.pool, weight: it.gain }));
-  const next = chooseNextChord(skyChordId, skyTabu, t => skyCoverage(t, audibleStars),
-    { lambdaField: LAMBDA_FIELD, richness: EXTENSION_INCENTIVE, maxCardinality: maxCardinalityForRichness(richnessLevel), perDegree: perDegreeSupport(audibleStars) });
-  skyChordId = next.id; pushTabu(skyTabu, skyChordId, TABU_K);
+  if (harmonySource === HARMONY_SOURCES.CHORD_WALK) {
+    const audibleStars = currentField.map(it => ({ pool: it.pool, weight: it.gain }));
+    const next = chooseNextChord(skyChordId, skyTabu, t => skyCoverage(t, audibleStars),
+      { lambdaField: LAMBDA_FIELD, richness: EXTENSION_INCENTIVE, maxCardinality: maxCardinalityForRichness(richnessLevel), perDegree: perDegreeSupport(audibleStars) });
+    skyChordId = next.id; pushTabu(skyTabu, skyChordId, TABU_K);
+  }
+  const boundaryPolicy = currentHarmonyPolicy();
   rootPhraseTracker = observePhraseBoundary(rootPhraseTracker,
-    { rootKey: skyRoot.rootKey, chordId: skyChordId, tabu: skyTabu }).tracker;
+    { rootKey: skyRoot.rootKey, chordId: boundaryPolicy.id, tabu: harmonySource === HARMONY_SOURCES.CHORD_WALK ? skyTabu : [] }).tracker;
   applyRootPolicyAtBoundary();   // sole live root authority; atomic after chord+tabu advance
 }
 
@@ -1123,6 +1227,8 @@ export function setRootPolicyContext({ settled = false, geographyEpoch = 0 } = {
 
 function rootPolicyComputation() {
   if (!lastRootPolicyProposal?.ladder?.length || !lastRootPolicyProposal.incumbent) return null;
+  const harmonyPolicy = currentHarmonyPolicy();
+  if (lastRootPolicyProposal.policyKey && lastRootPolicyProposal.policyKey !== harmonyPolicyDefinitionKey(harmonyPolicy)) return null;
   const normalized = normalizeRootLadder(lastRootPolicyProposal.ladder, lastRootPolicyProposal.incumbent);
   const context = {
     settled: rootPolicyContext.settled,
@@ -1131,7 +1237,8 @@ function rootPolicyComputation() {
   };
   const decision = decideRootAtBoundary(normalized, rootPhraseTracker, context, {
     established: rootEstablished,
-    chordDegrees: currentChordSemitones(),
+    chordDegrees: harmonyPolicy.targets.filter(target => target % 100 === 0).map(target => target / 100),
+    harmonyTargets: harmonyPolicy.targets,
     recentRoots: recentSkyRoots,
     tuningStrength: LAMBDA_FIELD,
   });
@@ -1168,7 +1275,9 @@ function applyRootPolicyAtBoundary() {
   }
 
   rootEstablished = true;
-  rootPhraseTracker = resetPhraseTracker(skyRoot.rootKey, skyChordId, skyTabu);
+  const harmonyPolicy = currentHarmonyPolicy();
+  rootPhraseTracker = resetPhraseTracker(skyRoot.rootKey, harmonyPolicy.id,
+    harmonySource === HARMONY_SOURCES.CHORD_WALK ? skyTabu : []);
   lastRootDecision = {
     reason: decision.trigger.reason,
     changed,
@@ -1284,7 +1393,11 @@ export function currentSkySeconds() {
 
 // → { symbol, semitones } — the sky's current chord, for the cockpit readout (M4) and lead masking.
 export function currentSkyChord() {
-  return { symbol: CHORDS[skyChordId].symbol, id: skyChordId, semitones: currentChordSemitones() };
+  const policy = currentHarmonyPolicy();
+  if (policy.source === HARMONY_SOURCES.SCALE) {
+    return { symbol: SCALE_POLICIES[policy.scaleId].label, id: policy.id, semitones: policy.targets.map(target => target / 100), targets: [...policy.targets], source: policy.source };
+  }
+  return { symbol: CHORDS[skyChordId].symbol, id: skyChordId, semitones: currentChordSemitones(), targets: [...policy.targets], source: policy.source };
 }
 
 // Dev-only introspection snapshot for the live debug overlay (flight-view.js, ?skyDebug=1) — NOT used
@@ -1307,7 +1420,7 @@ export function debugSkyState() {
   // Sky Root handoff Feature A: the SAME ranking chooseNextChord used for its last step, against the
   // CURRENT live field — what the overlay needs to show *why* the walk is about to move where it's about
   // to move (parsimony + normalized field cost, not just raw coverage).
-  const candidates = (skyTabu || []).length
+  const candidates = harmonySource === HARMONY_SOURCES.CHORD_WALK && (skyTabu || []).length
     ? candidateCosts(skyChordId, skyTabu, t => skyCoverage(t, audibleStars),
       { lambdaField: LAMBDA_FIELD, richness: EXTENSION_INCENTIVE, maxCardinality: maxCardinalityForRichness(richnessLevel), perDegree: perDegreeSupport(audibleStars) })
         .map(c => ({ ...c, coverage: Math.round(c.coverage * 1000) / 1000, parsimony: Math.round(c.parsimony * 1000) / 1000,
@@ -1332,13 +1445,14 @@ export function debugSkyState() {
     volume: currentVolume(),
     space: currentSpace(),
     richness: currentRichness(),
+    harmony: currentHarmonyState(),
     midi: midiOutState(),
     gridRows,
     rootHz: ROOT_HZ,   // 1/1's fixed fundamental — the root solve only ever picks a RATIO relative to this
     root,
     rootLadder: ladderTopK,
     rootPolicy: rootPolicyDebugSnapshot(),
-    chord: { id: skyChordId, symbol: CHORDS[skyChordId].symbol, semitones: currentChordSemitones() },
+    chord: currentSkyChord(),
     tabu: (skyTabu || []).map(id => ({ id, symbol: CHORDS[id].symbol })),
     coverageByTriad: CHORDS.map(t => ({ id: t.id, symbol: t.symbol, coverage: Math.round(skyCoverage(t, audibleStars) * 1000) / 1000 })),
     candidateCosts: candidates,
@@ -1455,6 +1569,7 @@ export function stopAudio() {
   cosmosMidi = null; gridRowPlayer = null;
   bedStars = new Map(); dyingStars = []; bedOscCount = 0; bedLiveOscCount = 0; currentField = [];
   skyChordId = START_CHORD_ID; skyTabu = null; skyStep = -1; lastSyncedChordId = null;
+  harmonySource = DEFAULT_HARMONY_SOURCE; harmonyScale = DEFAULT_SCALE_POLICY; harmonyHold = false; rowFundamental = true;
   skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; lastRootLadder = [];
   rootEstablished = false; rootPhraseTracker = null; recentSkyRoots = []; lastRootPolicyProposal = null;
   rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;

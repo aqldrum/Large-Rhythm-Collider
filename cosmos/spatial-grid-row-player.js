@@ -81,6 +81,12 @@ export function culledGridRowFrequency(rawRatio) {
 
 const actionToneKey = action => action?.rawFraction ?? action?.fraction ?? String(action?.rawRatio);
 
+// Schedule-time ROW 1/1 policy. Exact source identity is rawFraction: folded `fraction` would also mute
+// 2/1, 4/1, …, which are intentionally still playable octave articulations of the fundamental.
+export function shouldScheduleRowAction(action, rowFundamental = true) {
+  return rowFundamental !== false || action?.rawFraction !== '1/1';
+}
+
 // Time until this layer will ACTUALLY re-articulate. With repeat-cull enabled, identical tones inside
 // the current cycle are silent holds; the first layer event after the loop wrap articulates because the
 // runtime hold memory clears there. Keeping this calculation pure makes the dense-grid policy testable.
@@ -222,6 +228,7 @@ export class SpatialGridRowPlayer {
     this.master.connect(output);                    // dry path
     this.reverb = this._buildReverbSend(output);    // wet send, tapped post-master (fades with enable)
     this.enabled = false;
+    this.rowFundamental = true;
     this.stars = new Map();
     // Exposure ledger for the sky's "hold the chord until its full quality has sounded" rule. The player
     // stays harmony-blind: it records only WHICH folded tone sounded and WHEN, carrying the tone's cents
@@ -263,6 +270,11 @@ export class SpatialGridRowPlayer {
     this.master.gain.setValueAtTime(Math.max(0, this.master.gain.value), now);
     this.master.gain.linearRampToValueAtTime(this.enabled ? 1 : 0, now + CROSSFADE);
     if (!this.enabled) this.setField([], 0);
+  }
+
+  setRowFundamental(enabled) {
+    this.rowFundamental = enabled !== false;
+    return this.rowFundamental;
   }
 
   // SPACE knob: the row half of the shared reverb send. cosmos-audio drives this and the ambient send
@@ -517,6 +529,7 @@ export class SpatialGridRowPlayer {
         const sounding = late.action === 'emit';
         for (const action of event.layerActions) {
           if (!LAYERS.has(action.layer)) continue;
+          if (!shouldScheduleRowAction(action, this.rowFundamental)) continue;
           // Silent hold, re-derived per loop: suppress a re-strike only when this layer's IMMEDIATELY
           // preceding tone THIS CYCLE is identical. The memory clears at each loop wrap (below), so a
           // tone that persists across the wrap — or spans the whole loop — still re-articulates once per
@@ -675,6 +688,7 @@ export class SpatialGridRowPlayer {
   debugState() {
     return {
       enabled: this.enabled,
+      rowFundamental: this.rowFundamental,
       activeStars: [...this.stars.values()].filter(star => star.active).length,
       voices: this.logicalVoiceCount,
       budget: MAX_ROW_OSC,
@@ -687,6 +701,8 @@ export class SpatialGridRowPlayer {
           pendingKey: star.pending?.program.programKey || null,
           selectedRatios: program?.summary.selectedRatios || 0,
           selectedTones: program?.selectedTones || [],
+          mutedLiteralFundamentalActions: this.rowFundamental ? 0 : (program?.events || []).reduce((count, event) =>
+            count + event.layerActions.filter(action => action.rawFraction === '1/1').length, 0),
           events: program?.events.length || 0,
           distance: star.distance,
           voices: star.currentDeck?.voices.size || 0,

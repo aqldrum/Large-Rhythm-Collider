@@ -9,6 +9,7 @@
 // touches the fundamental frequency. Fundamental portamento drift is a later, separate feature.
 import { nearestDegree, TONE_BIN_CENTS } from './grid-core.js';
 import { gainForDev } from './sky-walk.js';
+import { normalizeCentTargets, signedCircularCentsDistance, wrapOctaveCents } from './harmony-policy.js';
 
 const ALL_DEGREES = Array.from({ length: 12 }, (_, d) => d);
 
@@ -46,8 +47,47 @@ export function scoreRootAt(anchorCents, field, opts = {}) {
     for (let d = 0; d < 12; d++) { const slot = pool[d]; if (slot) perDegree[d] += weight * gainForDev(slot.dev); }
   }
   if (wSum > 0) for (let d = 0; d < 12; d++) perDegree[d] /= wSum;
-  const score = degreeTemplate.length ? degreeTemplate.reduce((sum, d) => sum + perDegree[d], 0) / degreeTemplate.length : 0;
-  return { score, perDegree };
+  const explicitTargets = opts.targetsCents || opts.policy?.targets;
+  if (!explicitTargets) {
+    const score = degreeTemplate.length ? degreeTemplate.reduce((sum, d) => sum + perDegree[d], 0) / degreeTemplate.length : 0;
+    return { score, perDegree, perTarget: degreeTemplate.map(degree => perDegree[degree]) };
+  }
+
+  const targets = normalizeCentTargets(explicitTargets);
+  const tolerance = Math.max(0, Number.isFinite(opts.toleranceCents ?? opts.policy?.toleranceCents)
+    ? Number(opts.toleranceCents ?? opts.policy?.toleranceCents) : Infinity);
+  const perTarget = new Array(targets.length).fill(0);
+  let targetWeight = 0;
+  for (const star of field || []) {
+    const weight = star.weight > 0 ? star.weight : 0;
+    if (!weight || !star.tones) continue;
+    targetWeight += weight;
+    for (let index = 0; index < targets.length; index++) {
+      const absoluteTarget = wrapOctaveCents(anchorCents + targets[index]);
+      let bestDeviation = Infinity;
+      for (const tone of star.tones) {
+        const deviation = signedCircularCentsDistance(tone.c, absoluteTarget);
+        if (Math.abs(deviation) < Math.abs(bestDeviation)) bestDeviation = deviation;
+      }
+      if (Math.abs(bestDeviation) <= tolerance) perTarget[index] += weight * gainForDev(bestDeviation);
+    }
+  }
+  if (targetWeight > 0) for (let index = 0; index < perTarget.length; index++) perTarget[index] /= targetWeight;
+  const score = perTarget.length ? perTarget.reduce((sum, value) => sum + value, 0) / perTarget.length : 0;
+  return { score, perDegree, perTarget, targets };
+}
+
+// Remove only literal 1/1 from root competition. A folded fundamental tone remains eligible when its
+// source list also contains 2/1, 4/1, …; in that case the surviving octave identity becomes the row ID.
+export function rootCompetitionTones(tones, rowFundamental = true) {
+  if (rowFundamental !== false) return tones || [];
+  const out = [];
+  for (const tone of tones || []) {
+    const sources = (tone.sourceFractions || [tone.f]).filter(fraction => fraction !== '1/1');
+    if (!sources.length) continue;
+    out.push({ ...tone, f: tone.f === '1/1' ? sources[0] : tone.f, sourceFractions: sources });
+  }
+  return out;
 }
 
 // "Simplest fraction" tie-break (mirrors ProgressionSolver's deterministic sort: strongest first, then

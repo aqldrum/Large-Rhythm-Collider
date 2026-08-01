@@ -2,12 +2,14 @@ import { readFileSync } from 'node:fs';
 import { gridRatioOwnerSolve, gridShardSystems, shardKeysOf } from '../grid-core.js';
 import { ProgramWorkerPool } from '../program-worker-pool.js';
 import { selectedGridRatioToneRows, setMix, currentMix, setAuditionListen, currentAuditionListen, leadNoteInChord,
-  setFundamentalOffset, currentFundamental, currentModulation, totalDetuneCents, glideCentsAt } from '../cosmos-audio.js';
+  setFundamentalOffset, currentFundamental, currentModulation, totalDetuneCents, glideCentsAt,
+  setHarmonySource, setHarmonyScale, currentHarmonyPolicy, currentSkyChord } from '../cosmos-audio.js';
 import {
   CULLED_ROW_FUNDAMENTAL_HZ, CULLED_ROW_MAX_HZ, ROW_MICRO_GAP_SECONDS,
   SpatialGridRowPlayer, culledGridRowFrequency, nearestCulledToneVoices,
-  nextRowLayerGapTicks, rowEnvelopePlan,
+  nextRowLayerGapTicks, rowEnvelopePlan, shouldScheduleRowAction,
 } from '../spatial-grid-row-player.js';
+import { bedTargetsForPolicy, harmonyPolicySelectionKey, matchHarmonyTarget, normalizeHarmonyPolicy, signedCircularCentsDistance } from '../harmony-policy.js';
 import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP, toAudioListenerPosition } from '../spatial-audio-frame.js';
 import {
   AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, RHYTHM_VOICE_WAVEFORM,
@@ -31,6 +33,30 @@ check('root-relative chord matching includes an in-window chord tone', ownerChor
 check('root-relative chord matching excludes the same degree outside the window', !ownerChordMatch(436, 0, [0, 4, 7], 35).selected);
 check('octave wrap around the solved root is circular', ownerChordMatch(1190, 0, [0], 35).selected && ownerChordMatch(10, 20, [0], 35).selected);
 check('selection generations key root, chord, and consonance window', harmonicSelectionKey(2, 7, 28) === 'root:2|chord:7|window:28');
+const microPolicy = normalizeHarmonyPolicy({ source: 'chord-walk', chordId: 'micro', chordTargets: [0, 386.314, 701.955], toleranceCents: 15 });
+check('generic policy matching preserves arbitrary cent targets without semitone quantization',
+  matchHarmonyTarget(390, 0, microPolicy).selected && matchHarmonyTarget(390, 0, microPolicy).targetCents === 386.314);
+check('cent distance wraps signed around the octave boundary',
+  signedCircularCentsDistance(1195, 0) === -5 && signedCircularCentsDistance(5, 0) === 5);
+check('the new selection key carries policy ID, normalized targets, tolerance, and exact root identity', (() => {
+  const key = harmonyPolicySelectionKey({ rootKey: 4, fraction: '5/4', cents: 386.314 }, microPolicy);
+  return key.includes('policy:chord-walk:micro') && key.includes('targets:0,386.314,701.955') && key.includes('window:15') && key.includes('root:4:5/4:386.314000');
+})());
+check('scale source exposes one shared normalized policy to the bed/rows/root consumers', (() => {
+  setHarmonyScale('diatonic-major'); setHarmonySource('scale');
+  const policy = currentHarmonyPolicy(), readout = currentSkyChord();
+  const ok = policy.id === 'diatonic-major' && policy.targets.join(',') === '0,200,400,500,700,900,1100' &&
+    readout.targets.join(',') === policy.targets.join(',') && bedTargetsForPolicy(policy).join(',') === '0,400,700';
+  setHarmonySource('chord-walk');
+  return ok;
+})());
+
+console.log('\n  Schedule-time ROW 1/1 policy');
+check('ROW 1/1 off skips only literal 1/1, not octave equivalents',
+  !shouldScheduleRowAction({ rawFraction: '1/1', fraction: '1/1' }, false) &&
+  shouldScheduleRowAction({ rawFraction: '2/1', fraction: '1/1' }, false) &&
+  shouldScheduleRowAction({ rawFraction: '4/1', fraction: '1/1' }, false));
+check('ROW 1/1 on preserves every scheduled action', shouldScheduleRowAction({ rawFraction: '1/1' }, true));
 
 console.log('\n  Monster/final-ownership gate');
 const owners = [{ fraction: '1/1', cents: 0, key: '2.3', layers: [2, 3], layerSum: 5 }];

@@ -1,6 +1,11 @@
 // cosmos-grid-audio-core.js — pure contracts shared by flight-view, the Cull2 compiler worker,
 // and headless guards. No DOM, Worker, or WebAudio state belongs here.
 import { buildGridCull2Readout } from './cull2-grid-core.js?v=6';
+import {
+  harmonyPolicySelectionKey,
+  matchHarmonyTarget,
+  normalizeHarmonyPolicy,
+} from './harmony-policy.js';
 
 export const AUDIO_MODES = Object.freeze({
   AMBIENT_CHORDS: 'ambient-chords',
@@ -25,29 +30,30 @@ export const ROW_SWITCH_TICKS = 16;
 export const ROW_MAX_COMPOSITE_ONSETS = 20000;
 export const CULLED_ROW_MAX_VOICES_PER_TONE = 4;
 
-const mod = (value, divisor) => ((value % divisor) + divisor) % divisor;
-
 // A ratio owner's cents are absolute within the octave. The solved sky root is the harmonic frame's
 // anchor, so chord degrees are measured from that anchor with signed circular deviation from 12TET.
 export function ownerChordMatch(ownerCents, rootCents, chordSemitones, windowCents = ROW_CONSONANCE_CENTS) {
-  if (!Number.isFinite(ownerCents) || !Number.isFinite(rootCents)) return null;
-  const relative = mod(ownerCents - rootCents, 1200);
-  const degree = Math.round(relative / 100) % 12;
-  const target = degree * 100;
-  let deviation = relative - target;
-  if (deviation > 600) deviation -= 1200;
-  if (deviation < -600) deviation += 1200;
-  const selected = new Set(chordSemitones || []).has(degree) && Math.abs(deviation) <= windowCents;
-  return { degree, deviation, selected };
+  const policy = normalizeHarmonyPolicy({ chordTargets: (chordSemitones || []).map(degree => degree * 100), toleranceCents: windowCents });
+  const match = matchHarmonyTarget(ownerCents, rootCents, policy);
+  if (!match) return null;
+  return { degree: Math.round(match.targetCents / 100) % 12, deviation: match.deviationCents, selected: match.selected };
 }
 
-export function selectedOwnerFractions(ratioOwners, rootCents, chordSemitones, windowCents = ROW_CONSONANCE_CENTS) {
-  return (ratioOwners || []).filter(owner => ownerChordMatch(owner.cents, rootCents, chordSemitones, windowCents)?.selected)
+export function ownerHarmonyMatch(ownerCents, rootCents, policy) {
+  return matchHarmonyTarget(ownerCents, rootCents, policy);
+}
+
+export function selectedOwnerFractions(ratioOwners, rootCents, policyOrSemitones, windowCents = ROW_CONSONANCE_CENTS) {
+  const policy = Array.isArray(policyOrSemitones)
+    ? normalizeHarmonyPolicy({ chordTargets: policyOrSemitones.map(degree => degree * 100), toleranceCents: windowCents })
+    : policyOrSemitones;
+  return (ratioOwners || []).filter(owner => ownerHarmonyMatch(owner.cents, rootCents, policy)?.selected)
     .map(owner => owner.fraction);
 }
 
-export function harmonicSelectionKey(rootKey, chordId, windowCents = ROW_CONSONANCE_CENTS) {
-  return `root:${rootKey}|chord:${chordId}|window:${windowCents}`;
+export function harmonicSelectionKey(rootOrKey, policyOrChordId, windowCents = ROW_CONSONANCE_CENTS) {
+  if (policyOrChordId && typeof policyOrChordId === 'object') return harmonyPolicySelectionKey(rootOrKey, policyOrChordId);
+  return `root:${rootOrKey}|chord:${policyOrChordId}|window:${windowCents}`;
 }
 
 // The monster gate is deliberately repeated at the audio boundary. A visually "solved" gated

@@ -14,23 +14,23 @@
 // vocabulary-ceiling stop. A stored v2 `richness: 0.05` is a legal-looking number in the new domain that
 // clamps to stop 1 — triads only — so a returning listener would silently come up with the narrowest
 // vocabulary they never chose. A unit change with an overlapping domain is exactly what this key is for.
-export const RAIL_SCHEMA_VERSION = 3;
+// v4 replaces the retired DENSITY/DWELL product state with the harmony-source, scale, and ROW 1/1 policy.
+export const RAIL_SCHEMA_VERSION = 4;
 export const RAIL_STORAGE_KEY = 'lrc.cosmos.rail.v1';   // storage NAMESPACE (stable); the blob's `v` field gates schema
 
 // curve: how a normalized knob position [0,1] maps to the engine VALUE this module stores.
 //   linear — even in value. (Cents are already log-of-frequency, so FUNDAMENTAL is linear-in-cents, which
 //            IS the plan's "log for FUNDAMENTAL": the knob travels evenly in pitch.)
 //   log    — even in ratio; min and max must both be > 0. SPEED's perceived tempo travels evenly.
-//   detent — a small set of integer stops (DENSITY 1/2/3).
-//   bool   — a toggle (modulation; the transient mute / MIDI-out).
+//   detent — a small set of integer stops (RICHNESS 1/2/3/4).
+//   bool   — a toggle (modulation, ROW 1/1; the transient mute / hold / MIDI-out).
+//   choice — one of a fixed string vocabulary.
 // group/label/unit are UI hints the rail (Phase 2) reads; this module never touches the DOM.
 export const RAIL_PARAMS = Object.freeze({
   // ── persisted musical knobs (decision 8) — the shipped rail, grouped pitch / time / harmony / texture ──
   volume:      { default: 0.85, min: 0,     max: 1,    curve: 'linear', persist: true,  unit: '',         group: 'texture',   label: 'VOLUME' },
-  fundamental: { default: 0,    min: -1200, max: 1200, curve: 'linear', persist: true,  unit: '¢',        group: 'pitch',     label: 'FUNDAMENTAL' },
-  density:     { default: 1,    min: 1,     max: 3,    curve: 'detent', persist: true,  unit: '',         group: 'harmony',   label: 'DENSITY' },
+  fundamental: { default: 0,    min: -1200, max: 1200, curve: 'linear', persist: true,  unit: '¢',        group: 'pitch',     label: 'PITCH' },
   speed:       { default: 2.5,  min: 0.5,   max: 16,   curve: 'log',    persist: true,  unit: ' notes/s', group: 'time',      label: 'SPEED' },
-  dwell:       { default: 0,    min: 0,     max: 1,    curve: 'linear', persist: true,  unit: '×cyc',     group: 'time',      label: 'DWELL' },
   // RICHNESS is a DETENT over the chord vocabulary's cardinality tiers (2026-07-30), not a weight — Avery
   // heard the old linear knob as "~3–4 discrete musical levels, not a continuum", and it was, because an
   // incentive can only re-weight a vocabulary it cannot shrink. `stops` are the readout labels; the engine's
@@ -42,10 +42,14 @@ export const RAIL_PARAMS = Object.freeze({
   // culled-grid-rows; 0.8 is the deliberate replacement now that the rail owns entry state.
   mix:         { default: 0.8,  min: 0,     max: 1,    curve: 'linear', persist: true,  unit: '',         group: 'texture',   label: 'BED/ROWS' },
   space:       { default: 0.5,  min: 0,     max: 1,    curve: 'linear', persist: true,  unit: '',         group: 'texture',   label: 'SPACE' },
+  harmonySource: { default: 'chord-walk', curve: 'choice', choices: ['chord-walk', 'scale'], persist: true, group: 'harmony', label: 'HARMONY SOURCE' },
+  scale:       { default: 'diatonic-major', curve: 'choice', choices: ['chromatic', 'diatonic-major'], persist: true, group: 'harmony', label: 'SCALE' },
+  rowFundamental: { default: true, curve: 'bool', persist: true, group: 'advanced', label: 'ROW 1/1' },
   // Default ON — carries the `f54198c` lab entry default forward (see MODULATION_DEFAULT in cosmos-audio.js).
   modulation:  { default: true,                        curve: 'bool',   persist: true,                    group: 'advanced',  label: 'MODULATION' },
-  // ── transient (decision 8: MIDI-enabled and mute do NOT persist) ──
+  // ── transient (entry always resets these; they never enter localStorage) ──
   mute:        { default: false,                       curve: 'bool',   persist: false,                   group: 'transport', label: 'MUTE' },
+  hold:        { default: false,                       curve: 'bool',   persist: false,                   group: 'transport', label: 'HOLD' },
   midiOut:     { default: false,                       curve: 'bool',   persist: false,                   group: 'advanced',  label: 'MIDI OUT' },
 });
 
@@ -54,6 +58,7 @@ const clampNum = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 // Coerce/clamp a raw value into a spec's legal domain — the STORAGE form the module keeps.
 export function clampParam(spec, raw) {
   if (spec.curve === 'bool') return !!raw;
+  if (spec.curve === 'choice') return spec.choices.includes(raw) ? raw : spec.default;
   const n = Number(raw);
   if (!Number.isFinite(n)) return spec.default;
   if (spec.curve === 'detent') return clampNum(Math.round(n), spec.min, spec.max);   // integer stops
@@ -64,6 +69,7 @@ export function clampParam(spec, raw) {
 export function normToValue(spec, pos) {
   const p = clampNum(Number.isFinite(+pos) ? +pos : 0, 0, 1);
   if (spec.curve === 'bool') return p >= 0.5;
+  if (spec.curve === 'choice') return spec.choices[Math.round(p * (spec.choices.length - 1))] ?? spec.default;
   if (spec.curve === 'log') return spec.min * (spec.max / spec.min) ** p;
   if (spec.curve === 'detent') return spec.min + Math.round(p * (spec.max - spec.min));
   return spec.min + p * (spec.max - spec.min);
@@ -72,6 +78,7 @@ export function normToValue(spec, pos) {
 // Engine value → normalized knob position [0,1] (inverse of normToValue, within the same domain).
 export function valueToNorm(spec, value) {
   if (spec.curve === 'bool') return value ? 1 : 0;
+  if (spec.curve === 'choice') return Math.max(0, spec.choices.indexOf(clampParam(spec, value))) / Math.max(1, spec.choices.length - 1);
   const v = clampParam(spec, value);
   if (spec.curve === 'log') return Math.log(v / spec.min) / Math.log(spec.max / spec.min);
   return (v - spec.min) / (spec.max - spec.min);   // linear and detent share the affine inverse

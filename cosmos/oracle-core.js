@@ -60,11 +60,18 @@ export function deriveScale(rawLayers) {
   const ratioMap = new Map();
   for (const s of spaces) {
     if (s > 0) {
-      let ratio = spaceFund / s;
+      const rawRatio = spaceFund / s;
+      const rawFraction = decimalToFraction(rawRatio);
+      let ratio = rawRatio;
       while (ratio >= 2) ratio /= 2;
       while (ratio < 1) ratio *= 2;
       const fraction = decimalToFraction(ratio);
-      if (!ratioMap.has(fraction)) ratioMap.set(fraction, { fraction, ratio, cents: ratioToCents(ratio) });
+      const existing = ratioMap.get(fraction);
+      if (existing) {
+        if (!existing.sourceFractions.includes(rawFraction)) existing.sourceFractions.push(rawFraction);
+      } else {
+        ratioMap.set(fraction, { fraction, ratio, cents: ratioToCents(ratio), sourceFractions: [rawFraction] });
+      }
     }
   }
   ratioMap.delete('2/1'); // the octave is not a scale tone — presence of 2/1 never distinguishes a tuning system

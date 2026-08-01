@@ -5,7 +5,7 @@
 import { ensureFlight, stopFlight } from './flight-view.js';
 import { M } from './mode.js';
 import { initAudio, resumeAudio, panicMidiOut } from './cosmos-audio.js';
-import { ensureRail, applyRailToEngine } from './rail-view.js';
+import { ensureRail, resetRailForEntry, applyRailToEngine } from './rail-view.js';
 
 // ENTER: swallow the page and start flying. Add the class FIRST so the overlay/canvas have layout before
 // ensureFlight()'s resize() reads clientWidth/Height (the class change forces a synchronous reflow on read).
@@ -18,6 +18,7 @@ function enterCosmos() {
   ensureFlight(canvas, hud);
   initAudio(); resumeAudio();   // user-gesture unlock for the cosmos-audio transport (autoplay policy)
   ensureRail();                 // mount the performance rail over the live graph (idempotent — first entry only)
+  resetRailForEntry();          // front face + transient buttons always start clean on every entry
   applyRailToEngine();          // …then RESTORE its state into the fresh graph. Every entry: initAudio()
                                 //   rebuilds the buses at the engine's own defaults, so this — not the
                                 //   one-shot mount above — is what makes the rail the engine's owner.

@@ -9,9 +9,9 @@
 // railParams. It's the panel-shaped bottom-centre rail, always visible.
 //
 // ── THE RAIL NOW OWNS THE ENGINE (ownership transfer, 2026-07-29) ────────────────────────────────────
-// SCOPE: every knob of decision 9 that has an engine setter — FUNDAMENTAL · SPEED · DWELL · RICHNESS ·
-// VOLUME · MIX · SPACE — plus the MUTE button (transport) and the advanced drawer (MODULATION · MIDI OUT).
-// Only DENSITY is still absent, because Phase 4 has no setter to bind yet.
+// SCOPE: the front performance face contains only controls with an immediate, unmistakable audible result:
+// PITCH · SPEED · VOLUME · BED/ROWS · SPACE, plus MUTE and HOLD. The back face owns harmony source,
+// scale, RICHNESS, ROW 1/1, MODULATION, and MIDI OUT without becoming a second state owner.
 //
 // RESTORATION IS ON. `applyRailToEngine()` pushes every param through its setter and repaints every
 // control; flight-boot calls it on EVERY cosmos entry, right after initAudio(). It is deliberately NOT an
@@ -29,15 +29,14 @@
 
 import { railParams } from './rail-params.js';
 import {
-  setMix, setVolume, setSpace, setRichness, setFundamentalOffset, setTargetOnsetRate, setDwell,
-  setMuted, setModulation, setMidiOut,
+  setMix, setVolume, setSpace, setRichness, setFundamentalOffset, setTargetOnsetRate,
+  setMuted, setHarmonyHold, setHarmonySource, setHarmonyScale, setRowFundamental, setModulation, setMidiOut,
 } from './cosmos-audio.js';
+import { HARMONY_SOURCES, SCALE_POLICIES } from './harmony-policy.js';
 
 // param → engine setter. Each is a thin, guarded, additive setter whose default reproduces the intended
-// entry sound (assert-rail-bindings.mjs). A param with no setter yet (DENSITY, Phase 4) simply stays out of
-// this map and out of the rendered rail — the optional call in the binding below no-ops rather than
-// throwing. The value passed is the ENGINE-unit value (railParams.get): cents for FUNDAMENTAL, notes/sec
-// for SPEED, cycle-fractions for DWELL, booleans for the toggles, [0,1] for the rest.
+// entry sound (assert-rail-bindings.mjs). Values are in ENGINE units: cents for PITCH/FUNDAMENTAL,
+// notes/sec for SPEED, cycle-fractions for DWELL, booleans for toggles, and [0,1] for the rest.
 //
 // MIDI OUT is deliberately ABSENT: `setMidiOut` is async, needs a user gesture for the Web MIDI permission
 // prompt, and can fail with a reason the rail has to report and roll back — so it gets its own handler
@@ -46,21 +45,25 @@ import {
 export const ENGINE_SETTERS = Object.freeze({
   fundamental: setFundamentalOffset,   // cents (railParams 'fundamental' value is already in cents, ±1200 knob)
   speed: setTargetOnsetRate,           // notes/sec — puts the engine in ONSET mode (SPEED replaces fixed/scaled)
-  dwell: setDwell,                     // [0,1] chord dwell past full exposure, in cycles (0 = advance at exposure)
   richness: setRichness,               // detent 1–4 — the largest chord the walk may reach for
   volume: setVolume,                   // [0,1] master trim ahead of the limiter
   mix: setMix,                         // [0,1] constant-power bed↔rows crossfade
   space: setSpace,                     // [0,1] both reverb sends (0.5 = today's levels)
   mute: setMuted,                      // bool — master mute; the transport keeps ticking
+  hold: setHarmonyHold,                // bool — freezes chord + solved root, never the transport
+  harmonySource: setHarmonySource,     // chord-walk | scale
+  scale: setHarmonyScale,              // normalized cent-target preset ID
+  rowFundamental: setRowFundamental,   // bool — schedule-time literal 1/1 attacks only
   modulation: setModulation,           // bool — retune each newly solved root to the fundamental
 });
 
-// The ROTARY knobs this rail renders, in order within their group. DENSITY (Phase 4) is the only decision-9
-// knob still missing, for want of an engine setter.
-export const RAIL_KNOBS = Object.freeze(['fundamental', 'speed', 'dwell', 'richness', 'volume', 'mix', 'space']);
-// Momentary/latching BUTTONS (transport group) and the advanced drawer's SWITCHES.
-export const RAIL_BUTTONS = Object.freeze(['mute']);
-export const RAIL_SWITCHES = Object.freeze(['modulation', 'midiOut']);
+// Front-face ROTARY knobs, ordered within their groups. RICHNESS is a named back-face segment;
+// retired DENSITY/DWELL do not participate in the product state model.
+export const RAIL_KNOBS = Object.freeze(['fundamental', 'speed', 'volume', 'mix', 'space']);
+export const RAIL_BUTTONS = Object.freeze(['mute', 'hold']);
+export const RAIL_SWITCHES = Object.freeze(['rowFundamental', 'modulation', 'midiOut']);
+export const RAIL_SEGMENTS = Object.freeze(['harmonySource', 'richness']);
+export const RAIL_SELECTS = Object.freeze(['scale']);
 
 const GROUP_ORDER = ['transport', 'pitch', 'time', 'harmony', 'texture'];
 
@@ -69,6 +72,7 @@ const GROUP_ORDER = ['transport', 'pitch', 'time', 'harmony', 'texture'];
 export function formatReadout(spec, value) {
   if (!spec) return '';
   if (spec.curve === 'bool') return value ? 'ON' : 'OFF';
+  if (spec.curve === 'choice') return String(value).toUpperCase().replaceAll('-', ' ');
   // A detent with `stops` reads its stop's NAME — a rail knob's readout is the only thing telling the
   // listener what a stop means, and "9ths" says it where "3" does not. Unnamed detents still read numeric.
   if (spec.curve === 'detent') return spec.stops?.[value - spec.min] ?? String(value);
@@ -80,7 +84,12 @@ let built = false;
 const knobEls = new Map();     // param → { dial, indicator, readout } — the DOM the shared sync repaints
 const buttonEls = new Map();   // param → { button }
 const switchEls = new Map();   // param → { input, readout }
+const segmentEls = new Map();  // param → { buttons }
+const selectEls = new Map();   // param → { select }
 let midiStatus = '';           // last MIDI-out outcome (port name or failure reason), shown on its readout
+let activeFace = 'performance';
+let performanceFace = null, harmonyFace = null, scaleControl = null, richnessControl = null;
+let performanceFaceToggle = null, harmonyFaceToggle = null;
 
 const KNOB_SWEEP_DEG = 270;                 // indicator arc, copied from the ADSR knob (ToneRowPlayback.js:1498)
 const KNOB_DRAG_PER_PX = 0.005;             // normalized change per px of vertical drag (same feel as ADSR)
@@ -102,14 +111,37 @@ function paintControl(name, value) {
     const on = !!value;
     btn.button.classList.toggle('active', on);
     btn.button.setAttribute('aria-pressed', String(on));
-    btn.button.title = name === 'mute' ? (on ? 'Unmute (M)' : 'Mute (M)') : railParams.spec(name).label;
+    btn.button.title = name === 'mute' ? (on ? 'Unmute (M)' : 'Mute (M)')
+      : name === 'hold' ? (on ? 'Release harmony (H)' : 'Hold harmony (H)') : railParams.spec(name).label;
     return;
   }
   const sw = switchEls.get(name);
   if (sw) {
     sw.input.checked = !!value;
     sw.readout.textContent = (name === 'midiOut' && midiStatus) ? midiStatus : formatReadout(railParams.spec(name), value);
+    return;
   }
+  const segment = segmentEls.get(name);
+  if (segment) {
+    for (const [option, button] of segment.buttons) {
+      const on = String(option) === String(value);
+      button.classList.toggle('active', on);
+      button.setAttribute('aria-pressed', String(on));
+    }
+    updateBackFaceVisibility();
+    return;
+  }
+  const select = selectEls.get(name);
+  if (select) {
+    select.select.value = String(value);
+    updateBackFaceVisibility();
+  }
+}
+
+function updateBackFaceVisibility() {
+  const scaleOn = railParams.get('harmonySource') === HARMONY_SOURCES.SCALE;
+  if (scaleControl) scaleControl.hidden = !scaleOn;
+  if (richnessControl) richnessControl.hidden = scaleOn;
 }
 
 // Build one rotary knob bound to `name` — the site's ADSR knob (Playback), reused CLASS-FOR-CLASS
@@ -183,7 +215,7 @@ function buildButton(name) {
   return wrap;
 }
 
-// A boolean switch for the advanced drawer (MODULATION / MIDI OUT), with its own live readout — MODULATION
+// A boolean switch for the harmony face (ROW 1/1 / MODULATION / MIDI OUT), with its own live readout — MODULATION
 // reads ON/OFF, MIDI OUT reports the real outcome (port name, or why enabling failed).
 function buildSwitch(name) {
   const spec = railParams.spec(name);
@@ -204,6 +236,63 @@ function buildSwitch(name) {
   switchEls.set(name, { input, readout });
   paintControl(name, railParams.get(name));
   return row;
+}
+
+function buildSegmented(name, options) {
+  const spec = railParams.spec(name);
+  const fieldset = document.createElement('fieldset');
+  fieldset.className = 'rail-setting rail-segmented'; fieldset.dataset.param = name;
+  const legend = document.createElement('legend'); legend.textContent = spec.label;
+  const group = document.createElement('div'); group.className = 'rail-segment-options';
+  const buttons = new Map();
+  for (const option of options) {
+    const value = option.value;
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'rail-segment'; button.textContent = option.label;
+    button.setAttribute('aria-pressed', 'false');
+    button.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') e.stopPropagation(); });
+    button.addEventListener('click', () => railParams.set(name, value));
+    buttons.set(value, button); group.appendChild(button);
+  }
+  fieldset.append(legend, group);
+  segmentEls.set(name, { buttons });
+  paintControl(name, railParams.get(name));
+  return fieldset;
+}
+
+function buildSelect(name, options) {
+  const spec = railParams.spec(name);
+  const label = document.createElement('label');
+  label.className = 'rail-setting rail-select'; label.dataset.param = name;
+  const text = document.createElement('span'); text.textContent = spec.label;
+  const select = document.createElement('select'); select.setAttribute('aria-label', spec.label);
+  for (const option of options) {
+    const el = document.createElement('option'); el.value = option.value; el.textContent = option.label;
+    select.appendChild(el);
+  }
+  select.addEventListener('change', () => railParams.set(name, select.value));
+  label.append(text, select);
+  selectEls.set(name, { select });
+  paintControl(name, railParams.get(name));
+  return label;
+}
+
+function setRailFace(face, { focus = true } = {}) {
+  activeFace = face === 'harmony' ? 'harmony' : 'performance';
+  if (!performanceFace || !harmonyFace) return;
+  const performanceOn = activeFace === 'performance';
+  performanceFace.hidden = !performanceOn; performanceFace.inert = !performanceOn;
+  harmonyFace.hidden = performanceOn; harmonyFace.inert = performanceOn;
+  if (focus) (performanceOn ? performanceFaceToggle : harmonyFaceToggle)?.focus();
+}
+
+function buildFaceToggle(label, destination) {
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'rail-face-toggle'; button.textContent = label;
+  button.setAttribute('aria-label', destination === 'harmony' ? 'Open harmony controls' : 'Return to performance controls');
+  button.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') e.stopPropagation(); });
+  button.addEventListener('click', () => setRailFace(destination));
+  return button;
 }
 
 // MIDI OUT's own applier (see the ENGINE_SETTERS note). Web MIDI permission needs the user gesture and the
@@ -244,6 +333,15 @@ export function applyRailToEngine() {
   }
 }
 
+// Cosmos-entry reset for UI/transient state. Persisted musical choices survive; face, HOLD, MUTE, and
+// MIDI permission state do not. Called on every entry even though the DOM itself mounts only once.
+export function resetRailForEntry() {
+  setRailFace('performance', { focus: false });
+  railParams.set('hold', false);
+  railParams.set('mute', false);
+  railParams.set('midiOut', false);
+}
+
 // Mount the rail once and wire it to railParams. Idempotent + guarded by `built` (like flight-view's
 // `bound`): the overlay DOM persists across exit→re-enter, so a second call is a no-op — which is exactly
 // why restoration lives in applyRailToEngine() rather than in this function's subscribe call.
@@ -255,7 +353,13 @@ export function ensureRail() {
 
   const rail = document.createElement('div');
   rail.id = 'cosmos-rail'; rail.className = 'cosmos-rail';
-  rail.setAttribute('role', 'group'); rail.setAttribute('aria-label', 'Performance rail');
+  rail.setAttribute('role', 'group'); rail.setAttribute('aria-label', 'Cosmos audio controls');
+
+  const stage = document.createElement('div'); stage.className = 'rail-face-stage';
+  performanceFace = document.createElement('section');
+  performanceFace.className = 'rail-face rail-performance-face'; performanceFace.setAttribute('aria-label', 'Performance controls');
+  harmonyFace = document.createElement('section');
+  harmonyFace.className = 'rail-face rail-harmony-face'; harmonyFace.setAttribute('aria-label', 'Harmony controls');
 
   // bucket every rendered control by spec.group, then emit columns in the fixed GROUP_ORDER. Knobs and
   // buttons share a group row (transport's MUTE sits where a knob would); the advanced switches are pulled
@@ -273,23 +377,29 @@ export function ensureRail() {
     const knobs = document.createElement('div'); knobs.className = 'rail-knobs';
     for (const name of names) knobs.appendChild(RAIL_BUTTONS.includes(name) ? buildButton(name) : buildKnob(name));
     col.append(gl, knobs);
-    rail.appendChild(col);
+    performanceFace.appendChild(col);
   }
 
-  // ADVANCED drawer — a native <details> so it is keyboard-accessible and needs no open/close state of its
-  // own. Holds the switches that are settings rather than performance gestures (decision 9).
-  const drawer = document.createElement('details');
-  drawer.className = 'rail-advanced';
-  const summary = document.createElement('summary');
-  summary.className = 'rail-advanced-summary'; summary.textContent = 'adv';
-  summary.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') e.stopPropagation(); });
-  const switches = document.createElement('div');
-  switches.className = 'rail-switches';
+  performanceFaceToggle = buildFaceToggle('HARMONY ›', 'harmony');
+  performanceFace.appendChild(performanceFaceToggle);
+
+  const source = buildSegmented('harmonySource', [
+    { value: HARMONY_SOURCES.CHORD_WALK, label: 'CHORD WALK' },
+    { value: HARMONY_SOURCES.SCALE, label: 'SCALE' },
+  ]);
+  scaleControl = buildSelect('scale', Object.values(SCALE_POLICIES).map(policy => ({ value: policy.id, label: policy.label })));
+  richnessControl = buildSegmented('richness', railParams.spec('richness').stops.map((label, index) => ({ value: index + 1, label: label.toUpperCase() })));
+  const switches = document.createElement('div'); switches.className = 'rail-switches';
   for (const name of RAIL_SWITCHES) switches.appendChild(buildSwitch(name));
-  drawer.append(summary, switches);
-  rail.appendChild(drawer);
+  harmonyFaceToggle = buildFaceToggle('‹ PERFORMANCE', 'performance');
+  harmonyFace.append(source, scaleControl, richnessControl, switches, harmonyFaceToggle);
+
+  stage.append(performanceFace, harmonyFace);
+  rail.appendChild(stage);
 
   host.appendChild(rail);
+  updateBackFaceVisibility();
+  setRailFace('performance', { focus: false });
 
   // BOTH-directions binding. This single callback is the one place that (a) drives the engine and (b)
   // repaints the control DOM, so a programmatic reset(), the M key, and the audio lab's mirrored controls

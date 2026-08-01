@@ -5,7 +5,7 @@ import { gridShardSolve, shardKeysOf, gridShardSystems, divisorsFast, nearestDeg
 import { deriveScale } from '../oracle-core.js';
 import { CHORDS, CHORD_QUALITIES, QUALITY_COUNT, START_CHORD_ID, GAIN_CEILING_CENTS, EPS_SPREAD, vlParsimony, gainForDev, coverage, perDegreeSupport, weakestSupport, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, RICHNESS_LEVELS, maxCardinalityForRichness } from '../sky-walk.js';
 import { SPEED_MODES, SCALED_CYCLE_DEFAULT, TABU_K, EXTENSION_INCENTIVE, MAX_BED_OSC, REATTACK_PERIODS, LEAD_MASK_WINDOW, hashId, bedDegreesFor, selectedRatioToneRows, reattachStepFor, deriveVoice, leadNoteInChord, currentSkyChord, voiceToneChanged, setTuningStrength, currentTuningStrength, proposeRoot, setRootPolicyContext, debugSkyState, scaledRateFor, modulationCentsFor, rootGlideSeconds } from '../cosmos-audio.js';
-import { poolFromTones, solveRoots, scoreRootAt } from '../sky-root.js';
+import { poolFromTones, solveRoots, scoreRootAt, rootCompetitionTones } from '../sky-root.js';
 import { ratioToCents } from '../oracle-core.js';
 
 let PASS = true;
@@ -707,6 +707,16 @@ check(`tones (folded at anchor 0) reproduce the worker's pool across ${testGrids
 check('the 1/1 tone (cents === 0) is present in every grid\'s tone list', toneZeroMissing === 0, `${toneZeroMissing}/${testGrids.length} missing`);
 check('every tone\'s cents ∈ [0, 1200)', toneCentsRangeFail === 0, `${toneCentsRangeFail} out of range`);
 check('dedupe is idempotent (re-deduping an already-deduped tone list changes nothing)', toneDedupeFail === 0, `${toneDedupeFail}/${testGrids.length} grids changed`);
+
+const octaveSources = deriveScale([2, 3]).ratios.find(ratio => ratio.fraction === '1/1');
+check('folded tones retain exact source identities for literal-vs-octave policy',
+  octaveSources.sourceFractions.includes('1/1') && octaveSources.sourceFractions.includes('2/1'));
+const competitionMuted = rootCompetitionTones([{ f: '1/1', c: 0, sourceFractions: ['1/1', '2/1', '4/1'] }], false);
+check('root competition removes literal 1/1 but keeps an eligible higher-octave identity',
+  competitionMuted.length === 1 && competitionMuted[0].f === '2/1' &&
+  !competitionMuted[0].sourceFractions.includes('1/1') && competitionMuted[0].sourceFractions.includes('4/1'));
+check('a literal-only 1/1 tone is absent from competition while muted',
+  rootCompetitionTones([{ f: '1/1', c: 0, sourceFractions: ['1/1'] }], false).length === 0);
 
 // nearestDegree's anchor generalization: anchor 0 must reproduce the pre-B2 anchor-0 formula bit-for-bit.
 let anchorZeroDrift = 0;

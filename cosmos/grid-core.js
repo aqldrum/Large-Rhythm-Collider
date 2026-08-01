@@ -141,9 +141,13 @@ const toneBin = cents => Math.round(cents / TONE_BIN_CENTS);
 export function tonesFromRatios(ratios, tones = [], seenBins = new Set()) {
   for (const r of ratios) {
     const bin = toneBin(r.cents);
-    if (seenBins.has(bin)) continue;
+    if (seenBins.has(bin)) {
+      const tone = tones.find(candidate => toneBin(candidate.c) === bin);
+      if (tone) tone.sourceFractions = [...new Set([...(tone.sourceFractions || [tone.f]), ...(r.sourceFractions || [r.fraction])])];
+      continue;
+    }
     seenBins.add(bin);
-    tones.push({ f: r.fraction, c: r.cents });
+    tones.push({ f: r.fraction, c: r.cents, sourceFractions: [...(r.sourceFractions || [r.fraction])] });
   }
   return { tones, seenBins };
 }

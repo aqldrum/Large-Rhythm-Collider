@@ -37,7 +37,11 @@ function mergeSkyTones(z, tones) {
   if (!z.skyTones) { z.skyTones = []; z._skyToneBins = new Set(); }
   for (const t of tones) {
     const bin = Math.round(t.c / TONE_BIN_CENTS);
-    if (z._skyToneBins.has(bin)) continue;
+    if (z._skyToneBins.has(bin)) {
+      const existing = z.skyTones.find(candidate => Math.round(candidate.c / TONE_BIN_CENTS) === bin);
+      if (existing) existing.sourceFractions = [...new Set([...(existing.sourceFractions || [existing.f]), ...(t.sourceFractions || [t.f])])];
+      continue;
+    }
     z._skyToneBins.add(bin);
     z.skyTones.push(t);
   }

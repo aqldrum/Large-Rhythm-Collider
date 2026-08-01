@@ -5,7 +5,7 @@
 // railParams. The DOM build (ensureRail) needs a document; here we pin the pure, export-visible pieces and
 // scan the sources for the wiring/anti-regression facts.
 import { readFileSync } from 'node:fs';
-import { RAIL_KNOBS, RAIL_BUTTONS, RAIL_SWITCHES, ENGINE_SETTERS, formatReadout, applyRailToEngine } from '../rail-view.js';
+import { RAIL_KNOBS, RAIL_BUTTONS, RAIL_SWITCHES, RAIL_SEGMENTS, RAIL_SELECTS, ENGINE_SETTERS, formatReadout, applyRailToEngine, resetRailForEntry } from '../rail-view.js';
 import { railParams, RAIL_PARAMS } from '../rail-params.js';
 
 let PASS = true;
@@ -14,19 +14,25 @@ const check = (label, ok, detail = '') => { if (!ok) PASS = false; console.log(`
 console.log('═══ COSMOS RAIL VIEW — assertions ═══');
 
 console.log('\n  The rendered rail + its engine bindings');
-// Decision 9's rail, minus DENSITY (Phase 4 has no setter to bind). SPEED's setter (setTargetOnsetRate)
-// intentionally puts the engine in ONSET mode — that behaviour is proven in assert-rail-bindings.
-const RENDERED = ['fundamental', 'speed', 'dwell', 'richness', 'volume', 'mix', 'space'];
-check('the rail renders every decision-9 knob that has a setter (pitch/time/harmony/texture)',
+// The front face is deliberately restricted to controls with an immediate audible result. HOLD replaces
+// the retired DWELL product control; RICHNESS is a named segment on the harmony/back face.
+const RENDERED = ['fundamental', 'speed', 'volume', 'mix', 'space'];
+check('the front rail renders exactly PITCH / SPEED / VOLUME / BED-ROWS / SPACE',
   Array.isArray(RAIL_KNOBS) && RAIL_KNOBS.length === RENDERED.length && RENDERED.every(n => RAIL_KNOBS.includes(n)));
+check('the renamed pitch control keeps the existing fundamental-offset parameter and cents contract',
+  RAIL_PARAMS.fundamental.label === 'PITCH' && RAIL_PARAMS.fundamental.unit === '¢');
 check('SPEED is wired to setTargetOnsetRate (its ONSET-mode flip is intentional; behaviour in assert-rail-bindings)',
   typeof ENGINE_SETTERS.speed === 'function');
-check('DWELL is live — the time group is complete (its linear-vs-log curve is still an ear question)',
-  RAIL_KNOBS.includes('dwell') && typeof ENGINE_SETTERS.dwell === 'function');
-check('MUTE is a transport BUTTON, not a knob, and MODULATION/MIDI-OUT are the advanced drawer\'s switches',
-  RAIL_BUTTONS.length === 1 && RAIL_BUTTONS[0] === 'mute' && RAIL_PARAMS.mute.group === 'transport' &&
-  RAIL_SWITCHES.length === 2 && RAIL_SWITCHES.every(n => RAIL_PARAMS[n]?.group === 'advanced'));
-check('every rendered knob/button is a real param and has a live engine setter (no dangling / silent controls)',
+check('DWELL is removed from the user-facing rail model and HOLD has a live engine setter',
+  !RAIL_PARAMS.dwell && !RAIL_KNOBS.includes('dwell') && typeof ENGINE_SETTERS.hold === 'function');
+check('RICHNESS is hidden from the front but retained for the future harmony/back face',
+  !RAIL_KNOBS.includes('richness') && typeof ENGINE_SETTERS.richness === 'function');
+check('MUTE/HOLD are transport buttons and the back face owns ROW 1/1 / MODULATION / MIDI OUT',
+  RAIL_BUTTONS.join(',') === 'mute,hold' && RAIL_BUTTONS.every(n => RAIL_PARAMS[n]?.group === 'transport') &&
+  RAIL_SWITCHES.join(',') === 'rowFundamental,modulation,midiOut' && RAIL_SWITCHES.every(n => RAIL_PARAMS[n]?.group === 'advanced'));
+check('harmony source, scale, and named RICHNESS choices are explicit back-face controls',
+  RAIL_SEGMENTS.join(',') === 'harmonySource,richness' && RAIL_SELECTS.join(',') === 'scale');
+check('every rendered knob/button is a real param with a live engine setter',
   [...RAIL_KNOBS, ...RAIL_BUTTONS].every(n => RAIL_PARAMS[n] && typeof ENGINE_SETTERS[n] === 'function'));
 check('every ENGINE_SETTERS key is a real param — the map can never bind a name the state layer lacks',
   Object.keys(ENGINE_SETTERS).every(n => n in RAIL_PARAMS));
@@ -34,14 +40,13 @@ check('every ENGINE_SETTERS key is a real param — the map can never bind a nam
 // deliberately NOT a plain setter that entry restoration would replay.
 check('MIDI OUT is rendered but kept OUT of the setter map — it has its own async applier + rollback',
   RAIL_SWITCHES.includes('midiOut') && !('midiOut' in ENGINE_SETTERS));
-// DENSITY has no engine setter yet (Phase 4): it must stay out of both the setter map and the rendered rail.
-check('DENSITY stays unbound (Phase 4, no setter) — absent from the setter map and the rail',
+check('DENSITY is fully absent from the active rail and engine binding',
   !('density' in ENGINE_SETTERS) && !RAIL_KNOBS.includes('density'));
 
 console.log('\n  Readout formatting (spec + engine value → string)');
 check('booleans read ON / OFF',
   formatReadout(RAIL_PARAMS.modulation, true) === 'ON' && formatReadout(RAIL_PARAMS.mute, false) === 'OFF');
-check('an unnamed detent reads as an integer stop', formatReadout(RAIL_PARAMS.density, 2) === '2');
+check('a fixed choice reads as an uppercase label', formatReadout(RAIL_PARAMS.harmonySource, 'chord-walk') === 'CHORD WALK');
 // A rail readout is the only thing telling the listener what a stop MEANS. "3" says nothing; "9ths" says
 // where the vocabulary ceiling is without opening the debug overlay.
 check('a detent with named stops reads its stop\'s name (RICHNESS)',
@@ -54,7 +59,6 @@ check('unit-fraction knobs read to two decimals (MIX / VOLUME / SPACE)',
   formatReadout(RAIL_PARAMS.space, 0.5) === '0.50');
 check('wider-range knobs read to one decimal with their unit (SPEED)',
   formatReadout(RAIL_PARAMS.speed, 2.5) === '2.5 notes/s');
-check('DWELL reads as a cycle fraction', formatReadout(RAIL_PARAMS.dwell, 0) === '0.00×cyc');
 
 console.log('\n  MIX round-trip through the state layer (what a drag then does)');
 // A knob at 0.5 normalized → the crossfade midpoint; the readout mirrors railParams.get exactly.
@@ -82,8 +86,13 @@ check('a gesture calls setNorm (normalized → curve) — never a raw engine val
 // The knob is the site's ADSR rotary, reused class-for-class and swept the same 270° (ToneRowPlayback.js).
 check('the knob reuses the ADSR rotary (.knob/.knob-indicator) and its 270° indicator sweep',
   src.includes("dial.className = 'knob'") && src.includes("indicator.className = 'knob-indicator'") && src.includes('KNOB_SWEEP_DEG = 270'));
-check('the advanced drawer is a native <details> so it needs no open/close state of its own',
-  src.includes("createElement('details')") && src.includes("drawer.className = 'rail-advanced'"));
+check('two ordinary DOM faces replace the old <details> drawer',
+  src.includes("createElement('section')") && src.includes("'rail-face rail-performance-face'") &&
+  src.includes("'rail-face rail-harmony-face'") && !src.includes("createElement('details')"));
+check('inactive-face focus is excluded with hidden + inert, and focus moves to the destination toggle',
+  src.includes('performanceFace.inert') && src.includes('harmonyFace.inert') && src.includes('?.focus()'));
+check('scale and RICHNESS visibility follows the single harmonySource state owner',
+  src.includes("railParams.get('harmonySource')") && src.includes('scaleControl.hidden') && src.includes('richnessControl.hidden'));
 check('the module imports its state from rail-params and its setters from cosmos-audio',
   src.includes("from './rail-params.js'") && src.includes("from './cosmos-audio.js'"));
 
@@ -98,13 +107,19 @@ check('restoration is a repeatable exported call, not a one-shot emitNow at subs
   /export function applyRailToEngine/.test(src) && src.includes('ENGINE_SETTERS[name]?.(value)'));
 check('applyRailToEngine runs headlessly without an AudioContext (the setters are all guarded)',
   (() => { try { applyRailToEngine(); return true; } catch { return false; } })());
+check('entry reset clears HOLD/MUTE/MIDI and returns to the performance face',
+  typeof resetRailForEntry === 'function' && src.includes("setRailFace('performance'") &&
+  src.includes("railParams.set('hold', false)") && src.includes("railParams.set('midiOut', false)"));
 const boot = readFileSync(new URL('../flight-boot.js', import.meta.url), 'utf8');
-check('flight-boot restores the rail on every cosmos entry, after initAudio()',
-  /initAudio\(\);[\s\S]*ensureRail\(\);[\s\S]*applyRailToEngine\(\);/.test(boot) &&
+check('flight-boot resets then restores the rail on every cosmos entry, after initAudio()',
+  /initAudio\(\);[\s\S]*ensureRail\(\);[\s\S]*resetRailForEntry\(\);[\s\S]*applyRailToEngine\(\);/.test(boot) &&
   boot.includes('applyRailToEngine') && boot.split('applyRailToEngine()').length === 2);
 
 console.log('\n  ⚠ OWNERSHIP — the audio lab is a dev MIRROR, not a second owner');
 const flight = readFileSync(new URL('../flight-view.js', import.meta.url), 'utf8');
+check('flight no longer reads DENSITY or adds it to row-program identity',
+  !flight.includes("railParams.get('density')") &&
+  !flight.includes('harmonicSelectionKey(root.rootKey, chord.id, ROW_CONSONANCE_CENTS, density)'));
 const audioImport = flight.match(/import \{([^}]*)\} from '\.\/cosmos-audio\.js'/)?.[1] || '';
 check('flight-view no longer imports the setters the rail owns (mute / mix / modulation / MIDI / full-quality)',
   audioImport.length > 0 && !/\bsetMuted\b|\bsetMix\b|\bsetModulation\b|\bsetMidiOut\b|\bsetHoldForFullQuality\b/.test(audioImport));

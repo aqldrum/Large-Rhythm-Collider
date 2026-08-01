@@ -19,10 +19,12 @@ check('every param initialises to its declared default',
   Object.entries(RAIL_PARAMS).every(([name, spec]) => p.get(name) === spec.default));
 // Decision 9's shipped rail must all be present and persisted; the transient toggles must not persist.
 check('the shipped musical knobs are all present and persisted',
-  ['volume', 'fundamental', 'density', 'speed', 'dwell', 'richness', 'mix', 'space'].every(n => RAIL_PARAMS[n]?.persist === true));
-check('modulation persists (default ON since the ownership transfer) while mute and MIDI-out are transient (decision 8)',
+  ['volume', 'fundamental', 'speed', 'richness', 'mix', 'space', 'harmonySource', 'scale', 'rowFundamental'].every(n => RAIL_PARAMS[n]?.persist === true));
+check('retired DENSITY/DWELL are absent from the user-facing state model', !RAIL_PARAMS.density && !RAIL_PARAMS.dwell);
+check('modulation persists while mute, HOLD, and MIDI-out are transient',
   RAIL_PARAMS.modulation.persist === true && RAIL_PARAMS.modulation.default === true &&
-  RAIL_PARAMS.mute.persist === false && RAIL_PARAMS.midiOut.persist === false);
+  RAIL_PARAMS.mute.persist === false && RAIL_PARAMS.hold.persist === false && RAIL_PARAMS.midiOut.persist === false);
+check('ROW 1/1 preserves today\'s sound by default', RAIL_PARAMS.rowFundamental.default === true && RAIL_PARAMS.rowFundamental.persist === true);
 // The entry sound is now the RAIL's: MIX 0.8 is rows-forward with the bed audible underneath (Avery,
 // 2026-07-29), replacing the pure-rows entry the audio lab's mode select used to impose.
 check('MIX defaults to the rows-forward blend the rail restores on entry', RAIL_PARAMS.mix.default === 0.8);
@@ -35,7 +37,9 @@ check('linear values clamp to [min,max]',
   clampParam(RAIL_PARAMS.mix, 2) === 1 && clampParam(RAIL_PARAMS.mix, -1) === 0 &&
   clampParam(RAIL_PARAMS.fundamental, 99999) === 1200 && clampParam(RAIL_PARAMS.fundamental, -99999) === -1200);
 check('detents snap to integer stops within range',
-  clampParam(RAIL_PARAMS.density, 2.4) === 2 && clampParam(RAIL_PARAMS.density, 9) === 3 && clampParam(RAIL_PARAMS.density, 0) === 1);
+  clampParam(RAIL_PARAMS.richness, 2.4) === 2 && clampParam(RAIL_PARAMS.richness, 9) === 4 && clampParam(RAIL_PARAMS.richness, 0) === 1);
+check('fixed choices accept known values and reject unknown values to the default',
+  clampParam(RAIL_PARAMS.harmonySource, 'scale') === 'scale' && clampParam(RAIL_PARAMS.harmonySource, 'other') === 'chord-walk');
 check('bools coerce and a non-finite value falls back to the default',
   clampParam(RAIL_PARAMS.modulation, 1) === true && clampParam(RAIL_PARAMS.mute, '') === false &&
   clampParam(RAIL_PARAMS.speed, NaN) === RAIL_PARAMS.speed.default);
@@ -47,13 +51,13 @@ check('linear FUNDAMENTAL is centred: pos 0/0.5/1 → −1200/0/+1200¢',
 check('log SPEED travels evenly in ratio: the knob midpoint is the geometric mean of the ends',
   near(normToValue(RAIL_PARAMS.speed, 0), 0.5) && near(normToValue(RAIL_PARAMS.speed, 1), 16) &&
   near(normToValue(RAIL_PARAMS.speed, 0.5), Math.sqrt(0.5 * 16)));
-check('detent DENSITY maps thirds of the travel to stops 1 / 2 / 3',
-  normToValue(RAIL_PARAMS.density, 0) === 1 && normToValue(RAIL_PARAMS.density, 0.5) === 2 && normToValue(RAIL_PARAMS.density, 1) === 3);
+check('detent RICHNESS maps the travel to its four vocabulary stops',
+  normToValue(RAIL_PARAMS.richness, 0) === 1 && normToValue(RAIL_PARAMS.richness, 0.5) === 3 && normToValue(RAIL_PARAMS.richness, 1) === 4);
 check('valueToNorm inverts normToValue for every curve',
   [0, 0.25, 0.5, 0.75, 1].every(pos =>
     near(valueToNorm(RAIL_PARAMS.speed, normToValue(RAIL_PARAMS.speed, pos)), pos) &&
     near(valueToNorm(RAIL_PARAMS.fundamental, normToValue(RAIL_PARAMS.fundamental, pos)), pos)) &&
-  valueToNorm(RAIL_PARAMS.density, 2) === 0.5);
+  valueToNorm(RAIL_PARAMS.richness, 3) === 2 / 3 && valueToNorm(RAIL_PARAMS.harmonySource, 'scale') === 1);
 check('setNorm drives the engine value through the curve, and norm() reads it back',
   (() => { p.setNorm('speed', 0.5); return near(p.get('speed'), Math.sqrt(8)) && near(p.norm('speed'), 0.5); })());
 
@@ -82,18 +86,20 @@ check('emitNow replays every current value so an engine binding syncs the persis
 console.log('\n  Persistence round-trip (persisted subset only, schema-versioned)');
 const store = makeStorage();
 const a = new RailParams({ storage: store });
-a.set('fundamental', 700); a.set('mix', 0.6); a.set('density', 3); a.set('modulation', true);
-a.set('mute', true); a.set('midiOut', true);   // transient — must NOT round-trip
+a.set('fundamental', 700); a.set('mix', 0.6); a.set('richness', 4); a.set('modulation', true);
+a.set('harmonySource', 'scale'); a.set('scale', 'chromatic'); a.set('rowFundamental', false);
+a.set('mute', true); a.set('hold', true); a.set('midiOut', true);   // transient — must NOT round-trip
 const blob = JSON.parse(store.getItem(a.key));
 check('the stored blob carries a schema version and the persisted subset',
-  blob.v === RAIL_SCHEMA_VERSION && blob.params.fundamental === 700 && blob.params.mix === 0.6 &&
-  blob.params.density === 3 && blob.params.modulation === true);
-check('transient params (mute, MIDI-out) are excluded from the stored blob',
-  !('mute' in blob.params) && !('midiOut' in blob.params));
+  blob.v === RAIL_SCHEMA_VERSION && blob.params.fundamental === 700 && blob.params.mix === 0.6 && blob.params.richness === 4 &&
+  blob.params.harmonySource === 'scale' && blob.params.scale === 'chromatic' && blob.params.rowFundamental === false);
+check('transient params (mute, HOLD, MIDI-out) are excluded from the stored blob',
+  !('mute' in blob.params) && !('hold' in blob.params) && !('midiOut' in blob.params));
 const b = new RailParams({ storage: store });
 check('a fresh instance reloads the persisted musical state, but transient state stays at its default',
-  b.get('fundamental') === 700 && b.get('mix') === 0.6 && b.get('density') === 3 && b.get('modulation') === true &&
-  b.get('mute') === false && b.get('midiOut') === false);
+  b.get('fundamental') === 700 && b.get('mix') === 0.6 && b.get('richness') === 4 && b.get('modulation') === true &&
+  b.get('harmonySource') === 'scale' && b.get('scale') === 'chromatic' && b.get('rowFundamental') === false &&
+  b.get('mute') === false && b.get('hold') === false && b.get('midiOut') === false);
 
 console.log('\n  Stale / corrupt storage is discarded, never loaded');
 check('deserializeRail rejects corrupt JSON and a mismatched schema version, accepts a current blob',
@@ -107,9 +113,9 @@ const stale = new RailParams({ storage: staleStore });
 check('an incompatible stored layout loads defaults, not its stale values', stale.get('mix') === RAIL_PARAMS.mix.default);
 // A bad stored value inside a CURRENT-schema blob is re-clamped on load, not trusted verbatim.
 const clampStore = makeStorage();
-clampStore.setItem(KEY, JSON.stringify({ v: RAIL_SCHEMA_VERSION, params: { fundamental: 99999, density: 7 } }));
+clampStore.setItem(KEY, JSON.stringify({ v: RAIL_SCHEMA_VERSION, params: { fundamental: 99999, richness: 7, harmonySource: 'bogus' } }));
 const clamped = new RailParams({ storage: clampStore });
-check('loaded values are re-clamped against the current spec', clamped.get('fundamental') === 1200 && clamped.get('density') === 3);
+check('loaded values are re-clamped against the current spec', clamped.get('fundamental') === 1200 && clamped.get('richness') === 4 && clamped.get('harmonySource') === 'chord-walk');
 
 console.log('\n  reset');
 const r = new RailParams({ storage: makeStorage() });
