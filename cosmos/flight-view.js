@@ -71,6 +71,12 @@ const HIL_CAMERA_RADIUS = CELL * 0.12; // keeps the viewpoint in front of the ne
 const HIL_SPAWN = 10;       // spawn grids within this many cells of the camera (frontier reach / density)
 const HIL_EVICT = 40;      // drop zones beyond this — the zone-count ceiling; keep ≈ HIL_SPAWN + 2
 const POOL_MAX = 8;        // max solver workers. Fewer = smoother flight (leaves cores for render), slower solve
+// Fill-rate cap. The main scene is Canvas 2D on the main thread, so cost scales with backing-store PIXELS:
+// a DPR-3 phone fills 9× the area of DPR-1 for the same view. DPR_CAP clamps the backing store so hi-DPI
+// screens don't pay a fill-rate tax the design never asked for. 2 = no change on Retina; a CPU tier lowers it.
+const DPR_CAP = 2;
+let   renderScale = 1;     // live capped DPR — set once in resize(), reused by every setTransform so the
+                           //   backing store and the context transform can never disagree (mismatch = blur/clip)
 // Backpressure: when the solve backlog (pending+solving in-window) exceeds SOLVE_BACKLOG, the frontier reach eases
 // down toward HIL_SPAWN_MIN so we stop piling on work, and recovers when it catches up. Magnitude-agnostic — the
 // natural home for a future LOD slider (raise HIL_SPAWN / SOLVE_BACKLOG for a denser, hungrier field).
@@ -903,7 +909,7 @@ export function stopFlight() {
   leadVoice = null; stopAudio(); audibleIds = new Set(); rowActiveIds = new Set(); rowPrewarmIds = new Set();   // kill the cosmos-audio transport, mirroring the worker teardown
   if (skyDebugEl) skyDebugEl.style.display = 'none';   // dev overlay — hide, don't destroy (cheap to reuse on re-entry)
   if (audioLabEl) audioLabEl.hidden = true;
-  if (ctx && cv) { const dpr = window.devicePixelRatio || 1; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H); }
+  if (ctx && cv) { ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0); ctx.clearRect(0, 0, W, H); }
 }
 
 export function warpTo(G) {
@@ -1914,7 +1920,7 @@ function loop() {
   }
   if (swarm && swarm.agents.length) swarm.update(dt, cam.anchor);
 
-  const dpr = window.devicePixelRatio || 1; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
   ctx.clearRect(0, 0, W, H);
   const basis = camBasis();
   drawHilbertBoundaryWalls(basis);
@@ -2152,6 +2158,11 @@ function loop() {
   // stars, painter's order (far first). A blooming star dissolves into its point cloud (dot alpha ↓).
   const rowActivity = new Map(gridRowVisualState().map(activity => [activity.id, activity]));
   const order = [...proj.values()].sort((a, b) => b.s.z - a.s.z);
+  // Core-dot batching. The frontier is mostly a few FIXED colours (unlit dust, unsolvable grey, monster red);
+  // only solved stars carry the continuous starColor. Bucket each core by exact colour + a fine fog-alpha band
+  // (1/48 ≈ sub-perceptual) so ~1500 per-dot fills collapse to a few dozen. Colour is never quantised — the
+  // dust→sun gradient is untouched. Only the tiny cores defer; they flush before the blots, so z-order holds.
+  const dotBuckets = new Map();
   for (const { z, s } of order) {
     const fog = fogAt(s.z); if (fog <= 0) continue;
     // Cache projected motion even while a star is occluded so uncovering it cannot produce a stale,
@@ -2202,13 +2213,19 @@ function loop() {
       g.addColorStop(0, col); g.addColorStop(1, 'transparent');
       ctx.globalAlpha = 0.5 * fog * dim; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x, s.y, r * 2.6, 0, 7); ctx.fill();
     }
-    ctx.globalAlpha = fog * dim; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, 7); ctx.fill();
+    const dotBand = Math.round(fog * dim * 48), dotKey = col + '|' + dotBand;   // deferred: batched fill after the loop
+    let dotBucket = dotBuckets.get(dotKey);
+    if (!dotBucket) { dotBucket = { a: dotBand / 48, col, path: new Path2D() }; dotBuckets.set(dotKey, dotBucket); }
+    dotBucket.path.moveTo(s.x + r, s.y); dotBucket.path.arc(s.x, s.y, r, 0, 7);
     if (selected && selected.kind === 'star' && selected.grid === z.grid) selPos = { x: s.x, y: s.y, r };
     // topmost wins: iteration is far→near (painter's order), so a later hit is drawn OVER any earlier
     // one and should always take the pick — picking by "closest centre" instead let a farther star's
     // circle win over a nearer star actually under the cursor. No z-comparison needed; draw order IS depth order.
     if (havePtr) { const dx = s.x - mouseX, dy = s.y - mouseY, d2 = dx * dx + dy * dy, hit = r + STAR_HIT; if (d2 <= hit * hit) { pickStarD2 = d2; pickStar = { kind: 'star', grid: z.grid, z, x: s.x, y: s.y, r }; } }
   }
+  // one fill per (colour, alpha-band) instead of one per star — the steady-state main-thread win
+  for (const b of dotBuckets.values()) { ctx.globalAlpha = b.a; ctx.fillStyle = b.col; ctx.fill(b.path); }
+  ctx.globalAlpha = 1;
 
   // black-hole disks: a soft dark sphere behind each bloom (drawn over the culled background, under the
   // cloud) so the bloom reads as a focal object floating in a clearing — no background noise bleeding through.
@@ -2387,7 +2404,8 @@ function loop() {
 }
 
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+  renderScale = dpr;
   W = cv.clientWidth; H = cv.clientHeight; cv.width = W * dpr; cv.height = H * dpr;
   cx = W / 2; cy = H / 2; focal = Math.min(W, H) * 0.9;
   webRenderer?.resize(W, H, dpr);
