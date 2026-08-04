@@ -69,7 +69,12 @@ const HIL_CAMERA_RADIUS = CELL * 0.12; // keeps the viewpoint in front of the ne
 // survive, so evict ≫ spawn keeps the whole TRAIL you fly (evict 20 → ~10k+ zones → jank). Keep evict
 // ≈ spawn + 2. Zone count while flying ≈ 4.2·HIL_EVICT³·0.9: evict 8 → ~1900 · 10 → ~3800 · 12 → ~6500.
 const HIL_SPAWN = 10;       // spawn grids within this many cells of the camera (frontier reach / density)
-const HIL_EVICT = 40;      // drop zones beyond this — the zone-count ceiling; keep ≈ HIL_SPAWN + 2
+// HIL_EVICT does DOUBLE DUTY in hilbert mode (see ~L875): it is both the retention radius (→ the all-zones
+// projection loop every frame) AND FOG_FAR = HIL_EVICT·CELL (→ how deep the star-wake is drawn/processed).
+// So it is the master perf lever: it governs the two dominant per-frame costs at once. 40 gave a 13.6k-unit
+// wake that was as expensive as it was deep; 20 halves the rear wake we fly away from while HIL_SPAWN keeps
+// the forward density we fly into. Raise for a deeper field at linear-in-volume cost; lower for headroom.
+const HIL_EVICT = 20;
 const POOL_MAX = 8;        // max solver workers. Fewer = smoother flight (leaves cores for render), slower solve
 // Fill-rate cap. The main scene is Canvas 2D on the main thread, so cost scales with backing-store PIXELS:
 // a DPR-3 phone fills 9× the area of DPR-1 for the same view. DPR_CAP clamps the backing store so hi-DPI
