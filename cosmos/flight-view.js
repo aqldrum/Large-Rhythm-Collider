@@ -1508,7 +1508,7 @@ function requestRowProgram(candidate, root, policy, selectionKey, validRequestKe
     zoneIdentity._rowAudio.requestKey = '';
     zoneIdentity._rowAudio.state = 'program-ready';
     zoneIdentity._rowAudio.compileMs = reply.compileMs;
-    markFieldDirty();   // a prewarm star just became able to sound — membership has to re-select
+    markLandingDirty();   // a prewarm star just became able to sound — re-select, but coalesced (old program holds)
   }).catch(error => {
     // TEMP DEBUG (2.4 worker-err flood) — surface the REAL compileGridAudioProgram throw, deduped so a
     // flood collapses to one line per distinct message, with the owner/state context to test the
@@ -1539,10 +1539,17 @@ function requestRowProgram(candidate, root, policy, selectionKey, validRequestKe
 //                star became eligible to sound). Marked by markFieldDirty() from each of those sites.
 // A safety re-run bounds staleness regardless, so an un-enumerated cause can only ever delay the field by
 // one interval rather than strand it — at 250ms that is 4 passes/sec while turning instead of 60+.
-let fieldMembershipDirty = true, fieldMembershipAt = -Infinity;
+let fieldMembershipDirty = true, fieldLandingDirty = false, fieldMembershipAt = -Infinity;
 const FIELD_MEMBERSHIP_MAX_INTERVAL_MS = 250;
+// Landing coalescing. A compile completing (a prewarm star becoming able to sound) is a SOFT trigger: the
+// fresh program can wait a few frames to swap in — its old-chord program keeps sounding meanwhile, so there
+// is no hole. Without this, ~20 audible zones recompiling on a single chord change forced ~20 back-to-back
+// full-field rebuilds (the main-thread "always busy" behind the chord-change freeze). Coalesce soft triggers
+// to at most one pass per MIN interval; hard triggers (chord/translate/spawn/root) still pass the next frame.
+const FIELD_MEMBERSHIP_MIN_INTERVAL_MS = 60;
 
 function markFieldDirty() { fieldMembershipDirty = true; }
+function markLandingDirty() { fieldLandingDirty = true; }   // a compile landed — coalesced, not immediate
 
 function updateGridRowField(placed, basis, translated, nowMs) {
   const root = currentSkyRoot(), policy = currentHarmonyPolicy();
@@ -1556,7 +1563,11 @@ function updateGridRowField(placed, basis, translated, nowMs) {
   if (translated) markFieldDirty();   // distance drives selection; rotation does not
   // POSE-ONLY frame: re-aim the stars already in the field and return. rowActiveIds is the membership the
   // last full pass installed, so this stays exactly in step with what the player actually holds.
-  if (!fieldMembershipDirty && nowMs - fieldMembershipAt < FIELD_MEMBERSHIP_MAX_INTERVAL_MS) {
+  const sinceMembership = nowMs - fieldMembershipAt;
+  const runMembership = fieldMembershipDirty                                       // hard: chord/translate/spawn/root — next frame
+    || (fieldLandingDirty && sinceMembership >= FIELD_MEMBERSHIP_MIN_INTERVAL_MS)  // soft: landings, coalesced to the MIN interval
+    || sinceMembership >= FIELD_MEMBERSHIP_MAX_INTERVAL_MS;                        // safety net — bounds staleness regardless
+  if (!runMembership) {
     const pose = [];
     for (const id of rowActiveIds) {
       const position = placed.get(id);
@@ -1569,6 +1580,7 @@ function updateGridRowField(placed, basis, translated, nowMs) {
     return;
   }
   fieldMembershipDirty = false;
+  fieldLandingDirty = false;
   fieldMembershipAt = nowMs;
   const candidates = [];
   for (const [grid, position] of placed) {
