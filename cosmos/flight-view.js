@@ -16,7 +16,7 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, gridRowDetuneCents, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
 // The RAIL owns the engine's user-facing state (rail-view.js mounts it; flight-boot restores it on entry).
 // Every parameter BOTH surfaces express — mute, mix, modulation, MIDI out — is written through railParams so
 // there is exactly one owner and the two surfaces cannot disagree. See the audio-lab section below.
@@ -2162,6 +2162,7 @@ function loop() {
 
   // stars, painter's order (far first). A blooming star dissolves into its point cloud (dot alpha ↓).
   const rowActivity = new Map(gridRowVisualState().map(activity => [activity.id, activity]));
+  const auraDetuneCents = gridRowDetuneCents();   // one global read/frame: shifts every orb's hue together on a modulation
   const order = [...proj.values()].sort((a, b) => b.s.z - a.s.z);
   // Core-dot batching. The frontier is mostly a few FIXED colours (unlit dust, unsolvable grey, monster red);
   // only solved stars carry the continuous starColor. Bucket each core by exact colour + a fine fog-alpha band
@@ -2206,7 +2207,7 @@ function loop() {
       }
     }
     const activity = rowActivity.get(z.grid);
-    if (activity && !bloomed.has(z.grid)) drawGridRowAura(ctx, s, r, fog, activity);
+    if (activity && !bloomed.has(z.grid)) drawGridRowAura(ctx, s, r, fog, activity, auraDetuneCents);
     if (travelGlow > 0.01 && travelStarColor) {                // route-energy halo around unfinished stars
       const haloR = r * (2.4 + travelGlow * 2.2);
       const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, haloR);
@@ -2342,7 +2343,7 @@ function loop() {
 
     // Rhythm nodes remain above the Web detail so every connected rhythm stays legible and clickable.
     for (const { p, pi, sp, fog, a0, r } of renderedNodes) {
-      if (nodeSources) { const src = nodeSources.get(p.key); if (src) drawGridRowAura(ctx, sp, r, fog, src); }
+      if (nodeSources) { const src = nodeSources.get(p.key); if (src) drawGridRowAura(ctx, sp, r, fog, src, auraDetuneCents); }
       ctx.globalAlpha = a0; ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, 7); ctx.fill();
       if (p.dense) { ctx.globalAlpha = a0 * 0.5; ctx.strokeStyle = p.col; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sp.x, sp.y, r + 1.6, 0, 7); ctx.stroke(); }
       const nid = g + ':' + pi;

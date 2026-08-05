@@ -727,6 +727,13 @@ export function gridRowVisualState() {
   return gridRowPlayer?.visualState() || [];
 }
 
+// Live summed detune-bus value in cents: FUNDAMENTAL transpose + the root-modulation glide, read at its
+// current (mid-ramp) value. Read-only. Flight visuals fold this into orb pitch-colour so a note's hue
+// tracks its SOUNDING pitch, not its birth frequency — the whole sky's hue then drifts with a modulation.
+export function gridRowDetuneCents() {
+  return (fundamentalOffset?.offset.value || 0) + (modulationOffset?.offset.value || 0);
+}
+
 // Row-player counters for the telemetry panel (installs / star entries / exits / voice-budget misses).
 // Monotonic within a session; the meter folds them in as deltas. Null before initAudio.
 export function rowPlayerStats() { return gridRowPlayer?.stats || null; }

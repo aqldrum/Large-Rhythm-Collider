@@ -595,9 +595,11 @@ export class SpatialGridRowPlayer {
       // ownerKey tags the life/attack with the rhythm that sourced it, so a bloomed grid can light the
       // matching bloom node instead of a single grid-centre orb.
       const ownerKey = deck.ownerKeyByFraction?.get(action.fraction) ?? null;
-      voice.visualLife = { startTime: when, endTime: endAt, ownerKey };
+      // frequencyHz is the BIRTH pitch (pre-detune). The global cents glide is applied at draw time so the
+      // orb's hue tracks the sounding pitch; storing it here would freeze the colour against a live modulation.
+      voice.visualLife = { startTime: when, endTime: endAt, ownerKey, frequencyHz };
       star.visualLives.push(voice.visualLife);
-      star.visualAttacks.push({ when, strength: 1, ownerKey });
+      star.visualAttacks.push({ when, strength: 1, ownerKey, frequencyHz });
     }
     this.midiBridge?.note(frequencyHz, when, endAt - when, this.stars.get(deck.program.grid)?.gain.gain.value ?? 1);
     const soundedCents = deck.centsByFraction?.get(action.fraction);
@@ -735,18 +737,25 @@ export class SpatialGridRowPlayer {
       star.visualLives = star.visualLives.filter(life => life.endTime > now);
       const voices = star.visualLives.reduce((count, life) => count + (life.startTime <= now ? 1 : 0), 0);
       if (!voices) continue;
-      let pulse = 0;
-      for (const attack of star.visualAttacks) pulse = Math.max(pulse, attackPulse(attack));
+      // hz carries the star's colour: the pitch of its FRESHEST attack (the note just heard). A sustained
+      // voice with no recent attack still needs a colour, so fall back below to a live voice's pitch.
+      let pulse = 0, hz = 0;
+      for (const attack of star.visualAttacks) {
+        const p = attackPulse(attack);
+        if (p > pulse) { pulse = p; hz = attack.frequencyHz || hz; }
+      }
+      if (!hz) for (const life of star.visualLives) if (life.startTime <= now && life.frequencyHz) { hz = life.frequencyHz; break; }
       // Per-source breakdown keyed by owning rhythm — a bloomed grid lights each node whose rhythm has a
       // live voice or a recent attack (attacks linger past the short note, so a node pulses then fades).
+      // Each source carries its own hz the same way: freshest attack wins, else its live voice's pitch.
       const sources = new Map();
-      const bump = key => { let s = sources.get(key); if (!s) sources.set(key, s = { key, voices: 0, pulse: 0 }); return s; };
-      for (const life of star.visualLives) if (life.startTime <= now && life.ownerKey != null) bump(life.ownerKey).voices++;
+      const bump = key => { let s = sources.get(key); if (!s) sources.set(key, s = { key, voices: 0, pulse: 0, hz: 0 }); return s; };
+      for (const life of star.visualLives) if (life.startTime <= now && life.ownerKey != null) { const s = bump(life.ownerKey); s.voices++; if (!s.hz) s.hz = life.frequencyHz || 0; }
       for (const attack of star.visualAttacks) {
         const p = attackPulse(attack);   // 0 for a not-yet-reached lookahead attack — don't light its node early
-        if (p > 0 && attack.ownerKey != null) { const s = bump(attack.ownerKey); s.pulse = Math.max(s.pulse, p); }
+        if (p > 0 && attack.ownerKey != null) { const s = bump(attack.ownerKey); if (p > s.pulse) { s.pulse = p; s.hz = attack.frequencyHz || s.hz; } }
       }
-      out.push({ id: star.id, voices, pulse, sources: [...sources.values()] });
+      out.push({ id: star.id, voices, pulse, hz, sources: [...sources.values()] });
     }
     return out;
   }
