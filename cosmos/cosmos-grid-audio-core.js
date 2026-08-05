@@ -91,21 +91,32 @@ export function chooseSpatialRows(candidates, previousActiveIds = new Set(), {
   return { prewarm, active: [...kept, ...fresh].slice(0, activeLimit) };
 }
 
-function compactAction(action) {
-  return {
-    layer: action.layer,
-    action: action.action,
-    rawRatio: action.rawRatio,
-    rawFraction: action.rawFraction,
-    foldedRatio: action.foldedRatio,
-    fraction: action.fraction,
-    gap: action.gap,
+// Playback reads only { layer, rawFraction, fraction, rawRatio } from an action (foldedRatio kept for parity;
+// `gap` is DROPPED — it is per-occurrence and never read on the main thread, and keeping it would defeat the
+// interning below). INTERNING: an action is fully determined by (layer, tone), but a program repeats each one
+// across thousands of onsets. Emitting ONE shared object per distinct action lets structured clone (postMessage)
+// preserve the shared reference — so ~80k action clones and their ~240k string copies collapse to a few dozen
+// objects cloned once. This is what lets a dense/monster-grid program cross the worker boundary without a
+// multi-tens-of-ms main-thread deserialization freeze on every chord change. Verified: structuredClone dedups
+// shared refs. The player treats actions as read-only, so sharing is safe.
+function makeActionInterner() {
+  const pool = new Map();
+  return action => {
+    const key = `${action.layer}|${action.rawFraction}|${action.fraction}|${action.rawRatio}|${action.foldedRatio}|${action.action}`;
+    let shared = pool.get(key);
+    if (!shared) {
+      shared = { layer: action.layer, action: action.action, rawRatio: action.rawRatio,
+        rawFraction: action.rawFraction, foldedRatio: action.foldedRatio, fraction: action.fraction };
+      pool.set(key, shared);
+    }
+    return shared;
   };
 }
 
 // The lab readout intentionally retains rich diagnostics. The flight path must not structured-clone
 // that ~MB-scale object per star, so this is the immutable playback projection crossing the worker.
 export function compactGridAudioProgram(readout, metadata = {}) {
+  const internAction = makeActionInterner();   // shared action objects → structured clone dedups them across onsets
   return {
     mode: AUDIO_MODES.CULLED_GRID_ROWS,
     grid: readout.grid,
@@ -123,7 +134,7 @@ export function compactGridAudioProgram(readout, metadata = {}) {
     })),
     events: readout.events.map(event => ({
       tick: event.tick,
-      layerActions: event.layerActions.map(compactAction),
+      layerActions: event.layerActions.map(internAction),
     })),
     summary: {
       representativeRhythms: readout.summary.representativeRhythms,
