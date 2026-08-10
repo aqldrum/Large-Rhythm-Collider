@@ -1625,6 +1625,44 @@ function resyncSchedulePointer() {
 
 let lastSchedulerTickAt = null;   // wall clock of the previous tick — its GAP is main-thread starvation
 
+// Per-phase resilience + live diagnostics for the transport heartbeat. schedulerTick runs sky-walk, bed,
+// reattacks, ROW-PLAYER (the ONLY place stars/decks/programs are destroyed), and lead scheduling in sequence.
+// It used to be unguarded: a single deterministic throw in an early phase stranded gridRowPlayer.tick() on
+// EVERY tick until a page refresh → stars/programs leaked without bound AND audio went dead. Now each phase is
+// isolated, so a bad tick is one logged, dropped phase — never a permanent strand — and the throw is captured
+// here as the diagnostic. Read window.__cosmosHealth() live in DevTools during a session: throws/byPhase name
+// any real strand; activeStars is the #1 leak tell (should hover near active+prewarm and never climb).
+const tickHealth = { throws: 0, byPhase: Object.create(null), lastError: null, _seen: new Set() };
+function guardPhase(phase, fn) {
+  try { fn(); }
+  catch (err) {
+    tickHealth.throws++;
+    tickHealth.byPhase[phase] = (tickHealth.byPhase[phase] || 0) + 1;
+    const msg = err && err.message ? err.message : String(err);
+    tickHealth.lastError = { phase, msg };
+    const key = phase + '|' + msg;
+    if (!tickHealth._seen.has(key)) {   // dedup the console flood — one line per distinct phase:message
+      tickHealth._seen.add(key);
+      console.error(`[schedulerTick] "${phase}" threw — phase dropped, other phases protected:`, err);
+    }
+  }
+}
+if (typeof window !== 'undefined') {
+  window.__cosmosHealth = () => {
+    let retiringDecks = 0;
+    if (gridRowPlayer && gridRowPlayer.stars) for (const s of gridRowPlayer.stars.values()) retiringDecks += (s.retiringDecks ? s.retiringDecks.length : 0);
+    return {
+      throws: tickHealth.throws,
+      byPhase: { ...tickHealth.byPhase },
+      lastError: tickHealth.lastError,
+      activeStars: gridRowPlayer && gridRowPlayer.stars ? gridRowPlayer.stars.size : null,   // #1 leak tell
+      retiringDecks,
+      bedOsc: bedOscCount,
+      bedLiveOsc: bedLiveOscCount,
+    };
+  };
+}
+
 function schedulerTick() {
   if (!audioCtx) return;
   // The gap between ticks is the first link in the flam mechanism: this is a main-thread setInterval, so a
@@ -1634,27 +1672,29 @@ function schedulerTick() {
   if (lastSchedulerTickAt !== null) audioTelemetry.tick(wall - lastSchedulerTickAt);
   lastSchedulerTickAt = wall;
   const now = audioCtx.currentTime;
-  stepSkyWalk(skySeconds(now));   // the sky's own chord clock — independent of any lead (no click gating)
-  // Voice the bed against the CURRENT chord on the AUDIO clock, not the render frame. Membership moved
-  // behind a change-gate (setField), so if this still rode the frame a chord change or root swap would wait
-  // on the next membership pass to be heard. Cheap and idempotent: with a stable field and chord it compares
-  // ≤10 stars × ≤3 degrees and does nothing.
-  syncBedDegrees(now);
-  pumpReattacks(now, skySeconds(now));   // bed breathes at every mix position (gain gates audibility)
-  gridRowPlayer?.tick(now, now + SCHEDULE_AHEAD, transportStart, ticksPerSec);
-  ensureLeadMask(false);       // cheap cache-check; recomputes only right after stepSkyWalk changed the chord
-  if (!lead || !lead.notes.length) return;
-  const horizon = audioCtx.currentTime + SCHEDULE_AHEAD;
-  while (true) {
-    const note = lead.notes[schedIdx];
-    const cycleTicks = lead.notes.length;
-    const noteTicks = schedCycle * cycleTicks + note.t * cycleTicks;
-    const time = transportStart + noteTicks / ticksPerSec;
-    if (time > horizon) break;
-    scheduleNote(note, time, schedIdx);
-    schedIdx++;
-    if (schedIdx >= lead.notes.length) { schedIdx = 0; schedCycle++; }
-  }
+  guardPhase('skyWalk', () => stepSkyWalk(skySeconds(now)));   // the sky's own chord clock (no click gating)
+  // Voice the bed against the CURRENT chord on the AUDIO clock, not the render frame. Membership moved behind a
+  // change-gate (setField); cheap and idempotent (≤10 stars × ≤3 degrees) when field and chord are stable.
+  guardPhase('bed', () => syncBedDegrees(now));
+  guardPhase('reattacks', () => pumpReattacks(now, skySeconds(now)));   // bed breathes at every mix position
+  // ROW PLAYER — the ONLY place stars/decks/programs are destroyed. Guarded on its own so a throw in ANY earlier
+  // phase can never strand it; that strand was the leak-and-die failure mode this whole guard exists to prevent.
+  guardPhase('rowPlayer', () => gridRowPlayer?.tick(now, now + SCHEDULE_AHEAD, transportStart, ticksPerSec));
+  guardPhase('lead', () => {
+    ensureLeadMask(false);       // cheap cache-check; recomputes only right after stepSkyWalk changed the chord
+    if (!lead || !lead.notes.length) return;
+    const horizon = audioCtx.currentTime + SCHEDULE_AHEAD;
+    while (true) {
+      const note = lead.notes[schedIdx];
+      const cycleTicks = lead.notes.length;
+      const noteTicks = schedCycle * cycleTicks + note.t * cycleTicks;
+      const time = transportStart + noteTicks / ticksPerSec;
+      if (time > horizon) break;
+      scheduleNote(note, time, schedIdx);
+      schedIdx++;
+      if (schedIdx >= lead.notes.length) { schedIdx = 0; schedCycle++; }
+    }
+  });
 }
 
 function scheduleNote(note, time, noteIdx) {
