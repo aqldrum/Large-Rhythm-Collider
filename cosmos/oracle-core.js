@@ -37,20 +37,30 @@ export function decimalToFraction(decimal) {
 
 export function ratioToCents(ratio) { return 1200 * Math.log2(ratio); }
 
-// Derive the scale exactly as the LRC site core (LRCModule.generateCompositeRhythm →
-// generateSpacesPlot → generateRatiosWithFrequency, then delete "2/1"). Any cardinality.
-export function deriveScale(rawLayers) {
+// One composite derivation shared by the scale-only solver path and the richer selected-rhythm UI/audio
+// path. `withNodes` stays opt-in: deriveScale is called across enormous solve corpora and must retain its
+// lean Set-based path, while a selected rhythm needs attack ownership plus raw/folded ratio identity.
+function deriveRhythm(rawLayers, withNodes = false) {
   const layers = normalizeLayers(rawLayers);
   const grid = lcmAll(layers);
   const fundamental = grid / layers[0]; // grid / fastest layer (matches codex `fundamental`)
 
   // composite attack points: i*groupingSize for i in [0, L) — endpoint is the wraparound
-  const positions = new Set();
-  for (const L of layers) {
+  const positions = withNodes ? new Map() : new Set();
+  for (let layerIndex = 0; layerIndex < layers.length; layerIndex++) {
+    const L = layers[layerIndex];
     const gs = grid / L;
-    for (let i = 0; i < L; i++) positions.add(i * gs);
+    for (let i = 0; i < L; i++) {
+      const tick = i * gs;
+      if (!withNodes) positions.add(tick);
+      else {
+        let owners = positions.get(tick);
+        if (!owners) positions.set(tick, owners = []);
+        owners.push(layerIndex);
+      }
+    }
   }
-  const comp = Array.from(positions).sort((a, b) => a - b);
+  const comp = Array.from(withNodes ? positions.keys() : positions).sort((a, b) => a - b);
   const spaces = [];
   for (let i = 0; i < comp.length - 1; i++) spaces.push(comp[i + 1] - comp[i]);
   spaces.push(grid - comp[comp.length - 1] + comp[0]); // wraparound space
@@ -58,25 +68,46 @@ export function deriveScale(rawLayers) {
   let spaceFund = 0; for (const s of spaces) if (s > spaceFund) spaceFund = s; // largest space (loop, not
   // spread: at huge grids `spaces` has millions of entries and Math.max(...spaces) overflows the call stack)
   const ratioMap = new Map();
-  for (const s of spaces) {
+  const fractionCache = withNodes ? new Map([[1, '1/1']]) : null;
+  const fractionFor = value => {
+    if (!fractionCache) return decimalToFraction(value);
+    let fraction = fractionCache.get(value);
+    if (!fraction) { fraction = decimalToFraction(value); fractionCache.set(value, fraction); }
+    return fraction;
+  };
+  const nodes = withNodes ? [] : null;
+  for (let i = 0; i < spaces.length; i++) {
+    const s = spaces[i];
     if (s > 0) {
       const rawRatio = spaceFund / s;
-      const rawFraction = decimalToFraction(rawRatio);
+      const rawFraction = fractionFor(rawRatio);
       let ratio = rawRatio;
       while (ratio >= 2) ratio /= 2;
       while (ratio < 1) ratio *= 2;
-      const fraction = decimalToFraction(ratio);
+      const fraction = fractionFor(ratio);
       const existing = ratioMap.get(fraction);
       if (existing) {
         if (!existing.sourceFractions.includes(rawFraction)) existing.sourceFractions.push(rawFraction);
       } else {
         ratioMap.set(fraction, { fraction, ratio, cents: ratioToCents(ratio), sourceFractions: [rawFraction] });
       }
+      if (nodes) nodes.push({
+        tick: comp[i],
+        phase: comp[i] / grid,
+        gap: s,
+        ownerIndexes: [...positions.get(comp[i])],
+        rawRatio,
+        rawFraction,
+        foldedRatio: ratio,
+        fraction,
+        // Compatibility alias for the existing plot/scale-highlight consumers.
+        ratioFraction: fraction,
+      });
     }
   }
   ratioMap.delete('2/1'); // the octave is not a scale tone — presence of 2/1 never distinguishes a tuning system
   const ratios = Array.from(ratioMap.values()).sort((a, b) => a.ratio - b.ratio);
-  return {
+  const model = {
     inputLayers: rawLayers.slice(),
     layers,                    // normalized
     key: layers.join('.'),
@@ -87,6 +118,20 @@ export function deriveScale(rawLayers) {
     ratios,
     ratioSet: ratios.map(r => r.fraction).join(' '),
   };
+  if (nodes) { model.nodes = nodes; model.maxGap = spaceFund; }
+  return model;
+}
+
+// Derive the scale exactly as the LRC site core (LRCModule.generateCompositeRhythm →
+// generateSpacesPlot → generateRatiosWithFrequency, then delete "2/1"). Any cardinality.
+export function deriveScale(rawLayers) {
+  return deriveRhythm(rawLayers, false);
+}
+
+// Selected-rhythm canonical model: the same scale derivation plus ordered attacks and enough identity to
+// distinguish literal 1/1 from octave-folded 2/1, 4/1, …. Build once, then share between card and audition.
+export function deriveSelectedRhythmModel(rawLayers) {
+  return deriveRhythm(rawLayers, true);
 }
 
 // Consult the codex. `index` is the loaded oracle-index.json (sorted keys[] + parallel arrays).

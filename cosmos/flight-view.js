@@ -16,7 +16,7 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, gridRowDetuneCents, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, classifyLeadHarmony, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, gridRowDetuneCents, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
 // The RAIL owns the engine's user-facing state (rail-view.js mounts it; flight-boot restores it on entry).
 // Every parameter BOTH surfaces express — mute, mix, modulation, MIDI out — is written through railParams so
 // there is exactly one owner and the two surfaces cannot disagree. See the audio-lab section below.
@@ -32,6 +32,7 @@ import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
 import { drawGridRowAura } from './grid-row-aura.js';
 import { buildRhythmInspectorModel } from './rhythm-inspector-model.js';
+import { shouldScheduleRowAction } from './spatial-grid-row-player.js';
 import { SolverWorkerPool } from './cosmos/solver-worker-pool.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
@@ -605,6 +606,20 @@ let cockpitLayerColors = { A: '#ff6b6b', B: '#4ecdc4', C: '#00a638ff', D: '#f9ca
 let cockpitScaleHighlightsEnabled = true, cockpitScaleLastNodeIndex = -1;
 const cockpitScaleRows = new Map(), cockpitScaleHighlightTimestamps = new Map();
 const COCKPIT_SCALE_HIGHLIGHT_MS = 300;
+// One selected-rhythm derivation shared by the card, plot, scale table and audition. Pick objects are rebuilt
+// by the draw loop, so cache by canonical layer identity rather than object identity.
+let selectedRhythmModelKey = '', selectedRhythmModelCache = null;
+let cockpitPlotBaseCanvas = null, cockpitPlotBaseCtx = null, cockpitPlotBaseKey = '';
+let cockpitPlotEligibleNodes = new Set(), cockpitPlotLastNodeIndex = -1, cockpitPlotPulseAt = -Infinity;
+function modelForRhythmNode(node) {
+  if (!node?.layers) return null;
+  const key = node.layers.join('.');
+  if (key !== selectedRhythmModelKey || !selectedRhythmModelCache) {
+    selectedRhythmModelKey = key;
+    selectedRhythmModelCache = buildRhythmInspectorModel(node.layers);
+  }
+  return selectedRhythmModelCache;
+}
 let audioLabEl = null, audioLabOn = false;
 let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, chordReadoutEl = null, audioModeEl = null;
 let tuningSliderEl = null, tuningReadoutEl = null;
@@ -1328,7 +1343,8 @@ function updateRhythmActionState() {
 function setRhythmAudition(node) {
   if (!node?.layers) return;
   resetCockpitScaleHighlights();
-  leadVoice = { ...deriveVoice(node.layers), node };
+  const model = modelForRhythmNode(node);
+  leadVoice = { ...deriveVoice(model), node };
   setLead(leadVoice);
   updateRhythmActionState();
 }
@@ -1342,6 +1358,8 @@ function toggleRhythmAudition() {
 
 function resetCockpitScaleHighlights() {
   cockpitScaleLastNodeIndex = -1;
+  cockpitPlotLastNodeIndex = -1;
+  cockpitPlotPulseAt = -Infinity;
   cockpitScaleHighlightTimestamps.clear();
   for (const row of cockpitScaleRows.values()) {
     row.classList.remove('pitch-playback-highlight');
@@ -1361,21 +1379,28 @@ function renderCockpitScaleTable() {
   const scroller = scaleTableBodyEl.closest('.lrc-scale-table-container'); if (scroller) scroller.scrollTop = 0;
 }
 
-function updateCockpitScaleHighlights(now) {
+function cockpitNodeIndexAtPhase(nodes, phase) {
+  let lo = 0, hi = nodes.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (nodes[mid].phase <= phase) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo > 0 ? lo - 1 : nodes.length - 1;
+}
+
+function updateCockpitScaleHighlights(now, nodeIndex = null) {
   const listening = leadVoice?.node?.id === inspectedNode?.id;
   if (!listening || !rhythmInspectorModel?.nodes.length || !cockpitScaleHighlightsEnabled) {
     if (!listening && (cockpitScaleLastNodeIndex !== -1 || cockpitScaleHighlightTimestamps.size)) resetCockpitScaleHighlights();
     return;
   }
-  const phase = transportPhase();
-  let nodeIndex = rhythmInspectorModel.nodes.length - 1;
-  for (let i = 0; i < rhythmInspectorModel.nodes.length; i++) {
-    if (rhythmInspectorModel.nodes[i].phase > phase) break;
-    nodeIndex = i;
-  }
+  if (nodeIndex == null) nodeIndex = cockpitNodeIndexAtPhase(rhythmInspectorModel.nodes, transportPhase());
   if (nodeIndex !== cockpitScaleLastNodeIndex) {
     cockpitScaleLastNodeIndex = nodeIndex;
-    cockpitScaleHighlightTimestamps.set(rhythmInspectorModel.nodes[nodeIndex].ratioFraction, now);
+    if (cockpitPlotEligibleNodes.has(nodeIndex)) {
+      cockpitScaleHighlightTimestamps.set(rhythmInspectorModel.nodes[nodeIndex].ratioFraction, now);
+    }
   }
   for (const [fraction, timestamp] of cockpitScaleHighlightTimestamps) {
     const row = cockpitScaleRows.get(fraction), age = now - timestamp;
@@ -1429,7 +1454,7 @@ function renderRhythmConnections() {
 function renderRhythmInspector(node) {
   if (!node?.layers) return;
   inspectedNode = node;
-  rhythmInspectorModel = buildRhythmInspectorModel(node.layers);
+  rhythmInspectorModel = modelForRhythmNode(node);
   if (lrcEmptyEl) lrcEmptyEl.hidden = true;
   if (rhythmInspectorEl) rhythmInspectorEl.hidden = false;
   if (rhythmTitleEl) rhythmTitleEl.textContent = rhythmInspectorModel.identity;
@@ -1623,34 +1648,84 @@ function toggleHarmonyHold() {
 }
 
 // Selected rhythm's real spaces plot: horizontal position is the attack's true transport phase and
-// vertical position is the following gap. Layer ownership supplies the shared main-page colors;
-// coincident attacks go white. The plot deliberately has no connectors.
+// vertical position is the following gap. The full node field is cached into a static backing canvas and
+// rebuilt only when layout, layer visibility or harmony changes. The flight frame draws that bitmap plus a
+// tiny dynamic overlay (playhead + the one live onset), instead of walking thousands of nodes every rAF.
 function drawCockpitPlot() {
   if (!cockpitPlotCtx || !rhythmInspectorModel || !lrcDivEl?.classList.contains('open')) return;
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
   const w = Math.max(1, cockpitPlotEl.clientWidth || 576), h = Math.max(1, cockpitPlotEl.clientHeight || 192);
   const pixelW = Math.round(w * dpr), pixelH = Math.round(h * dpr);
   if (cockpitPlotEl.width !== pixelW || cockpitPlotEl.height !== pixelH) { cockpitPlotEl.width = pixelW; cockpitPlotEl.height = pixelH; }
-  const g = cockpitPlotCtx; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  if (!cockpitPlotBaseCanvas) {
+    cockpitPlotBaseCanvas = document.createElement('canvas');
+    cockpitPlotBaseCtx = cockpitPlotBaseCanvas.getContext('2d');
+  }
   const top = 8, bottom = h - 9, height = bottom - top, maxGap = Math.max(1, rhythmInspectorModel.maxGap);
   const xFor = node => 1 + node.phase * (w - 2);
   const yFor = node => bottom - node.gap / maxGap * height;
 
-  for (const node of rhythmInspectorModel.nodes) {
-    const visibleOwners = node.owners.filter(owner => cockpitVisibleLayers.has(owner));
-    if (!visibleOwners.length) continue;
-    const x = xFor(node), y = yFor(node), coincident = visibleOwners.length > 1;
-    g.fillStyle = coincident ? '#f4f7fb' : (cockpitLayerColors[visibleOwners[0]] || '#aab2bd');
-    g.beginPath(); g.arc(x, y, coincident ? 2.3 : 1.65, 0, Math.PI * 2); g.fill();
-    if (coincident) { g.strokeStyle = 'rgba(255,255,255,.28)'; g.beginPath(); g.arc(x, y, 4, 0, Math.PI * 2); g.stroke(); }
+  const root = currentSkyRoot(), policy = currentHarmonyPolicy();
+  const rowFundamental = railParams.get('rowFundamental');
+  const harmonyKey = harmonicSelectionKey(root, policy);
+  const visibleKey = [...cockpitVisibleLayers].sort().join('');
+  const baseKey = `${rhythmInspectorModel.key}|${pixelW}x${pixelH}|${visibleKey}|${harmonyKey}|1/1:${rowFundamental ? 1 : 0}`;
+  if (baseKey !== cockpitPlotBaseKey) {
+    cockpitPlotBaseKey = baseKey;
+    cockpitPlotBaseCanvas.width = pixelW; cockpitPlotBaseCanvas.height = pixelH;
+    const bg = cockpitPlotBaseCtx;
+    bg.setTransform(dpr, 0, 0, dpr, 0, 0); bg.clearRect(0, 0, w, h);
+    // Harmony is evaluated once per distinct folded tone. The resulting tiny Map is then projected across
+    // the onset tape while building this cached bitmap; repeated 1/1 nodes never repeat harmonic math.
+    const selectedByTone = classifyLeadHarmony(rhythmInspectorModel.ratios, root.cents, policy).selectedByTone;
+    cockpitPlotEligibleNodes = new Set();
+    for (let i = 0; i < rhythmInspectorModel.nodes.length; i++) {
+      const node = rhythmInspectorModel.nodes[i];
+      const visibleOwners = node.owners.filter(owner => cockpitVisibleLayers.has(owner));
+      if (!visibleOwners.length) continue;
+      const x = xFor(node), y = yFor(node);
+      const eligible = selectedByTone.get(node.fraction) === true && shouldScheduleRowAction(node, rowFundamental);
+      if (eligible) cockpitPlotEligibleNodes.add(i);
+      // Coincidence has no separate visual identity. Chord-live tones use a soft halo in their owning layer's
+      // colour; avoiding white strokes makes the old nested-ratio marker impossible to misread here.
+      const color = cockpitLayerColors[visibleOwners[0]] || '#aab2bd';
+      if (eligible) {
+        bg.globalAlpha = 0.18; bg.fillStyle = color;
+        bg.beginPath(); bg.arc(x, y, 4.2, 0, Math.PI * 2); bg.fill();
+      }
+      bg.globalAlpha = eligible ? 0.98 : 0.32; bg.fillStyle = color;
+      bg.beginPath(); bg.arc(x, y, eligible ? 2.05 : 1.45, 0, Math.PI * 2); bg.fill();
+    }
+    bg.globalAlpha = 1;
   }
 
-  if (leadVoice?.node?.id === inspectedNode?.id) {
-    const x = 1 + transportPhase() * (w - 2);
+  const g = cockpitPlotCtx;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  g.drawImage(cockpitPlotBaseCanvas, 0, 0, pixelW, pixelH, 0, 0, w, h);
+
+  const listening = leadVoice?.node?.id === inspectedNode?.id;
+  const now = performance.now();
+  let nodeIndex = null;
+  if (listening) {
+    const phase = transportPhase();
+    nodeIndex = cockpitNodeIndexAtPhase(rhythmInspectorModel.nodes, phase);
+    if (nodeIndex !== cockpitPlotLastNodeIndex) {
+      cockpitPlotLastNodeIndex = nodeIndex;
+      if (cockpitPlotEligibleNodes.has(nodeIndex)) cockpitPlotPulseAt = now;
+    }
+    const pulseAge = now - cockpitPlotPulseAt;
+    if (cockpitPlotEligibleNodes.has(nodeIndex) && pulseAge >= 0 && pulseAge <= COCKPIT_SCALE_HIGHLIGHT_MS) {
+      const node = rhythmInspectorModel.nodes[nodeIndex], alpha = 1 - pulseAge / COCKPIT_SCALE_HIGHLIGHT_MS;
+      const visibleOwner = node.owners.find(owner => cockpitVisibleLayers.has(owner));
+      g.globalAlpha = alpha * 0.55; g.fillStyle = cockpitLayerColors[visibleOwner] || '#aab2bd';
+      g.beginPath(); g.arc(xFor(node), yFor(node), 4.5 + (1 - alpha) * 4, 0, Math.PI * 2); g.fill();
+      g.globalAlpha = 1;
+    }
+    const x = 1 + phase * (w - 2);
     g.strokeStyle = 'rgba(255,255,255,.72)'; g.lineWidth = 1;
     g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
   }
-  updateCockpitScaleHighlights(performance.now());
+  updateCockpitScaleHighlights(now, nodeIndex);
 }
 
 // Full Sky readout (M4): the GLOBAL walk's current chord — one sky-wide progression, not a per-star

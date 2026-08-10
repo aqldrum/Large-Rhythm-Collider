@@ -171,3 +171,36 @@ Untouched, still open:
 - Action interning: `cosmos-grid-audio-core.js` `makeActionInterner` / `compactGridAudioProgram` (~`:94`).
 - Scheduler guard + diagnostic: `cosmos-audio.js` `schedulerTick` / `guardPhase` / `window.__cosmosHealth` (~`:1626`).
 - Destruction path (create-vs-destroy asymmetry): `spatial-grid-row-player.js` `_destroyDeck`/`_destroyStar` (~`:641`), reachable only from `tick()`.
+
+---
+
+## 9. Selected-rhythm checkpoint — canonical model + live-harmony plot
+
+The rhythm card, tone table/plot, and selected-rhythm audition now share one canonical derivation keyed by
+normalized layers. The model retains both identities needed downstream: the raw source ratio/fraction and its
+octave-folded tone. This removes the duplicate card + audition solve and lets the rail's **ROW 1/1** policy
+exclude only literal `1/1`; octave sources such as `2/1` that fold onto the same pitch remain eligible.
+
+Plot semantics and frame cost changed together:
+
+- Coincident/nested attacks no longer become special white nodes. Layer colour remains the static identity.
+- A soft halo in the owning layer's colour means **harmonically live under the current root/chord policy**.
+  It follows chord/root changes and also obeys ROW 1/1; white coincidence rings are gone entirely.
+- The full plot is rasterized into a backing canvas only when its actual inputs change (selected rhythm,
+  dimensions/DPR, visible layers, harmony selection, or ROW 1/1). Normal animation frames copy that bitmap,
+  binary-search the current onset, and draw only the playhead/live pulse. The old per-rAF full node walk is gone.
+- Harmony is evaluated once per distinct folded tone, then projected over repeated onsets. Representative
+  high-range case `[4096,11,3]`: **4,108 onsets, 7 tones**; focused classification benchmark was **6.4× faster**
+  than evaluating harmony at every onset. Its 4,084 literal-`1/1` repetitions are suppressed when ROW 1/1 is
+  off without suppressing octave-folded sources.
+
+Selected-rhythm audition schedules only that same chord-live set. Out-of-harmony onsets are omitted rather
+than quietly played at the former 25% duck level, so the plot and audition now express the same selection.
+
+Live browser smoke pass under concurrent host load: grid 2,640 solved, bloomed, and revealed a 132-onset card;
+the inspector and new plot rendered and remained interactive, with no browser warnings/errors. This is useful
+integration coverage, not an audio-stutter verdict: automated browser audio/rAF behavior is not representative
+enough to replace Avery's real audible stress pass.
+
+Validation: `assert-rhythm-inspector.mjs`, `assert-fullsky.mjs`, `assert-grid-spatial-audio.mjs`, syntax checks,
+and `git diff --check` all pass.

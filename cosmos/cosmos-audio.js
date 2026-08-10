@@ -4,7 +4,7 @@
 // HARD RULE: fully separate from the site's playback engine. Do not import Core Interface/
 // LRCModule.js, LRCSearch.js, Playback/* (AudioEngine/Scheduler/Partitions), Tone.js, or MIDIOut.
 // The only shared code is the pure scale math below.
-import { normalizeLayers, lcmAll, ratioToCents } from './oracle-core.js';
+import { deriveSelectedRhythmModel, ratioToCents } from './oracle-core.js?v=2';
 import { nearestDegree } from './grid-core.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): the global progression + its one gain law. Pure, no DOM.
 import { CHORDS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, coverage as skyCoverage, perDegreeSupport, gainForDev,
@@ -12,7 +12,7 @@ import { CHORDS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chor
 import { normalizeRootLadder, resetPhraseTracker, observePhraseBoundary, pushRecentRoot,
   classifyRootDestinations, rankModulationDestinations, decideRootAtBoundary } from './sky-modulation.js';
 import { AUDIO_MODES, RHYTHM_VOICE_WAVEFORM, ownerHarmonyMatch } from './cosmos-grid-audio-core.js';
-import { SpatialGridRowPlayer } from './spatial-grid-row-player.js';
+import { SpatialGridRowPlayer, shouldScheduleRowAction } from './spatial-grid-row-player.js';
 import {
   DEFAULT_HARMONY_SOURCE, DEFAULT_HARMONY_TOLERANCE_CENTS, DEFAULT_SCALE_POLICY,
   HARMONY_SOURCES, SCALE_POLICIES, bedTargetsForPolicy, harmonyPolicyDefinitionKey,
@@ -31,7 +31,6 @@ const SCHEDULE_AHEAD = SCHEDULE_AHEAD_SECONDS;   // seconds — schedule any not
 const MAX_LIVE_OSC = 48;         // defensive cap so a pathological dense grid can't runaway
 const ATTACK = 0.008, DECAY = 0.22;   // soft short envelope so a busy melody (option A) doesn't smear
 const NOTE_PEAK = 0.32;          // per-note envelope peak (kept modest — dense grids stack many notes)
-const DUCK = 0.25;               // -12dB — out-of-chord onsets duck, they never get skipped
 const LEAD_MASK_WINDOW = 35;     // cents — a lead onset counts as "in the global chord" within this of a degree
 
 // ══ SKY KNOBS ═════════════════════════════════════════════════════════════════════════════════
@@ -170,23 +169,18 @@ const SPACE_DEFAULT = 0.5, SPACE_AMBIENT_WET_AT_HALF = REVERB_WET, SPACE_ROW_WET
 // One cycle of the rhythm as an ordered list of {t, ratio}: t = onset time as a fraction of the
 // cycle in [0,1); ratio = folded pitch ratio in [1,2) (1/1 = root). Mirrors oracle-core.deriveScale's
 // onset/space math EXACTLY, but keeps per-onset order (no dedup, no 2/1 delete).
-export function deriveVoice(rawLayers) {
-  const layers = normalizeLayers(rawLayers);
-  const grid = lcmAll(layers);
-  const positions = new Set();
-  for (const L of layers) { const gs = grid / L; for (let i = 0; i < L; i++) positions.add(i * gs); }
-  const comp = Array.from(positions).sort((a, b) => a - b);
-  const spaces = [];
-  for (let i = 0; i < comp.length - 1; i++) spaces.push(comp[i + 1] - comp[i]);
-  spaces.push(grid - comp[comp.length - 1] + comp[0]);            // wraparound gap
-  let spaceFund = 0; for (const s of spaces) if (s > spaceFund) spaceFund = s;   // largest gap (loop, not Math.max spread)
-  const notes = [];
-  for (let i = 0; i < comp.length; i++) {
-    const s = spaces[i]; if (s <= 0) continue;
-    let ratio = spaceFund / s; while (ratio >= 2) ratio /= 2; while (ratio < 1) ratio *= 2;   // fold to [1,2)
-    notes.push({ t: comp[i] / grid, ratio });                    // onset i sounds the tone of the gap AFTER it
-  }
-  return { notes, grid, cardinality: layers.length ? new Set(notes.map(n => n.ratio.toFixed(6))).size : 0 };
+export function deriveVoice(rawLayersOrModel) {
+  const model = rawLayersOrModel?.nodes && rawLayersOrModel?.ratios
+    ? rawLayersOrModel
+    : deriveSelectedRhythmModel(rawLayersOrModel);
+  const notes = model.nodes.map(node => ({
+    t: node.phase,
+    ratio: node.foldedRatio,
+    rawRatio: node.rawRatio,
+    rawFraction: node.rawFraction,
+    fraction: node.fraction,
+  }));
+  return { notes, grid: model.grid, cardinality: model.cardinality, model };
 }
 
 // ── audio graph: three independent gain buses → shared mute-gain → limiter → out ──
@@ -230,10 +224,9 @@ let currentOctaveLift = 0;        // applies to NEWLY scheduled notes only (spec
 const absoluteTicks = now => (now - transportStart) * ticksPerSec;   // monotonic tick count since transport start
 const skySeconds = now => (audioEpoch == null ? 0 : now - audioEpoch);   // monotonic wall seconds, rate-independent
 
-// ── Full Sky lead tint (M4): the lead's chord mask now comes from the GLOBAL walk, not a per-star
-// song — solveStarSong is no longer called from the click path. Ducks (−12dB), never silences: the
-// clicked star's own rhythm stays sacrosanct, the sky only tints it.
-let leadMask = null;              // leadMask[noteIdx] = true if lead.notes[noteIdx] is in the CURRENT sky chord
+// ── Full Sky lead selection (M4): the lead's chord mask comes from the GLOBAL walk, not a per-star song.
+// Only harmonically selected onsets are scheduled; the plot consumes the same classifier.
+let leadMask = null;              // leadMask[noteIdx] = true if this onset may sound under the CURRENT sky chord
 let leadMaskChordId = -1;         // which skyChordId leadMask was computed against (cache invalidation)
 let leadMaskRootKey = -1;         // root swaps independently invalidate the same mask
 
@@ -774,14 +767,31 @@ export function leadNoteInHarmony(ratio, rootCents, policy) {
   return !!matchHarmonyTarget(ratioToCents(ratio), rootCents, widened)?.selected;
 }
 
-// Recompute leadMask against the CURRENT global sky chord. Cheap (≤ lead cardinality), so it's called
-// lazily (skyChordId cache-check) rather than threaded through every stepSkyWalk call.
+// Classify once per DISTINCT folded tone, then project that answer over the onset tape. High-range rhythms
+// can repeat literal 1/1 thousands of times, so evaluating harmony per onset would repeat identical work.
+export function classifyLeadHarmony(notes, rootCents, policy) {
+  const selectedByTone = new Map();
+  const mask = (notes || []).map(note => {
+    const key = note.fraction || String(note.ratio);
+    if (!selectedByTone.has(key)) selectedByTone.set(key, leadNoteInHarmony(note.ratio, rootCents, policy));
+    return selectedByTone.get(key);
+  });
+  return { mask, selectedByTone };
+}
+
+// Selected-rhythm playback has two independent gates: chord-live tone selection and the rail's literal-1/1
+// policy. Keep the combined decision pure so the visual plot and audio scheduler cannot silently diverge.
+export function shouldScheduleLeadNote(note, noteIdx, mask, includeFundamental) {
+  return shouldScheduleRowAction(note, includeFundamental) && (!mask || mask[noteIdx] === true);
+}
+
+// Recompute leadMask against the CURRENT global sky chord, lazily on chord/root changes.
 function ensureLeadMask(force) {
   if (!lead) { leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1; return; }
   const policy = currentHarmonyPolicy();
   const policyKey = harmonyPolicyDefinitionKey(policy);
   if (!force && leadMaskChordId === policyKey && leadMaskRootKey === skyRoot.rootKey) return;
-  leadMask = lead.notes.map(n => leadNoteInHarmony(n.ratio, skyRoot.cents, policy));
+  leadMask = classifyLeadHarmony(lead.notes, skyRoot.cents, policy).mask;
   leadMaskChordId = policyKey;
   leadMaskRootKey = skyRoot.rootKey;
 }
@@ -1698,15 +1708,15 @@ function schedulerTick() {
 }
 
 function scheduleNote(note, time, noteIdx) {
+  // Only chord-live tones sound. The independent literal-1/1 gate preserves raw identity so octave sources
+  // folded onto 1/1 (2/1, 4/1, …) remain playable when ROW 1/1 is disabled.
+  if (!shouldScheduleLeadNote(note, noteIdx, leadMask, rowFundamental)) return;
   if (liveOscs.size >= MAX_LIVE_OSC) return;
   const freq = ROOT_HZ * note.ratio * (2 ** currentOctaveLift);
   const osc = audioCtx.createOscillator(); osc.type = RHYTHM_VOICE_WAVEFORM; osc.frequency.value = freq;
   detuneBus?.connect(osc.detune);   // shared fundamental + modulation glide — see initAudio
   const env = audioCtx.createGain();
-  // Full Sky tint: in-(global-)chord onsets play full, out-of-chord onsets duck — the rhythm is
-  // sacrosanct, no onset is ever skipped, the sky only tints it (M4 — replaces the per-star Chord Walk).
-  const inChord = leadMask ? leadMask[noteIdx] : true;
-  const peak = NOTE_PEAK * (inChord ? 1 : DUCK);
+  const peak = NOTE_PEAK;
   env.gain.setValueAtTime(0, time);
   env.gain.linearRampToValueAtTime(peak, time + ATTACK);
   env.gain.exponentialRampToValueAtTime(0.001, time + ATTACK + DECAY);

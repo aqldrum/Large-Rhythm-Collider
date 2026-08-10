@@ -1,6 +1,6 @@
 // rhythm-inspector-model.js — pure selected-rhythm presentation data for the Cosmos inspector.
 // It mirrors the main page's Rhythm Info vocabulary without importing its stateful UI/module graph.
-import { decimalToFraction, deriveScale, normalizeLayers } from './oracle-core.js';
+import { deriveSelectedRhythmModel } from './oracle-core.js?v=2';
 
 const LAYER_NAMES = ['A', 'B', 'C', 'D'];
 
@@ -14,33 +14,12 @@ function averageStepDeviation(ratios) {
 }
 
 export function buildRhythmInspectorModel(rawLayers) {
-  const layers = normalizeLayers(rawLayers);
-  const scale = deriveScale(layers);
-  const ownersAt = new Map();
-
-  layers.forEach((layer, layerIndex) => {
-    const step = scale.grid / layer;
-    for (let i = 0; i < layer; i++) {
-      const tick = i * step;
-      let owners = ownersAt.get(tick);
-      if (!owners) ownersAt.set(tick, owners = []);
-      owners.push(LAYER_NAMES[layerIndex]);
-    }
-  });
-
-  const attacks = [...ownersAt.entries()].sort((a, b) => a[0] - b[0]);
-  const nodes = attacks.map(([tick, owners], index) => {
-    const nextTick = attacks[(index + 1) % attacks.length][0];
-    const gap = index + 1 < attacks.length ? nextTick - tick : scale.grid - tick + nextTick;
-    return { tick, phase: tick / scale.grid, gap, owners: [...owners] };
-  });
-  const maxGap = nodes.reduce((max, node) => Math.max(max, node.gap), 0);
-  for (const node of nodes) {
-    let ratio = maxGap / node.gap;
-    while (ratio >= 2) ratio /= 2;
-    while (ratio < 1) ratio *= 2;
-    node.ratioFraction = decimalToFraction(ratio);
-  }
+  const scale = deriveSelectedRhythmModel(rawLayers);
+  const layers = scale.layers;
+  const nodes = scale.nodes.map(node => ({
+    ...node,
+    owners: node.ownerIndexes.map(index => LAYER_NAMES[index]),
+  }));
 
   const groupings = layers.map(layer => scale.grid / layer);
   const layerSum = layers.reduce((sum, layer) => sum + layer, 0);
@@ -63,6 +42,6 @@ export function buildRhythmInspectorModel(rawLayers) {
     avgDeviation: averageStepDeviation(scale.ratios),
     ratios: scale.ratios.map(ratio => ({ ...ratio })),
     nodes,
-    maxGap,
+    maxGap: scale.maxGap,
   };
 }
