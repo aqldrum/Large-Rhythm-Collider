@@ -32,6 +32,33 @@
 }
 .prog-solve:hover { filter: brightness(1.1); }
 .prog-status { font-size: 11px; color: var(--hud-text-muted); font-family: ui-monospace, monospace; line-height: 1.35; }
+.prog-anchors {
+    display: grid; gap: 7px;
+    padding: 8px; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: var(--border-radius);
+    background: rgba(18, 22, 20, 0.82);
+}
+.prog-anchor-head, .prog-anchor-nav, .prog-anchor-foot { min-width: 0; }
+.prog-anchor-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.prog-anchor-title { color: var(--hud-text); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.prog-anchor-title span { color: var(--hud-text-muted); font-weight: 600; text-transform: none; letter-spacing: 0; }
+.prog-anchor-fit { padding: 2px 6px; border-radius: 999px; font: 700 10px ui-monospace, Menlo, monospace; white-space: nowrap; }
+.prog-anchor-fit.fit-high { color: #062a18; background: var(--hud-accent); }
+.prog-anchor-fit.fit-mid { color: #251d00; background: #f9ca24; }
+.prog-anchor-fit.fit-low { color: #300707; background: #ff6b6b; }
+.prog-anchor-nav { display: grid; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 7px; }
+.prog-anchor-readout {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center;
+    color: var(--hud-text); font: 700 14px ui-monospace, Menlo, monospace;
+}
+.prog-anchor-step { width: 34px; height: 34px; padding: 0; font-size: 19px; line-height: 1; }
+.prog-anchor-step:disabled { opacity: 0.35; cursor: default; }
+.prog-anchor-foot { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+.prog-anchor-foot label { color: var(--hud-text-muted); font-size: 11px; display: flex; align-items: center; gap: 5px; }
+.prog-anchor-foot .prog-mini { width: 58px; text-align: right; }
+.prog-anchor-fold {
+    align-items: center; padding: 2px 5px; border: 1px solid rgba(249, 202, 36, .55); border-radius: 4px;
+    color: #f9ca24; background: rgba(249, 202, 36, .08); font: 700 9px ui-monospace, Menlo, monospace; white-space: nowrap;
+}
 
 /* ---- bracket bar carved above the canvas ---- */
 .prog-brackets {

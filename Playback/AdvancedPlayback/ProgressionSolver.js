@@ -378,19 +378,24 @@
         if (!ratios.length) return { ok: false, reason: 'no-scale', parsed };
         // topK scaled to the pool so a small tone row has alternatives to avoid collision-empty beams
         const topK = clamp(ratios.length, 1, 8);
-        let res = optimize({ ratios, requiredSemitones: parsed.requiredSemitones, topK, beamWidth: 12, resultLimit: 1 });
+        const candidateLimit = clamp(Math.trunc(toFinite(opts.candidateLimit, 8)), 1, 40);
+        let res = optimize({ ratios, requiredSemitones: parsed.requiredSemitones, topK, beamWidth: 12, resultLimit: candidateLimit });
         let relaxed = false;
         if (!res.candidates.length) {
             // tone row has fewer distinct ratios than the progression's pitch classes:
             // allow a ratio to voice more than one pitch class (best partial fit)
-            res = optimize({ ratios, requiredSemitones: parsed.requiredSemitones, topK, beamWidth: 12, resultLimit: 1, allowReuse: true });
+            res = optimize({ ratios, requiredSemitones: parsed.requiredSemitones, topK, beamWidth: 12, resultLimit: candidateLimit, allowReuse: true });
             relaxed = true;
         }
         const candidate = res.candidates[0] || null;
         if (!candidate) return { ok: false, reason: 'no-solution', parsed };
         const windowCents = opts.windowCents != null ? opts.windowCents : 15;
         const perChord = analyzePerChord(parsed, candidate, ratios, windowCents);
-        return { ok: true, parsed, candidate, perChord, relaxed, windowCents, strength: candidate.strength, avgDeviation: candidate.avgDeviation };
+        return {
+            ok: true, parsed, candidate, candidates: res.candidates, ratioRows: ratios,
+            perChord, relaxed, windowCents, strength: candidate.strength,
+            avgDeviation: candidate.avgDeviation
+        };
     }
 
     // Note name (e.g. "C", "F#", "Bb", optional octave "C4") -> frequency in Hz.
