@@ -182,12 +182,17 @@ bendFromSemitones(semitones) {   // 8192 = center; clamp, never wrap
 // bytes: [0xE0|ch, bend & 0x7F, (bend >> 7) & 0x7F]
 ```
 
-**Live-note registry:** `liveNotes: [{ chIdx, note, ratio, layerIndex, onTs, offTs|null, timer }]`
-— `offTs === null` means held (legato). `ratio` is `noteData.ratio` raw (can exceed 2;
-`fund × ratio` matches the engine's own `recalcFrequencies`). Prune entries via setTimeout
-at offTs (+60ms slack); cap registry at 128 with oldest-first eviction. Retune iterates
-latest-entry-per-channel. Hybrid-legato headroom test: next pitch's `|freqToMidiFloat(f) −
-heldEntry.note| ≤ bendRangeSemitones` (leave ~1-semi margin for subsequent retunes).
+**Live-note registry:** `liveNotes: [{ chIdx, note, ratio, layerIndex, onTs, offTs|null,
+reservationUntil, timer }]` — `offTs === null` means held (legato). Both note-on and ordinary
+note-off are submitted to Web MIDI immediately with timestamps; the JS timer only prunes registry
+bookkeeping after the off, so timer throttling cannot lengthen notes. Channel allocation compares
+the requested note interval with timestamped reservations, not with cleanup-timer completion. A
+future reservation is never terminated at `performance.now()`; safe held-note stealing closes the
+old voice at the replacement timestamp, and excess finite overlaps are dropped. `ratio` is
+`noteData.ratio` raw (can exceed 2; `fund × ratio` matches the engine's own
+`recalcFrequencies`). Retune iterates latest-entry-per-channel. Hybrid-legato headroom test: next
+pitch's `|freqToMidiFloat(f) − heldEntry.note| ≤ bendRangeSemitones` (leave ~1-semi margin for
+subsequent retunes).
 
 ## 7. UI section ("MIDI Out — DAW Control", collapsible, collapsed by default)
 

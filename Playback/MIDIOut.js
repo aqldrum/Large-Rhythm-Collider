@@ -27,6 +27,7 @@ class MIDIOut {
         this.mpeNextMember = 0;              // round-robin cursor, index into the member pool
         this.retuneRamps = new Map();         // chIdx -> setInterval id
         this._lastSentBend = new Map();       // chIdx -> last bend value (0-16383), ramp start point
+        this._lastVoiceLimitWarningTs = -Infinity;
 
         this._loadSettings();
         this._bindEngineEvents();
@@ -288,9 +289,14 @@ class MIDIOut {
     _registerLiveNote(entry) {
         this.liveNotes.push(entry);
         if (this.liveNotes.length > this.MAX_REGISTRY) {
-            const evicted = this.liveNotes.shift();
-            if (evicted?.timer) clearTimeout(evicted.timer);
-            if (evicted && !evicted.__off) this._sendNoteOff(evicted.chIdx, evicted.note, performance.now());
+            // Cleanup timers can run late on a throttled/background tab. Prune only entries whose
+            // timestamped offs have already passed; evicting a future entry would leave its
+            // already-queued note-on without safe channel-reservation bookkeeping.
+            const now = performance.now();
+            for (let i = this.liveNotes.length - 1; i >= 0 && this.liveNotes.length > this.MAX_REGISTRY; i -= 1) {
+                const entryEnd = this._entryReservationEnd(this.liveNotes[i]);
+                if (entryEnd <= now) this.liveNotes.splice(i, 1);
+            }
         }
     }
 
@@ -319,30 +325,77 @@ class MIDIOut {
         return latest;
     }
 
-    // Same channel + same note number pending off -> flush it now so it can never land on/after
-    // the note-on we're about to send (would otherwise cut the new note short or leave it hanging).
-    _flushGuard(chIdx, note, ts) {
-        const now = performance.now();
-        this.liveNotes.forEach(entry => {
-            if (entry.chIdx === chIdx && entry.note === note && !entry.__off && entry.offTs != null && entry.offTs > now) {
-                if (entry.timer) clearTimeout(entry.timer);
-                this._sendNoteOff(chIdx, note, ts);
-                entry.__off = true;
-                this._pruneEntry(entry);
-            }
-        });
+    _entryReservationEnd(entry) {
+        if (Number.isFinite(entry.reservationUntil)) return entry.reservationUntil;
+        if (Number.isFinite(entry.offTs)) return entry.offTs;
+        return Infinity;
     }
 
-    // Actual delivery is deferred to a cancellable JS timer (not a pre-queued future output.send)
-    // so the flush guard / panic can genuinely cancel it - Web MIDI has no per-message cancel.
+    _entryOverlaps(entry, startTs, endTs) {
+        if (entry.kind !== 'tone' && entry.kind !== 'drum') return false;
+        const entryEnd = this._entryReservationEnd(entry);
+        return entry.onTs < endTs && startTs < entryEnd;
+    }
+
+    _armEntryPrune(entry, pruneTs) {
+        if (entry.timer) clearTimeout(entry.timer);
+        const delay = Math.max(0, pruneTs - performance.now());
+        entry.timer = setTimeout(() => {
+            entry.__off = true;
+            this._pruneEntry(entry);
+        }, delay + 60);
+    }
+
+    // End an entry without ever placing its off before a future-timestamped on. If a normal
+    // off was already queued, retain the channel reservation until that message has passed so
+    // the stale off cannot cut a later voice that reuses the channel.
+    _terminateEntry(entry, requestedTs = performance.now()) {
+        if (!entry) return;
+        const now = performance.now();
+        // Web MIDI preserves send order for equal timestamps. If the requested boundary is at
+        // or after the queued on, an off at that same boundary is safe (old on -> off -> new on).
+        // A release requested before a future on must instead trail that on by at least 1ms.
+        const safeRequestedTs = requestedTs >= entry.onTs ? requestedTs : entry.onTs + 1;
+        const terminationTs = Math.max(now, safeRequestedTs);
+        const previousReservationEnd = Number.isFinite(entry.reservationUntil)
+            ? entry.reservationUntil
+            : (Number.isFinite(entry.offTs) ? entry.offTs : terminationTs);
+        this._sendNoteOff(entry.chIdx, entry.note, terminationTs);
+        entry.__off = true;
+        entry.offTs = terminationTs;
+        entry.reservationUntil = Math.max(terminationTs, previousReservationEnd);
+        this._armEntryPrune(entry, entry.reservationUntil);
+    }
+
+    // Same-channel/same-note retriggers are safe only after every already-queued off has landed.
+    // Held notes can be terminated at the boundary because they have no queued off to straggle.
+    _flushGuard(chIdx, note, startTs, endTs = startTs + 1) {
+        const conflicts = this.liveNotes.filter(entry =>
+            entry.chIdx === chIdx &&
+            entry.note === note &&
+            this._entryOverlaps(entry, startTs, endTs)
+        );
+
+        for (const entry of conflicts) {
+            // Held notes have no irrevocably queued off, so a timestamped termination at the
+            // retrigger boundary is safe. A finite reservation means an old off is already in
+            // the Web MIDI queue; retriggering before it lands would let it kill the new note.
+            if (entry.offTs == null && !entry.__off && entry.onTs <= startTs) {
+                this._terminateEntry(entry, startTs);
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Queue the off on the same Web MIDI timestamp timeline as the note-on. The JS timer now
+    // performs bookkeeping only, so background-tab throttling cannot turn late offs into chords.
     _scheduleNoteOff(entry, offTsMs) {
         entry.offTs = offTsMs;
-        const delay = Math.max(0, offTsMs - performance.now());
-        entry.timer = setTimeout(() => {
-            this._sendNoteOff(entry.chIdx, entry.note, performance.now());
-            entry.__off = true;
-            entry.timer = setTimeout(() => this._pruneEntry(entry), 60);
-        }, delay);
+        entry.reservationUntil = offTsMs;
+        this._sendNoteOff(entry.chIdx, entry.note, offTsMs);
+        this._armEntryPrune(entry, offTsMs);
     }
 
     // ====================================
@@ -388,30 +441,46 @@ class MIDIOut {
         return pool;
     }
 
-    _allocateMpeChannel() {
+    _allocateMpeChannel(startTs, endTs) {
         const pool = this._mpeMemberPool();
-        const busy = new Set(this.liveNotes.filter(e => e.kind === 'tone' && !e.__off).map(e => e.chIdx));
 
         for (let i = 0; i < pool.length; i += 1) {
             const idx = (this.mpeNextMember + i) % pool.length;
-            if (!busy.has(pool[idx])) {
+            const chIdx = pool[idx];
+            const overlaps = this.liveNotes.some(entry =>
+                entry.chIdx === chIdx && entry.kind === 'tone' && this._entryOverlaps(entry, startTs, endTs)
+            );
+            if (!overlaps) {
                 this.mpeNextMember = (idx + 1) % pool.length;
-                return pool[idx];
+                return chIdx;
             }
         }
 
-        // All members busy: steal round-robin. Terminate the stolen note first so it never hangs.
-        const stealIdx = this.mpeNextMember % pool.length;
-        const chIdx = pool[stealIdx];
-        this.mpeNextMember = (stealIdx + 1) % pool.length;
-        const stolen = this._latestLiveEntry(chIdx);
+        // Only a genuinely held voice is safe to steal: it has no later queued off that could
+        // cut the replacement. Never steal a future reservation; its note-on would still arrive
+        // after an immediate off and become permanently stuck.
+        const stolen = this.liveNotes
+            .filter(entry =>
+                entry.kind === 'tone' &&
+                !entry.__off &&
+                entry.offTs == null &&
+                entry.onTs <= startTs &&
+                pool.includes(entry.chIdx)
+            )
+            .sort((a, b) => a.onTs - b.onTs)[0];
         if (stolen) {
-            if (stolen.timer) clearTimeout(stolen.timer);
-            this._sendNoteOff(chIdx, stolen.note, performance.now());
-            stolen.__off = true;
-            this._pruneEntry(stolen);
+            this._terminateEntry(stolen, startTs);
+            const poolIdx = pool.indexOf(stolen.chIdx);
+            this.mpeNextMember = (poolIdx + 1) % pool.length;
+            return stolen.chIdx;
         }
-        return chIdx;
+
+        const now = performance.now();
+        if (now - this._lastVoiceLimitWarningTs > 1000) {
+            console.warn('[MIDIOut] MPE voice limit reached; dropping note instead of orphaning a queued note-on');
+            this._lastVoiceLimitWarningTs = now;
+        }
+        return null;
     }
 
     // ====================================
@@ -463,30 +532,33 @@ class MIDIOut {
             }
 
             this._cancelRetuneRamp(chIdx);
-            this._flushGuard(chIdx, note, ts);
+            if (!this._flushGuard(chIdx, note, ts, Infinity)) return;
             this._sendBend(chIdx, bend, ts);
             this._sendNoteOn(chIdx, note, ts, velocity);
-            if (held) this._scheduleNoteOff(held, ts + 15);
+            if (held && !held.__off) this._scheduleNoteOff(held, ts + 15);
             this._registerLiveNote({ chIdx, note, ratio: noteData.ratio, layerIndex, onTs: ts, offTs: null, timer: null, kind: 'tone' });
             return;
         }
 
         this._cancelRetuneRamp(chIdx);
-        this._flushGuard(chIdx, note, ts);
+        const offDelayMs = Math.max(10, duration * 1000 - 10);
+        if (!this._flushGuard(chIdx, note, ts, ts + offDelayMs)) return;
         this._sendBend(chIdx, bend, ts);
         this._sendNoteOn(chIdx, note, ts, velocity);
-        const offDelayMs = Math.max(10, duration * 1000 - 10);
         const entry = { chIdx, note, ratio: noteData.ratio, layerIndex, onTs: ts, offTs: null, timer: null, kind: 'tone' };
         this._registerLiveNote(entry);
         this._scheduleNoteOff(entry, ts + offDelayMs);
     }
 
     _scheduleMpeNote(noteData, duration, layerIndex, ts, legatoEnabled) {
-        const chIdx = this._allocateMpeChannel();
+        const offDelayMs = Math.max(10, duration * 1000 - 10);
+        const endTs = legatoEnabled ? Infinity : ts + offDelayMs;
+        const chIdx = this._allocateMpeChannel(ts, endTs);
+        if (chIdx == null) return;
         this._cancelRetuneRamp(chIdx);
         const { note, bend } = this.noteAndBend(noteData.frequency);
 
-        this._flushGuard(chIdx, note, ts);
+        if (!this._flushGuard(chIdx, note, ts, endTs)) return;
         this._sendBend(chIdx, bend, ts);
         this._sendNoteOn(chIdx, note, ts, this._layerVelocity(layerIndex));
 
@@ -498,7 +570,6 @@ class MIDIOut {
             return;
         }
 
-        const offDelayMs = Math.max(10, duration * 1000 - 10);
         const entry = { chIdx, note, ratio: noteData.ratio, layerIndex, onTs: ts, offTs: null, timer: null, kind: 'tone' };
         this._registerLiveNote(entry);
         this._scheduleNoteOff(entry, ts + offDelayMs);
@@ -557,8 +628,9 @@ class MIDIOut {
         const transpose = Number.isFinite(transposeSemitones) ? Math.round(transposeSemitones) : 0;
         const note = Math.min(127, Math.max(0, (baseNotes[layerIndex] ?? 36) + transpose));
         const velocity = this._partitionVelocity(volumeDb);
+        const offDelayMs = Number.isFinite(durationSec) ? Math.max(10, durationSec * 1000 - 10) : 100;
 
-        this._flushGuard(chIdx, note, ts);
+        if (!this._flushGuard(chIdx, note, ts, ts + offDelayMs)) return;
         this._sendNoteOn(chIdx, note, ts, velocity);
 
         const entry = { chIdx, note, ratio: null, layerIndex, onTs: ts, offTs: null, timer: null, kind: 'drum' };
@@ -567,7 +639,6 @@ class MIDIOut {
         // offDelayMs pattern) instead of a flat 100ms - a fixed cutoff truncates any
         // sample/patch that actually listens for note-off (long cymbal decays, held
         // synth drum voices) regardless of what's happening in other layers.
-        const offDelayMs = Number.isFinite(durationSec) ? Math.max(10, durationSec * 1000 - 10) : 100;
         this._scheduleNoteOff(entry, ts + offDelayMs);
     }
 
@@ -635,11 +706,8 @@ class MIDIOut {
         if (!matches.length) return;
 
         matches.forEach(entry => {
-            if (entry.timer) clearTimeout(entry.timer);
             this._cancelRetuneRamp(entry.chIdx);
-            this._sendNoteOff(entry.chIdx, entry.note, now);
-            entry.__off = true;
-            this._pruneEntry(entry);
+            this._terminateEntry(entry, now);
         });
 
         this._scheduleStragglerSweep(matches.map(e => ({ chIdx: e.chIdx, note: e.note })));
@@ -655,10 +723,7 @@ class MIDIOut {
         if (!matches.length) return;
 
         matches.forEach(entry => {
-            if (entry.timer) clearTimeout(entry.timer);
-            this._sendNoteOff(entry.chIdx, entry.note, now);
-            entry.__off = true;
-            this._pruneEntry(entry);
+            this._terminateEntry(entry, now);
         });
 
         this._scheduleStragglerSweep(matches.map(e => ({ chIdx: e.chIdx, note: e.note })));
@@ -675,10 +740,7 @@ class MIDIOut {
         if (!matches.length) return;
 
         matches.forEach(entry => {
-            if (entry.timer) clearTimeout(entry.timer);
-            this._sendNoteOff(entry.chIdx, entry.note, now);
-            entry.__off = true;
-            this._pruneEntry(entry);
+            this._terminateEntry(entry, now);
         });
 
         this._scheduleStragglerSweep(matches.map(e => ({ chIdx: e.chIdx, note: e.note })));
