@@ -28,9 +28,13 @@ import { TransportClock, TRANSPORT_TICK_MS, SCHEDULE_AHEAD_SECONDS } from './tra
 const ROOT_HZ = 220;             // Phase 0: one root for every voice (per-star root is a later phase)
 const LOOKAHEAD_MS = TRANSPORT_TICK_MS;      // scheduler tick cadence (the pulse now comes from a worker)
 const SCHEDULE_AHEAD = SCHEDULE_AHEAD_SECONDS;   // seconds — schedule any note landing within this horizon
-const MAX_LIVE_OSC = 48;         // defensive cap so a pathological dense grid can't runaway
-const ATTACK = 0.008, DECAY = 0.22;   // soft short envelope so a busy melody (option A) doesn't smear
-const NOTE_PEAK = 0.32;          // per-note envelope peak (kept modest — dense grids stack many notes)
+const MAX_LIVE_OSC = 48;         // held lead voices + their short release tails (normally only four are live)
+// Rhythm-card audition defaults to the main ToneRowPlayback engine's Legato envelope: one sustained
+// voice per A-D layer, replaced only by the next harmonically eligible attack in that layer. Keeping the
+// same ADSR proportions makes the card behave like the site's sustain-pedal mode instead of a 228ms pluck.
+const LEAD_ATTACK = 0.001, LEAD_DECAY = 0.2, LEAD_SUSTAIN = 0.7, LEAD_RELEASE = 0.3;
+const NOTE_PEAK = 0.32;          // per-layer peak; the limiter catches the rare four-layer unison attack
+const MAX_LEAD_FREQUENCY_HZ = 3520; // match ToneRowPlayback's absolute pitch ceiling
 const LEAD_MASK_WINDOW = 35;     // cents — a lead onset counts as "in the global chord" within this of a degree
 
 // ══ SKY KNOBS ═════════════════════════════════════════════════════════════════════════════════
@@ -179,6 +183,9 @@ export function deriveVoice(rawLayersOrModel) {
     rawRatio: node.rawRatio,
     rawFraction: node.rawFraction,
     fraction: node.fraction,
+    // Composite attacks may belong to several polyrhythm layers. Preserve that identity so the audition
+    // can keep an independent sustain-pedal voice for every owning layer, just like ToneRowPlayback.
+    ownerIndexes: [...node.ownerIndexes],
   }));
   return { notes, grid: model.grid, cardinality: model.cardinality, model };
 }
@@ -194,6 +201,8 @@ let masterVolume = null;          // VOLUME knob: master gain between muteGainNo
 let lastVolume = MASTER_VOLUME_DEFAULT;   // persisted musical setting (readout + re-entry); node tracks it
 let lastSpace = SPACE_DEFAULT;    // persisted SPACE position; drives both reverb sends (see setSpace)
 let liveOscs = null;              // Set of live OscillatorNodes (capacity-capped)
+let leadVoices = null;            // Set of held/releasing rhythm-card voice records
+let leadLayerVoices = null;       // current scheduled voice for each A-D layer
 let schedulerClock = null;        // TransportClock — the worker-driven pulse (see transport-clock.js)
 let mix = 0;                      // 0 = bed, 1 = rows; constant-power crossfade
 let auditionListening = true;     // audition bus on/off (independent of mix)
@@ -355,6 +364,8 @@ export function initAudio() {
   lastFundamentalCents = 0; fundamentalGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   scaledMedianGrid = 0; fieldOnsetTicks = 0;
   liveOscs = new Set();
+  leadVoices = new Set();
+  leadLayerVoices = [null, null, null, null];
   schedIdx = 0; schedCycle = 0;
   // The pulse comes from a worker timer, not this thread: the flight loop's per-frame work would otherwise
   // starve it (and a hidden tab clamps main-thread timers to 1Hz outright — measured 1001ms vs 25ms
@@ -749,6 +760,7 @@ export function resumeAudio() {
 
 // voice = deriveVoice(node.layers) + {node}; (re)starts the transport melody. null = silence (transport keeps ticking).
 export function setLead(voice) {
+  if (audioCtx) releaseAllLeadVoices(audioCtx.currentTime);
   lead = voice || null;
   if (lead) resyncSchedulePointer();
   else if (audioCtx) distGainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.05);
@@ -785,6 +797,25 @@ export function shouldScheduleLeadNote(note, noteIdx, mask, includeFundamental) 
   return shouldScheduleRowAction(note, includeFundamental) && (!mask || mask[noteIdx] === true);
 }
 
+// Project one eligible composite onset back onto the A-D arpeggiator layers that own it. This is the
+// essential difference between the old one-pluck lead and ToneRowPlayback Legato: coincident attacks can
+// replace several independent held voices, while an out-of-harmony onset replaces none of them.
+export function scheduledLeadLayers(note, noteIdx, mask, includeFundamental) {
+  if (!shouldScheduleLeadNote(note, noteIdx, mask, includeFundamental)) return [];
+  const owners = Array.isArray(note?.ownerIndexes) ? note.ownerIndexes : [0];
+  return [...new Set(owners.filter(layer => Number.isInteger(layer) && layer >= 0 && layer < 4))];
+}
+
+// Harmony is octave-relative, but playback is not: literal 2/1 and 4/1 sources must sound one and two
+// octaves above 1/1 even though all three share the folded pitch-class ratio `1`. This mirrors the main
+// ToneRowPlayback engine, including its hard upper-frequency guard.
+export function leadFrequencyHz(note, octaveLift = 0) {
+  const sourceRatio = Number.isFinite(note?.rawRatio) && note.rawRatio > 0 ? note.rawRatio : note?.ratio;
+  const lift = Number.isFinite(octaveLift) ? octaveLift : 0;
+  const frequency = ROOT_HZ * sourceRatio * (2 ** lift);
+  return Number.isFinite(frequency) && frequency > 0 && frequency <= MAX_LEAD_FREQUENCY_HZ ? frequency : null;
+}
+
 // Recompute leadMask against the CURRENT global sky chord, lazily on chord/root changes.
 function ensureLeadMask(force) {
   if (!lead) { leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1; return; }
@@ -794,6 +825,17 @@ function ensureLeadMask(force) {
   leadMask = classifyLeadHarmony(lead.notes, skyRoot.cents, policy).mask;
   leadMaskChordId = policyKey;
   leadMaskRootKey = skyRoot.rootKey;
+  // Scale Selection on the main engine releases a held legato voice as soon as its pitch is deselected.
+  // Do the same when the live Cosmos harmony (or ROW 1/1 policy) changes, so a formerly valid sustained
+  // tone cannot hang under the new chord while its layer waits for another eligible attack.
+  if (audioCtx && leadVoices) {
+    const now = audioCtx.currentTime;
+    for (const voice of [...leadVoices]) {
+      if (!shouldScheduleLeadNote(voice.note, voice.noteIdx, leadMask, rowFundamental)) {
+        releaseLeadVoice(voice, now);
+      }
+    }
+  }
 }
 
 // Called each frame from the flight loop for the lead star. pan in [-1,1], gain in [0,1].
@@ -1610,6 +1652,7 @@ export function stopAudio() {
   fundamentalGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1;
   audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; outputLimiter = null; liveOscs = null;
+  leadVoices = null; leadLayerVoices = null;
   bedGain = null; rowsGain = null; auditionGain = null; masterVolume = null;
   bedBus = null; reverbConv = null; reverbWet = null;
   mix = 0; auditionListening = true; auditionPinned = false;
@@ -1722,19 +1765,73 @@ function schedulerTick() {
 function scheduleNote(note, time, noteIdx) {
   // Only chord-live tones sound. The independent literal-1/1 gate preserves raw identity so octave sources
   // folded onto 1/1 (2/1, 4/1, …) remain playable when ROW 1/1 is disabled.
-  if (!shouldScheduleLeadNote(note, noteIdx, leadMask, rowFundamental)) return;
+  const layers = scheduledLeadLayers(note, noteIdx, leadMask, rowFundamental);
+  if (!layers.length) return;
+  const freq = leadFrequencyHz(note, currentOctaveLift);
+  if (freq === null) return;
+  for (const layerIndex of layers) startLeadLegatoVoice(note, noteIdx, layerIndex, freq, time);
+}
+
+function startLeadLegatoVoice(note, noteIdx, layerIndex, freq, time) {
+  if (!audioCtx || !liveOscs || !leadVoices || !leadLayerVoices) return;
+  const when = Math.max(audioCtx.currentTime, time);
+
+  // Exactly one sustained voice owns a layer. A harmony-filtered onset never reaches this function, so
+  // the previous pitch continues just as it does when Scale Selection skips a note on the main page.
   if (liveOscs.size >= MAX_LIVE_OSC) return;
-  const freq = ROOT_HZ * note.ratio * (2 ** currentOctaveLift);
+  releaseLeadVoice(leadLayerVoices[layerIndex], when);
+
   const osc = audioCtx.createOscillator(); osc.type = RHYTHM_VOICE_WAVEFORM; osc.frequency.value = freq;
   detuneBus?.connect(osc.detune);   // shared fundamental + modulation glide — see initAudio
   const env = audioCtx.createGain();
   const peak = NOTE_PEAK;
-  env.gain.setValueAtTime(0, time);
-  env.gain.linearRampToValueAtTime(peak, time + ATTACK);
-  env.gain.exponentialRampToValueAtTime(0.001, time + ATTACK + DECAY);
+  const sustain = peak * LEAD_SUSTAIN;
+  env.gain.setValueAtTime(0, when);
+  env.gain.linearRampToValueAtTime(peak, when + LEAD_ATTACK);
+  env.gain.linearRampToValueAtTime(sustain, when + LEAD_ATTACK + LEAD_DECAY);
+  env.gain.setValueAtTime(sustain, when + LEAD_ATTACK + LEAD_DECAY + 0.01);
   osc.connect(env); env.connect(pannerNode);
-  cosmosMidi?.note(freq, time, ATTACK + DECAY, { cents: totalDetuneCentsAt(time), gain: peak / NOTE_PEAK });
-  osc.start(time); osc.stop(time + ATTACK + DECAY + 0.02);
+  const voice = {
+    osc, env, note, noteIdx, layerIndex, sustain,
+    midi: cosmosMidi?.noteOn(freq, when, { cents: totalDetuneCentsAt(when), gain: peak / NOTE_PEAK }) || null,
+    releaseAt: Infinity,
+  };
+  leadVoices.add(voice);
+  leadLayerVoices[layerIndex] = voice;
   liveOscs.add(osc);
-  osc.onended = () => { liveOscs.delete(osc); try { osc.disconnect(); } catch {} try { env.disconnect(); } catch {} };
+  osc.start(when);
+  osc.onended = () => {
+    liveOscs?.delete(osc);
+    leadVoices?.delete(voice);
+    if (leadLayerVoices?.[layerIndex] === voice) leadLayerVoices[layerIndex] = null;
+    try { osc.disconnect(); } catch {}
+    try { env.disconnect(); } catch {}
+  };
+}
+
+function releaseLeadVoice(voice, when, release = LEAD_RELEASE) {
+  if (!voice || !audioCtx || when >= voice.releaseAt) return;
+  const at = Math.max(audioCtx.currentTime, when);
+  const stopAt = at + Math.max(0.01, release);
+  voice.releaseAt = at;
+  try {
+    if (typeof voice.env.gain.cancelAndHoldAtTime === 'function') {
+      voice.env.gain.cancelAndHoldAtTime(at);
+    } else {
+      voice.env.gain.cancelScheduledValues(at);
+      voice.env.gain.setValueAtTime(Math.max(0.0001, voice.env.gain.value || voice.sustain), at);
+    }
+    voice.env.gain.linearRampToValueAtTime(0, stopAt);
+    voice.osc.stop(stopAt + 0.01);
+  } catch {
+    try { voice.osc.stop(at); } catch {}
+  }
+  if (voice.midi) cosmosMidi?.noteOff(voice.midi, at);
+  if (leadLayerVoices?.[voice.layerIndex] === voice) leadLayerVoices[voice.layerIndex] = null;
+}
+
+function releaseAllLeadVoices(when) {
+  if (!leadVoices) return;
+  for (const voice of [...leadVoices]) releaseLeadVoice(voice, when, 0.05);
+  if (leadLayerVoices) leadLayerVoices.fill(null);
 }

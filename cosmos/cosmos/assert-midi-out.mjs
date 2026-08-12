@@ -169,10 +169,12 @@ check('a note spells at the summed pitch whether the shift is fundamental, modul
 const audioSource = readFileSync(new URL('../cosmos-audio.js', import.meta.url), 'utf8');
 check('every MIDI-facing call in cosmos-audio spells at the summed detune (totalDetuneCentsAt), never modulation alone',
   audioSource.includes('cents: totalDetuneCentsAt(when)') &&              // row/lead worker bridge
-  audioSource.includes('cents: totalDetuneCentsAt(time)') &&              // scheduled lead onset
   audioSource.includes('cents: totalDetuneCentsAt(now)') &&              // bed voice birth
   audioSource.includes('elapsed => totalDetuneCentsAt(now + elapsed)') && // sustained-voice retune during a glide
   !/cents: modulationCentsAt\(/.test(audioSource));
+check('rhythm-card Legato holds MIDI notes until their owning layer retriggers or releases',
+  audioSource.includes('midi: cosmosMidi?.noteOn(freq, when') &&
+  audioSource.includes('if (voice.midi) cosmosMidi?.noteOff(voice.midi, at)'));
 const rowSource = readFileSync(new URL('../spatial-grid-row-player.js', import.meta.url), 'utf8');
 check('ROW 1/1 uses one schedule predicate ahead of the shared WebAudio+MIDI voice start',
   rowSource.includes('if (!shouldScheduleRowAction(action, this.rowFundamental)) continue;') &&
