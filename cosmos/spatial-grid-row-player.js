@@ -230,6 +230,11 @@ export class SpatialGridRowPlayer {
     this.enabled = false;
     this.rowFundamental = true;
     this.stars = new Map();
+    // Denormalized index mirroring deck.voices, keyed by tone: toneKey -> Map<voice, owningDeck>. It exists
+    // so the per-tone voice cap (_toneVoiceCandidates) reads only the handful of live voices on THAT tone
+    // instead of rescanning every star × deck × voice on every sounding note (was ~O(V) per note, super-
+    // linear in field density). Maintained in lockstep with deck.voices at the three sites that set/delete.
+    this._voicesByTone = new Map();
     // Exposure ledger for the sky's "hold the chord until its full quality has sounded" rule. The player
     // stays harmony-blind: it records only WHICH folded tone sounded and WHEN, carrying the tone's cents
     // straight through from the program. cosmos-audio owns the root and maps those cents to chord degrees.
@@ -442,23 +447,40 @@ export class SpatialGridRowPlayer {
     this.stats.installs++;
   }
 
+  // Index maintenance — call these exactly where a voice enters/leaves its deck.voices Map, so the tone
+  // index never diverges from the authoritative per-layer state.
+  _indexAddVoice(deck, voice) {
+    let byVoice = this._voicesByTone.get(voice.toneKey);
+    if (!byVoice) this._voicesByTone.set(voice.toneKey, byVoice = new Map());
+    byVoice.set(voice, deck);
+  }
+  _indexRemoveVoice(voice) {
+    const byVoice = this._voicesByTone.get(voice.toneKey);
+    if (!byVoice) return;
+    byVoice.delete(voice);
+    if (!byVoice.size) this._voicesByTone.delete(voice.toneKey);
+  }
+
+  // Same candidate shape and (distance, current) semantics as the old full scan, but sourced from the tone
+  // index: only the ≤(few) live voices on THIS tone are visited, and distance/current are read live off the
+  // star so a flying field still ranks by current geometry. nearestCulledToneVoices re-sorts by those keys,
+  // so the Map's iteration order doesn't affect the outcome (beyond an arbitrary pick between exact ties,
+  // which the full-scan order was equally arbitrary about).
   _toneVoiceCandidates(toneKey) {
     const candidates = [];
-    for (const star of this.stars.values()) {
-      const decks = star.currentDeck ? [star.currentDeck, ...star.retiringDecks] : [...star.retiringDecks];
-      for (const deck of decks) {
-        for (const voice of deck.voices.values()) {
-          if (voice.toneKey !== toneKey) continue;
-          candidates.push({
-            starId: star.id,
-            layer: voice.layer,
-            distance: star.distance,
-            current: deck === star.currentDeck,
-            deck,
-            voice,
-          });
-        }
-      }
+    const byVoice = this._voicesByTone.get(toneKey);
+    if (!byVoice) return candidates;
+    for (const [voice, deck] of byVoice) {
+      const star = this.stars.get(deck.program.grid);
+      if (!star) continue;
+      candidates.push({
+        starId: star.id,
+        layer: voice.layer,
+        distance: star.distance,
+        current: deck === star.currentDeck,
+        deck,
+        voice,
+      });
     }
     return candidates;
   }
@@ -489,19 +511,27 @@ export class SpatialGridRowPlayer {
 
   tick(now, horizon, transportStart, ticksPerSecond) {
     const canSchedule = this.enabled && ticksPerSecond > 0;
-    for (const [id, star] of [...this.stars]) {
+    // Iterate the star Map directly — no per-tick [...this.stars] clone. Deleting the CURRENT key during
+    // Map iteration is well-defined and safe (the iterator won't revisit it), and it's the only entry we
+    // ever delete here. retiringDecks is compacted IN PLACE rather than rebuilt into a fresh array, so a
+    // steady tick over a stable field allocates nothing in this loop.
+    for (const [id, star] of this.stars) {
       if (!star.active && now >= star.removeAt) { this._destroyStar(star, now); this.stars.delete(id); continue; }
       if (canSchedule && star.pending) {
         const switchTime = transportStart + star.pending.boundaryTick / ticksPerSecond;
         if (switchTime <= horizon) this._activatePending(star, Math.max(now, switchTime));
       }
       if (canSchedule && star.active && star.currentDeck) this._scheduleDeck(star.currentDeck, now, horizon, transportStart, ticksPerSecond);
-      const keep = [];
-      for (const deck of star.retiringDecks) {
-        if (now >= deck.retireAt) this._destroyDeck(deck, now);
-        else keep.push(deck);
+      const retiring = star.retiringDecks;
+      if (retiring.length) {
+        let write = 0;
+        for (let read = 0; read < retiring.length; read++) {
+          const deck = retiring[read];
+          if (now >= deck.retireAt) this._destroyDeck(deck, now);
+          else retiring[write++] = deck;
+        }
+        retiring.length = write;
       }
-      star.retiringDecks = keep;
     }
   }
 
@@ -587,6 +617,7 @@ export class SpatialGridRowPlayer {
       released: false,   // budget is freed exactly once — by whichever of onended / _releaseLayer runs first
     };
     deck.voices.set(action.layer, voice);
+    this._indexAddVoice(deck, voice);
     deck.oscillators.add(osc);
     const star = this.stars.get(deck.program.grid);
     if (star) {
@@ -611,6 +642,7 @@ export class SpatialGridRowPlayer {
       try { this.detuneBus?.disconnect(osc.detune); } catch {}
       deck.oscillators.delete(osc);
       if (deck.voices.get(action.layer)?.osc === osc) deck.voices.delete(action.layer);
+      this._indexRemoveVoice(voice);   // the ended voice leaves the tone index even if a newer one took its layer
       // A voice that plays out its full gate ends HERE, not via _releaseLayer — so free its budget slot
       // here too, or the count leaks up to MAX_ROW_OSC and every later attack is silently dropped.
       if (!voice.released) { voice.released = true; this.logicalVoiceCount = Math.max(0, this.logicalVoiceCount - 1); }
@@ -622,6 +654,7 @@ export class SpatialGridRowPlayer {
     const voice = deck.voices.get(layer);
     if (!voice) return;
     deck.voices.delete(layer);
+    this._indexRemoveVoice(voice);
     // Guarded so a later natural onended on the same osc can't double-free (and vice-versa).
     if (!voice.released) { voice.released = true; this.logicalVoiceCount = Math.max(0, this.logicalVoiceCount - 1); }
     if (voice.visualLife) voice.visualLife.endTime = Math.min(voice.visualLife.endTime, when + release);
@@ -655,6 +688,7 @@ export class SpatialGridRowPlayer {
     for (const star of this.stars.values()) this._destroyStar(star, now);
     this.stars.clear();
     this.soundedTones.clear();
+    this._voicesByTone.clear();
     this.logicalVoiceCount = 0;
   }
 

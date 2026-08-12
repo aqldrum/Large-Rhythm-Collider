@@ -202,7 +202,16 @@ check('a current deck wins an exact-distance tie against its retiring predecesso
 const allocationPlayer = Object.create(SpatialGridRowPlayer.prototype);
 allocationPlayer.stats = { toneCapMisses: 0, toneCapEvictions: 0 };
 allocationPlayer.logicalVoiceCount = 4;
-allocationPlayer._releaseLayer = (deck, layer) => { deck.voices.delete(layer); allocationPlayer.logicalVoiceCount--; };
+// The tone cap now reads a denormalized index (toneKey -> Map<voice, deck>) instead of scanning every
+// star/deck/voice, so this white-box fixture maintains that index in lockstep with deck.voices — exactly
+// as the live player does at its _startVoice / _releaseLayer / onended sites.
+allocationPlayer._voicesByTone = new Map();
+allocationPlayer._releaseLayer = (deck, layer) => {
+  const voice = deck.voices.get(layer);
+  deck.voices.delete(layer);
+  if (voice) allocationPlayer._indexRemoveVoice(voice);
+  allocationPlayer.logicalVoiceCount--;
+};
 const allocationDeck = (grid, tone = true) => ({
   program: { grid },
   voices: new Map(tone ? [['A', { layer: 'A', toneKey: '1/1' }]] : []),
@@ -214,15 +223,23 @@ allocationPlayer.stars = new Map([
   [50, { id: 50, distance: 500, retiringDecks: [], currentDeck: allocationDeck(50) }],
   [40, { id: 40, distance: 400, retiringDecks: [], currentDeck: allocationDeck(40, false) }],
 ]);
+for (const star of allocationPlayer.stars.values())
+  for (const voice of star.currentDeck.voices.values()) allocationPlayer._indexAddVoice(star.currentDeck, voice);
 const nearerDeck = allocationPlayer.stars.get(40).currentDeck;
 check('a nearer live request claims the tone and evicts its farthest incumbent',
   allocationPlayer._claimToneVoice(nearerDeck, { layer: 'A', fraction: '1/1' }, 0) &&
   allocationPlayer.stars.get(50).currentDeck.voices.size === 0 && allocationPlayer.stats.toneCapEvictions === 1);
-nearerDeck.voices.set('A', { layer: 'A', toneKey: '1/1' });
+const claimedVoice = { layer: 'A', toneKey: '1/1' };
+nearerDeck.voices.set('A', claimedVoice);
+allocationPlayer._indexAddVoice(nearerDeck, claimedVoice);
 allocationPlayer.stars.set(60, { id: 60, distance: 600, retiringDecks: [], currentDeck: allocationDeck(60, false) });
 check('a fifth farther live request is rejected without disturbing the nearest four',
   !allocationPlayer._claimToneVoice(allocationPlayer.stars.get(60).currentDeck, { layer: 'A', fraction: '1/1' }, 0) &&
   allocationPlayer.stats.toneCapMisses === 1 && allocationPlayer._toneVoiceCandidates('1/1').length === 4);
+check('the tone index stays consistent with deck.voices after eviction and rejection',
+  allocationPlayer._voicesByTone.get('1/1').size === 4 &&
+  [...allocationPlayer._voicesByTone.get('1/1').keys()].every(voice =>
+    [...allocationPlayer.stars.values()].some(star => [...star.currentDeck.voices.values()].includes(voice))));
 
 const rowChart = selectedGridRatioToneRows(0, 0, [{
   selectedTones: [{ fraction: '1/1', cents: 0 }, { fraction: '5/4', cents: 386.3137 }],
@@ -257,6 +274,7 @@ budgetPlayer.ctx = fakeCtx();
 budgetPlayer.logicalVoiceCount = 0;
 budgetPlayer.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0 };
 budgetPlayer.stars = new Map();
+budgetPlayer._voicesByTone = new Map();      // _startVoice/onended maintain the tone index
 budgetPlayer._claimToneVoice = () => true;   // isolate accounting from the per-tone spatial cap
 const budgetDeck = () => ({ program: { grid: 7, repeatCull: true }, voices: new Map(), oscillators: new Set(), lastToneByLayer: new Map() });
 const deckA = budgetDeck();
@@ -288,6 +306,7 @@ holdPlayer.ctx = holdCtx;
 holdPlayer.logicalVoiceCount = 0;
 holdPlayer.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0 };
 holdPlayer.stars = new Map();
+holdPlayer._voicesByTone = new Map();
 holdPlayer._claimToneVoice = () => true;
 const holdDeck = budgetDeck();
 holdPlayer._startVoice(holdDeck, { layer: 'A', rawRatio: 1, fraction: '1/1', rawFraction: '1/1' }, 0);
@@ -332,6 +351,7 @@ ledgerPlayer.logicalVoiceCount = 0;
 ledgerPlayer.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0 };
 ledgerPlayer.stars = new Map();
 ledgerPlayer.soundedTones = new Map();
+ledgerPlayer._voicesByTone = new Map();
 ledgerPlayer._claimToneVoice = () => true;
 const ledgerDeck = { program: { grid: 7, repeatCull: true }, voices: new Map(), oscillators: new Set(),
   lastToneByLayer: new Map(), centsByFraction: new Map([['1/1', 0], ['5/4', 386.31], ['3/2', 701.96]]) };
