@@ -1942,10 +1942,12 @@ function renderSkyDebug(now) {
   lines.push(`FULL SKY DEBUG   mix ${s.mix.toFixed(2)} (${s.mix < 0.01 ? 'bed' : s.mix > 0.99 ? 'rows' : 'crossfade'})   tuning ${s.tuningStrength.toFixed(2)}st   sounding root ${s.root.fraction} (${s.root.cents}¢, ${s.root.hz}Hz)${s.rootPolicy.pending ? '  [policy decision pending]' : ''}`);
   const settleState = settleSinceSecond === null ? 'moving' : `settled ${(Math.max(0, (currentSkySeconds() - settleSinceSecond))).toFixed(1)}/${SETTLE_SECONDS}s`;
   lines.push(`  ${settleState}, camSpeed ${camSpeed.toFixed(1)}u/s (settle<${SETTLE_SPEED})`);
-  // Two clocks: the grid clock (ticks/s, scales with speed) and the sky clock (seconds, never does).
-  lines.push(`clock  ${s.speed.mode === 'scaled'
-    ? `SCALED ${Math.round(s.speed.ticksPerSec)} ticks/s from median grid ${s.speed.medianGrid.toLocaleString()} → ${s.speed.cycleSeconds}s/cycle`
-    : `fixed ${Math.round(s.speed.ticksPerSec)} ticks/s`}   ·   sky ${s.speed.skySeconds.toFixed(1)}s`);
+  // Three clocks: density-derived row-grid ticks, card onsets, and rate-independent sky seconds.
+  lines.push(`clock  ${s.speed.mode === 'onset'
+    ? `SPEED ${s.speed.leadOnsetsPerSec.toFixed(1)} card onsets/s · ${Math.round(s.speed.ticksPerSec)} row ticks/s`
+    : s.speed.mode === 'scaled'
+      ? `SCALED ${Math.round(s.speed.ticksPerSec)} ticks/s from median grid ${s.speed.medianGrid.toLocaleString()} → ${s.speed.cycleSeconds}s/cycle`
+      : `fixed ${Math.round(s.speed.ticksPerSec)} ticks/s`}   ·   sky ${s.speed.skySeconds.toFixed(1)}s`);
   if (s.midi?.enabled) lines.push(`midi   MPE → ${s.midi.port} · ${s.midi.notes} notes · ${s.midi.live} live ch · ${s.midi.steals} steals · ${s.midi.dropped} dropped`);
   lines.push(`modul  ${s.modulation.on
     ? `ON  root → fundamental, shift ${s.modulation.cents >= 0 ? '+' : ''}${s.modulation.cents.toFixed(0)}¢, glide ${s.modulation.glideSeconds.toFixed(2)}s (${s.modulation.onsetTicks.toFixed(0)} ticks/onset)`

@@ -25,6 +25,9 @@ check('with no onset gap known yet it yields null — "keep the rate we have", l
 check('setTargetOnsetRate clamps to the knob range and switches speed into ONSET mode',
   setTargetOnsetRate(3) === 3 && currentSpeedMode().mode === 'onset' && currentTargetOnsetRate() === 3 &&
   setTargetOnsetRate(9999) === 16 && setTargetOnsetRate(0.01) === 0.5);
+check('rhythm-card playback advances at the SPEED target itself, not the density-derived grid tick rate',
+  setTargetOnsetRate(3) === 3 && currentSpeedMode().leadOnsetsPerSec === 3 &&
+  onsetRateToTickRate(3, 100).ticksPerSec === 300);
 setTargetOnsetRate(2.5);   // hygiene: back to the calibrated default
 
 console.log('\n  DWELL — chord dwell past full exposure, in cycle fractions (0 = advance at exposure)');
@@ -79,6 +82,10 @@ check('VOLUME is a real master gain between the mute and the safety limiter',
   audio.includes('masterVolume.gain.setTargetAtTime'));
 check('SPEED\'s ONSET mode re-derives the tick rate as the field churns, under the same hysteresis',
   audio.includes('onsetRateToTickRate(targetOnsetRate, fieldOnsetTicks)') && audio.includes("SPEED_MODES.ONSET"));
+check('rhythm-card scheduling has an independent onset clock pinned to SPEED while rows keep grid time',
+  audio.includes('setLeadTickRate(targetOnsetRate)') &&
+  audio.includes('leadTransportStart + noteTicks / leadTicksPerSec') &&
+  audio.includes('gridRowPlayer?.tick(now, now + SCHEDULE_AHEAD, transportStart, ticksPerSec)'));
 check('SPACE drives BOTH reverb sends — the ambient send here and the row send on the player',
   audio.includes('reverbWet?.gain.setTargetAtTime') && audio.includes('gridRowPlayer?.setReverbWet(') &&
   player.includes('setReverbWet(level)') && player.includes('this.reverb.wet.gain.setTargetAtTime'));

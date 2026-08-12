@@ -209,28 +209,30 @@ let auditionListening = true;     // audition bus on/off (independent of mix)
 let auditionPinned = false;       // pin keeps audition audible after deselection
 let gridRowPlayer = null;
 
-// ── TWO CLOCKS ─────────────────────────────────────────────────────────────────────────────────
-// GRID CLOCK (ticks). A fixed TICK RATE (ticks/sec), not a fixed cycle duration. For the lead, a
-// "tick" is one ONSET (lead.notes.length ticks = one full cycle) — NOT one grid-step: `grid` is the
-// LCM of the layers and can be tens of thousands even for a modest rhythm, which made cycles hours
-// long when ticks were grid-steps. Using the onset count instead pins the average note rate to
-// ticksPerSec regardless of grid size, while note.t fractions still preserve the exact (uneven) onset
-// spacing within the cycle. Row programs DO run on grid-steps (a program's loop is `grid` ticks), which
-// is exactly why the rate has to be able to scale with the local grid — see setSpeedMode.
+// ── THREE CLOCKS ────────────────────────────────────────────────────────────────────────────────
+// GRID CLOCK (ticks). Spatial row programs run on actual grid steps, so SPEED converts its target
+// onsets/sec through the nearby field's median ticks/onset. This clock therefore changes with density.
+//
+// LEAD CLOCK (onsets). Rhythm-card audition uses one tick per composite onset. Its rate is SPEED's
+// target onsets/sec DIRECTLY — feeding it the density-derived grid rate made cards race or drag as the
+// nearby field changed. `note.t` still preserves the rhythm's uneven spacing within an N-onset cycle.
 //
 // SKY CLOCK (seconds). Wall-clock seconds since the audio context started, NEVER re-anchored. The
 // chord walk, the bed's re-swells and the root policy's settle/rate-limit are all "how long a listener
 // experiences this harmony" quantities: they must not speed up when playback does. Keeping them on
 // ticks is what would make scaled speed unusable — at grid 61600's ~5100 ticks/s the 256-tick chord
-// window would fire every 50ms. The two clocks agree exactly at the historical 10 ticks/s default,
+// window would fire every 50ms. All three clocks agree at the historical 10 ticks/s default,
 // which is how every seconds constant below was derived.
 let ticksPerSec = 10;              // default: 10 ticks/sec (~100ms/tick) — slow enough to actually listen
 let transportStart = null;        // audioCtx time at which the absolute tick counter reads 0 (re-anchored on rate change)
+let leadTicksPerSec = 10;          // one lead tick = one source onset; ONSET mode pins this to targetOnsetRate
+let leadTransportStart = null;     // independent epoch: density-driven grid-rate changes cannot move the card
 let audioEpoch = null;            // audioCtx time the transport started — the sky clock's fixed origin
 let lead = null;                  // { notes, grid, cardinality, node } | null
 let schedIdx = 0, schedCycle = 0; // scheduler's cursor into lead.notes / current cycle number
 let currentOctaveLift = 0;        // applies to NEWLY scheduled notes only (spec: don't repitch in flight)
 const absoluteTicks = now => (now - transportStart) * ticksPerSec;   // monotonic tick count since transport start
+const absoluteLeadTicks = now => (now - leadTransportStart) * leadTicksPerSec;
 const skySeconds = now => (audioEpoch == null ? 0 : now - audioEpoch);   // monotonic wall seconds, rate-independent
 
 // ── Full Sky lead selection (M4): the lead's chord mask comes from the GLOBAL walk, not a per-star song.
@@ -357,7 +359,9 @@ export function initAudio() {
   rootPhraseTracker = resetPhraseTracker(skyRoot.rootKey, currentHarmonyPolicy().id, skyTabu);
   recentSkyRoots = []; lastRootPolicyProposal = null; rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
   bedStars = new Map(); bedOscCount = 0; bedLiveOscCount = 0; currentField = [];
-  transportStart = audioCtx.currentTime;   // grid clock starts here; lead swaps ride the same phase
+  transportStart = audioCtx.currentTime;   // grid and lead clocks share an origin, then preserve phase independently
+  leadTransportStart = transportStart;
+  leadTicksPerSec = speedMode === SPEED_MODES.ONSET ? targetOnsetRate : ticksPerSec;
   audioEpoch = transportStart;             // sky clock shares the origin but is never re-anchored after this
   chordStartedAt = 0; lastChordSeconds = 0; lastChordExposure = { targets: [], degrees: [], sounded: [], missing: [], rowsPresent: false, exposed: true, complete: true, heldSeconds: 0 };
   lastModulationCents = 0; modulationGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
@@ -486,10 +490,16 @@ export function setSpeedMode(mode, cycleSeconds) {
   speedMode = Object.values(SPEED_MODES).includes(mode) ? mode : SPEED_MODES.FIXED;
   if (Number.isFinite(+cycleSeconds) && +cycleSeconds > 0) scaledCycleSeconds = +cycleSeconds;
   if (speedMode === SPEED_MODES.FIXED) { scaledMedianGrid = 0; setTickRate(fixedTickRate); }
-  else if (scaledMedianGrid > 0) {
+  else if (speedMode === SPEED_MODES.SCALED && scaledMedianGrid > 0) {
     setTickRate(Math.max(SCALED_RATE_MIN, Math.min(SCALED_RATE_MAX, scaledMedianGrid / scaledCycleSeconds)));
+  } else if (speedMode === SPEED_MODES.ONSET) {
+    const derived = onsetRateToTickRate(targetOnsetRate, fieldOnsetTicks);
+    if (derived) setTickRate(derived.ticksPerSec);
+    setLeadTickRate(targetOnsetRate);
+  } else {
+    setLeadTickRate(ticksPerSec);
   }
-  return { mode: speedMode, cycleSeconds: scaledCycleSeconds, ticksPerSec, medianGrid: scaledMedianGrid };
+  return { mode: speedMode, cycleSeconds: scaledCycleSeconds, ticksPerSec, leadOnsetsPerSec: leadTicksPerSec, medianGrid: scaledMedianGrid };
 }
 
 // SPEED knob binding (Phase 2.1): set the target note rate in onsets/sec, switching speed into ONSET mode
@@ -499,6 +509,7 @@ export function setTargetOnsetRate(rate) {
   const n = Number(rate);
   targetOnsetRate = Math.max(SPEED_ONSET_MIN, Math.min(SPEED_ONSET_MAX, Number.isFinite(n) ? n : SPEED_ONSET_DEFAULT));
   speedMode = SPEED_MODES.ONSET;
+  setLeadTickRate(targetOnsetRate);
   const derived = onsetRateToTickRate(targetOnsetRate, fieldOnsetTicks);
   if (derived && audioCtx) setTickRate(derived.ticksPerSec);
   return targetOnsetRate;
@@ -683,7 +694,7 @@ export function currentFundamental() {
 export function currentSpeedMode() {
   // In SCALED/ONSET the cycle is DERIVED (grid/rate); the readout shows both "N notes/s · ~Ss cycle".
   const derivedCycleSeconds = scaledMedianGrid > 0 && ticksPerSec > 0 ? scaledMedianGrid / ticksPerSec : scaledCycleSeconds;
-  return { mode: speedMode, cycleSeconds: scaledCycleSeconds, derivedCycleSeconds, ticksPerSec, medianGrid: scaledMedianGrid, targetOnsetRate };
+  return { mode: speedMode, cycleSeconds: scaledCycleSeconds, derivedCycleSeconds, ticksPerSec, leadOnsetsPerSec: leadTicksPerSec, medianGrid: scaledMedianGrid, targetOnsetRate };
 }
 
 // RICHNESS knob: an integer DETENT 1–4 setting the largest chord the walk may reach for (the old linear
@@ -1595,16 +1606,31 @@ export function bedStats() {
   };
 }
 
-// Ticks per second (the universal clock's rate). Re-anchors the transport epoch so the CURRENT
-// absolute tick count is preserved under the new rate (a rate change glides pace rather than jumping
-// the playhead — past ticks don't retroactively speed up or slow down).
+// Grid ticks per second. Re-anchor the grid epoch so its current absolute tick is preserved. In FIXED
+// and SCALED modes the card intentionally follows this legacy rate too; in ONSET mode its independent
+// lead clock stays pinned to targetOnsetRate while nearby density changes only this grid rate.
 export function setTickRate(rate, fromUser = false) {
   if (fromUser) fixedTickRate = rate;   // remember the slider's rate so leaving scaled mode restores it
-  if (!audioCtx) { ticksPerSec = rate; return; }
+  if (!audioCtx) {
+    ticksPerSec = rate;
+    if (speedMode !== SPEED_MODES.ONSET) leadTicksPerSec = rate;
+    return;
+  }
   const now = audioCtx.currentTime;
   const ticksSoFar = absoluteTicks(now);
   ticksPerSec = rate;
   transportStart = now - ticksSoFar / ticksPerSec;
+  if (speedMode !== SPEED_MODES.ONSET) setLeadTickRate(rate);
+}
+
+function setLeadTickRate(rate) {
+  const next = Number(rate);
+  if (!(next > 0)) return;
+  if (!audioCtx || leadTransportStart == null) { leadTicksPerSec = next; return; }
+  const now = audioCtx.currentTime;
+  const ticksSoFar = absoluteLeadTicks(now);
+  leadTicksPerSec = next;
+  leadTransportStart = now - ticksSoFar / leadTicksPerSec;
   if (lead) resyncSchedulePointer();
 }
 
@@ -1616,8 +1642,8 @@ export function setMuted(bool) {
 // 0..1 position within the current lead's cycle, for the cockpit playhead. 0 before the transport
 // starts or when there's no lead (a cycle is only meaningful relative to some star's grid).
 export function transportPhase() {
-  if (!audioCtx || transportStart == null || !lead) return 0;
-  const phase = (absoluteTicks(audioCtx.currentTime) / lead.notes.length) % 1;
+  if (!audioCtx || leadTransportStart == null || !lead) return 0;
+  const phase = (absoluteLeadTicks(audioCtx.currentTime) / lead.notes.length) % 1;
   return phase < 0 ? phase + 1 : phase;
 }
 
@@ -1644,7 +1670,7 @@ export function stopAudio() {
   skyRoot = { fraction: '1/1', cents: 0, rootKey: 0 }; rootKeyCounter = 0; lastRootLadder = [];
   rootEstablished = false; rootPhraseTracker = null; recentSkyRoots = []; lastRootPolicyProposal = null;
   rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
-  lead = null; schedIdx = 0; schedCycle = 0; transportStart = null; audioEpoch = null;
+  lead = null; schedIdx = 0; schedCycle = 0; transportStart = null; leadTransportStart = null; audioEpoch = null;
   chordStartedAt = 0; lastChordSeconds = 0; scaledMedianGrid = 0; fieldOnsetTicks = 0;
   fundamentalOffset = null; modulationOffset = null; detuneBus = null;
   lastModulationCents = 0; lastFundamentalCents = 0;
@@ -1677,11 +1703,11 @@ export function stopAudio() {
   }
 }
 
-// Jump the scheduler's cursor to the next upcoming note at the current transport phase (used when a
-// lead is (re)set or the tick rate changes) so playback picks up NOW instead of restarting the cycle.
+// Jump the scheduler's cursor to the next upcoming note at the current lead phase (used when a lead is
+// swapped or its onset target changes) so playback picks up NOW instead of restarting the cycle.
 function resyncSchedulePointer() {
   if (!audioCtx || !lead || !lead.notes.length) { schedIdx = 0; schedCycle = 0; return; }
-  const ticks = absoluteTicks(audioCtx.currentTime);
+  const ticks = absoluteLeadTicks(audioCtx.currentTime);
   const cycleNow = Math.floor(ticks / lead.notes.length);
   const phase = ticks / lead.notes.length - cycleNow;
   const idx = lead.notes.findIndex(n => n.t >= phase);
@@ -1753,7 +1779,7 @@ function schedulerTick() {
       const note = lead.notes[schedIdx];
       const cycleTicks = lead.notes.length;
       const noteTicks = schedCycle * cycleTicks + note.t * cycleTicks;
-      const time = transportStart + noteTicks / ticksPerSec;
+      const time = leadTransportStart + noteTicks / leadTicksPerSec;
       if (time > horizon) break;
       scheduleNote(note, time, schedIdx);
       schedIdx++;
