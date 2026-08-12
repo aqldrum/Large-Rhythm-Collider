@@ -22,7 +22,10 @@ function aggregateRatioCatalog(compiledRhythms, ratioOwners, selection) {
     return {
       fraction: owner.fraction,
       cents: owner.cents,
-      selected: selection == null || selection.has(owner.fraction),
+      // A tone is selected only if its rhythm actually survived into the compiled set — a rhythm dropped by
+      // the per-rhythm onset cap can't sound, so its tones must not report as selected (keeps selectedTones/
+      // selectedFractions honest). No-op when nothing is capped (rhythm is always present then).
+      selected: (selection == null || selection.has(owner.fraction)) && rhythm != null,
       occurrenceCount: note?.occurrenceCount || 0,
       structuralEventCount: note?.structuralEventCount || 0,
       playEventCount: 0,
@@ -61,7 +64,7 @@ function candidateGroups(candidates) {
   })).sort(compareToneGroups);
 }
 
-export function buildGridCull2Readout(rawGrid, { reflect = true, repeatCull = true, selectedFractions = null, ownerSolve = null } = {}) {
+export function buildGridCull2Readout(rawGrid, { reflect = true, repeatCull = true, selectedFractions = null, ownerSolve = null, maxPlaybackOnsets = Infinity } = {}) {
   const grid = Number(rawGrid);
   if (!Number.isSafeInteger(grid) || grid < 2) throw new Error('Grid must be a safe integer of 2 or greater.');
 
@@ -76,6 +79,10 @@ export function buildGridCull2Readout(rawGrid, { reflect = true, repeatCull = tr
     group.ownedFractions.push(owner.fraction);
   }
   const compiledRhythms = [...ownersByRhythm.values()]
+    // Per-rhythm onset prohibition: a representative rhythm denser than maxPlaybackOnsets is dropped BEFORE
+    // compile, so it never enters the composite (events[]) nor costs a buildCull2Readout. Fail-open — a
+    // missing layerSum reads as 0 and is kept. Its catalog tones fall to selected:false below (rhythm gone).
+    .filter(system => (Number(system.layerSum) || 0) <= maxPlaybackOnsets)
     .sort((a, b) => a.key.localeCompare(b.key))
     .map(system => {
       const ownedSelection = system.ownedFractions.filter(fraction => selection == null || selection.has(fraction));

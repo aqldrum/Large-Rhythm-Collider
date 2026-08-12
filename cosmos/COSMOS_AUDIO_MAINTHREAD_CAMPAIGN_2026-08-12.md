@@ -297,3 +297,27 @@ Each batch: land behind its captured-data assertions, then Avery's audible pass 
 dimension. Re-read `window.__cosmosHealth()` live after Batches 2–4 (`activeStars` must not climb; `throws`
 must stay 0). Update memory `cosmos-perf-profile` with the four-center map + the stale-cap correction on
 completion of Batch 1.
+
+---
+
+## 7. Addendum — per-rhythm onset prohibition (landed 2026-08-12, Avery-requested)
+
+Interleaved between Batch 1 and Batch 2. Attacks cost center 3 (and 2) at the source: onset count `E` is the
+term driving the per-tick walk, deck-swap seed `O(E·L)`, and `nextRowLayerGapTicks` `O(E²)/cycle`, so
+dropping over-dense rhythms before they enter the composite is cheaper than optimizing the walk over them.
+
+- **New cap:** `ROW_MAX_PLAYBACK_ONSETS = 16384` (`cosmos-grid-audio-core.js`), **distinct from** the
+  zone-level OOM gate `ROW_MAX_COMPOSITE_ONSETS = 20000`. Chosen by Avery (2048 judged "very low").
+- **Scope = per-rhythm, not per-zone.** A representative rhythm whose `layerSum` exceeds the cap is filtered
+  out of `compiledRhythms` in `buildGridCull2Readout` **before** `buildCull2Readout` runs — so it costs
+  neither worker compile nor a place in `events[]`. A zone keeps sounding its lighter rhythms; it goes silent
+  only if *all* its rhythms are over-dense. Catalog `selected` now requires rhythm survival, so
+  `selectedTones`/`selectedFractions` stay honest (a dropped rhythm's tone can't report selected).
+- **Scene-only.** Applied on the flight compile path (`compileGridAudioProgram` → `buildGridCull2Readout`,
+  option `maxPlaybackOnsets`). The lab/rhythm-card path (`cull2-grid-worker.js`) calls `buildGridCull2Readout`
+  with no cap (default `Infinity`), so deliberate card inspection of a dense rhythm is unaffected.
+- **Fail-open:** a missing `layerSum` reads as 0 → kept (matches the eligibility gate's philosophy).
+- **Validation:** new assertions in `assert-cull2-audio.mjs` (grid 840, cap 60 → 5 rhythms dropped, composite
+  shrinks, catalog consistent, uncapped/`Infinity` path byte-unchanged). Behavior IS audible (dense rhythms
+  go silent) → Avery-audible-gated. Note `E` is a proxy; effective heaviness also tracks onset *rate*
+  (`E·ticksPerSec/grid`) — revisit if a lower cap is wanted for fast-playing mid-density zones.
