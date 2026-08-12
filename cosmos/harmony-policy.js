@@ -77,9 +77,19 @@ export function bedTargetsForPolicy(policy) {
   targets[0])))].sort((a, b) => a - b);
 }
 
+// Perf: the definition key re-normalizes `policy.targets` on every call, and the hot paths (per-tick lead
+// mask, per-frame row selection key) ask for it constantly against an unchanged policy. Memoize by policy
+// identity — but ONLY for frozen policies, whose targets can never mutate out from under a cached key.
+// normalizeHarmonyPolicy freezes its output, so the hot-path policies hit this; ad-hoc/unfrozen policies
+// (never on the hot path) always recompute, so there is no staleness risk.
+const _definitionKeyCache = new WeakMap();
 export function harmonyPolicyDefinitionKey(policy) {
+  const cacheable = policy !== null && typeof policy === 'object' && Object.isFrozen(policy);
+  if (cacheable) { const hit = _definitionKeyCache.get(policy); if (hit !== undefined) return hit; }
   const targets = normalizeCentTargets(policy?.targets);
-  return `policy:${policy?.id || 'none'}|source:${policy?.source || 'none'}|targets:${targets.join(',')}|window:${policy?.toleranceCents ?? DEFAULT_HARMONY_TOLERANCE_CENTS}`;
+  const key = `policy:${policy?.id || 'none'}|source:${policy?.source || 'none'}|targets:${targets.join(',')}|window:${policy?.toleranceCents ?? DEFAULT_HARMONY_TOLERANCE_CENTS}`;
+  if (cacheable) _definitionKeyCache.set(policy, key);
+  return key;
 }
 
 export function harmonyPolicySelectionKey(root, policy) {

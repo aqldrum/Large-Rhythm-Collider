@@ -827,14 +827,26 @@ export function currentTuningStrength() { return LAMBDA_FIELD; }
 const currentChordSemitones = () => CHORDS[skyChordId].semitones;
 const currentChordTargets = () => currentChordSemitones().map(degree => degree * 100);
 
+// The policy is fully determined by (harmonySource, harmonyScale, skyChordId) — tolerance is constant and
+// chordTargets is a pure function of skyChordId. It was rebuilt ~3×/scheduler-tick + 1×/rAF-frame (each a
+// Set+filter+2 maps+sort+freeze), ~120 rebuilds/s of pure churn. Memoize on that tuple, self-invalidating:
+// the key is re-derived every call, so ANY change to the three inputs is picked up on the next call with no
+// setter hooks. Returning the same frozen instance while stable is what lets harmonyPolicyDefinitionKey's
+// identity cache (harmony-policy.js) collapse the per-tick/per-frame selection-key normalize too.
+let _harmonyPolicyCache = null, _harmonyPolicyCacheKey = null;
 export function currentHarmonyPolicy() {
-  return normalizeHarmonyPolicy({
-    source: harmonySource,
-    scaleId: harmonyScale,
-    chordId: skyChordId,
-    chordTargets: currentChordTargets(),
-    toleranceCents: DEFAULT_HARMONY_TOLERANCE_CENTS,
-  });
+  const key = `${harmonySource}|${harmonyScale}|${skyChordId}`;
+  if (key !== _harmonyPolicyCacheKey) {
+    _harmonyPolicyCacheKey = key;
+    _harmonyPolicyCache = normalizeHarmonyPolicy({
+      source: harmonySource,
+      scaleId: harmonyScale,
+      chordId: skyChordId,
+      chordTargets: currentChordTargets(),
+      toleranceCents: DEFAULT_HARMONY_TOLERANCE_CENTS,
+    });
+  }
+  return _harmonyPolicyCache;
 }
 
 export function currentHarmonyState() {

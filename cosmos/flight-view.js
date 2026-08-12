@@ -198,7 +198,13 @@ function skyPoseFor(position, distance, basis) {
 // Cull2 grid-row mode: true-3D, head-turn-independent movement field. Only this nearest prewarm set
 // is allowed to touch the dedicated audio compiler; the thousands of other loaded zones remain pure
 // visual/number-theory state. The consonance window is intentionally one constant ready for a UI knob.
-const ROW_COMPILE_WORKERS = 1;
+// 2, not 1: a chord change serializes up to ROW_PREWARM_STARS (30) recompiles through this pool,
+// nearest-first, so with a single worker the far prewarm stars wait behind the whole queue before they can
+// sound the new chord. Two workers roughly halve time-to-full-field re-arm. The pool dedups by key above
+// worker assignment, and landings are coalesced (≥60 ms), so two near-simultaneous completions don't
+// double-trigger a field rebuild. Program bursts (compiling already-solved zones) rarely coincide with
+// solver saturation (solving fresh zones), so this doesn't meaningfully contend with the solver pool.
+const ROW_COMPILE_WORKERS = 2;
 const rowDistanceGain = d => clampN(mapRange(d, 0, ROW_RADIUS, 0.9, 0.06), 0.04, 0.9);
 const rowDistanceCutoff = d => mapRange(d, 0, ROW_RADIUS, 9000, 900);
 let rowActiveIds = new Set();
@@ -1576,6 +1582,27 @@ const FIELD_MEMBERSHIP_MIN_INTERVAL_MS = 60;
 function markFieldDirty() { fieldMembershipDirty = true; }
 function markLandingDirty() { fieldLandingDirty = true; }   // a compile landed — coalesced, not immediate
 
+// Perf (1c): audioCompileEligibility loops z.ratioOwners to fold maxLayerSum, and it was called for EVERY
+// placed zone on EVERY membership rebuild — O(Z·owners) — though the verdict only changes when a zone's
+// solve state does. Cache it on the zone, keyed on every field the check reads. z.ratioOwners is REPLACED
+// with a fresh array whenever ownership changes (cosmos-runtime.js:56 mergeStarRatioOwners / :213 clear —
+// never mutated in place), so its reference stands in for the per-owner content without walking it; the
+// rest are O(1) scalars. On a stable solved field this collapses to an O(1) signature compare per zone.
+// Fail-open (recompute) on any miss, so a new field the signature doesn't recognise is never wrongly gated.
+function cachedAudioCompileEligibility(z) {
+  if (!z) return audioCompileEligibility(z);
+  const owners = z.ratioOwners;
+  const c = z._eligCache;
+  if (c && c.owners === owners && c.state === z.state && c.shardsDone === z.shardsDone
+        && c.shardsTotal === z.shardsTotal && c.monster === z.monster && c.unsolvable === z.unsolvable) {
+    return c.verdict;
+  }
+  const verdict = audioCompileEligibility(z);
+  z._eligCache = { owners, state: z.state, shardsDone: z.shardsDone, shardsTotal: z.shardsTotal,
+    monster: z.monster, unsolvable: z.unsolvable, verdict };
+  return verdict;
+}
+
 function updateGridRowField(placed, basis, translated, nowMs) {
   const root = currentSkyRoot(), policy = currentHarmonyPolicy();
   const selectionKey = harmonicSelectionKey(root, policy, ROW_CONSONANCE_CENTS);
@@ -1610,20 +1637,24 @@ function updateGridRowField(placed, basis, translated, nowMs) {
   const candidates = [];
   for (const [grid, position] of placed) {
     const z = cosmos.zones.get(grid);
-    if (!audioCompileEligibility(z).eligible) continue;
+    if (!cachedAudioCompileEligibility(z).eligible) continue;
     const distance = Math.hypot(position[0], position[1], position[2]);
     candidates.push({ id: grid, z, position, distance, ready: !!z._rowAudio?.program });
   }
-  let selection = chooseSpatialRows(candidates, rowActiveIds);
+  // ONE distance sort yields both prewarm and active. The active set used to be re-selected after
+  // requestRowProgram with a re-read `candidate.ready`, but requestRowProgram only writes
+  // `_rowAudio.program` asynchronously (in .then, ~line 1531) and inits it to null synchronously, and
+  // `rowActiveIds` is unchanged until below — so no `ready` flag flips and the second chooseSpatialRows
+  // was provably identical work. A completed older program still keeps a zone `ready` (its program is
+  // non-null) so it stays active while its current-chord replacement compiles — that hole-free behavior
+  // rides on the original `ready` stamp at candidate-build and is unchanged. (If a future path ever lands
+  // a program synchronously between here and the active read, restore the re-read + a second call.)
+  const selection = chooseSpatialRows(candidates, rowActiveIds);
   rowPrewarmIds = new Set(selection.prewarm.map(candidate => candidate.id));
   const validRequestKeys = new Set();
   for (const candidate of selection.prewarm) requestRowProgram(candidate, root, policy, selectionKey, validRequestKeys);
   rowCompiler?.cancelQueuedExcept(validRequestKeys);
 
-  // A completed older program stays active while its current-chord replacement compiles. This is
-  // what keeps flight and chord changes from punching holes in the scheduler.
-  for (const candidate of candidates) candidate.ready = !!candidate.z._rowAudio?.program;
-  selection = chooseSpatialRows(candidates, rowActiveIds);
   rowActiveIds = new Set(selection.active.map(candidate => candidate.id));
   setGridSpatialField(selection.active.map(candidate => ({
     id: candidate.id,
