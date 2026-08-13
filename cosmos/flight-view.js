@@ -1718,11 +1718,18 @@ function toggleHarmonyHold() {
 // rebuilt only when layout, layer visibility or harmony changes. The flight frame draws that bitmap plus a
 // tiny dynamic overlay (playhead + the one live onset), instead of walking thousands of nodes every rAF.
 function drawCockpitPlot() {
-  if (!cockpitPlotCtx || !rhythmInspectorModel || !lrcDivEl?.classList.contains('open')) return;
+  if (!cockpitPlotCtx || !lrcDivEl?.classList.contains('open')) return;
   const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
   const w = Math.max(1, cockpitPlotEl.clientWidth || 576), h = Math.max(1, cockpitPlotEl.clientHeight || 192);
   const pixelW = Math.round(w * dpr), pixelH = Math.round(h * dpr);
   if (cockpitPlotEl.width !== pixelW || cockpitPlotEl.height !== pixelH) { cockpitPlotEl.width = pixelW; cockpitPlotEl.height = pixelH; }
+  if (!rhythmInspectorModel) {
+    // No model (too-dense card, or nothing inspected): clear any stale plot instead of leaving the last
+    // rhythm's bitmap on screen, and reset the base key so a real model rebuilds cleanly when one returns.
+    cockpitPlotCtx.setTransform(dpr, 0, 0, dpr, 0, 0); cockpitPlotCtx.clearRect(0, 0, w, h);
+    cockpitPlotBaseKey = '';
+    return;
+  }
   if (!cockpitPlotBaseCanvas) {
     cockpitPlotBaseCanvas = document.createElement('canvas');
     cockpitPlotBaseCtx = cockpitPlotBaseCanvas.getContext('2d');
@@ -1745,13 +1752,21 @@ function drawCockpitPlot() {
     // the onset tape while building this cached bitmap; repeated 1/1 nodes never repeat harmonic math.
     const selectedByTone = classifyLeadHarmony(rhythmInspectorModel.ratios, root.cents, policy).selectedByTone;
     cockpitPlotEligibleNodes = new Set();
+    // Bound the rasterization cost. A dense rhythm is dominated by heavily-repeated tones (often 1/1 — a
+    // uniform pulse train folds every onset to the same fraction) that pile onto the same plot region, and
+    // this bitmap re-rasterizes on every chord/root change. Skip DRAWING a node whose tone repeats the
+    // previously drawn one, so the draw count tracks distinct-tone RUNS, not raw onset count. Eligibility is
+    // still recorded for EVERY node, so the playhead pulse and scale-table highlight are unaffected.
+    let prevDrawnFraction = null;
     for (let i = 0; i < rhythmInspectorModel.nodes.length; i++) {
       const node = rhythmInspectorModel.nodes[i];
       const visibleOwners = node.owners.filter(owner => cockpitVisibleLayers.has(owner));
       if (!visibleOwners.length) continue;
-      const x = xFor(node), y = yFor(node);
       const eligible = selectedByTone.get(node.fraction) === true && shouldScheduleRowAction(node, rowFundamental);
       if (eligible) cockpitPlotEligibleNodes.add(i);
+      if (node.fraction === prevDrawnFraction) continue;   // heavily-repeated tone — already drawn this run
+      prevDrawnFraction = node.fraction;
+      const x = xFor(node), y = yFor(node);
       // Coincidence has no separate visual identity. Chord-live tones use a soft halo in their owning layer's
       // colour; avoiding white strokes makes the old nested-ratio marker impossible to misread here.
       const color = cockpitLayerColors[visibleOwners[0]] || '#aab2bd';
