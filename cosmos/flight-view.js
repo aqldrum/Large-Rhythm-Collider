@@ -31,7 +31,7 @@ import { harmonyPolicyDefinitionKey } from './harmony-policy.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
 import { drawGridRowAura } from './grid-row-aura.js';
-import { buildRhythmInspectorModel } from './rhythm-inspector-model.js';
+import { buildRhythmInspectorModel, lightRhythmMetrics } from './rhythm-inspector-model.js';
 import { shouldScheduleRowAction } from './spatial-grid-row-player.js';
 import { SolverWorkerPool } from './cosmos/solver-worker-pool.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
@@ -1473,21 +1473,32 @@ function renderRhythmInspector(node) {
   if (lrcEmptyEl) lrcEmptyEl.hidden = true;
   if (rhythmInspectorEl) rhythmInspectorEl.hidden = false;
   if (!rhythmInspectorModel) {
-    // Too dense to build the composite model / audition without a synchronous O(onsets) freeze. Show a
-    // compact notice instead of the ratio table + plot; audition stays disabled via updateRhythmActionState.
-    // The scale table / plot readouts guard on a null model already, so they simply hold blank.
-    const identity = node.layers.join(' : ');
-    const onsetLoad = node.layers.reduce((sum, layer) => sum + layer, 0);
-    if (rhythmTitleEl) rhythmTitleEl.textContent = identity;
-    if (rhythmSubtitleEl) rhythmSubtitleEl.textContent = `grid ${(node.grid ?? 0).toLocaleString()} · too dense to audition`;
+    // Too dense to build the composite model / audition without a synchronous O(layerSum) freeze. We still
+    // show the CHEAP closed-form metrics (fundamental, density, groupings — all O(layers), computed without
+    // the composite tape) so the card is informative, not just a refusal; only the ratio table + plot (which
+    // need the walk we skipped) hold blank, and audition stays disabled via updateRhythmActionState. These
+    // fields read identically to a below-cap card — lightRhythmMetrics mirrors the full model's formulas.
+    const metrics = lightRhythmMetrics(node.layers);
+    if (rhythmTitleEl) rhythmTitleEl.textContent = metrics.identity;
+    if (rhythmSubtitleEl) rhythmSubtitleEl.textContent = `grid ${metrics.grid.toLocaleString()} · too dense to audition`;
     if (rhythmStateEl) { rhythmStateEl.textContent = node.charted ? 'charted' : 'open space'; rhythmStateEl.classList.toggle('charted', !!node.charted); }
-    const sub = lrcHeadEl?.querySelector('.lrc-div-sub'); if (sub) sub.textContent = identity;
-    if (metricFundamentalEl) metricFundamentalEl.textContent = '—';
-    if (metricOnsetsEl) metricOnsetsEl.textContent = `≥ ${onsetLoad.toLocaleString()}`;
-    if (metricDensityEl) metricDensityEl.textContent = '—';
-    if (scaleCountEl) scaleCountEl.textContent = '—';
-    if (scaleTableBodyEl) scaleTableBodyEl.innerHTML = `<tr><td colspan="9" class="lrc-too-dense">${onsetLoad.toLocaleString()}-onset layer-sum exceeds the ${ROW_MAX_PLAYBACK_ONSETS.toLocaleString()} card cap — too dense to render or audition.</td></tr>`;
-    if (structureListEl) structureListEl.innerHTML = `<div><dt>Layer sum</dt><dd>${onsetLoad.toLocaleString()}</dd></div><div><dt>Keep-two</dt><dd>${node.dense ? 'paired' : 'solo'}</dd></div>`;
+    const sub = lrcHeadEl?.querySelector('.lrc-div-sub'); if (sub) sub.textContent = metrics.identity;
+    if (metricFundamentalEl) metricFundamentalEl.textContent = inspectorNumber(metrics.fundamental);
+    // Distinct onsets need the O(layerSum) walk; layerSum is their exact upper bound, so report "≤".
+    if (metricOnsetsEl) metricOnsetsEl.textContent = `≤ ${metrics.maxOnsets.toLocaleString()}`;
+    if (metricDensityEl) metricDensityEl.textContent = `${metrics.density.toFixed(2)}%`;
+    if (scaleCountEl) scaleCountEl.textContent = '—';   // tone count needs the folded-ratio walk we skipped
+    if (scaleTableBodyEl) scaleTableBodyEl.innerHTML = `<tr><td colspan="9" class="lrc-too-dense">${metrics.maxOnsets.toLocaleString()}-onset layer-sum exceeds the ${ROW_MAX_PLAYBACK_ONSETS.toLocaleString()} card cap — scale tones and plot need the full composite build, skipped to keep the click light.</td></tr>`;
+    if (structureListEl) {
+      const denseMetrics = [
+        ['Groupings', metrics.groupings.map(inspectorNumber).join(' · ')],
+        ['Layer sum', metrics.layerSum.toLocaleString()],
+        ['Range', metrics.range.toFixed(2)],
+        ['P/G ratio', metrics.pulseToGrouping.toFixed(2)],
+        ['Keep-two', node.dense ? 'paired' : 'solo'],
+      ];
+      structureListEl.innerHTML = denseMetrics.map(([label, value]) => `<div><dt>${label}</dt><dd title="${inspectorEscape(value)}">${inspectorEscape(value)}</dd></div>`).join('');
+    }
     renderCockpitLayerControls();
     renderRhythmConnections();
     updateRhythmActionState();

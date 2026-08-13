@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { buildRhythmInspectorModel } from '../rhythm-inspector-model.js';
+import { buildRhythmInspectorModel, lightRhythmMetrics } from '../rhythm-inspector-model.js';
 import { classifyLeadHarmony, deriveVoice, leadFrequencyHz, scheduledLeadLayers, shouldScheduleLeadNote } from '../cosmos-audio.js';
 import { normalizeHarmonyPolicy } from '../harmony-policy.js';
 import { shouldScheduleRowAction } from '../spatial-grid-row-player.js';
@@ -52,6 +52,29 @@ const normalized = buildRhythmInspectorModel([3, 5, 4]);
 assert.deepEqual(normalized.layers, [5, 4, 3]);
 assert.equal(normalized.key, model.key);
 
+// Light metrics for the TOO-DENSE card must equal the full model's fields exactly — the card shows these
+// without the O(layerSum) composite walk that would freeze the click. Parity over the shared fields:
+for (const layers of [[5, 4, 3], [3, 2], [7, 5, 3, 2], [6, 4, 2], [12, 8, 6]]) {
+  const full = buildRhythmInspectorModel(layers);
+  const light = lightRhythmMetrics(layers);
+  assert.deepEqual(light.layers, full.layers, `layers ${layers}`);
+  assert.equal(light.identity, full.identity, `identity ${layers}`);
+  assert.equal(light.grid, full.grid, `grid ${layers}`);
+  assert.equal(light.fundamental, full.fundamental, `fundamental ${layers}`);
+  assert.equal(light.layerSum, full.layerSum, `layerSum ${layers}`);
+  assert.equal(light.density, full.density, `density ${layers}`);
+  assert.deepEqual(light.groupings, full.groupings, `groupings ${layers}`);
+  assert.equal(light.range, full.range, `range ${layers}`);
+  assert.equal(light.pulseToGrouping, full.pulseToGrouping, `pulseToGrouping ${layers}`);
+  assert.ok(light.maxOnsets >= full.compositeLength, `maxOnsets upper-bounds composite onsets ${layers}`);
+}
+// Density is scale-invariant: a common factor reduces exactly as the full model reduces it.
+assert.equal(lightRhythmMetrics([6, 4, 2]).density, lightRhythmMetrics([3, 2, 1]).density);
+// Cheap even for a rhythm far past the card cap (the whole point): finite metrics, no composite tape, no throw.
+const denseMetrics = lightRhythmMetrics([8192, 8193]);
+assert.ok(Number.isFinite(denseMetrics.grid) && Number.isFinite(denseMetrics.fundamental) && denseMetrics.density > 0);
+assert.equal(denseMetrics.maxOnsets, 8192 + 8193);
+
 const flightSource = readFileSync(new URL('../flight-view.js', import.meta.url), 'utf8');
 const pageSource = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
 const styleSource = readFileSync(new URL('../../style.css', import.meta.url), 'utf8');
@@ -73,6 +96,10 @@ assert.match(pageSource, /<aside id="lrc-audio-lab"[^>]+hidden>/);
 assert.doesNotMatch(flightSource, /\['Codex key'|\['Scale tones'/);
 assert.match(flightSource, /cockpitVisibleLayers\.(?:has|delete|add)/);
 assert.match(flightSource, /function modelForRhythmNode\(node\)/);
+// The too-dense card shows the cheap metrics (fundamental + density), not a bare '—' refusal.
+assert.match(flightSource, /const metrics = lightRhythmMetrics\(node\.layers\)/);
+assert.match(flightSource, /metricFundamentalEl\.textContent = inspectorNumber\(metrics\.fundamental\)/);
+assert.match(flightSource, /metricDensityEl\.textContent = `\$\{metrics\.density\.toFixed\(2\)\}%`/);
 assert.match(flightSource, /leadVoice = \{ \.\.\.deriveVoice\(model\), node \}/);
 assert.match(flightSource, /rhythmInspectorModel = modelForRhythmNode\(node\)/);
 const audioSource = readFileSync(new URL('../cosmos-audio.js', import.meta.url), 'utf8');
