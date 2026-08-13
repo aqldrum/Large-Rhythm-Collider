@@ -34,15 +34,18 @@ function mergeSkyPool(z, pool, toneCount) {
 // eviction (zones.delete) drops both fields free.
 const TONE_BIN_CENTS = 0.5;
 function mergeSkyTones(z, tones) {
-  if (!z.skyTones) { z.skyTones = []; z._skyToneBins = new Set(); }
+  // _skyToneBins is a Map<bin, tone> (was a Set): the collision branch reads the incumbent tone directly
+  // instead of a linear z.skyTones.find, which had grown to ~O(tones²) across a large grid's shards. The
+  // stored tone IS the object pushed to skyTones, so mutating its sourceFractions is identical to before.
+  if (!z.skyTones) { z.skyTones = []; z._skyToneBins = new Map(); }
   for (const t of tones) {
     const bin = Math.round(t.c / TONE_BIN_CENTS);
-    if (z._skyToneBins.has(bin)) {
-      const existing = z.skyTones.find(candidate => Math.round(candidate.c / TONE_BIN_CENTS) === bin);
-      if (existing) existing.sourceFractions = [...new Set([...(existing.sourceFractions || [existing.f]), ...(t.sourceFractions || [t.f])])];
+    const existing = z._skyToneBins.get(bin);
+    if (existing) {
+      existing.sourceFractions = [...new Set([...(existing.sourceFractions || [existing.f]), ...(t.sourceFractions || [t.f])])];
       continue;
     }
-    z._skyToneBins.add(bin);
+    z._skyToneBins.set(bin, t);
     z.skyTones.push(t);
   }
 }
@@ -53,7 +56,9 @@ function mergeSkyTones(z, tones) {
 function mergeStarRatioOwners(z, ratioOwners) {
   if (!z._ratioOwnerMap) z._ratioOwnerMap = new Map();
   mergeRatioOwners(z._ratioOwnerMap, ratioOwners);
-  z.ratioOwners = [...z._ratioOwnerMap.values()].sort((a, b) => a.cents - b.cents || a.fraction.localeCompare(b.fraction));
+  // The sorted z.ratioOwners array is rebuilt ONCE per frame in _flushRatioOwners (the zone is marked dirty
+  // by the _onShard caller), not on every shard reply — a large grid lands up to MAX_GRID_SHARDS replies and
+  // the old per-reply full re-sort was O(shards·owners·log owners) of main-thread work while flying past it.
 }
 
 export class Cosmos {
@@ -85,7 +90,8 @@ export class Cosmos {
     this.cam = 0;
     this.focusGrid = null;       // a clicked grid the UI wants solved NOW — jumps the pump queue (#4)
     this._dirty = false;
-    this.events = { solves: [], reparents: 0, maxStep: 0, spawned: 0, evicted: 0, plans: 0, shards: 0, heavyShards: 0, timeouts: 0, errors: 0 };
+    this._ownersDirty = new Set();// zones whose ratio-owner map changed this frame → re-sort once in tick (coalesced)
+    this.events = { solves: [], reparents: 0, maxStep: 0, spawned: 0, evicted: 0, plans: 0, shards: 0, heavyShards: 0, timeouts: 0, errors: 0, ownerFlushes: 0 };
   }
 
   setCamera(grid) { this.cam = Math.round(grid); }
@@ -182,7 +188,7 @@ export class Cosmos {
     z.shardsDone++; z.partial += (r && r.count || 0);
     if (r && r.pool) mergeSkyPool(z, r.pool, r.toneCount);     // Full Sky: piggybacked on the abundance solve
     if (r && r.tones) mergeSkyTones(z, r.tones);               // Sky Root B1: anchor-independent tone superset
-    if (r && r.ratioOwners) mergeStarRatioOwners(z, r.ratioOwners); // canonical rhythm owner per folded ratio
+    if (r && r.ratioOwners) { mergeStarRatioOwners(z, r.ratioOwners); this._ownersDirty.add(z); } // owner map grew → flush (sort) once next tick
     z.size = Math.max(0.15, Math.log2(z.partial + 1) * 0.5);   // progressive glow as bites land
     if (z.shardsDone >= z.shardsTotal) this._finishZone(z, z.partial);
   }
@@ -210,7 +216,7 @@ export class Cosmos {
 
   _clearSolvePayloads(z) {
     z.plan = undefined; z.shardsTotal = 0; z.dispatchIdx = 0; z.shardsDone = 0; z.partial = 0;
-    z.ratioOwners = undefined; z._ratioOwnerMap = undefined;
+    z.ratioOwners = undefined; z._ratioOwnerMap = undefined; this._ownersDirty.delete(z);   // no stale flush of cleared owners
     z.skyPool = undefined; z.skyToneCount = undefined;
     z.skyTones = undefined; z._skyToneBins = undefined;
   }
@@ -292,9 +298,25 @@ export class Cosmos {
     this._expandFrontier();
     if (this.dispatch) { this._pumpPoolAsync(); }      // async completes via promise → sets _dirty
     else { this._pumpPool(); this._completeSolves(); } // virtual clock (tests)
+    this._flushRatioOwners();                          // coalesce this frame's owner merges into one sort/zone
     if (this._dirty) this._recompete();
     this._stepMotion(dt);
     this._evict();
+  }
+
+  // Rebuild the sorted z.ratioOwners for every zone whose owner map grew since the last frame — ONCE, here,
+  // instead of on every shard reply (mergeStarRatioOwners). Shard replies arrive as promise microtasks
+  // BETWEEN frames, so by this point all of a frame's replies are already merged into the maps; consumers
+  // later in the same frame (updateGridRowField/audioCompileEligibility) read the fresh array. The sort key
+  // is unchanged (cents, then fraction), so the assembled array is byte-identical to the old per-reply one.
+  _flushRatioOwners() {
+    if (!this._ownersDirty.size) return;
+    for (const z of this._ownersDirty) {
+      if (this.zones.get(z.grid) !== z || !z._ratioOwnerMap) continue;   // evicted or payloads cleared → skip
+      z.ratioOwners = [...z._ratioOwnerMap.values()].sort((a, b) => a.cents - b.cents || a.fraction.localeCompare(b.fraction));
+      this.events.ownerFlushes++;
+    }
+    this._ownersDirty.clear();
   }
 
   stats() {

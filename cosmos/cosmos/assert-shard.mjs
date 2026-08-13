@@ -163,5 +163,65 @@ check('timed-out deep work becomes a gated monster instead of a false solved cou
 check('partial shard and audio ownership state is discarded on timeout',
   timedZone?.plan == null && timedZone?.ratioOwners == null && timedZone?.shardsTotal === 0 && timedZone?.partial === 0);
 
+// [8] Owner re-sort COALESCING (perf). The sorted z.ratioOwners is rebuilt once per FRAME (in tick), not on
+// every shard reply — a large grid's shards reply in bursts between frames, and the old code paid a full
+// O(owners·log owners) re-sort on each reply. Correctness is already proven above ([1..3] owner assembly);
+// this proves the coalescing: a whole burst of one grid's replies landing in a single drain costs ONE sort.
+console.log('\n[8] Owner re-sort coalesces a burst of shard replies into one sort per frame');
+const burstGrid = 840;
+const burstKeys = shardKeysOf(burstGrid);
+const heldResolvers = [];
+const burstDispatch = p => {
+  if (p.op === 'plan') return Promise.resolve({ shards: burstKeys });
+  const below = divisorsFast(p.grid).filter(x => x >= 2 && x < p.A);
+  return new Promise(res => heldResolvers.push(() => res(gridShardSolve(p.grid, p.A, below))));   // defer every shard reply
+};
+const burst = new Cosmos({ poolSize: burstKeys.length, isValid: () => true, dispatch: burstDispatch,
+  neighbors: () => [burstGrid], cellDist: () => 0, puffs: false, compete: false });
+burst.setCamera(burstGrid);
+// Tick until the plan lands and every shard is dispatched-but-unresolved (all held, so no flush yet).
+for (let t = 0; t < burstKeys.length + 4 && heldResolvers.length < burstKeys.length; t++) { burst.tick(1 / 60); await flush(); }
+const heldCount = heldResolvers.length, flushesBefore = burst.events.ownerFlushes;
+for (const r of heldResolvers) r();                 // release the whole burst at once
+await flush();                                      // every reply merges into the owner map in one drain
+burst.tick(1 / 60); await flush();                  // …then exactly one coalesced re-sort happens here
+check('a burst of many one-grid shard replies costs a single owner re-sort, not one per reply',
+  heldCount >= 3 && (burst.events.ownerFlushes - flushesBefore) === 1 && burst.zones.get(burstGrid)?.ratioOwners?.length > 0,
+  `${heldCount} replies in one drain → ${burst.events.ownerFlushes - flushesBefore} sort`);
+// The coalesced array is still fully assembled + sorted by (cents, fraction).
+const burstOwners = burst.zones.get(burstGrid).ratioOwners;
+check('the coalesced owner array is complete and sorted by cents then fraction',
+  burstOwners.every((o, i) => i === 0 || o.cents > burstOwners[i - 1].cents ||
+    (o.cents === burstOwners[i - 1].cents && o.fraction.localeCompare(burstOwners[i - 1].fraction) >= 0)),
+  `${burstOwners.length} owners`);
+
+// [9] Sky-tone merge (B). _skyToneBins is a Map<bin,tone> now, so a cross-shard bin collision is an O(1)
+// lookup instead of a linear z.skyTones.find (which had grown to ~O(tones²) over a large grid). Content must
+// be identical: one tone per 0.5¢ bin, first-seen kept, sourceFractions unioned across colliding shards.
+console.log('\n[9] Sky-tone bin dedup preserves cross-shard content (O(1) merge)');
+const toneGrid = 840;
+const toneKeys = shardKeysOf(toneGrid);
+const tonesByA = new Map([
+  [toneKeys[0], [{ c: 100.0, f: '9/8', sourceFractions: ['9/8'] }, { c: 386.0, f: '5/4', sourceFractions: ['5/4'] }]],
+  [toneKeys[1], [{ c: 100.2, f: '8/7', sourceFractions: ['8/7'] }, { c: 702.0, f: '3/2', sourceFractions: ['3/2'] }]],  // 100.2 shares bin 200 with 100.0
+]);
+const toneDispatch = p => {
+  if (p.op === 'plan') return Promise.resolve({ shards: toneKeys });
+  return Promise.resolve({ count: 1, ratioOwners: [], tones: tonesByA.get(p.A) || [] });
+};
+const toneCos = new Cosmos({ poolSize: 8, isValid: () => true, dispatch: toneDispatch,
+  neighbors: () => [toneGrid], cellDist: () => 0, puffs: false, compete: false });
+toneCos.setCamera(toneGrid);
+for (let t = 0; t < toneKeys.length + 8; t++) { toneCos.tick(1 / 60); await flush(); if (toneCos.zones.get(toneGrid)?.state === 'solved') break; }
+const toneZone = toneCos.zones.get(toneGrid);
+const bin = c => Math.round(c / 0.5);
+const collided = (toneZone.skyTones || []).filter(t => bin(t.c) === bin(100));   // 100.0 / 100.2 both fold to bin 200
+const distinctBins = new Set((toneZone.skyTones || []).map(t => bin(t.c)));
+check('a cross-shard 0.5¢ bin collision keeps one tone and unions its sourceFractions (order-independent)',
+  toneZone?.skyTones?.length === 3 && collided.length === 1 &&
+  [...new Set(collided[0].sourceFractions)].sort().join(',') === '8/7,9/8' &&
+  distinctBins.has(bin(386)) && distinctBins.has(bin(702)),
+  `${toneZone?.skyTones?.length} tones, collided sf=${collided[0]?.sourceFractions}`);
+
 console.log(`\n${PASS ? '✓✓✓ DISTRIBUTED SOLVE PASSES — sharded, progressive, non-blocking, exact' : '✗ DISTRIBUTED SOLVE FAILED'}`);
 process.exit(PASS ? 0 : 1);
