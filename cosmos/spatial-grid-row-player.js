@@ -395,8 +395,12 @@ export class SpatialGridRowPlayer {
     if (!events.length) { deck.cursorCycle = 0; deck.cursorEvent = 0; return; }
     deck.cursorCycle = Math.floor(absoluteTick / grid);
     const cycleTick = absoluteTick - deck.cursorCycle * grid;
-    deck.cursorEvent = events.findIndex(event => event.tick >= cycleTick);
-    if (deck.cursorEvent < 0) { deck.cursorEvent = 0; deck.cursorCycle++; }
+    // Leftmost event with tick >= cycleTick. events are tick-ascending, so this is a binary search rather
+    // than the old O(E) findIndex — a chord change re-syncs up to ~30 decks in one tick, each up to E=20000.
+    let lo = 0, hi = events.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (events[mid].tick >= cycleTick) hi = mid; else lo = mid + 1; }
+    if (lo >= events.length) { deck.cursorEvent = 0; deck.cursorCycle++; }  // wrapped past the last event
+    else deck.cursorEvent = lo;
   }
 
   // A program swap is SILENT: it only restores the repeat-cull memory a deck that had been running
@@ -409,9 +413,25 @@ export class SpatialGridRowPlayer {
   // stacked into a ~20-note chord repeating on the switch grid, swamping the real polyrhythm with the
   // same chord over and over. Deck installs are now inaudible; onsets resume at the next real event.
   _seedDeck(deck, absoluteTick) {
-    const events = deck.program.events;
+    const program = deck.program;
+    const events = program.events;
     if (!events.length) return;
-    const cycleTick = ((absoluteTick % deck.program.grid) + deck.program.grid) % deck.program.grid;
+    const grid = program.grid;
+    const cycleTick = ((absoluteTick % grid) + grid) % grid;
+    const seedTable = program.seedTable;
+    if (seedTable) {
+      // Table path: for each layer, the last occurrence with tick < cycleTick (else the loop tail — its
+      // final occurrence) is the tone a deck running since loop start would hold. Binary-search each layer
+      // instead of the old two full passes over every event.
+      for (let s = 0; s < seedTable.length; s++) {
+        const { layer, ticks, fractions } = seedTable[s];
+        let lo = 0, hi = ticks.length;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (ticks[mid] < cycleTick) lo = mid + 1; else hi = mid; }
+        deck.lastToneByLayer.set(layer, lo > 0 ? fractions[lo - 1] : fractions[fractions.length - 1]);
+      }
+      return;
+    }
+    // Fallback (fixtures / programs without a precomputed table): the original two-pass derivation.
     const latest = new Map();
     // Previous-cycle tail seeds every canonical layer, then current-cycle events before the boundary
     // overwrite it. An event exactly ON the boundary is left to the scheduler as a real attack.
@@ -536,7 +556,7 @@ export class SpatialGridRowPlayer {
   }
 
   _scheduleDeck(deck, now, horizon, transportStart, ticksPerSecond) {
-    const { events, grid } = deck.program;
+    const { events, grid, eventGaps } = deck.program;
     if (!events.length) return;
     while (true) {
       const event = events[deck.cursorEvent];
@@ -557,7 +577,9 @@ export class SpatialGridRowPlayer {
       // also what lets a streamed window be compared against a full compile: same state, whatever sounded.)
       if (afterInstall) {
         const sounding = late.action === 'emit';
-        for (const action of event.layerActions) {
+        const layerActions = event.layerActions;
+        for (let ai = 0; ai < layerActions.length; ai++) {
+          const action = layerActions[ai];
           if (!LAYERS.has(action.layer)) continue;
           if (!shouldScheduleRowAction(action, this.rowFundamental)) continue;
           // Silent hold, re-derived per loop: suppress a re-strike only when this layer's IMMEDIATELY
@@ -569,7 +591,11 @@ export class SpatialGridRowPlayer {
           if (deck.program.repeatCull && deck.lastToneByLayer.get(action.layer) === action.rawFraction) continue;
           deck.lastToneByLayer.set(action.layer, action.rawFraction);
           if (!sounding) continue;   // audibly late — the memory advanced, the note does not sound
-          const gapTicks = nextRowLayerGapTicks(events, deck.cursorEvent, action, grid, deck.program.repeatCull);
+          // Worker-precomputed gap (eventGaps[event.gapBase + ai]) — the forward/wrap scan that was O(E)
+          // per onset. Fall back to the live scan only for a program without the table (e.g. a test fixture).
+          const gapTicks = eventGaps
+            ? eventGaps[event.gapBase + ai]
+            : nextRowLayerGapTicks(events, deck.cursorEvent, action, grid, deck.program.repeatCull);
           // Math.max clamps by at most LATE_CLAMP_TOLERANCE_SECONDS now (12ms — under the threshold where
           // two attacks are separately articulated), so this can no longer stack a spread into a flam.
           this._startVoice(deck, action, Math.max(now, when), gapTicks / ticksPerSecond);

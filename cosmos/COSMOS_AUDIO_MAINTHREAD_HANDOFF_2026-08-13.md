@@ -22,14 +22,19 @@ cached, so it's ruled out. **Outcome so far (Avery, 2026-08-13):** *"convinced w
 | `a01092e` → `c399853` | **Per-rhythm onset cap** — landed flight-scoped, then **re-scoped to the rhythm CARD** (see §3). `ROW_MAX_PLAYBACK_ONSETS = 16384` | ✅ compile guards; card click-test owed |
 | `d166582` | **Batch 3** — flight translation is now a SOFT/coalesced membership trigger, not an every-frame full rebuild (60 ms cadence; pose stays per-frame) | ✅ guards; audible pass owed |
 | `a0dbd7c` | **Rhythm-card plot fixes** — clear stale plot on a null (too-dense) model; skip drawing heavily-repeated tones so the plot rebuild is bounded, not O(all onsets) | ✅ guards; card interaction pass owed |
+| _(uncommitted)_ | **Batch 4** — worker precomputes the deck-swap/gap tables (`buildRowScheduleTables` in `cosmos-grid-audio-core.js`): flat `eventGaps` + per-event `gapBase` + per-layer `seedTable`. `_scheduleDeck` reads `eventGaps[event.gapBase+i]` (was `nextRowLayerGapTicks`, O(E)/onset → O(E²)/cycle); `_seedDeck` binary-searches `seedTable` (was two O(E·L) passes); `_syncCursor` binary-searches (was O(E) `findIndex`) | ✅ guards (exhaustive parity); **Avery audible pass owed** |
 
 `d086d51` / `9cb565e` (rhythm-card lead-legato + Speed-sync) are **Avery's own** interleaved feature work, not
 this campaign.
 
-**Standing guard suite: 19 pass, 1 fail** — the 1 is a **pre-existing stale source-regex** in
-`assert-transport-clock.mjs` (commit `f5ff905`'s `guardPhase(...)` wrapping broke a text match), unrelated to
-any campaign work. Fix chip filed. Everything else is green, including the campaign's new/updated guards
-(`assert-harmony-policy-memo.mjs`, `assert-grid-spatial-audio.mjs` index-consistency).
+**Standing guard suite (post-Batch-4): all green except `assert-transport-clock.mjs`** (3 content ✗ + summary).
+Those 3 are **pre-existing `flight-view.js` source-regex drift** (pose-only frame / rotation-vs-translation
+membership / chord-clock text matches from the Batch-3 + plot edits), confirmed pre-existing by re-running the
+guard with Batch 4 stashed — **not** Batch 4. `assert-grid-spatial-audio.mjs` now carries the Batch-4 parity
+section (145 checks): every precomputed gap byte-equals `nextRowLayerGapTicks`, table-`_seedDeck` equals the
+two-pass, binary `_syncCursor` equals `findIndex`, over a branch-covering synthetic fixture, a 1500-onset dense
+fixture, and real grids `[120,660,2520]` × `repeatCull∈{true,false}`. Program size still ~3 KB (well under the
+20 KB guard); tables clone as `Float64Array` bulk copies, no typed-array transfer added yet (see §4).
 
 ---
 
@@ -45,6 +50,10 @@ Avery's:
   normal rhythm still auditions.
 - **Card plot fixes** — a too-dense card shows an EMPTY plot (not a stale one); a dense card open over several
   chord changes no longer periodically hitches.
+- **Batch 4** — behavior-preserving ("sounds identical"); the parity guards prove the tables reproduce the old
+  derivations exactly, so this is a confirmation, not a hunt. Fly a **dense** field and force **chord changes**
+  (the ~20-deck swap wave); listen for any timing change on the first onset after a swap or any dropped/held
+  layer that used to sound. Watch `window.__cosmosHealth()`: `throws` stays 0, `activeStars` must not climb.
 
 **Always hard-reload / clear cache before testing** — the dev server heuristic-caches module imports (the
 compile worker imports `cosmos-grid-audio-core.js` with no cache-buster), so edits can run stale otherwise.
@@ -71,11 +80,27 @@ boundary — even when harmony-silent. `a0dbd7c` bounds that by skipping draws f
 
 ---
 
-## 4. NEXT UP — Batch 4 (worker-side deck-swap / gap tables)
+## 4. Batch 4 (worker-side deck-swap / gap tables) — LANDED (guards green; audible pass owed)
 
-The last audible-gated chunk and the **most likely remaining chord-change freeze** — Avery still sees hitches
-on chord changes, and with a card open the (now-bounded) plot rebuild used to stack on top; the scene half is
-Batch 4. Full spec in `COSMOS_AUDIO_MAINTHREAD_CAMPAIGN_2026-08-12.md` §4 "Batch 4". Summary:
+**As-built (uncommitted).** `buildRowScheduleTables(events, grid, repeatCull)` in `cosmos-grid-audio-core.js`
+runs once inside `compactGridAudioProgram` (i.e. in the worker) and emits three tables on the program:
+`eventGaps` (flat `Float64Array`), a per-event `gapBase` offset stamped on each event, and `seedTable`
+(per layer: ascending occurrence `ticks` as a `Float64Array` + the `rawFraction` at each). The player now:
+- `_scheduleDeck` → `eventGaps[event.gapBase + i]` instead of `nextRowLayerGapTicks` per onset (kills the
+  O(E²)/cycle forward/wrap scan — the continuous 40 Hz cost, worse than the swap spike).
+- `_seedDeck` → binary-search `seedTable` per layer (was two full O(E·L) passes per swap).
+- `_syncCursor` → binary search on the tick-ascending events (was O(E) `findIndex`); **no table needed**,
+  pure main-thread, zero clone.
+All three keep a fallback to the old derivation for a program without the tables (test fixtures). `Float64`
+not `Int32`: a grid is an LCM and a wrap gap can exceed 2³¹. The gap table is a pure fn of
+`(events, grid, repeatCull)` — no runtime voice state — so precomputing is exact; the guard proves byte parity.
+
+**Typed-array transfer: DEFERRED (per spec §4 "add only if the added tables re-inflate structured-clone
+cost").** Programs stayed ~3 KB and the tables are already `Float64Array`s (bulk-copy clone, not boxed). If
+Avery still sees a chord-change deserialization spike on the densest grids, the follow-up is the transferable
+flat `Int32Array` event payload posted with a transfer list (`cull2-program-worker.js` currently pure clone).
+
+**Original problem, for context (full spec `…CAMPAIGN_2026-08-12.md` §4):**
 
 **Problem.** Per-program structural work is deferred to the main-thread deck swap in `gridRowPlayer.tick`:
 `_syncCursor` = O(E) `findIndex` (`spatial-grid-row-player.js:~393`), `_seedDeck` = O(E·L) two passes

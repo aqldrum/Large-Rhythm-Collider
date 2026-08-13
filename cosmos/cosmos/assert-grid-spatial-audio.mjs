@@ -14,7 +14,7 @@ import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP, toAudioListenerPosition } fr
 import {
   AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, RHYTHM_VOICE_WAVEFORM,
   ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_MAX_COMPOSITE_ONSETS,
-  audioCompileEligibility, chooseSpatialRows, compileGridAudioProgram,
+  audioCompileEligibility, buildRowScheduleTables, chooseSpatialRows, compileGridAudioProgram,
   harmonicSelectionKey, ownerChordMatch, selectedOwnerFractions,
 } from '../cosmos-grid-audio-core.js';
 
@@ -180,6 +180,101 @@ check('shorter micro notes are attenuated instead of becoming full-level impulse
   fourMsPlan.peak < tenMsPlan.peak && tenMsPlan.peak < normalPlan.peak);
 check('events shorter than two samples are suppressed as unrenderable', !rowEnvelopePlan(1 / 48000, 48000).render);
 check('ordinary gaps retain the established fixed pluck envelope', !normalPlan.micro && normalPlan.render);
+
+console.log('\n  Batch 4 — precomputed schedule tables (worker parity)');
+// The worker now bakes three schedule tables into every program so the 40 Hz scheduler and the deck-swap
+// seed never re-derive on the main thread. Each is a pure function of (events, grid, repeatCull), so the
+// gate is exact parity with the runtime derivations these tables replaced: nextRowLayerGapTicks (per onset,
+// was O(E²)/cycle), the two-pass _seedDeck, and the findIndex in _syncCursor.
+const mapsEqual = (a, b) => a.size === b.size && [...a].every(([k, v]) => b.get(k) === v);
+// Reference derivations, verbatim to the code the tables replace.
+const refSeed = (events, grid, absoluteTick) => {
+  const cycleTick = ((absoluteTick % grid) + grid) % grid;
+  const latest = new Map();
+  for (const ev of events) for (const ac of ev.layerActions) latest.set(ac.layer, ac);
+  for (const ev of events) { if (ev.tick >= cycleTick) break; for (const ac of ev.layerActions) latest.set(ac.layer, ac); }
+  const out = new Map();
+  for (const ac of latest.values()) out.set(ac.layer, ac.rawFraction);
+  return out;
+};
+const refSync = (events, grid, absoluteTick) => {
+  const cursorCycle = Math.floor(absoluteTick / grid);
+  const cycleTick = absoluteTick - cursorCycle * grid;
+  let cursorEvent = events.findIndex(ev => ev.tick >= cycleTick);
+  let cycle = cursorCycle;
+  if (cursorEvent < 0) { cursorEvent = 0; cycle++; }
+  return { cursorEvent, cursorCycle: cycle };
+};
+const gapParityPlayer = Object.create(SpatialGridRowPlayer.prototype);
+// One driver that checks all three tables on a program, over every integer boundary in [0, 2·grid).
+const assertScheduleTableParity = (label, events, grid, repeatCull) => {
+  const { eventGaps, seedTable } = buildRowScheduleTables(events, grid, repeatCull);
+  let gapChecked = 0, gapMiss = 0;
+  for (let e = 0; e < events.length; e++) {
+    const la = events[e].layerActions;
+    for (let a = 0; a < la.length; a++) {
+      gapChecked++;
+      if (eventGaps[events[e].gapBase + a] !== nextRowLayerGapTicks(events, e, la[a], grid, repeatCull)) gapMiss++;
+    }
+  }
+  check(`${label}: every precomputed gap equals nextRowLayerGapTicks (repeatCull=${repeatCull})`,
+    gapChecked > 0 && gapMiss === 0, `${gapMiss}/${gapChecked} mismatch`);
+  const program = { events, grid, seedTable, repeatCull };
+  let seedMiss = 0, syncMiss = 0;
+  const span = Math.min(grid, 400);   // every boundary for small grids; a bounded scan for larger ones
+  for (let at = 0; at < 2 * span; at++) {
+    const seedDeck = { program, lastToneByLayer: new Map() };
+    gapParityPlayer._seedDeck(seedDeck, at);
+    if (!mapsEqual(seedDeck.lastToneByLayer, refSeed(events, grid, at))) seedMiss++;
+    const syncDeck = { program, cursorEvent: -1, cursorCycle: -1 };
+    gapParityPlayer._syncCursor(syncDeck, at);
+    const ref = refSync(events, grid, at);
+    if (syncDeck.cursorEvent !== ref.cursorEvent || syncDeck.cursorCycle !== ref.cursorCycle) syncMiss++;
+  }
+  check(`${label}: table-driven _seedDeck matches the two-pass derivation across boundaries`, seedMiss === 0, `${seedMiss} mismatch`);
+  check(`${label}: binary-search _syncCursor matches the findIndex cursor across boundaries`, syncMiss === 0, `${syncMiss} mismatch`);
+};
+// Synthetic fixture with same-tone runs, a wrap, a single-occurrence layer, and two-tone layers — exercises
+// every gap branch deterministically. Fields mirror an interned action (rawFraction/fraction/rawRatio).
+const act = (layer, num, den) => ({ layer, rawFraction: `${num}/${den}`, fraction: `${num}/${den}`, rawRatio: num / den });
+const syntheticEvents = () => [
+  { tick: 0, layerActions: [act('A', 1, 1), act('B', 3, 2)] },
+  { tick: 2, layerActions: [act('A', 1, 1)] },                     // same-tone hold on A
+  { tick: 5, layerActions: [act('A', 5, 4), act('C', 7, 4)] },
+  { tick: 7, layerActions: [act('A', 5, 4)] },                     // same-tone hold on A → wraps to occ 0
+  { tick: 9, layerActions: [act('C', 9, 8)] },
+];
+assertScheduleTableParity('synthetic', syntheticEvents(), 12, true);
+assertScheduleTableParity('synthetic', syntheticEvents(), 12, false);
+// Dense fixture the chord-filtered real grids can't reach: long same-tone runs (the reverse-pass carry),
+// multiple wraps, and a sparse layer, at a scale where the old per-onset scan was the O(E²) freeze.
+const denseEvents = () => {
+  const tones = [[1, 1], [5, 4], [3, 2], [7, 4]];
+  const evs = [];
+  for (let i = 0; i < 1500; i++) {
+    const la = [act('A', ...tones[(i / 7 | 0) % tones.length])];   // A holds the same tone for 7 onsets → runs
+    if (i % 4 === 0) la.push(act('B', ...tones[i % tones.length])); // B sparse, tone rotates every onset
+    evs.push({ tick: i * 3, layerActions: la });
+  }
+  return evs;
+};
+assertScheduleTableParity('dense', denseEvents(), 1500 * 3, true);
+assertScheduleTableParity('dense', denseEvents(), 1500 * 3, false);
+// Real compiled programs across grids and both repeat-cull settings — realistic collision/hold shapes.
+for (const g of [120, 660, 2520]) {
+  const s = gridRatioOwnerSolve(g);
+  const fr = selectedOwnerFractions(s.ratioOwners, 0, [0, 2, 4, 5, 7, 9, 11]);   // broad selection → denser tape
+  for (const rc of [true, false]) {
+    const prog = compileGridAudioProgram({ grid: g, ratioOwners: s.ratioOwners, abundance: s.keptCount,
+      selectedFractions: fr, selectionKey: harmonicSelectionKey(0, 0), generation: 0, repeatCull: rc });
+    assertScheduleTableParity(`grid ${g}`, prog.events, prog.grid, prog.repeatCull);
+    // The emitted program must carry the tables the player reads, sized to the tape.
+    const actionCount = prog.events.reduce((n, ev) => n + ev.layerActions.length, 0);
+    check(`grid ${g} (repeatCull=${rc}): program carries a gap table sized to its onsets and a per-layer seed table`,
+      prog.eventGaps.length === actionCount && prog.seedTable.length === new Set(prog.events.flatMap(ev => ev.layerActions.map(a => a.layer))).size &&
+      prog.events.every(ev => Number.isInteger(ev.gapBase)));
+  }
+}
 
 console.log('\n  Per-tone spatial voice cap');
 const toneVoiceCandidates = [

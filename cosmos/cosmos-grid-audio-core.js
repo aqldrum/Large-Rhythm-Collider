@@ -120,10 +120,79 @@ function makeActionInterner() {
   };
 }
 
+// Schedule-time tone identity, replicated from spatial-grid-row-player.js's actionToneKey so the
+// worker-precomputed gap table keys tones exactly as the runtime scan did. Interned actions always
+// carry rawFraction; the fallbacks match the runtime for parity, not because they fire here.
+const actionToneKey = action => action?.rawFraction ?? action?.fraction ?? String(action?.rawRatio);
+
+// Precompute the playback schedule tables ONCE in the worker so the 40 Hz scheduler and the deck-swap
+// seed read lookups instead of re-deriving per onset on the main thread. All three tables are pure
+// functions of (events, grid, repeatCull) — no runtime voice state feeds them — so precomputing is exact:
+//
+//   • eventGaps  — flat array; eventGaps[event.gapBase + i] === nextRowLayerGapTicks(events, e, action_i,
+//                  grid, repeatCull). That forward/wrap scan was O(E) PER ONSET → O(E²)/cycle in the hot
+//                  loop; the table computes every gap in ONE reverse pass per layer (O(E·L) total).
+//   • event.gapBase — each event's start offset into eventGaps (stamped in place on the emitted event).
+//   • seedTable  — per layer, its occurrence ticks (ascending) + the rawFraction at each, so _seedDeck
+//                  binary-searches the last tone at/before a swap boundary instead of scanning events twice.
+//
+// events are tick-ascending with a unique tick per event and ≤1 action per canonical layer per event
+// (cull2-grid-core builds them that way), so per-layer occurrences are already in ascending tick order.
+// Float64 (not Int32): grid is an LCM and a wrap gap can exceed 2^31; float64 holds these integer ticks
+// exactly, and clones as a bulk copy rather than boxing each number.
+export function buildRowScheduleTables(events, grid, repeatCull) {
+  const perLayer = new Map();   // layer -> { flat:[], ticks:[], tones:[], fractions:[] } in event order
+  let totalActions = 0;
+  for (let e = 0; e < events.length; e++) {
+    const layerActions = events[e].layerActions;
+    events[e].gapBase = totalActions;
+    for (let a = 0; a < layerActions.length; a++) {
+      const action = layerActions[a];
+      let rec = perLayer.get(action.layer);
+      if (!rec) perLayer.set(action.layer, rec = { flat: [], ticks: [], tones: [], fractions: [] });
+      rec.flat.push(totalActions + a);
+      rec.ticks.push(events[e].tick);
+      rec.tones.push(actionToneKey(action));
+      rec.fractions.push(action.rawFraction);
+    }
+    totalActions += layerActions.length;
+  }
+  const eventGaps = new Float64Array(totalActions);
+  const seedTable = [];
+  for (const [layer, rec] of perLayer) {
+    const m = rec.ticks.length, t0 = rec.ticks[0];
+    if (repeatCull) {
+      // Forward to the next occurrence with a DIFFERENT tone (same-tone holds are silent so they don't
+      // count as a re-articulation); if none forward, the loop wraps to occurrence 0 regardless of tone,
+      // because the hold memory clears at the wrap. nextDiff[j] = j+1 when tones differ, else nextDiff[j+1]
+      // (same tone → same target) — one reverse pass carrying that value.
+      let carry = -1;
+      for (let j = m - 1; j >= 0; j--) {
+        const nd = j === m - 1 ? -1 : (rec.tones[j + 1] !== rec.tones[j] ? j + 1 : carry);
+        eventGaps[rec.flat[j]] = nd >= 0 ? rec.ticks[nd] - rec.ticks[j] : grid - rec.ticks[j] + t0;
+        carry = nd;
+      }
+    } else {
+      // No repeat-cull: the very next occurrence articulates regardless of tone; last wraps to occurrence 0.
+      for (let j = m - 1; j >= 0; j--) {
+        eventGaps[rec.flat[j]] = j + 1 < m ? rec.ticks[j + 1] - rec.ticks[j] : grid - rec.ticks[j] + t0;
+      }
+    }
+    seedTable.push({ layer, ticks: Float64Array.from(rec.ticks), fractions: rec.fractions });
+  }
+  return { eventGaps, seedTable };
+}
+
 // The lab readout intentionally retains rich diagnostics. The flight path must not structured-clone
 // that ~MB-scale object per star, so this is the immutable playback projection crossing the worker.
 export function compactGridAudioProgram(readout, metadata = {}) {
   const internAction = makeActionInterner();   // shared action objects → structured clone dedups them across onsets
+  const events = readout.events.map(event => ({
+    tick: event.tick,
+    layerActions: event.layerActions.map(internAction),
+  }));
+  // Precompute here (once, off the main thread) so deck swaps and the 40 Hz loop are table lookups.
+  const { eventGaps, seedTable } = buildRowScheduleTables(events, readout.grid, readout.repeatCull);
   return {
     mode: AUDIO_MODES.CULLED_GRID_ROWS,
     grid: readout.grid,
@@ -139,10 +208,9 @@ export function compactGridAudioProgram(readout, metadata = {}) {
     selectedTones: readout.ratioCatalog.filter(note => note.selected).map(note => ({
       fraction: note.fraction, cents: note.cents, ownerKey: note.ownerKey ?? null, ownerLayers: note.ownerLayers ?? null,
     })),
-    events: readout.events.map(event => ({
-      tick: event.tick,
-      layerActions: event.layerActions.map(internAction),
-    })),
+    events,
+    eventGaps,   // flat gap-ticks table; indexed by event.gapBase + layerAction index
+    seedTable,   // per-layer occurrence ticks + rawFractions for the deck-swap seed binary search
     summary: {
       representativeRhythms: readout.summary.representativeRhythms,
       distinctRatios: readout.summary.distinctRatios,
