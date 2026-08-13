@@ -26,7 +26,7 @@ import { railParams } from './rail-params.js';
 // investigation (motion → main-thread jank → late events clamped into a flam → MIDI channel steals).
 import { audioTelemetry, formatLive, formatTable } from './audio-telemetry.js';
 import { sampleRecovery } from './recovery-timing.js';   // TEMP DEBUG (Phase 2.4) — remove with the module
-import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
+import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, ROW_MAX_PLAYBACK_ONSETS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
 import { harmonyPolicyDefinitionKey } from './harmony-policy.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
@@ -620,9 +620,15 @@ let cockpitPlotEligibleNodes = new Set(), cockpitPlotLastNodeIndex = -1, cockpit
 function modelForRhythmNode(node) {
   if (!node?.layers) return null;
   const key = node.layers.join('.');
-  if (key !== selectedRhythmModelKey || !selectedRhythmModelCache) {
+  if (key !== selectedRhythmModelKey) {
     selectedRhythmModelKey = key;
-    selectedRhythmModelCache = buildRhythmInspectorModel(node.layers);
+    // Cheap pre-gate: building the composite model (deriveSelectedRhythmModel) is O(onset load), and so is
+    // auditioning it (deriveVoice). A very dense clicked rhythm would freeze the page synchronously. Above
+    // ROW_MAX_PLAYBACK_ONSETS we refuse to build — the inspector shows a compact "too dense" card and the
+    // audition is disabled. Card-only; the flight scene keeps dense rhythms as representatives (uncapped).
+    // layerSum (sum of layer values) is the build-cost driver and needs no model, so the gate stays cheap.
+    const onsetLoad = node.layers.reduce((sum, layer) => sum + layer, 0);
+    selectedRhythmModelCache = onsetLoad > ROW_MAX_PLAYBACK_ONSETS ? null : buildRhythmInspectorModel(node.layers);
   }
   return selectedRhythmModelCache;
 }
@@ -1328,13 +1334,15 @@ function resetRhythmInspector() {
 }
 
 function updateRhythmActionState() {
+  // A node is inspected but its model refused to build (too dense to audition) → its audition is unavailable.
+  const tooDense = !!inspectedNode && !rhythmInspectorModel;
   const listening = !!(inspectedNode && leadVoice?.node?.id === inspectedNode.id);
   if (listenBtnEl) {
     listenBtnEl.classList.toggle('active', listening);
-    listenBtnEl.disabled = !inspectedNode;
+    listenBtnEl.disabled = !inspectedNode || tooDense;
     listenBtnEl.setAttribute('aria-pressed', String(listening));
-    listenBtnEl.setAttribute('aria-label', `${listening ? 'Stop listening to' : 'Listen to'} selected rhythm`);
-    listenBtnEl.title = listening ? 'Stop listening' : 'Listen';
+    listenBtnEl.setAttribute('aria-label', tooDense ? 'Selected rhythm is too dense to audition' : `${listening ? 'Stop listening to' : 'Listen to'} selected rhythm`);
+    listenBtnEl.title = tooDense ? 'Too dense to audition' : (listening ? 'Stop listening' : 'Listen');
   }
   if (loadBtnEl) {
     const loaded = !!inspectedNode?._applied;
@@ -1348,8 +1356,9 @@ function updateRhythmActionState() {
 
 function setRhythmAudition(node) {
   if (!node?.layers) return;
-  resetCockpitScaleHighlights();
   const model = modelForRhythmNode(node);
+  if (!model) { setLead(null); leadVoice = null; updateRhythmActionState(); return; }   // too dense to build/audition
+  resetCockpitScaleHighlights();
   leadVoice = { ...deriveVoice(model), node };
   setLead(leadVoice);
   updateRhythmActionState();
@@ -1463,6 +1472,28 @@ function renderRhythmInspector(node) {
   rhythmInspectorModel = modelForRhythmNode(node);
   if (lrcEmptyEl) lrcEmptyEl.hidden = true;
   if (rhythmInspectorEl) rhythmInspectorEl.hidden = false;
+  if (!rhythmInspectorModel) {
+    // Too dense to build the composite model / audition without a synchronous O(onsets) freeze. Show a
+    // compact notice instead of the ratio table + plot; audition stays disabled via updateRhythmActionState.
+    // The scale table / plot readouts guard on a null model already, so they simply hold blank.
+    const identity = node.layers.join(' : ');
+    const onsetLoad = node.layers.reduce((sum, layer) => sum + layer, 0);
+    if (rhythmTitleEl) rhythmTitleEl.textContent = identity;
+    if (rhythmSubtitleEl) rhythmSubtitleEl.textContent = `grid ${(node.grid ?? 0).toLocaleString()} · too dense to audition`;
+    if (rhythmStateEl) { rhythmStateEl.textContent = node.charted ? 'charted' : 'open space'; rhythmStateEl.classList.toggle('charted', !!node.charted); }
+    const sub = lrcHeadEl?.querySelector('.lrc-div-sub'); if (sub) sub.textContent = identity;
+    if (metricFundamentalEl) metricFundamentalEl.textContent = '—';
+    if (metricOnsetsEl) metricOnsetsEl.textContent = `≥ ${onsetLoad.toLocaleString()}`;
+    if (metricDensityEl) metricDensityEl.textContent = '—';
+    if (scaleCountEl) scaleCountEl.textContent = '—';
+    if (scaleTableBodyEl) scaleTableBodyEl.innerHTML = `<tr><td colspan="9" class="lrc-too-dense">${onsetLoad.toLocaleString()}-onset layer-sum exceeds the ${ROW_MAX_PLAYBACK_ONSETS.toLocaleString()} card cap — too dense to render or audition.</td></tr>`;
+    if (structureListEl) structureListEl.innerHTML = `<div><dt>Layer sum</dt><dd>${onsetLoad.toLocaleString()}</dd></div><div><dt>Keep-two</dt><dd>${node.dense ? 'paired' : 'solo'}</dd></div>`;
+    renderCockpitLayerControls();
+    renderRhythmConnections();
+    updateRhythmActionState();
+    openCockpit();
+    return;
+  }
   if (rhythmTitleEl) rhythmTitleEl.textContent = rhythmInspectorModel.identity;
   if (rhythmSubtitleEl) rhythmSubtitleEl.textContent = `grid ${rhythmInspectorModel.grid.toLocaleString()} · ${rhythmInspectorModel.pitchCount}-tone${node.dense ? ' · paired' : ''}`;
   if (rhythmStateEl) {

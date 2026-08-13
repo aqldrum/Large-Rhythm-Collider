@@ -28,12 +28,12 @@ export const ROW_SWITCH_TICKS = 16;
 // a huge LCM from small coprime layers is cheap and must stay eligible. 20000 onsets/cycle is already far
 // past any perceptible rhythm, so this only excludes drone-dense zones. Tunable; the real fix is streaming.
 export const ROW_MAX_COMPOSITE_ONSETS = 20000;
-// Per-rhythm PLAYBACK cap (distinct from the OOM gate above). A single representative rhythm with more
-// than this many onsets/cycle is prohibited from the scene: it is excluded from the composite BEFORE it
-// is compiled, so it costs neither worker compile nor scheduler walk (onset count E is the term driving
-// the per-tick walk, deck-swap seed O(E·L), and nextRowLayerGapTicks O(E²)/cycle). Unlike the zone-level
-// OOM gate, this is PER-RHYTHM: a zone keeps sounding its lighter rhythms and drops only the too-dense
-// ones. Applied only on the flight compile (compileGridAudioProgram) — the lab/rhythm-card path is uncapped.
+// Onset ceiling for the RHYTHM-CARD inspector/audition only — NOT the flight scene. Building a card's
+// composite model (deriveSelectedRhythmModel) and auditioning it (deriveVoice → lead) are each O(onsets),
+// so a very dense clicked rhythm freezes the page synchronously. Above this onset load the card refuses to
+// build the model / audition (flight-view.js modelForRhythmNode). The flight scene is deliberately NOT
+// capped: row playback may still need a >this-onset rhythm as a folded-ratio representative, and its
+// scheduler cost is bounded incrementally (lookahead horizon + MAX_ROW_OSC), unlike the card's one-shot build.
 export const ROW_MAX_PLAYBACK_ONSETS = 16384;
 export const CULLED_ROW_MAX_VOICES_PER_TONE = 4;
 
@@ -176,6 +176,6 @@ export function compileGridAudioProgram({
     tooLarge: false,
     ms: 0,
   };
-  const readout = buildGridCull2Readout(grid, { reflect, repeatCull, selectedFractions, ownerSolve, maxPlaybackOnsets: ROW_MAX_PLAYBACK_ONSETS });
+  const readout = buildGridCull2Readout(grid, { reflect, repeatCull, selectedFractions, ownerSolve });
   return compactGridAudioProgram(readout, { selectionKey, generation });
 }

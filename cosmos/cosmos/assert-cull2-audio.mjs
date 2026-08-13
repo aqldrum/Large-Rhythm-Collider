@@ -165,26 +165,6 @@ check('grid summary accounting preserves the full source program while bounding 
   gridProgram.summary.sourceLayerAttacks >= gridProgram.summary.canonicalActions &&
   gridProgram.summary.layerPlays + gridProgram.summary.layerRepeatHolds === gridProgram.summary.canonicalActions);
 
-console.log('\n  Per-rhythm onset prohibition (audio main-thread campaign)');
-const layerSumOf = rhythm => rhythm.layers.reduce((a, b) => a + b, 0);
-const dense = buildGridCull2Readout(840);                             // 22 rhythms, layerSums ~23..137
-const CAP = 60;                                                       // drops the denser rhythms, keeps the rest
-const capped = buildGridCull2Readout(840, { maxPlaybackOnsets: CAP });
-const droppedCount = dense.rhythms.filter(rhythm => layerSumOf(rhythm) > CAP).length;
-check('a representative rhythm denser than the cap is excluded from the compile',
-  droppedCount > 0 &&
-  capped.summary.representativeRhythms === dense.summary.representativeRhythms - droppedCount &&
-  capped.rhythms.every(rhythm => layerSumOf(rhythm) <= CAP), `dropped ${droppedCount}`);
-check('excluding dense rhythms shrinks the composite the scheduler must walk',
-  capped.summary.compositeTicks < dense.summary.compositeTicks);
-check('a rhythm dropped by the cap contributes no SELECTED catalog tone',
-  capped.ratioCatalog.filter(note => note.selected).length < dense.ratioCatalog.filter(note => note.selected).length &&
-  capped.ratioCatalog.filter(note => note.selected).every(note =>
-    capped.rhythms.some(rhythm => rhythm.ownedFractions.includes(note.fraction))));
-check('the default (uncapped / lab-card) path is unchanged — filter is opt-in',
-  buildGridCull2Readout(840).summary.compositeTicks === dense.summary.compositeTicks &&
-  buildGridCull2Readout(840, { maxPlaybackOnsets: Infinity }).summary.representativeRhythms === dense.summary.representativeRhythms);
-
 console.log('\n  Tick-rate transport');
 const rateTransport = new Cull2AudioPlayer();
 rateTransport.setProgram(sample);

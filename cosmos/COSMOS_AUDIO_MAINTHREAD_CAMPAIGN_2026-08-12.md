@@ -300,24 +300,29 @@ completion of Batch 1.
 
 ---
 
-## 7. Addendum — per-rhythm onset prohibition (landed 2026-08-12, Avery-requested)
+## 7. Addendum — rhythm-card onset prohibition (landed 2026-08-12, Avery-requested; re-scoped)
 
-Interleaved between Batch 1 and Batch 2. Attacks cost center 3 (and 2) at the source: onset count `E` is the
-term driving the per-tick walk, deck-swap seed `O(E·L)`, and `nextRowLayerGapTicks` `O(E²)/cycle`, so
-dropping over-dense rhythms before they enter the composite is cheaper than optimizing the walk over them.
+Interleaved between Batch 1 and Batch 2. **Correction (Avery):** the cap belongs to the **rhythm-card
+inspector/audition, NOT the flight scene.** A first pass mistakenly filtered dense representatives out of the
+flight compile; that was reverted, because row playback may still need a `>ROW_MAX_PLAYBACK_ONSETS`-onset
+rhythm as a folded-ratio representative (losing it would drop a tone), and the scene's cost is bounded
+incrementally (lookahead horizon + `MAX_ROW_OSC`) rather than as one synchronous build.
 
-- **New cap:** `ROW_MAX_PLAYBACK_ONSETS = 16384` (`cosmos-grid-audio-core.js`), **distinct from** the
-  zone-level OOM gate `ROW_MAX_COMPOSITE_ONSETS = 20000`. Chosen by Avery (2048 judged "very low").
-- **Scope = per-rhythm, not per-zone.** A representative rhythm whose `layerSum` exceeds the cap is filtered
-  out of `compiledRhythms` in `buildGridCull2Readout` **before** `buildCull2Readout` runs — so it costs
-  neither worker compile nor a place in `events[]`. A zone keeps sounding its lighter rhythms; it goes silent
-  only if *all* its rhythms are over-dense. Catalog `selected` now requires rhythm survival, so
-  `selectedTones`/`selectedFractions` stay honest (a dropped rhythm's tone can't report selected).
-- **Scene-only.** Applied on the flight compile path (`compileGridAudioProgram` → `buildGridCull2Readout`,
-  option `maxPlaybackOnsets`). The lab/rhythm-card path (`cull2-grid-worker.js`) calls `buildGridCull2Readout`
-  with no cap (default `Infinity`), so deliberate card inspection of a dense rhythm is unaffected.
-- **Fail-open:** a missing `layerSum` reads as 0 → kept (matches the eligibility gate's philosophy).
-- **Validation:** new assertions in `assert-cull2-audio.mjs` (grid 840, cap 60 → 5 rhythms dropped, composite
-  shrinks, catalog consistent, uncapped/`Infinity` path byte-unchanged). Behavior IS audible (dense rhythms
-  go silent) → Avery-audible-gated. Note `E` is a proxy; effective heaviness also tracks onset *rate*
-  (`E·ticksPerSec/grid`) — revisit if a lower cap is wanted for fast-playing mid-density zones.
+The freeze is on the **card path**: clicking a rhythm builds its composite model
+(`deriveSelectedRhythmModel`, `O(onset load)`) for the inspector **and** auditions it (`deriveVoice` →
+lead, another `O(onset load)`), synchronously on the main thread. A very dense clicked rhythm freezes the page.
+
+- **Cap:** `ROW_MAX_PLAYBACK_ONSETS = 16384` (`cosmos-grid-audio-core.js`), distinct from the flight OOM gate
+  `ROW_MAX_COMPOSITE_ONSETS = 20000`. Chosen by Avery (2048 judged "very low").
+- **Gate point:** `modelForRhythmNode` (`flight-view.js`) pre-checks a cheap `layerSum = Σ node.layers`
+  (the build-cost driver, needs no model) and returns `null` above the cap. `renderRhythmInspector` then shows
+  a compact "too dense to audition" card (identity, grid, layer-sum) instead of the ratio table + plot;
+  `setRhythmAudition` refuses (`setLead(null)`); `updateRhythmActionState` disables the LISTEN button. The
+  cockpit plot / scale-table already guard on a null model, so they hold blank.
+- **Flight scene: uncapped.** `compileGridAudioProgram` / `buildGridCull2Readout` reverted to no cap — dense
+  rhythms remain eligible representatives.
+- **Validation:** guard-side is thin (the gate lives in DOM-bound `flight-view.js`, not headless-importable);
+  covered by syntax + the unchanged compile suite (`assert-cull2-audio.mjs` back to baseline). **Avery
+  audible/interaction pass:** click a very dense rhythm — card shows "too dense", LISTEN disabled, no freeze;
+  a normal rhythm still auditions. Note `layerSum` is a conservative proxy (≥ true composite onset count); if
+  a card shows fewer displayed onsets than the cap yet is refused, that's the proxy being safe.
