@@ -1570,7 +1570,7 @@ function requestRowProgram(candidate, root, policy, selectionKey, validRequestKe
     zoneIdentity._rowAudio.requestKey = '';
     zoneIdentity._rowAudio.state = 'program-ready';
     zoneIdentity._rowAudio.compileMs = reply.compileMs;
-    markLandingDirty();   // a prewarm star just became able to sound — re-select, but coalesced (old program holds)
+    markSoftMembershipDirty();   // a prewarm star just became able to sound — re-select, but coalesced (old program holds)
   }).catch(error => {
     // TEMP DEBUG (2.4 worker-err flood) — surface the REAL compileGridAudioProgram throw, deduped so a
     // flood collapses to one line per distinct message, with the owner/state context to test the
@@ -1596,22 +1596,26 @@ function requestRowProgram(candidate, root, policy, selectionKey, validRequestKe
 // rotation showed it best: it recomputed an IDENTICAL selection, because rotation changes no distance, no
 // zone membership and no programKey). Split in two:
 //   POSE       — every frame. Where each sounding star sits, how loud, how bright. AudioParams only.
-//   MEMBERSHIP — only when something that can change the selection has happened: the camera TRANSLATED, a
-//                zone spawned/evicted, the harmonic selection key moved, or a compile landed (a prewarm
-//                star became eligible to sound). Marked by markFieldDirty() from each of those sites.
-// A safety re-run bounds staleness regardless, so an un-enumerated cause can only ever delay the field by
-// one interval rather than strand it — at 250ms that is 4 passes/sec while turning instead of 60+.
-let fieldMembershipDirty = true, fieldLandingDirty = false, fieldMembershipAt = -Infinity;
+//   MEMBERSHIP — only when the selection can change: the harmonic selection key moved or a zone spawned/
+//                evicted (HARD — next frame), or the camera TRANSLATED or a compile LANDED (SOFT — coalesced,
+//                because the nearest-set drift and prewarm-ready swaps can wait one MIN interval). Marked by
+//                markFieldDirty() / markSoftMembershipDirty() from those sites.
+// A safety re-run bounds staleness regardless, so an un-enumerated cause can only ever delay the field by one
+// interval rather than strand it. Translation is coalesced too (Batch 3), so flight recomputes MEMBERSHIP
+// ~16×/s (every 60ms) instead of every frame — while POSE still re-aims the active stars every single frame.
+let fieldMembershipDirty = true, fieldSoftDirty = false, fieldMembershipAt = -Infinity;
 const FIELD_MEMBERSHIP_MAX_INTERVAL_MS = 250;
-// Landing coalescing. A compile completing (a prewarm star becoming able to sound) is a SOFT trigger: the
-// fresh program can wait a few frames to swap in — its old-chord program keeps sounding meanwhile, so there
-// is no hole. Without this, ~20 audible zones recompiling on a single chord change forced ~20 back-to-back
-// full-field rebuilds (the main-thread "always busy" behind the chord-change freeze). Coalesce soft triggers
-// to at most one pass per MIN interval; hard triggers (chord/translate/spawn/root) still pass the next frame.
+// Soft-trigger coalescing. Two causes re-select membership but can wait a few frames: a compile LANDING (a
+// prewarm star becoming able to sound — its old-chord program keeps sounding meanwhile, so no hole) and
+// camera TRANSLATION during flight (the nearest-set drifts continuously; hysteresis + the 30-star prewarm +
+// ROW_SWITCH_TICKS swap-quantization absorb ~60ms of lag). Both otherwise force a FULL rebuild EVERY frame —
+// the landing storm behind the chord-change freeze, and the every-frame O(Z) membership scan during flight.
+// Coalesce them to at most one pass per MIN interval; hard triggers (chord/root/scale, spawn/evict) still
+// pass the next frame.
 const FIELD_MEMBERSHIP_MIN_INTERVAL_MS = 60;
 
-function markFieldDirty() { fieldMembershipDirty = true; }
-function markLandingDirty() { fieldLandingDirty = true; }   // a compile landed — coalesced, not immediate
+function markFieldDirty() { fieldMembershipDirty = true; }               // hard — next frame
+function markSoftMembershipDirty() { fieldSoftDirty = true; }            // landing or flight translation — coalesced
 
 // Perf (1c): audioCompileEligibility loops z.ratioOwners to fold maxLayerSum, and it was called for EVERY
 // placed zone on EVERY membership rebuild — O(Z·owners) — though the verdict only changes when a zone's
@@ -1643,12 +1647,12 @@ function updateGridRowField(placed, basis, translated, nowMs) {
     rowCompiler?.cancelQueuedExcept(new Set());
     markFieldDirty();               // a new chord re-selects every star's tones
   }
-  if (translated) markFieldDirty();   // distance drives selection; rotation does not
+  if (translated) markSoftMembershipDirty();   // flight drifts the nearest-set — SOFT/coalesced, not an every-frame full rebuild
   // POSE-ONLY frame: re-aim the stars already in the field and return. rowActiveIds is the membership the
   // last full pass installed, so this stays exactly in step with what the player actually holds.
   const sinceMembership = nowMs - fieldMembershipAt;
-  const runMembership = fieldMembershipDirty                                       // hard: chord/translate/spawn/root — next frame
-    || (fieldLandingDirty && sinceMembership >= FIELD_MEMBERSHIP_MIN_INTERVAL_MS)  // soft: landings, coalesced to the MIN interval
+  const runMembership = fieldMembershipDirty                                       // hard: chord/root/scale, spawn/evict — next frame
+    || (fieldSoftDirty && sinceMembership >= FIELD_MEMBERSHIP_MIN_INTERVAL_MS)     // soft: landings + flight translation, coalesced to MIN
     || sinceMembership >= FIELD_MEMBERSHIP_MAX_INTERVAL_MS;                        // safety net — bounds staleness regardless
   if (!runMembership) {
     const pose = [];
@@ -1663,7 +1667,7 @@ function updateGridRowField(placed, basis, translated, nowMs) {
     return;
   }
   fieldMembershipDirty = false;
-  fieldLandingDirty = false;
+  fieldSoftDirty = false;
   fieldMembershipAt = nowMs;
   const candidates = [];
   for (const [grid, position] of placed) {
