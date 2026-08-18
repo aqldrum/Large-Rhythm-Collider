@@ -92,6 +92,19 @@ export function harmonyPolicyDefinitionKey(policy) {
   return key;
 }
 
+// Root-selection invalidation key. The key CENTER a starfield implies is a function of the harmony SOURCE
+// and (in scale mode) the SCALE — NOT of which chord the walk is currently on. In chord-walk mode the
+// per-chord `id`/`targets` change on every boundary, so keying root invalidation on harmonyPolicyDefinitionKey
+// (a) churns the ~30 s root solve into one-per-chord, and (b) makes the boundary guard reject every ladder it
+// just solved — a normal walk advance looked like a policy change, so the root could never leave 1/1. This
+// key omits the chord so a walk advance is NOT a root-policy change; a source or scale switch still is. The
+// row fundamental is tracked separately by the caller (it feeds rootCompetitionTones, not the harmony frame).
+export function rootPolicyStableKey(policy) {
+  const source = policy?.source === HARMONY_SOURCES.SCALE ? HARMONY_SOURCES.SCALE : HARMONY_SOURCES.CHORD_WALK;
+  const scale = source === HARMONY_SOURCES.SCALE ? (policy?.scaleId || DEFAULT_SCALE_POLICY) : 'walk';
+  return `rootpolicy:${source}|${scale}`;
+}
+
 export function harmonyPolicySelectionKey(root, policy) {
   const rootIdentity = `${root?.rootKey ?? 'none'}:${root?.fraction ?? 'none'}:${Number.isFinite(root?.cents) ? wrapOctaveCents(root.cents).toFixed(6) : 'none'}`;
   return `${harmonyPolicyDefinitionKey(policy)}|root:${rootIdentity}`;

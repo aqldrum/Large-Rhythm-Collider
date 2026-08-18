@@ -16,7 +16,7 @@ import { SpatialGridRowPlayer, shouldScheduleRowAction } from './spatial-grid-ro
 import {
   DEFAULT_HARMONY_SOURCE, DEFAULT_HARMONY_TOLERANCE_CENTS, DEFAULT_SCALE_POLICY,
   HARMONY_SOURCES, SCALE_POLICIES, bedTargetsForPolicy, harmonyPolicyDefinitionKey,
-  matchHarmonyTarget, normalizeHarmonyPolicy,
+  matchHarmonyTarget, normalizeHarmonyPolicy, rootPolicyStableKey,
 } from './harmony-policy.js';
 import { CosmosMidiOut } from './cosmos-midi-out.js';
 // The audio clock's instrument panel (pure meters; see that module's header for the mechanism it measures).
@@ -1310,7 +1310,9 @@ export function setRootPolicyContext({ settled = false, geographyEpoch = 0 } = {
 function rootPolicyComputation() {
   if (!lastRootPolicyProposal?.ladder?.length || !lastRootPolicyProposal.incumbent) return null;
   const harmonyPolicy = currentHarmonyPolicy();
-  if (lastRootPolicyProposal.policyKey && lastRootPolicyProposal.policyKey !== harmonyPolicyDefinitionKey(harmonyPolicy)) return null;
+  // Guard against applying a proposal solved under a DIFFERENT harmony frame (source/scale switch) — but a
+  // normal chord-walk advance is NOT such a change, so key on the stable frame, not the per-chord definition key.
+  if (lastRootPolicyProposal.policyKey && lastRootPolicyProposal.policyKey !== rootPolicyStableKey(harmonyPolicy)) return null;
   const normalized = normalizeRootLadder(lastRootPolicyProposal.ladder, lastRootPolicyProposal.incumbent);
   const context = {
     settled: rootPolicyContext.settled,

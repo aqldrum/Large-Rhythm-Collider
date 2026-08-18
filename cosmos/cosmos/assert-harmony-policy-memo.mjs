@@ -11,6 +11,7 @@
 //      This is the safety property the frozen-guard exists to provide.
 import {
   normalizeHarmonyPolicy, normalizeCentTargets, harmonyPolicyDefinitionKey, harmonyPolicySelectionKey,
+  rootPolicyStableKey,
 } from '../harmony-policy.js';
 
 let PASS = true;
@@ -57,6 +58,25 @@ const rootB = { rootKey: 7, fraction: '3/2', cents: 701.955001 };
 check('selection key varies with root and is stable for a fixed root+policy',
   harmonyPolicySelectionKey(rootA, chord) !== harmonyPolicySelectionKey(rootB, chord) &&
   harmonyPolicySelectionKey(rootA, chord) === harmonyPolicySelectionKey(rootA, chord));
+
+// ── root-policy stable key (2026-08-17 root-modulation fix) ───────────────────────────────────────────
+// The root solve is invalidated by the harmony FRAME (source/scale), never by which chord the walk is on.
+// Regression this guards: keying root invalidation on harmonyPolicyDefinitionKey made every chord advance
+// look like a policy change, so the boundary guard rejected every just-solved ladder and the root was pinned
+// at provisional 1/1 forever in chord-walk mode.
+const cw5 = normalizeHarmonyPolicy({ source: 'chord-walk', chordId: 5, chordTargets: [0, 400, 700] });
+const cw6 = normalizeHarmonyPolicy({ source: 'chord-walk', chordId: 6, chordTargets: [0, 300, 700, 1000] });
+const scMaj = normalizeHarmonyPolicy({ source: 'scale', scaleId: 'diatonic-major' });
+const scChr = normalizeHarmonyPolicy({ source: 'scale', scaleId: 'chromatic' });
+check('a chord-walk advance does NOT change the stable key (the boundary guard must pass across it)',
+  rootPolicyStableKey(cw5) === rootPolicyStableKey(cw6),
+  `${rootPolicyStableKey(cw5)} vs ${rootPolicyStableKey(cw6)}`);
+check('the per-chord definition key DID change every chord — the bug this replaced',
+  harmonyPolicyDefinitionKey(cw5) !== harmonyPolicyDefinitionKey(cw6));
+check('a SOURCE switch (walk↔scale) still changes the stable key (proposal correctly invalidated)',
+  rootPolicyStableKey(cw5) !== rootPolicyStableKey(scMaj));
+check('a SCALE switch (major↔chromatic) still changes the stable key',
+  rootPolicyStableKey(scMaj) !== rootPolicyStableKey(scChr));
 
 console.log(PASS ? '\n✓✓✓ HARMONY POLICY MEMO PASSES' : '\n✗ HARMONY POLICY MEMO FAILED');
 process.exit(PASS ? 0 : 1);

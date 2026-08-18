@@ -27,7 +27,7 @@ import { railParams } from './rail-params.js';
 import { audioTelemetry, formatLive, formatTable } from './audio-telemetry.js';
 import { sampleRecovery } from './recovery-timing.js';   // TEMP DEBUG (Phase 2.4) — remove with the module
 import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, ROW_MAX_PLAYBACK_ONSETS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './cosmos-grid-audio-core.js';
-import { harmonyPolicyDefinitionKey } from './harmony-policy.js';
+import { rootPolicyStableKey } from './harmony-policy.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
 import { drawGridRowAura } from './grid-row-aura.js';
@@ -2215,7 +2215,11 @@ function loop() {
   const settled = settleSinceSecond !== null && (skyNow - settleSinceSecond) >= SETTLE_SECONDS;
   if (settled) rootPolicyWasSettled = true;
   const rootHarmonyPolicy = currentHarmonyPolicy();
-  const rootHarmonyPolicyKey = harmonyPolicyDefinitionKey(rootHarmonyPolicy);
+  // Invalidate the root solve on a harmony FRAME change (source/scale), NOT on a chord-walk advance — the
+  // starfield's implied key center doesn't change just because the walk stepped to the next chord. Keying
+  // on the per-chord definition key used to bump the epoch (and force a solveRoots) every chord AND stamp a
+  // proposal the boundary guard then rejected, so the root never left 1/1. See rootPolicyStableKey.
+  const rootHarmonyPolicyKey = rootPolicyStableKey(rootHarmonyPolicy);
   const rootFundamentalPolicy = railParams.get('rowFundamental');
   if (lastRootHarmonyPolicyKey === null) lastRootHarmonyPolicyKey = rootHarmonyPolicyKey;
   if (rootHarmonyPolicyKey !== lastRootHarmonyPolicyKey || rootFundamentalPolicy !== lastRootFundamentalPolicy) {
