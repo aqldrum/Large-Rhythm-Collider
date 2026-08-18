@@ -15,6 +15,11 @@ import { HEAVY_SHARD_LAYER, mergeRatioOwners } from '../grid-core.js';
 // spins on the clock. SLOT radius grows with grid-distance to the sun (near hug, far orbit wide).
 const PUFF = { omega: 0.25, base: 26, step: 1.6, spanCap: 30, k: 3, damping: 3.4 };
 
+// The solve LOG is diagnostics only (the non-blocking assert reads a single short flight; the live HUD reads
+// counters, never this array). Left unbounded it grew one entry per zone solve for the whole session — a slow
+// climb that survives eviction. Bound it to a ring far larger than any test flight so semantics are unchanged.
+const SOLVE_LOG_CAP = 4096;
+
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): fold one shard's 12-slot degree pool into the zone's running
 // pool — per degree keep the min |dev| tone, sum toneCount. Lives on the zone (z.skyPool/z.skyToneCount)
 // like z._bloom, so eviction (zones.delete) drops it for free. A star is audible as soon as its FIRST
@@ -193,11 +198,15 @@ export class Cosmos {
     if (z.shardsDone >= z.shardsTotal) this._finishZone(z, z.partial);
   }
 
+  // Append to the bounded solve log (see SOLVE_LOG_CAP). splice keeps the newest CAP entries; at steady
+  // state it drops one per push (cheap — CAP is small and solves are seconds apart).
+  _logSolve(entry) { const s = this.events.solves; s.push(entry); if (s.length > SOLVE_LOG_CAP) s.splice(0, s.length - SOLVE_LOG_CAP); }
+
   _finishZone(z, abundance) {
     z.abundance = abundance; z.state = 'solved';
     z.size = Math.max(0.15, Math.log2(abundance + 1) * 0.5);
     this._dirty = true;                                       // include in the next GG competition
-    this.events.solves.push({ grid: z.grid, doneAt: this.clock });
+    this._logSolve({ grid: z.grid, doneAt: this.clock });
   }
 
   _failTask(z, tid, generation = z.solveGeneration) {
@@ -211,7 +220,7 @@ export class Cosmos {
   _finishMonster(z) {
     z.state = 'solved';                 // stop re-planning it
     z.abundance = 0; z.size = 4;        // a red giant on screen (flight tints monsters); real count needs override
-    this.events.solves.push({ grid: z.grid, doneAt: this.clock });
+    this._logSolve({ grid: z.grid, doneAt: this.clock });
   }
 
   _clearSolvePayloads(z) {
@@ -241,7 +250,7 @@ export class Cosmos {
           z.state = 'solved';
           z.size = Math.max(0.15, Math.log2(z.abundance + 1) * 0.5); // suns big, dust small
           this._dirty = true;
-          this.events.solves.push({ grid: f.grid, startAt: f.startAt, doneAt: f.doneAt, dur: f.doneAt - f.startAt });
+          this._logSolve({ grid: f.grid, startAt: f.startAt, doneAt: f.doneAt, dur: f.doneAt - f.startAt });
         }
       } else still.push(f);
     }
