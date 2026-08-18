@@ -171,8 +171,8 @@ function buildKnob(name) {
   // Vertical-drag adjust, copied from the ADSR knob (ToneRowPlayback.js:1411): up = increase, 0.005/px.
   // document-level move/up so a drag that wanders off the 40px dial still tracks, then unbinds on release.
   let dragging = false, startY = 0, startPos = 0;
-  const onMove = e => { if (dragging) railParams.setNorm(name, startPos + (startY - e.clientY) * KNOB_DRAG_PER_PX); };
-  const onUp = () => { dragging = false; dial.classList.remove('active'); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  const onMove = e => { if (dragging) railParams.setNorm(name, startPos + (startY - e.clientY) * KNOB_DRAG_PER_PX, { persist: false }); };   // live audio, no per-move localStorage write
+  const onUp = () => { dragging = false; dial.classList.remove('active'); railParams.persistNow(); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };   // flush the drag's final value once
   dial.addEventListener('mousedown', e => {
     e.preventDefault(); dragging = true; startY = e.clientY; startPos = railParams.norm(name);
     dial.classList.add('active'); document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);

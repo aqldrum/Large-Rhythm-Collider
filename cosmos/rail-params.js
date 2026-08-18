@@ -119,14 +119,16 @@ export class RailParams {
   norm(name) { const spec = this.specs[name]; return spec ? valueToNorm(spec, this.state[name]) : 0; }
 
   // Set an engine value (clamped to the spec). No-ops — including a set to the current value — never notify
-  // or persist, so an engine subscriber isn't re-driven every frame. Returns the clamped value.
-  set(name, value, { silent = false } = {}) {
+  // or persist, so an engine subscriber isn't re-driven every frame. Returns the clamped value. `persist: false`
+  // still notifies (audio stays live) but skips the localStorage write — the knob DRAG passes it per move and
+  // flushes once on release via persistNow(), so a continuous drag is one write, not one per mousemove.
+  set(name, value, { silent = false, persist = true } = {}) {
     const spec = this.specs[name];
     if (!spec) return undefined;
     const clamped = clampParam(spec, value);
     if (this.state[name] === clamped) return clamped;
     this.state[name] = clamped;
-    if (spec.persist) this._persist();
+    if (spec.persist && persist) this._persist();
     if (!silent) this._notify(name, clamped, spec);
     return clamped;
   }
@@ -160,6 +162,9 @@ export class RailParams {
   }
 
   _notify(name, value, spec) { for (const fn of this.listeners) { try { fn(name, value, spec); } catch {} } }
+
+  // Force a write of the persisted subset now — the knob drag's release flush (see set's `persist: false`).
+  persistNow() { this._persist(); }
 
   _persist() {
     if (!this.storage) return;
