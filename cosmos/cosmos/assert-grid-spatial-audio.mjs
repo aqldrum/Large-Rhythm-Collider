@@ -644,5 +644,35 @@ check('cockpit exposes the live local-tuning weight in voice-leading semitone un
 check('flight guards every compile with finalized ownership and movement budgets',
   flight.includes('audioCompileEligibility(z)') && flight.includes('chooseSpatialRows(candidates, rowActiveIds)'));
 
+// ── Two-clock safety valve (2026-08-18): setField is a SECOND reaper ─────────────────────────────────
+// Stars are created on the rAF clock (setField) but normally destroyed only in tick() (transport-worker
+// clock). If tick stalls/throws, inactive stars — each pinning a full program + audio nodes — pile up
+// unbounded (the activeStars-climbs leak). setField must reap already-inactive stars past their removeAt
+// itself, so a stalled tick cannot leak. This proves the reap fires WITHOUT tick ever being called.
+{
+  const vp = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, cancelScheduledValues() {}, setTargetAtTime() {}, setPosition() {} });
+  const vnode = (extra = {}) => ({ connect() {}, disconnect() {}, ...extra });
+  const vctx = {
+    sampleRate: 48000, currentTime: 0,
+    createBiquadFilter: () => vnode({ type: '', frequency: vp() }),
+    createPanner: () => vnode({ panningModel: '', distanceModel: '', refDistance: 0, maxDistance: 0, rolloffFactor: 0, positionX: vp(), positionY: vp(), positionZ: vp(), setPosition() {} }),
+    createGain: () => vnode({ gain: vp() }),
+  };
+  const V = Object.create(SpatialGridRowPlayer.prototype);
+  V.ctx = vctx; V.master = vnode(); V.stars = new Map(); V._voicesByTone = new Map();
+  V.logicalVoiceCount = 0; V.stats = { entries: 0, exits: 0, budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0 };
+  const vitem = id => ({ id, position: [0, 0, 10], distance: 10, cutoff: 5000, gain: 0.5 });
+  vctx.currentTime = 0;
+  V.setField([vitem('A'), vitem('B')], 0);
+  check('valve: field of two makes two stars', V.stars.size === 2);
+  V.setField([vitem('A')], 0);                    // B leaves the field → marked inactive
+  check('valve: a departed star is inactive and still in its crossfade tail (not yet reaped)',
+    V.stars.size === 2 && V.stars.get('B').active === false && Math.abs(V.stars.get('B').removeAt - (0.35 + 0.08)) < 1e-9);
+  vctx.currentTime = 1.0;                         // past removeAt, WITHOUT calling tick()
+  V.setField([vitem('A')], 0);
+  check('valve: setField ALONE reaps an inactive star past removeAt (tick never ran) — the strand cannot leak',
+    V.stars.size === 1 && !V.stars.has('B') && V.stars.get('A').active === true);
+}
+
 console.log(`\n${PASS ? '✓✓✓ CULL2 GRID 3D AUDIO PASSES' : '✗ CULL2 GRID 3D AUDIO FAILED'}`);
 process.exit(PASS ? 0 : 1);

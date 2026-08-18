@@ -366,7 +366,19 @@ export class SpatialGridRowPlayer {
       }
     }
     for (const [id, star] of this.stars) {
-      if (seen.has(id) || !star.active) continue;
+      if (seen.has(id)) continue;
+      // Two-clock safety valve. Stars are normally reaped in tick() (transport-worker clock). If that stalls
+      // or its scheduling path throws, already-inactive stars — each pinning a full program (events[] +
+      // eventGaps + seedTable) plus static audio nodes — would pile up unbounded (the activeStars-climbs
+      // leak that __cosmosHealth() watches). setField runs on the rAF clock and does ONLY destruction here
+      // (no scheduling that could throw), so an inactive star past its removeAt is reaped here too. Healthy
+      // case is unchanged: tick (40Hz) still reaps first, before the next setField (~16Hz), so this rarely
+      // fires; when it does, the star is one tick() would have destroyed at the same removeAt. Deleting
+      // during Map iteration is safe (same as tick's reap loop — the iterator won't revisit the entry).
+      if (!star.active) {
+        if (now >= star.removeAt) { this._destroyStar(star, now); this.stars.delete(id); }
+        continue;
+      }
       star.active = false;
       star.pending = null;
       star.gain.gain.cancelScheduledValues(now);
