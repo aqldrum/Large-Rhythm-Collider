@@ -63,7 +63,12 @@ function bruteForcePool(G) {
   if (bruteForceCache.has(G)) return bruteForceCache.get(G);
   const pool = new Array(12).fill(null), toneCount = new Array(12).fill(0);
   for (const A of shardKeysOf(G)) {
+    // gridShardSystems now emits BOTH keep-two rhythms of a paired scale (for the bloom), but the pool is
+    // per-SCALE (ratioSet), so fold one rep per ratioSet — matching gridShardSolve's one-efficient-per-group.
+    const seenRs = new Set();
     for (const sys of gridShardSystems(G, A)) {
+      if (seenRs.has(sys.rs)) continue;
+      seenRs.add(sys.rs);
       const scale = deriveScale(sys.layers);
       poolFromRatios(scale.ratios, pool, toneCount);
     }

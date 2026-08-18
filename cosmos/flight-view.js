@@ -34,6 +34,7 @@ import { drawGridRowAura } from './grid-row-aura.js';
 import { buildRhythmInspectorModel, lightRhythmMetrics } from './rhythm-inspector-model.js';
 import { shouldScheduleRowAction } from './spatial-grid-row-player.js';
 import { SolverWorkerPool } from './cosmos/solver-worker-pool.js';
+import { QUALITY_ORDER, detectDefaultTier, devicePoolMax, resolveTier } from './cosmos-quality.js';
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
 // Sky Root handoff (cosmos/SKY_ROOT_HANDOFF_2026-07-22.md): anchor-independent root solve, Feature B.
@@ -66,29 +67,61 @@ const HIL_DOLLY_CELLS = 0.7; // HILBERT: cells per scroll notch — small on pur
 const HIL_WALL_REVEAL_CELLS = 7; // forcefield fades in only near a face; collision uses the exact same box
 const HIL_WALL_PATCH_CELLS = 9;  // local half-width — never construct/render an entire 256-by-256 face
 const HIL_CAMERA_RADIUS = CELL * 0.12; // keeps the viewpoint in front of the near plane at contact
+// ── PERFORMANCE QUALITY (cosmos-quality.js) ──────────────────────────────────────────────────────────
+// The resource knobs below are no longer fixed consts: the quality authority owns them. The tier
+// auto-detected from THIS machine seeds their initial values, and applyQuality() (just below) re-points
+// them live when the user moves the Stage-2 slider. Physically the solver pool is still spawned at the
+// device maximum (see startFlight); a tier only throttles cosmos.poolSize — concurrency — so dialing down
+// idles workers rather than tearing them down. Harmony is deliberately NOT a quality knob (module enforces).
+let   activeQualityId = detectDefaultTier();      // conservative default for an unknown public visitor
+const currentQuality = () => resolveTier(activeQualityId);
+let   poolPhysicalMax = 8;                         // set in startFlight() to the device pool size; ceils poolCap
+const _q0 = currentQuality();
 // Hilbert-cube LOD window (in CELL units). CRITICAL: HIL_EVICT is the distance BEHIND you that zones
 // survive, so evict ≫ spawn keeps the whole TRAIL you fly (evict 20 → ~10k+ zones → jank). Keep evict
 // ≈ spawn + 2. Zone count while flying ≈ 4.2·HIL_EVICT³·0.9: evict 8 → ~1900 · 10 → ~3800 · 12 → ~6500.
-const HIL_SPAWN = 10;       // spawn grids within this many cells of the camera (frontier reach / density)
+let   HIL_SPAWN = _q0.spawn; // spawn grids within this many cells of the camera (frontier reach / density) — tier-owned
 // HIL_EVICT does DOUBLE DUTY in hilbert mode (see ~L875): it is both the retention radius (→ the all-zones
 // projection loop every frame) AND FOG_FAR = HIL_EVICT·CELL (→ how deep the star-wake is drawn/processed).
 // So it is the master perf lever: it governs the two dominant per-frame costs at once. 40 gave a 13.6k-unit
 // wake that was as expensive as it was deep; 20 halves the rear wake we fly away from while HIL_SPAWN keeps
 // the forward density we fly into. Raise for a deeper field at linear-in-volume cost; lower for headroom.
-const HIL_EVICT = 20;
-const POOL_MAX = 8;        // max solver workers. Fewer = smoother flight (leaves cores for render), slower solve
+let   HIL_EVICT = _q0.evict;   // tier-owned retention/wake depth
 // Fill-rate cap. The main scene is Canvas 2D on the main thread, so cost scales with backing-store PIXELS:
 // a DPR-3 phone fills 9× the area of DPR-1 for the same view. DPR_CAP clamps the backing store so hi-DPI
-// screens don't pay a fill-rate tax the design never asked for. 2 = no change on Retina; a CPU tier lowers it.
-const DPR_CAP = 2;
+// screens don't pay a fill-rate tax the design never asked for. 2 = no change on Retina; a lower tier lowers it.
+let   DPR_CAP = _q0.dprCap;    // tier-owned backing-store DPR clamp
 let   renderScale = 1;     // live capped DPR — set once in resize(), reused by every setTransform so the
                            //   backing store and the context transform can never disagree (mismatch = blur/clip)
 // Backpressure: when the solve backlog (pending+solving in-window) exceeds SOLVE_BACKLOG, the frontier reach eases
 // down toward HIL_SPAWN_MIN so we stop piling on work, and recovers when it catches up. Magnitude-agnostic — the
 // natural home for a future LOD slider (raise HIL_SPAWN / SOLVE_BACKLOG for a denser, hungrier field).
-const HIL_SPAWN_MIN = 4;   // floor for the adaptive reach under load
-const SOLVE_BACKLOG = 80;  // backlog above which the frontier starts shrinking
+let   HIL_SPAWN_MIN = _q0.spawnMin;   // tier-owned floor for the adaptive reach under load
+let   SOLVE_BACKLOG = _q0.solveBacklog; // tier-owned backlog above which the frontier starts shrinking
 let   hilSpawn = HIL_SPAWN;// live (eased) frontier reach in the cube
+// applyQuality — re-point every live knob to a tier and push the cheap-live parts into the running engine
+// at once: the concurrency gate (cosmos.poolSize, physical workers stay warm), the DPR clamp (via resize),
+// and — hilbert only — the fog/evict shell. Called by the Stage-2 slider on override; on the tier that
+// matches today's shipped constants it is exactly behavior-preserving. Harmony is never touched here.
+function applyQuality(id) {
+  const q = resolveTier(id);
+  const prevRange = currentQuality().bloomMaxRange;   // capture before the id flips
+  activeQualityId = q.id;
+  HIL_SPAWN = q.spawn; HIL_EVICT = q.evict; HIL_SPAWN_MIN = q.spawnMin;
+  SOLVE_BACKLOG = q.solveBacklog; DPR_CAP = q.dprCap;
+  hilSpawn = Math.min(hilSpawn, HIL_SPAWN);   // a downshift bites immediately; recovery re-eases upward
+  if (cosmos) {
+    cosmos.poolSize = Math.min(q.poolCap, poolPhysicalMax);   // throttle concurrency; workers stay alive
+    if (placement === 'hilbert') { cosmos.evictRadius = HIL_EVICT; FOG_NEAR = HIL_SPAWN * CELL * 0.4; FOG_FAR = HIL_EVICT * CELL; }
+    // the range cull is applied on shard-receive, so a threshold change only takes on ALREADY-open blooms
+    // if they re-fetch: drop their caches + growth state and the next tick re-blooms them at the new range.
+    if (q.bloomMaxRange !== prevRange) {
+      for (const g of bloomed) { bloomCache.delete(g); const z = cosmos.zones.get(g); if (z) delete z._bloom; }
+    }
+  }
+  if (cv && ctx) resize();   // re-clamp the backing store to the new DPR cap
+  return q.id;
+}
 // Star bloom is CLICK-GATED: the ambient field stays a clean starry sky, and only the focused (clicked)
 // star renders its cardinality-sphere point cloud — the FULL cloud, no point cap. Clicking a star focuses
 // it (priority-solves via cosmos.setFocus if unsolved) and streams its whole cloud in; clicking empty
@@ -649,6 +682,17 @@ const cardVisible = c => c >= cardLo && c <= cardHi;
 // The focused bloom is fetched SHARD-BY-SHARD (same sharding as the abundance solve), so it streams in and
 // never blocks a worker on a whole hyper-abundant grid. Cache entry: { systems (grows), cmin, plan, next }.
 const bloomCache = new Map();   // grid -> entry | null (no shards → no bloom)
+// Bloom LOD by RANGE (cosmos-quality.js): a polyrhythm's range = fastest layer ÷ slowest layer. A huge
+// range is a degenerate "rhythm" — one layer firing hundreds of thousands of times against another firing
+// twice (443549:2 → ≈221,774). Lower tiers cull them at the shard-receive path, so they never enter the
+// cloud, never project, never cost a per-frame node. HIGH/ULTRA keep everything (bloomMaxRange = ∞).
+function bloomRange(s) {
+  const L = s && s.layers;
+  if (!L || L.length < 2) return 1;                 // a single-layer system has no range
+  let lo = L[0], hi = L[0];
+  for (let i = 1; i < L.length; i++) { const v = L[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+  return lo > 0 ? hi / lo : Infinity;
+}
 const bloomPlanning = new Set();// focused grids whose shard-plan fetch is in flight (planned here if the
                                 //   runtime hasn't yet — so an unsolved star still blooms the moment it's clicked)
 let   bloomInFlight = 0;        // concurrent bloom-shard fetches across ALL bloomed grids (≤ FOCUS_FETCH_CONC)
@@ -678,7 +722,7 @@ function pumpBlooms() {
     while (bloomInFlight < FOCUS_FETCH_CONC && e.next < e.plan.length) {
       const A = e.plan[e.next++]; bloomInFlight++;
       pool.dispatch({ op: 'bloomShard', grid: g, A })
-        .then(r => { bloomInFlight--; if (r && r.systems) for (const s of r.systems) { e.systems.push(s); if (s.c < e.cmin) e.cmin = s.c; if (s.c > e.cmax) e.cmax = s.c; } })
+        .then(r => { bloomInFlight--; if (r && r.systems) { const maxRange = currentQuality().bloomMaxRange; for (const s of r.systems) { if (bloomRange(s) > maxRange) continue; e.systems.push(s); if (s.c < e.cmin) e.cmin = s.c; if (s.c > e.cmax) e.cmax = s.c; } } })
         .catch(() => { bloomInFlight--; });
     }
   }
@@ -850,12 +894,13 @@ export function ensureFlight(canvas, hudEl) {
   }
   resetRhythmInspector();
   // ── PER-SESSION engine: fresh worker pool + cosmos on every entry; stopFlight() tears both down on exit ──
-  const poolSize = Math.max(2, Math.min(POOL_MAX, (navigator.hardwareConcurrency || 4) - 2));
+  const poolSize = devicePoolMax();   // PHYSICAL workers = the device ceiling; a tier throttles concurrency, not this
+  poolPhysicalMax = poolSize;         // applyQuality ceils the live poolCap to this
   FOCUS_FETCH_CONC = Math.max(2, poolSize - 1);   // divert most of the pool to the focused cloud, keep 1 ambient
   // Module-relative Worker URL: `new Worker(relative)` resolves against the DOCUMENT (index.html at root),
   // which breaks under the full-swallow — resolve against this module so it lands on cosmos/cosmos/. The
   // ?v= busts the hard Web-Worker cache — bump it AND the worker's ../grid-core.js?v= on worker edits.
-  pool = new SolverWorkerPool(new URL('./cosmos/abundance-worker.js?v=6', import.meta.url), poolSize);
+  pool = new SolverWorkerPool(new URL('./cosmos/abundance-worker.js?v=8', import.meta.url), poolSize);
   rowCompiler = new ProgramWorkerPool(new URL('./cosmos/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
   rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
   fieldMembershipDirty = true; fieldMembershipAt = -Infinity;   // a fresh session always does a full pass first
@@ -905,20 +950,23 @@ export function ensureFlight(canvas, hudEl) {
   if (placement === 'hilbert') {
     // 3D-proximity frontier: spawn/evict by cell distance; grids rest at their own cells (no puffs).
     FOG_NEAR = HIL_SPAWN * CELL * 0.4; FOG_FAR = HIL_EVICT * CELL;   // fade right up to the evict shell
-    cosmos = new Cosmos({ reachScale: 0.15, evictRadius: HIL_EVICT, poolSize, isValid, puffs: false, compete: false, ...zoneHooks,
+    cosmos = new Cosmos({ reachScale: 0.15, evictRadius: HIL_EVICT, poolSize: Math.min(currentQuality().poolCap, poolSize), isValid, puffs: false, compete: false, ...zoneHooks,
       dispatch: g => pool.dispatch(g),
       neighbors: cam => neighborGrids(hilbertDecode(cam), Math.max(2, Math.round(hilSpawn))),
       cellDist: (g, cam) => { const a = hilbertDecode(g), b = hilbertDecode(cam); return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]); } });
   } else {
     // evict window ≈ what the fog lets you see (FOG_FAR/SPACING) plus margin. spawn ~80% (hysteresis).
     FOG_NEAR = 3500; FOG_FAR = 13000;
-    cosmos = new Cosmos({ reachScale: 0.15, spawnRadius: 1100, evictRadius: 1400, poolSize, isValid, dispatch: g => pool.dispatch(g), ...zoneHooks });
+    cosmos = new Cosmos({ reachScale: 0.15, spawnRadius: 1100, evictRadius: 1400, poolSize: Math.min(currentQuality().poolCap, poolSize), isValid, dispatch: g => pool.dispatch(g), ...zoneHooks });
   }
   // agents deferred (POC): no ships — `swarm` stays null and all swarm paths guard on it.
   // yaw = π/2 points forward (+X); anchor = frontier center + render origin, off = world offset from it
   cam = { anchor: 2640, off: [0, 0, 0], yaw: Math.PI / 2, pitch: 0.05, speed: 180 };
   cosmos.setCamera(cam.anchor);
   resize();
+  // Live quality handle for tuning before the Stage-2 slider exists: __cosmosQuality.set('low'|'medium'
+  // |'high'|'ultra') re-points every knob on the running engine so a tier can be felt instantly.
+  if (typeof window !== 'undefined') window.__cosmosQuality = { get: () => activeQualityId, set: applyQuality, tiers: QUALITY_ORDER, detected: activeQualityId };
   last = performance.now();
   requestAnimationFrame(loop);
 }

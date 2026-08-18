@@ -47,6 +47,15 @@ export const HEAVY_SHARD_LAYER = 500_000;
 export const HEAVY_SHARD_TIMEOUT_MS = 10_000;
 export const MONSTER_GRID_COST = 3e9;
 
+// Definitional range floor for what counts as a real polyrhythm in FLIGHT: range = fastest layer ÷
+// slowest layer. Beyond this, a "rhythm" is degenerate — one layer firing hundreds of thousands of
+// times against another firing twice (443549:2 → ≈221,774): mathematically valid, musically nothing.
+// This is passed ONLY by the flight solve worker (abundance-worker.js), so the flight card's "kept"
+// count, star size, and bloom all exclude these; the headless lab / codex-math callers omit it
+// (→ Infinity → no cull) so the mathematical corpus — abundance(G), the (k,P) invariant — is UNCHANGED.
+// Independent of the quality slider (a definitional constant, not a per-tier LOD knob). Tune freely.
+export const REAL_RHYTHM_MAX_RANGE = 1000;
+
 // Cheap live-solve COST proxy from the (ascending) shard keys: Σ over shards A of C(#divisorsBelowA, ≤3)·A —
 // combos-per-shard × per-combo deriveScale cost (~A). Predicts BOTH cost drivers without solving: combinatorial
 // (many divisors → big C(...)) and deep (large max-layer → big A). Current values: grid 2,640 ≈ 37M,
@@ -75,7 +84,12 @@ export function gridPlan(G, force = false) {
 // The tuning-system GROUPS of one shard (max-layer A): enumerate valid layer sets whose max is A,
 // group by ratioSet (fundamental is fixed within a shard → keep-two is ratioSet-local). `belowIn`
 // optionally passes the precomputed ascending divisors in [2, A) to avoid re-factoring per shard.
-function shardGroups(G, A, below) {
+function shardGroups(G, A, below, maxRange = Infinity) {
+  // Definitional range cap (flight passes REAL_RHYTHM_MAX_RANGE; lab/math omit → Infinity → no cull).
+  // A system's range = A ÷ its smallest layer, so range ≤ maxRange ⟺ EVERY smaller layer ≥ A/maxRange.
+  // Pruning `below` to that floor is EXACT (drops no in-range system) and collapses the enumeration for
+  // deep/degenerate shards: a huge-prime A leaves nothing ≥ A/maxRange, so the shard costs ~nothing.
+  const layers = maxRange === Infinity ? below : below.filter(d => d >= A / maxRange);
   const valid = [];
   const rec = (start, cur) => {
     if (cur.length >= 1) {                                  // ≥2 layers total (A + ≥1 below)
@@ -86,7 +100,7 @@ function shardGroups(G, A, below) {
       }
     }
     if (cur.length >= 3) return;                            // ≤4 layers total
-    for (let i = start; i < below.length; i++) rec(i + 1, [...cur, below[i]]);
+    for (let i = start; i < layers.length; i++) rec(i + 1, [...cur, layers[i]]);
   };
   rec(0, []);
   const groups = new Map();
@@ -95,10 +109,10 @@ function shardGroups(G, A, below) {
 }
 
 // Kept COUNT for one shard (keep-two: 2 per paired group, 1 per solo) — the abundance/star-size metric.
-export function gridShardCount(G, A, belowIn) {
+export function gridShardCount(G, A, belowIn, maxRange = Infinity) {
   const below = belowIn || divisorsFast(G).filter(d => d >= 2 && d < A);
   let kept = 0;
-  for (const g of shardGroups(G, A, below)) kept += g.length > 1 ? 2 : 1;
+  for (const g of shardGroups(G, A, below, maxRange)) kept += g.length > 1 ? 2 : 1;
   return kept;
 }
 
@@ -176,12 +190,12 @@ export function mergeRatioOwners(ownerMap, candidates) {
 // Kept count, the shard's degree pool, AND its anchor-independent tone list in ONE pass over
 // shardGroups (no second enumeration): one representative per ratioSet group (they share ratios)
 // folds into the shard-wide pool and tone list alike.
-export function gridShardSolve(G, A, belowIn) {
+export function gridShardSolve(G, A, belowIn, maxRange = Infinity) {
   const below = belowIn || divisorsFast(G).filter(d => d >= 2 && d < A);
   const pool = new Array(12).fill(null), toneCount = new Array(12).fill(0);
   const tones = [], seenBins = new Set();
   const ratioOwnerMap = new Map();
-  const groups = shardGroups(G, A, below);
+  const groups = shardGroups(G, A, below, maxRange);
   let count = 0, validCount = 0;
   for (const g of groups) {
     count += g.length > 1 ? 2 : 1;
@@ -254,11 +268,15 @@ export function gridRatioOwnerSolve(G, { maxShards = 260, maxLayerCap = 3_000_00
 // is the EFFICIENT (min layer-sum) instance of the group, matching keep-two's `eff`, so its `key`/
 // `layers` are the codex identity used for charted lookups and the click-to-inspect detail panel.
 // Σ over shards = the grid's full system set, so blooming a grid shard-by-shard streams it in whole.
-export function gridShardSystems(G, A, belowIn) {
+export function gridShardSystems(G, A, belowIn, maxRange = Infinity) {
   const below = belowIn || divisorsFast(G).filter(d => d >= 2 && d < A);
-  return shardGroups(G, A, below).map(g => {
-    let eff = g[0]; for (const s of g) if (s.layerSum < eff.layerSum) eff = s;
-    return { c: eff.cardinality, dense: g.length > 1, key: eff.key, layers: eff.layers, fund: eff.fundamental, rs: eff.ratioSet };
+  // Keep-two, made visible: a scale reachable ≥2 ways is TWO distinct rhythms (same pitches, different
+  // layers), which abundance already counts as 2. Emit BOTH — the two lowest by compareRatioOwners, the
+  // same ordering gridShardSolve's `efficient` picks — so the bloom's node count equals keptCount exactly
+  // (1 node for a solo scale, 2 for a paired one). Both carry dense:true so each reads "paired" when clicked.
+  return shardGroups(G, A, below, maxRange).flatMap(g => {
+    const reps = g.length > 1 ? [...g].sort(compareRatioOwners).slice(0, 2) : g;
+    return reps.map(s => ({ c: s.cardinality, dense: g.length > 1, key: s.key, layers: s.layers, fund: s.fundamental, rs: s.ratioSet }));
   });
 }
 

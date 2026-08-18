@@ -5,7 +5,7 @@
 //  (4) DETERMINISTIC + CORRECT-VS-GG: same park → identical cosmos; parents == batch Grid-Gravity.
 import { Cosmos } from './cosmos-runtime.js';
 import { computeDistricts } from './gg-core.js';
-import { gridResults, shardKeysOf, gridShardSolve, divisorsFast, mergeRatioOwners } from '../grid-core.js';
+import { gridResults, shardKeysOf, gridShardSolve, gridShardSystems, gridShardCount, divisorsFast, mergeRatioOwners, REAL_RHYTHM_MAX_RANGE } from '../grid-core.js';
 import { absolutePos } from './spine.js';
 
 let PASS = true;
@@ -222,6 +222,52 @@ check('a cross-shard 0.5¢ bin collision keeps one tone and unions its sourceFra
   [...new Set(collided[0].sourceFractions)].sort().join(',') === '8/7,9/8' &&
   distinctBins.has(bin(386)) && distinctBins.has(bin(702)),
   `${toneZone?.skyTones?.length} tones, collided sf=${collided[0]?.sourceFractions}`);
+
+// ── [10] DEFINITIONAL RANGE CULL (flight-only; the lab/codex-math default path must stay byte-identical) ──
+// range = fastest layer ÷ slowest. The flight worker passes REAL_RHYTHM_MAX_RANGE so degenerate systems
+// (e.g. 443549:2) never reach the card count, star size, or bloom; every other caller omits it → Infinity.
+console.log('\n[10] Definitional range cull (flight opt-in, lab default byte-safe)');
+const rBelow = (G, A) => divisorsFast(G).filter(d => d >= 2 && d < A);
+const rAbund = (G, mr) => shardKeysOf(G).reduce((s, A) => s + gridShardCount(G, A, rBelow(G, A), mr), 0);
+const rSystems = (G, mr) => shardKeysOf(G).flatMap(A => gridShardSystems(G, A, rBelow(G, A), mr));
+// default (no maxRange) is exactly the uncapped Infinity path — the corpus is untouched
+check('gridShardCount default arg == explicit Infinity (lab/math path unchanged)',
+  rAbund(887098, undefined) === rAbund(887098, Infinity) && rAbund(2640, undefined) === rAbund(2640, Infinity));
+// 887,098 = 2·139·3191: keeps 3191:278 (r 11.5) and 6382:139 (r 45.9); drops 443549:2 and 3191:139:2
+const uncapped = rSystems(887098, Infinity), capped = rSystems(887098, REAL_RHYTHM_MAX_RANGE);
+const rangeOf = ly => Math.max(...ly) / Math.min(...ly);
+check('a degenerate system (443549:2, range 221k) is present uncapped',
+  uncapped.some(s => s.layers.includes(443549)) && rangeOf([443549, 2]) > REAL_RHYTHM_MAX_RANGE);
+check('...and is dropped once the flight range cap applies', !capped.some(s => s.layers.includes(443549)));
+check('every capped system is within range, every dropped one is over it',
+  capped.every(s => rangeOf(s.layers) <= REAL_RHYTHM_MAX_RANGE)
+  && uncapped.filter(u => !capped.some(c => c.layers.join() === u.layers.join())).every(d => rangeOf(d.layers) > REAL_RHYTHM_MAX_RANGE));
+check('the cap lowers a degenerate grid\'s kept count but not a rich smooth grid\'s',
+  rAbund(887098, REAL_RHYTHM_MAX_RANGE) < rAbund(887098, Infinity)
+  && rAbund(2640, REAL_RHYTHM_MAX_RANGE) === rAbund(2640, Infinity),
+  `887098 ${rAbund(887098, Infinity)}→${rAbund(887098, REAL_RHYTHM_MAX_RANGE)} · 2640 ${rAbund(2640, Infinity)}=${rAbund(2640, REAL_RHYTHM_MAX_RANGE)}`);
+// the prune is EXACT: capped count == manually range-filtering the uncapped per-shard groups
+const exact = shardKeysOf(887098).every(A => {
+  const full = gridShardSolve(887098, A, rBelow(887098, A), Infinity);
+  const cap = gridShardSolve(887098, A, rBelow(887098, A), REAL_RHYTHM_MAX_RANGE);
+  return cap.systemCount === gridShardSystems(887098, A, rBelow(887098, A), Infinity).filter(s => rangeOf(s.layers) <= REAL_RHYTHM_MAX_RANGE).length;
+});
+check('the below-layer prune is exact (no in-range system lost, none extra kept)', exact);
+// keep-two made visible: bloom node count (gridShardSystems) == keptCount (gridShardSolve) at every grid,
+// so the card's "N kept" always matches the cloud. A paired scale contributes its two distinct rhythms.
+const nodeCountEqualsKept = [30, 60, 120, 2640, 887098].every(G => {
+  for (const mr of [Infinity, REAL_RHYTHM_MAX_RANGE]) {
+    const kept = shardKeysOf(G).reduce((s, A) => s + gridShardSolve(G, A, rBelow(G, A), mr).count, 0);
+    const nodes = shardKeysOf(G).reduce((s, A) => s + gridShardSystems(G, A, rBelow(G, A), mr).length, 0);
+    if (kept !== nodes) return false;
+  }
+  return true;
+});
+check('bloom node count == keptCount (keep-two paired scales emit both rhythms)', nodeCountEqualsKept);
+check('a paired scale emits two nodes with distinct keys but the same ratioSet',
+  (() => { const g120 = shardKeysOf(120).flatMap(A => gridShardSystems(120, A)); const paired = g120.filter(s => s.dense);
+    // for a dense node there must be a sibling sharing rs but differing in key
+    return paired.length > 0 && paired.every(s => g120.some(o => o !== s && o.rs === s.rs && o.key !== s.key)); })());
 
 console.log(`\n${PASS ? '✓✓✓ DISTRIBUTED SOLVE PASSES — sharded, progressive, non-blocking, exact' : '✗ DISTRIBUTED SOLVE FAILED'}`);
 process.exit(PASS ? 0 : 1);
