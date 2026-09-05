@@ -567,9 +567,40 @@ export class SpatialGridRowPlayer {
     }
   }
 
+  // Recover from starvation in O(layers × log(events)), independent of the number of missed cycles.
+  // Only skip notes the existing lateness policy would drop; restore repeat memory from the skipped
+  // portion of this cycle. Unlike installation seeding, recovery must NOT borrow the previous tail:
+  // normal playback clears its memory at every wrap, even when a layer has not played this cycle yet.
+  _skipLateEvents(deck, now, transportStart, ticksPerSecond) {
+    const { events, grid, seedTable } = deck.program;
+    if (!seedTable || !events.length) return;
+    const oldCycle = deck.cursorCycle, oldEvent = deck.cursorEvent;
+    const oldTick = oldCycle * grid + events[oldEvent].tick;
+    const oldWhen = transportStart + oldTick / ticksPerSecond;
+    if (oldWhen < deck.startTime || now - oldWhen <= 0.25) return;
+    this._syncCursor(deck, (now - LATE_CLAMP_TOLERANCE_SECONDS - transportStart) * ticksPerSecond);
+    const skipped = (deck.cursorCycle - oldCycle) * events.length + deck.cursorEvent - oldEvent;
+    if (skipped <= 0) return;
+    if (deck.cursorCycle !== oldCycle) deck.lastToneByLayer.clear();
+    const cycleTick = events[deck.cursorEvent].tick;
+    const firstTick = deck.cursorCycle === oldCycle ? events[oldEvent].tick : 0;
+    for (const { layer, ticks, fractions } of seedTable) {
+      if (!LAYERS.has(layer)) continue;
+      let lo = 0, hi = ticks.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (ticks[mid] < cycleTick) lo = mid + 1; else hi = mid; }
+      let index = lo - 1;
+      // Muted literal fundamentals never advance repeat memory in the ordinary scheduler either.
+      while (index >= 0 && ticks[index] >= firstTick &&
+             !shouldScheduleRowAction({ rawFraction: fractions[index] }, this.rowFundamental)) index--;
+      if (index >= 0 && ticks[index] >= firstTick) deck.lastToneByLayer.set(layer, fractions[index]);
+    }
+    this.telemetry?.lateEventsSkipped?.(skipped, (now - oldWhen) * 1000);
+  }
+
   _scheduleDeck(deck, now, horizon, transportStart, ticksPerSecond) {
     const { events, grid, eventGaps } = deck.program;
     if (!events.length) return;
+    this._skipLateEvents(deck, now, transportStart, ticksPerSecond);
     while (true) {
       const event = events[deck.cursorEvent];
       const eventTick = deck.cursorCycle * grid + event.tick;

@@ -139,6 +139,14 @@ export class AudioTelemetry {
     if (emitted) bucket.counts.clamped++; else bucket.counts.dropped++;
   }
 
+  // A recovery seek drops a whole overdue range without visiting each event. Keep exact drop counts;
+  // record its worst lateness once so telemetry itself cannot recreate the skipped scheduling work.
+  lateEventsSkipped(count, maxLatenessMs) {
+    const bucket = this.bucket();
+    bucket.lateness.add(maxLatenessMs);
+    bucket.counts.dropped += count;
+  }
+
   // External monotonic counters (player stats, MIDI stats, compile pool) folded in as DELTAS, so each
   // mode's bucket only carries what happened while the camera was in that mode.
   counters(totals) {

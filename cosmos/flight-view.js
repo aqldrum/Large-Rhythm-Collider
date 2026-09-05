@@ -38,7 +38,7 @@ import { QUALITY_ORDER, detectDefaultTier, devicePoolMax, resolveTier } from './
 // Full Sky (cosmos/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
 // Sky Root handoff (cosmos/SKY_ROOT_HANDOFF_2026-07-22.md): anchor-independent root solve, Feature B.
-import { solveRoots, scoreRootAt, poolFromTones, rootCompetitionTones } from './sky-root.js';
+import { poolFromTones, rootCompetitionTones } from './sky-root.js';
 
 const STAR_SCALE = 4, NEAR = 5;
 // ══ FLIGHT / LOD KNOBS ═══════════════════════════════════════════════════════════════════════
@@ -243,6 +243,8 @@ const rowDistanceCutoff = d => mapRange(d, 0, ROW_RADIUS, 9000, 900);
 let rowActiveIds = new Set();
 let rowPrewarmIds = new Set();
 let rowCompiler = null;
+let rootCompiler = null;
+let rootSolvePending = false;
 let rowGeneration = 0;
 let rowSelectionKey = '';
 
@@ -901,6 +903,8 @@ export function ensureFlight(canvas, hudEl) {
   // which breaks under the full-swallow — resolve against this module so it lands on cosmos/cosmos/. The
   // ?v= busts the hard Web-Worker cache — bump it AND the worker's ../grid-core.js?v= on worker edits.
   pool = new SolverWorkerPool(new URL('./cosmos/abundance-worker.js?v=8', import.meta.url), poolSize);
+  rootCompiler = new ProgramWorkerPool(new URL('./cosmos/sky-root-worker.js', import.meta.url));
+  rootSolvePending = false;
   rowCompiler = new ProgramWorkerPool(new URL('./cosmos/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
   rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
   fieldMembershipDirty = true; fieldMembershipAt = -Infinity;   // a fresh session always does a full pass first
@@ -980,6 +984,8 @@ export function stopFlight() {
   started = false;
   if (pool) { pool.terminate(); pool = null; }   // kill workers, timers, and queued jobs — no lingering solve
   if (rowCompiler) { rowCompiler.terminate(); rowCompiler = null; }
+  if (rootCompiler) { rootCompiler.terminate(); rootCompiler = null; }
+  rootSolvePending = false;
   if (webRenderer) { webRenderer.terminate(); webRenderer = null; }
   webRouteGeneration++; webZoneAdded = []; webZoneRemoved = [];
   cosmos = null;
@@ -2251,8 +2257,8 @@ function loop() {
   // duration at any tempo or scaled speed), rate-limited to one solve per ROOT_RESOLVE_MIN_SECONDS.
   // The gather set is a world-space RADIUS around the camera (rpOf is already camera-relative, so its
   // length IS true 3D distance) — NOT the view-depth-sorted proj/audible set above, so the root never
-  // changes just because you turned to look somewhere else. Solving here is rare + main-thread-cheap
-  // (a few thousand gainForDev evals) — never done per frame.
+  // changes just because you turned to look somewhere else. Dense fields can take seconds to score;
+  // gather here, then score in a dedicated worker with at most one outstanding request.
   const skyNow = currentSkySeconds();
   if (camSpeed < SETTLE_SPEED) { if (settleSinceSecond === null) settleSinceSecond = skyNow; }
   else {
@@ -2281,7 +2287,7 @@ function loop() {
   // trajectory across a window after a stop to expose the recovery shape. Movement is derived from the
   // camera position (works for WASD + scroll/dolly). Toggle: window.RECOVERY_PROBE.
   sampleRecovery({ skyNow, camPos: cameraAbsolute(), settled });
-  if (settled && (skyNow - lastRootResolveSecond) >= ROOT_RESOLVE_MIN_SECONDS) {
+  if (settled && !rootSolvePending && rootCompiler && (skyNow - lastRootResolveSecond) >= ROOT_RESOLVE_MIN_SECONDS) {
     lastRootResolveSecond = skyNow;
     const rootField = [];
     for (const z of cosmos.zones.values()) {
@@ -2293,15 +2299,28 @@ function loop() {
       if (tones.length) rootField.push({ tones, weight: distGain(d) });
     }
     const rootScoreOptions = { targetsCents: rootHarmonyPolicy.targets, toleranceCents: rootHarmonyPolicy.toleranceCents };
-    const ladder = solveRoots(rootField, rootScoreOptions);
     const currentRoot = currentSkyRoot();
-    const incumbentResult = scoreRootAt(currentRoot.cents, rootField, rootScoreOptions);
-    proposeRoot({
-      ladder,
-      incumbent: { fraction: currentRoot.fraction, cents: currentRoot.cents, score: incumbentResult.score, perDegree: incumbentResult.perDegree },
-      proposalEpoch: rootGeographyEpoch,
-      policyKey: rootHarmonyPolicyKey,
-    });
+    const compiler = rootCompiler, proposalEpoch = rootGeographyEpoch;
+    rootSolvePending = true;
+    compiler.request({
+      field: rootField.map(star => ({ weight: star.weight, tones: star.tones.map(({ f, c }) => ({ f, c })) })),
+      options: rootScoreOptions,
+      currentRoot: { fraction: currentRoot.fraction, cents: currentRoot.cents },
+    }).then(({ result, cancelled }) => {
+      if (cancelled || !started || rootCompiler !== compiler) return;
+      // A solve may outlive movement, a policy edit, or an intervening modulation. Never apply a
+      // ladder (or incumbent score) gathered under a different context, including exit/re-entry.
+      if (proposalEpoch !== rootGeographyEpoch || !rootPolicyWasSettled ||
+          rootHarmonyPolicyKey !== rootPolicyStableKey(currentHarmonyPolicy()) ||
+          rootFundamentalPolicy !== railParams.get('rowFundamental') ||
+          currentRoot.rootKey !== currentSkyRoot().rootKey) {
+        lastRootResolveSecond = -Infinity;
+        return;
+      }
+      proposeRoot({ ...result, proposalEpoch, policyKey: rootHarmonyPolicyKey });
+    }).catch(error => {
+      if (rootCompiler === compiler) console.warn('[cosmos root solve]', error);
+    }).finally(() => { if (rootCompiler === compiler) rootSolvePending = false; });
   }
 
   const root = currentSkyRoot();
