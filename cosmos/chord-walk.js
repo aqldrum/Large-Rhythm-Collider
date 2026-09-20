@@ -1,4 +1,4 @@
-// chord-walk.js — Part A of the Chord Walk (see cosmos/CHORD_WALK_HANDOFF.md). Pure module, no DOM,
+// chord-walk.js — Part A of the Chord Walk (see cosmos/docs/CHORD_WALK_HANDOFF.md). Pure module, no DOM,
 // no audio: gives a star's tuning system a deterministic signature chord loop. Method: solve the star's
 // tone row against the full chromatic (the "frame" — ProgressionSolver already searches every root), keep
 // only major/minor triads whose 3 semitones are all well-tuned in that frame, then greedily walk that

@@ -605,19 +605,6 @@
         <canvas id="cosmos-canvas"></canvas>
         <div id="cosmos-hud"></div>
         <div id="tooltip"></div>
-        <div id="flight-detail" class="detail3">
-            <div id="flight-detail-body"></div>
-            <!-- cardinality WINDOW: one thin slider with two draggable ends; only shown inside this grid info card -->
-            <div id="flight-filter">
-                <span class="ff-cap">cardinality</span>
-                <div class="ff-track">
-                    <div class="ff-fill" id="card-fill"></div>
-                    <input type="range" id="card-lo" min="1" max="48" value="1" aria-label="min cardinality">
-                    <input type="range" id="card-hi" min="1" max="48" value="48" aria-label="max cardinality">
-                </div>
-                <b id="card-readout">all</b>
-            </div>
-        </div>
         <!-- help button (top-right) → toggles an info popup: flight controls + live solve queue (more to come) -->
         <button id="cosmos-help-btn" title="Controls &amp; status" aria-label="Controls and status">?</button>
         <!-- home button (top-right, right of help) → exits Cosmos back to the main interface (same as Esc) -->
@@ -656,7 +643,7 @@
             <div id="lrc-cockpit-body" class="lrc-cockpit-body">
                 <div id="lrc-empty-state" class="lrc-empty-state">
                     <span class="lrc-empty-orbit" aria-hidden="true"></span>
-                    <p>Bloom a star, then select one of its rhythm nodes.</p>
+                    <p>Select a star, web, or bloom node to inspect.</p>
                 </div>
                 <section id="lrc-rhythm-inspector" class="lrc-rhythm-inspector" hidden aria-live="polite">
                     <div class="lrc-plot-frame">
@@ -710,6 +697,24 @@
                         </section>
                     </div>
 
+                </section>
+                <!-- GRID mode of the fused card: a clicked star's grid info. The cardinality window lives here
+                     (it's grid-scoped); updateFilterUI toggles its own display when a bloom is focused. -->
+                <section id="lrc-grid-view" class="lrc-mode-view" hidden aria-live="polite">
+                    <div id="lrc-grid-body"></div>
+                    <div id="flight-filter">
+                        <span class="ff-cap">cardinality</span>
+                        <div class="ff-track">
+                            <div class="ff-fill" id="card-fill"></div>
+                            <input type="range" id="card-lo" min="1" max="48" value="1" aria-label="min cardinality">
+                            <input type="range" id="card-hi" min="1" max="48" value="48" aria-label="max cardinality">
+                        </div>
+                        <b id="card-readout">all</b>
+                    </div>
+                </section>
+                <!-- CONNECTOR mode of the fused card: a clicked Web's lineage + travel controls. -->
+                <section id="lrc-connector-view" class="lrc-mode-view" hidden aria-live="polite">
+                    <div id="lrc-connector-body"></div>
                 </section>
             </div>
         </div>

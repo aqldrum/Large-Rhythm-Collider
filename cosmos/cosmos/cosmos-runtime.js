@@ -20,7 +20,7 @@ const PUFF = { omega: 0.25, base: 26, step: 1.6, spanCap: 30, k: 3, damping: 3.4
 // climb that survives eviction. Bound it to a ring far larger than any test flight so semantics are unchanged.
 const SOLVE_LOG_CAP = 4096;
 
-// Full Sky (cosmos/FULL_SKY_HANDOFF.md): fold one shard's 12-slot degree pool into the zone's running
+// Full Sky (cosmos/docs/FULL_SKY_HANDOFF.md): fold one shard's 12-slot degree pool into the zone's running
 // pool — per degree keep the min |dev| tone, sum toneCount. Lives on the zone (z.skyPool/z.skyToneCount)
 // like z._bloom, so eviction (zones.delete) drops it for free. A star is audible as soon as its FIRST
 // shard pool lands (progressive, no waiting for the full solve).

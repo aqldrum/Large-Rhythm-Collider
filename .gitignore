@@ -1,0 +1,48 @@
+Playback/Partitions/PARTITIONS.md
+
+# OS generated files #
+######################
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs and databases #
+######################
+*.log
+*.sql
+*.sqlite
+
+# Dependencies #
+###############
+node_modules/
+
+# Build outputs #
+################
+dist/
+build/
+coverage/
+
+# Environment files #
+#####################
+.env
+.env.*
+
+# Firebase local artifacts / config #
+####################################
+Core Interface/firebase-config.js
+.firebase/
+firestore-debug.log
+ui-debug.log
+
+# Concept Animation assets #
+###########################
+LRC Concept Animation/assets
+
+# Cosmos sound design testing #
+###########################
+/cosmos/sound-design
+/cosmos/docs/

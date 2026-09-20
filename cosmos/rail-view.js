@@ -286,10 +286,22 @@ function setRailFace(face, { focus = true } = {}) {
   if (focus) (performanceOn ? performanceFaceToggle : harmonyFaceToggle)?.focus();
 }
 
-function buildFaceToggle(label, destination) {
+// The two faces flip through a single icon button each (was a text pill: "HARMONY ›" / "‹ PERFORMANCE").
+// GEAR opens the harmony face — it is effectively the settings/config face (harmony source, scale, richness,
+// ROW 1/1, modulation, MIDI). A ROTARY-KNOB glyph returns to the main knob rail (echoing the rail's own dials
+// — the instrument has no sliders). aria-label + title carry the meaning the text used to; stroke:currentColor
+// lets the shared hover rule tint them like every other rail control.
+const FACE_TOGGLE_ICONS = Object.freeze({
+  harmony: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  performance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><line x1="12" y1="12" x2="12" y2="5"/></svg>',
+});
+
+function buildFaceToggle(destination) {
   const button = document.createElement('button');
-  button.type = 'button'; button.className = 'rail-face-toggle'; button.textContent = label;
-  button.setAttribute('aria-label', destination === 'harmony' ? 'Open harmony controls' : 'Return to performance controls');
+  button.type = 'button'; button.className = 'rail-face-toggle rail-face-toggle-icon';
+  button.innerHTML = FACE_TOGGLE_ICONS[destination] || '';
+  const label = destination === 'harmony' ? 'Harmony & scale settings' : 'Performance controls';
+  button.setAttribute('aria-label', label); button.title = label;
   button.addEventListener('keydown', e => { if (e.key === ' ' || e.key === 'Enter') e.stopPropagation(); });
   button.addEventListener('click', () => setRailFace(destination));
   return button;
@@ -380,7 +392,7 @@ export function ensureRail() {
     performanceFace.appendChild(col);
   }
 
-  performanceFaceToggle = buildFaceToggle('HARMONY ›', 'harmony');
+  performanceFaceToggle = buildFaceToggle('harmony');
   performanceFace.appendChild(performanceFaceToggle);
 
   const source = buildSegmented('harmonySource', [
@@ -391,7 +403,7 @@ export function ensureRail() {
   richnessControl = buildSegmented('richness', railParams.spec('richness').stops.map((label, index) => ({ value: index + 1, label: label.toUpperCase() })));
   const switches = document.createElement('div'); switches.className = 'rail-switches';
   for (const name of RAIL_SWITCHES) switches.appendChild(buildSwitch(name));
-  harmonyFaceToggle = buildFaceToggle('‹ PERFORMANCE', 'performance');
+  harmonyFaceToggle = buildFaceToggle('performance');
   harmonyFace.append(source, scaleControl, richnessControl, switches, harmonyFaceToggle);
 
   stage.append(performanceFace, harmonyFace);

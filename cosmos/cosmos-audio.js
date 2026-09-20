@@ -6,7 +6,7 @@
 // The only shared code is the pure scale math below.
 import { deriveSelectedRhythmModel, ratioToCents } from './oracle-core.js?v=2';
 import { nearestDegree } from './grid-core.js';
-// Full Sky (cosmos/FULL_SKY_HANDOFF.md): the global progression + its one gain law. Pure, no DOM.
+// Full Sky (cosmos/docs/FULL_SKY_HANDOFF.md): the global progression + its one gain law. Pure, no DOM.
 import { CHORDS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chordStepIndex, coverage as skyCoverage, perDegreeSupport, gainForDev,
   RICHNESS_LEVELS, RICHNESS_LEVEL_MIN, RICHNESS_LEVEL_MAX, maxCardinalityForRichness } from './sky-walk.js';
 import { normalizeRootLadder, resetPhraseTracker, observePhraseBoundary, pushRecentRoot,
@@ -32,7 +32,7 @@ const MAX_LIVE_OSC = 48;         // held lead voices + their short release tails
 // Rhythm-card audition defaults to the main ToneRowPlayback engine's Legato envelope: one sustained
 // voice per A-D layer, replaced only by the next harmonically eligible attack in that layer. Keeping the
 // same ADSR proportions makes the card behave like the site's sustain-pedal mode instead of a 228ms pluck.
-const LEAD_ATTACK = 0.001, LEAD_DECAY = 0.2, LEAD_SUSTAIN = 0.7, LEAD_RELEASE = 0.3;
+const LEAD_ATTACK = 0.006, LEAD_DECAY = 0.2, LEAD_SUSTAIN = 0.7, LEAD_RELEASE = 0.3;  // 6ms attack de-clicks each legato onset (was 1ms)
 const NOTE_PEAK = 0.32;          // per-layer peak; the limiter catches the rare four-layer unison attack
 const MAX_LEAD_FREQUENCY_HZ = 3520; // match ToneRowPlayback's absolute pitch ceiling
 const LEAD_MASK_WINDOW = 35;     // cents — a lead onset counts as "in the global chord" within this of a degree
@@ -197,6 +197,7 @@ export function deriveVoice(rawLayersOrModel) {
 // MIX crossfades bedGain ↔ rowsGain (constant-power cos/sin); auditionGain is standalone.
 let audioCtx = null, pannerNode = null, distGainNode = null, muteGainNode = null, outputLimiter = null;
 let bedGain = null, rowsGain = null, auditionGain = null;
+let leadFilter = null, leadReverbSend = null;   // lead round-off: one shared lowpass + a send into the shared reverb
 let masterVolume = null;          // VOLUME knob: master gain between muteGainNode and the safety limiter
 let lastVolume = MASTER_VOLUME_DEFAULT;   // persisted musical setting (readout + re-entry); node tracks it
 let lastSpace = SPACE_DEFAULT;    // persisted SPACE position; drives both reverb sends (see setSpace)
@@ -301,6 +302,13 @@ export function initAudio() {
   if (audioCtx && audioCtx.state !== 'closed') return;   // idempotent; also tolerates re-init after stopAudio()
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   pannerNode = audioCtx.createStereoPanner();
+  // Lead round-off: the audition voice was the only path with no filter and no reverb — a raw triangle
+  // stack straight into the limiter. One shared lowpass rolls the fizzy upper partials off the whole lead
+  // sum (O(1), not per-voice); leadReverbSend (below) then puts it in the same room as the bed.
+  leadFilter = audioCtx.createBiquadFilter(); leadFilter.type = 'lowpass';
+  leadFilter.frequency.value = 4500;   // above the 3520 Hz fundamental ceiling, so no note's fundamental is dulled
+  leadFilter.Q.value = 0.7071;         // Butterworth — flat passband, no resonant peak to reintroduce edge
+  leadFilter.connect(pannerNode);
   distGainNode = audioCtx.createGain(); distGainNode.gain.value = 0;
   muteGainNode = audioCtx.createGain(); muteGainNode.gain.value = 1;
   // Three independent gain buses — MIX crossfades bed ↔ rows (constant-power); audition is standalone.
@@ -327,6 +335,11 @@ export function initAudio() {
   reverbConv = audioCtx.createConvolver(); reverbConv.buffer = makeImpulse(audioCtx);
   reverbWet = audioCtx.createGain(); reverbWet.gain.value = REVERB_WET;
   bedBus.connect(reverbConv); reverbConv.connect(reverbWet); reverbWet.connect(bedGain);
+  // Lead into the main reverb: tap post audition-gate (so it follows audition on/off and the distance
+  // gain), send into the shared convolver. Its wet returns via reverbWet -> bedGain like the bed's — one
+  // shared room — while the dry lead stays mix-independent on auditionGain.
+  leadReverbSend = audioCtx.createGain(); leadReverbSend.gain.value = 0.6;   // x REVERB_WET(0.3) ~= 0.18 wet
+  auditionGain.connect(leadReverbSend); leadReverbSend.connect(reverbConv);
   // One shared detune bus in CENTS, summed into EVERY oscillator's `detune` param. The main LRC page
   // retunes each sounding oscillator's frequency directly, which works there because its voices are held.
   // Cosmos cannot: row voices are a 140ms gate and are constantly reborn, so a per-voice retune would
@@ -1682,7 +1695,7 @@ export function stopAudio() {
   audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; outputLimiter = null; liveOscs = null;
   leadVoices = null; leadLayerVoices = null;
   bedGain = null; rowsGain = null; auditionGain = null; masterVolume = null;
-  bedBus = null; reverbConv = null; reverbWet = null;
+  bedBus = null; reverbConv = null; reverbWet = null; leadFilter = null; leadReverbSend = null;
   mix = 0; auditionListening = true; auditionPinned = false;
 
   const teardown = () => {
@@ -1818,7 +1831,7 @@ function startLeadLegatoVoice(note, noteIdx, layerIndex, freq, time) {
   env.gain.linearRampToValueAtTime(peak, when + LEAD_ATTACK);
   env.gain.linearRampToValueAtTime(sustain, when + LEAD_ATTACK + LEAD_DECAY);
   env.gain.setValueAtTime(sustain, when + LEAD_ATTACK + LEAD_DECAY + 0.01);
-  osc.connect(env); env.connect(pannerNode);
+  osc.connect(env); env.connect(leadFilter);
   const voice = {
     osc, env, note, noteIdx, layerIndex, sustain,
     midi: cosmosMidi?.noteOn(freq, when, { cents: totalDetuneCentsAt(when), gain: peak / NOTE_PEAK }) || null,

@@ -116,7 +116,7 @@ export function gridShardCount(G, A, belowIn, maxRange = Infinity) {
   return kept;
 }
 
-// ── Full Sky (cosmos/FULL_SKY_HANDOFF.md) — the degree pool, piggybacked on the abundance solve ──
+// ── Full Sky (cosmos/docs/FULL_SKY_HANDOFF.md) — the degree pool, piggybacked on the abundance solve ──
 // Global frame: degree 0 = 1/1, degrees d ∈ [0,12) at d·100 cents. Snap a tone's cents to its nearest
 // degree (dev = signed cents distance, |dev| ≤ 50 by construction of "nearest").
 // Sky Root handoff B2: generalized with an optional anchorCents (default 0, today's 1/1-anchored

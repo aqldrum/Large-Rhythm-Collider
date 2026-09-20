@@ -1,4 +1,4 @@
-// sky-walk.js — the global sky's one harmonic progression (see cosmos/FULL_SKY_HANDOFF.md). Pure
+// sky-walk.js — the global sky's one harmonic progression (see cosmos/docs/FULL_SKY_HANDOFF.md). Pure
 // module, no DOM, no audio, no ProgressionSolver: the frame is an EXACT 12TET grid (degree 0 = 1/1),
 // so chord-tone deviation is degenerate — the walk reduces to pure voice-leading parsimony (circular
 // semitone motion) plus a field term that rewards whatever the nearby sky is actually well-tuned for.

@@ -35,9 +35,9 @@ import { buildRhythmInspectorModel, lightRhythmMetrics } from './rhythm-inspecto
 import { shouldScheduleRowAction } from './spatial-grid-row-player.js';
 import { SolverWorkerPool } from './cosmos/solver-worker-pool.js';
 import { QUALITY_ORDER, detectDefaultTier, devicePoolMax, resolveTier } from './cosmos-quality.js';
-// Full Sky (cosmos/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
+// Full Sky (cosmos/docs/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
-// Sky Root handoff (cosmos/SKY_ROOT_HANDOFF_2026-07-22.md): anchor-independent root solve, Feature B.
+// Sky Root handoff (cosmos/docs/SKY_ROOT_HANDOFF_2026-07-22.md): anchor-independent root solve, Feature B.
 import { poolFromTones, rootCompetitionTones } from './sky-root.js';
 
 const STAR_SCALE = 4, NEAR = 5;
@@ -195,7 +195,7 @@ const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const mapRange = (v, a, b, c, d) => clampN((v - a) / (b - a), 0, 1) * (d - c) + c;
 const distGain = z => clampN(mapRange(z, FOG_NEAR, FOG_FAR, 1, 0.15), 0.05, 1);   // near→loud, far→quiet
 const distOctave = z => Math.min(2, Math.floor(mapRange(z, FOG_NEAR, FOG_FAR, 0, 2.99)));   // near→0, far→+1/+2
-// Full Sky (cosmos/FULL_SKY_HANDOFF.md): the ambient bed's audible-set selection. AUDIBLE_N here
+// Full Sky (cosmos/docs/FULL_SKY_HANDOFF.md): the ambient bed's audible-set selection. AUDIBLE_N here
 // pairs with cosmos-audio.js's own SKY KNOBS block (CHORD_TICKS/TABU_K/LAMBDA_FIELD/etc — audio-side
 // knobs live there; this is the camera/projection-side knob for WHICH zones feed the bed).
 const AUDIBLE_N = 10;         // nearest zones (by view depth) with a non-empty skyPool feed the bed
@@ -622,7 +622,7 @@ let hbLast = 0, hbPlans = 0, hbShards = 0, hbSolved = 0;   // per-second solve-p
 // Picking state. Cursor is tracked in CSS px (canvas-relative for hit-tests, client for the tooltip).
 // `hover` is resolved each frame from what's actually drawn under the cursor; `selected` is pinned on
 // click and drives the detail panel until the next click. Node identity = `${grid}:${systemIndex}`.
-let tipEl = null, detailEl = null, indexKeys = null;
+let tipEl = null, indexKeys = null;
 // Codex index columns kept for the network web: grid[] and mtag[] parallel to keys[], mtags[] the tag table.
 // mtagGrids inverts them once on load: motherTag -> sorted unique member grids.
 let indexGrid = null, indexMtag = null, mtagNames = null, mtagGrids = null;
@@ -637,6 +637,10 @@ let telemetryYaw = 0, telemetryPitch = 0, telemetryOff = [0, 0, 0], telemetryAnc
 let lrcDivEl = null, lrcHeadEl = null, cockpitPlotEl = null, cockpitPlotCtx = null;
 let cockpitPlotKeyEl = null;
 let lrcPanelToggleEl = null, lrcEmptyEl = null, rhythmInspectorEl = null;
+// The fused card's non-rhythm modes: GRID (a clicked star) and CONNECTOR (a clicked Web). `lrcMarkEl` is the
+// header identity word ("Rhythm" / "Grid" / "Connector") the mode switch relabels. These replace the retired
+// bottom-right #flight-detail card — showDetail now routes every selection kind into #lrc-div.
+let gridViewEl = null, connectorViewEl = null, gridBodyEl = null, connectorBodyEl = null, lrcMarkEl = null;
 let rhythmTitleEl = null, rhythmSubtitleEl = null, rhythmStateEl = null;
 let metricFundamentalEl = null, metricOnsetsEl = null, metricDensityEl = null;
 let structureListEl = null, connectionsEl = null, listenBtnEl = null, loadBtnEl = null;
@@ -678,7 +682,7 @@ let midiOutEl = null, midiReadoutEl = null;
 // shells; makes monster clouds parseable). Elements + a change-guard so the DOM is only touched when needed.
 // The band targets ONLY the currently-focused bloom (cosmos.focusGrid); other blooms render in full. filterGrid
 // tracks which bloom the sliders currently represent, so switching focus resets the band to that bloom's range.
-let loEl = null, hiEl = null, readoutEl = null, filterEl = null, fillEl = null, bodyEl = null, controlsEl = null, liveEl = null, helpPanelEl = null, filterShown = false, filterMax = 0, filterGrid = null;
+let loEl = null, hiEl = null, readoutEl = null, filterEl = null, fillEl = null, controlsEl = null, liveEl = null, helpPanelEl = null, filterShown = false, filterMax = 0, filterGrid = null;
 let cardLo = 1, cardHi = 999;
 const cardVisible = c => c >= cardLo && c <= cardHi;
 // The focused bloom is fetched SHARD-BY-SHARD (same sharding as the abundance solve), so it streams in and
@@ -753,8 +757,7 @@ export function ensureFlight(canvas, hudEl) {
   //    DOM + these listeners persist across sessions; only the engine (pool/cosmos) is rebuilt per entry.
   if (!bound) {
     bound = true;
-    tipEl = document.getElementById('tooltip'); detailEl = document.getElementById('flight-detail');
-    bodyEl = document.getElementById('flight-detail-body');
+    tipEl = document.getElementById('tooltip');
     filterEl = document.getElementById('flight-filter'); loEl = document.getElementById('card-lo');
     hiEl = document.getElementById('card-hi'); readoutEl = document.getElementById('card-readout');
     fillEl = document.getElementById('card-fill');
@@ -764,15 +767,6 @@ export function ensureFlight(canvas, hudEl) {
     if (helpBtn && helpPanelEl) helpBtn.addEventListener('click', () => helpPanelEl.classList.toggle('open'));
     const homeBtn = document.getElementById('cosmos-home-btn');
     if (homeBtn) homeBtn.addEventListener('click', () => window.exitCosmos());
-    if (detailEl) detailEl.addEventListener('click', e => {
-      const travel = e.target.closest && e.target.closest('.web-travel-btn');
-      if (travel) { beginWebReturn(travel.dataset.id, travel.dataset.destination); return; }
-      const cancel = e.target.closest && e.target.closest('.web-cancel-btn'); if (cancel) { cancelWebReturn(); return; }
-      const ap = e.target.closest && e.target.closest('.apply-btn'); if (ap) { applyToEngine(selected); return; }
-      const ov = e.target.closest && e.target.closest('.ov-btn'); if (ov) { overrideSolve(+ov.dataset.g); return; }
-      const wb = e.target.closest && e.target.closest('.web-btn'); if (wb) { toggleWeb(wb.dataset.tag, +wb.dataset.g); showDetail(selected); return; }
-      const mn = e.target.closest && e.target.closest('.mn-btn'); if (mn) { toggleMNWeb(mn.dataset.id, +mn.dataset.base, +mn.dataset.g); showDetail(selected); }
-    });
     // cardinality WINDOW: two thumbs on one thin rail — drag either end; the fill bar tracks the [lo,hi] window
     const onFilter = () => { cardLo = Math.min(+loEl.value, +hiEl.value); cardHi = Math.max(+loEl.value, +hiEl.value); updateFillBar(); };
     const blur = e => e.target.blur();   // hand focus back to the canvas so WASD/arrows fly again without a re-click
@@ -804,6 +798,9 @@ export function ensureFlight(canvas, hudEl) {
     }));
     lrcPanelToggleEl = document.getElementById('lrc-panel-toggle');
     lrcEmptyEl = document.getElementById('lrc-empty-state'); rhythmInspectorEl = document.getElementById('lrc-rhythm-inspector');
+    gridViewEl = document.getElementById('lrc-grid-view'); connectorViewEl = document.getElementById('lrc-connector-view');
+    gridBodyEl = document.getElementById('lrc-grid-body'); connectorBodyEl = document.getElementById('lrc-connector-body');
+    lrcMarkEl = lrcHeadEl?.querySelector('.lrc-div-mark');
     rhythmTitleEl = document.getElementById('lrc-rhythm-title'); rhythmSubtitleEl = document.getElementById('lrc-rhythm-subtitle');
     rhythmStateEl = document.getElementById('lrc-rhythm-state');
     metricFundamentalEl = document.getElementById('lrc-metric-fundamental'); metricOnsetsEl = document.getElementById('lrc-metric-onsets');
@@ -851,9 +848,19 @@ export function ensureFlight(canvas, hudEl) {
       updateRhythmActionState();
     });
     if (lrcDivEl) lrcDivEl.addEventListener('click', event => {
-      const web = event.target.closest?.('[data-rhythm-web]');
+      const t = event.target;
+      // GRID / CONNECTOR mode buttons — moved here from the retired #flight-detail delegation.
+      const travel = t.closest?.('.web-travel-btn');
+      if (travel) { beginWebReturn(travel.dataset.id, travel.dataset.destination); return; }
+      const cancel = t.closest?.('.web-cancel-btn'); if (cancel) { cancelWebReturn(); return; }
+      const ap = t.closest?.('.apply-btn'); if (ap) { applyToEngine(selected); return; }
+      const ov = t.closest?.('.ov-btn'); if (ov) { overrideSolve(+ov.dataset.g); return; }
+      const wb = t.closest?.('.web-btn'); if (wb) { toggleWeb(wb.dataset.tag, +wb.dataset.g); showDetail(selected); return; }
+      const mnb = t.closest?.('.mn-btn'); if (mnb) { toggleMNWeb(mnb.dataset.id, +mnb.dataset.base, +mnb.dataset.g); showDetail(selected); return; }
+      // RHYTHM mode connection toggles (in-card scale-web pins).
+      const web = t.closest?.('[data-rhythm-web]');
       if (web && inspectedNode) { toggleWeb(web.dataset.rhythmWeb, inspectedNode.grid); renderRhythmConnections(); return; }
-      const motif = event.target.closest?.('[data-rhythm-mn]');
+      const motif = t.closest?.('[data-rhythm-mn]');
       if (motif && inspectedNode) { toggleMNWeb(motif.dataset.rhythmMn, +motif.dataset.base, inspectedNode.grid); renderRhythmConnections(); }
     });
     // ── AUDIO LAB — a DEV overlay (?audioLab=1, or Z), no longer the engine's owner ────────────────────
@@ -1172,8 +1179,8 @@ function updateFillBar() {
   const a = (Math.min(cardLo, cardHi) - lo) / span * 100, b = (Math.max(cardLo, cardHi) - lo) / span * 100;
   fillEl.style.left = a + '%'; fillEl.style.width = Math.max(0, b - a) + '%';
 }
-// show/size the cardinality WINDOW to the FOCUSED bloom only; the slider lives inside the grid info card,
-// so it's a child of #flight-detail and only renders when that card is open (see showDetail). DOM touched on change.
+// show/size the cardinality WINDOW to the FOCUSED bloom only; the slider lives inside the fused card's GRID
+// mode (#lrc-grid-view), so it only renders when a star is selected AND a bloom is focused. DOM touched on change.
 function updateFilterUI() {
   if (!filterEl) return;
   const fg = cosmos.focusGrid, data = (fg != null && bloomed.has(fg)) ? bloomCache.get(fg) : null;
@@ -1233,78 +1240,124 @@ function updateTooltip() {
       `<div class="t-d">${ab ? ab.toLocaleString() + ' systems · ' : ''}${fi.primes} primes · ${fi.divisors} divisors</div>`;
   }
 }
-// pinned detail panel. Stars re-read the live zone (abundance/state update as it solves); nodes are
-// static so their snapshot is authoritative. Passing null hides the panel.
+// The fused card is the single flight detail surface: showDetail routes each selection kind into #lrc-div.
+// RHYTHM (bloom node) keeps the rich inspector; GRID (star) and CONNECTOR (Web) are lighter modes rendered
+// here into their own body, wearing the same card chrome. null returns the card to its empty state.
+// Stars re-read the live zone (abundance/state update as they solve); nodes are static snapshots.
+const CARD_MARKS = { empty: 'Rhythm', rhythm: 'Rhythm', grid: 'Grid', connector: 'Connector' };
+
+// Flip the card between modes: reveal the matching body section, relabel the header identity word, and hide
+// the rhythm-only Listen/Load actions outside rhythm mode. `accent` tints the mark (a Web's own colour).
+function setCardMode(mode, accent = '') {
+  if (lrcEmptyEl) lrcEmptyEl.hidden = mode !== 'empty';
+  if (rhythmInspectorEl) rhythmInspectorEl.hidden = mode !== 'rhythm';
+  if (gridViewEl) gridViewEl.hidden = mode !== 'grid';
+  if (connectorViewEl) connectorViewEl.hidden = mode !== 'connector';
+  if (lrcMarkEl) { lrcMarkEl.textContent = CARD_MARKS[mode] || 'Rhythm'; lrcMarkEl.style.color = accent; }
+  // Only rhythm mode earns the wide card (its Linear Plot + side-by-side scale table); GRID/CONNECTOR are a
+  // narrow metric list and keep the collapsed width. Width transitions, so the card grows/shrinks smoothly.
+  if (lrcDivEl) lrcDivEl.classList.toggle('lrc-wide', mode === 'rhythm');
+  const rhythmActions = mode === 'rhythm';
+  if (listenBtnEl) listenBtnEl.hidden = !rhythmActions;
+  if (loadBtnEl) loadBtnEl.hidden = !rhythmActions;
+}
+
+// A definition list styled like the inspector's Structure block — the shared metric primitive for GRID and
+// CONNECTOR modes, so they read as the rhythm card wearing a different face rather than a foreign panel.
+function metricList(pairs) {
+  return `<dl class="lrc-detail-list lrc-mode-metrics">` +
+    pairs.map(([label, value]) => `<div><dt>${inspectorEscape(label)}</dt><dd title="${inspectorEscape(value)}">${inspectorEscape(value)}</dd></div>`).join('') +
+    `</dl>`;
+}
+
+function setCardSub(text) { const sub = lrcHeadEl?.querySelector('.lrc-div-sub'); if (sub) sub.textContent = text; }
+
 function showDetail(sel) {
-  if (!detailEl) return;
-  if (!sel) { detailEl.style.display = 'none'; return; }
-  if (sel.kind === 'node') { detailEl.style.display = 'none'; renderRhythmInspector(sel); return; }
-  detailEl.style.display = 'block';
-  const dismiss = `<div style="margin-top:8px;color:var(--dimmer);font-size:10px">click empty space to dismiss</div>`;
-  if (sel.kind === 'web') {
-    const web = activeWebs.get(sel.webId);
-    if (!web) { detailEl.style.display = 'none'; return; }
-    const homeCell = macroCell(web.homeGrid), originCell = macroCell(web.originGrid), apexCell = macroCell(web.apexGrid), camCell = macroCell(cam.anchor);
-    const homeDistance = Math.hypot(homeCell[0] - camCell[0], homeCell[1] - camCell[1], homeCell[2] - camCell[2]);
-    const originDistance = Math.hypot(originCell[0] - camCell[0], originCell[1] - camCell[1], originCell[2] - camCell[2]);
-    const apexDistance = Math.hypot(apexCell[0] - camCell[0], apexCell[1] - camCell[1], apexCell[2] - camCell[2]);
-    const riding = !!(web.routePlanning || (returnRide && returnRide.webId === web.tag));
-    const title = web.dynamic ? web.tag.replace(/^mn:/, '') : `mother ${web.tag}`;
-    const family = web.dynamic ? 'unbounded' : `${web.memberCount.toLocaleString()} grids`;
-    const status = web.routePlanning ? web.rideStatus : riding
-      ? `${Math.round((web.rideProgress || 0) * 100)}% · ${returnRide.duration.toFixed(0)}s bounded ride`
-      : (web.rideStatus || 'ready');
-    const travelButton = riding
-      ? `<button class="web-cancel-btn" style="width:100%;margin-top:10px;background:rgba(255,255,255,.05);border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-size:11px;padding:7px;border-radius:var(--border-radius);cursor:pointer">cancel Web travel</button>`
-      : `<button class="web-travel-btn" data-id="${web.tag}" data-destination="anchor" style="width:100%;margin-top:10px;background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Return to grid ${web.homeGrid.toLocaleString()}</button>` +
-        // Origin (smallest grid in this NR) and Apex (largest grid in the Hilbert cube for this NR) — the two lineage extremes.
-        `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">` +
-          `<button class="web-travel-btn" data-id="${web.tag}" data-destination="origin" style="background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Origin · grid ${web.originGrid.toLocaleString()}</button>` +
-          `<button class="web-travel-btn" data-id="${web.tag}" data-destination="apex" style="background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Apex · grid ${web.apexGrid.toLocaleString()}</button>` +
-        `</div>`;
-    bodyEl.innerHTML =
-      `<div class="big" style="color:${web.color}">◈ ${title}</div>` +
-      `<div class="r"><span>network reach</span><b>${family}</b></div>` +
-      `<div class="r"><span>visible nodes</span><b>${(web.visibleNodes || 0).toLocaleString()}</b></div>` +
-      (web.dynamic ? `<div class="r"><span>nested-ratio base</span><b>${web.base.toLocaleString()}</b></div>` : '') +
-      `<div class="r"><span>first-clicked grid</span><b>${web.homeGrid.toLocaleString()}</b></div>` +
-      `<div class="r"><span>origin grid</span><b>${web.originGrid.toLocaleString()}</b></div>` +
-      `<div class="r"><span>apex grid</span><b>${web.apexGrid.toLocaleString()}</b></div>` +
-      `<div class="r"><span>anchor / origin / apex dist</span><b>${homeDistance.toFixed(1)} / ${originDistance.toFixed(1)} / ${apexDistance.toFixed(1)} cells</b></div>` +
-      `<div class="r"><span>travel</span><b>${status}</b></div>` +
-      (web.dynamic ? `<div style="margin-top:7px;color:var(--dimmer);font-size:10px;line-height:1.45">This family is infinite. Travel samples qualifying NR grids adaptively while the local Web rebuilds around the camera.</div>` : '') +
-      travelButton + dismiss;
-  } else {
-    const z = cosmos.zones.get(sel.grid), fi = factorInfo(sel.grid);
-    if (z && z.monster) {              // combinatorial black hole — identified, solve gated behind an override
-      bodyEl.innerHTML =
-        `<div class="big" style="color:#ff7869">grid ${sel.grid.toLocaleString()}</div>` +
-        `<div class="r"><span>factors</span><b>${factorString(sel.grid)}</b></div>` +
-        `<div class="r"><span>divisors</span><b>${z.divisors ?? fi.divisors}</b></div>` +
-        `<div class="r"><span>class</span><b style="color:#ff7869">combinatorial monster</b></div>` +
-        `<div style="margin:6px 0;color:var(--dimmer);font-size:10px;line-height:1.5">expensive to solve live — gated so the field keeps flowing. Solving may take a few seconds.</div>` +
-        `<button class="ov-btn" data-g="${sel.grid}" style="width:100%;margin-top:2px;background:#3a1c1a;border:1px solid #ff7869;color:#ff7869;font-family:var(--mono);font-size:11px;padding:6px;border-radius:6px;cursor:pointer">◉ solve anyway</button>` + dismiss;
-      return;
-    }
-    if (z && z.unsolvable) {           // beyond the live solve cap — be honest, don't imply "1 kept"
-      bodyEl.innerHTML =
-        `<div class="big">grid ${sel.grid.toLocaleString()}</div>` +
-        `<div class="r"><span>factors</span><b>${factorString(sel.grid)}</b></div>` +
-        `<div class="r"><span>primes · divisors</span><b>${fi.primes} · ${fi.divisors}</b></div>` +
-        `<div class="r"><span>abundance</span><b style="color:var(--dimmer)">beyond solve cap</b></div>` +
-        `<div style="margin-top:8px;color:var(--dimmer);font-size:10px;line-height:1.5">uncharted frontier — too large to solve live (grid &gt; cap)</div>` + dismiss;
-      return;
-    }
-    const ab = z ? z.abundance : (sel.z ? sel.z.abundance : 0), state = z ? z.state : 'evicted';
-    const sun = z && z.parentGrid !== z.grid ? z.parentGrid.toLocaleString() : '—';
-    bodyEl.innerHTML =
-      `<div class="big">grid ${sel.grid.toLocaleString()}</div>` +
-      `<div class="r"><span>abundance</span><b>${(ab || 0).toLocaleString()} kept</b></div>` +
-      `<div class="r"><span>factors</span><b>${factorString(sel.grid)}</b></div>` +
-      `<div class="r"><span>primes · divisors</span><b>${fi.primes} · ${fi.divisors}</b></div>` +
-      (placement !== 'hilbert' ? `<div class="r"><span>district sun</span><b>${sun}</b></div>` : '') +
-      `<div class="r"><span>state</span><b>${state}</b></div>` + dismiss;
+  if (!lrcDivEl) return;
+  if (!sel) { resetRhythmInspector(); return; }
+  if (sel.kind === 'node') { renderRhythmInspector(sel); return; }
+  if (sel.kind === 'web') { renderConnectorView(sel); return; }
+  renderGridView(sel);
+}
+
+// GRID mode — a clicked star's grid. Ported from the old #flight-detail star branch (monster / unsolvable /
+// solved), re-expressed in the card's own typography. The cardinality window (#flight-filter) is a static
+// child of this section; updateFilterUI shows it when a bloom is focused.
+function renderGridView(sel) {
+  if (!gridBodyEl) return;
+  setCardMode('grid');
+  setCardSub(`grid ${sel.grid.toLocaleString()}`);
+  const z = cosmos.zones.get(sel.grid), fi = factorInfo(sel.grid);
+  if (z && z.monster) {                // combinatorial black hole — solve gated behind an override
+    gridBodyEl.innerHTML = metricList([
+      ['Factors', factorString(sel.grid)],
+      ['Divisors', z.divisors ?? fi.divisors],
+      ['Class', 'combinatorial monster'],
+    ]) +
+      `<p class="lrc-mode-note warn">Expensive to solve live — gated so the field keeps flowing. Solving may take a few seconds.</p>` +
+      `<button class="ov-btn lrc-mode-btn warn" data-g="${sel.grid}">◉ solve anyway</button>`;
+    openCockpit(); return;
   }
+  if (z && z.unsolvable) {             // beyond the live solve cap — be honest, don't imply "1 kept"
+    gridBodyEl.innerHTML = metricList([
+      ['Factors', factorString(sel.grid)],
+      ['Primes · divisors', `${fi.primes} · ${fi.divisors}`],
+      ['Abundance', 'beyond solve cap'],
+    ]) +
+      `<p class="lrc-mode-note">Uncharted frontier — too large to solve live (grid &gt; cap).</p>`;
+    openCockpit(); return;
+  }
+  const ab = z ? z.abundance : (sel.z ? sel.z.abundance : 0), state = z ? z.state : 'evicted';
+  const sun = z && z.parentGrid !== z.grid ? z.parentGrid.toLocaleString() : '—';
+  gridBodyEl.innerHTML = metricList([
+    ['Abundance', `${(ab || 0).toLocaleString()} kept`],
+    ['Factors', factorString(sel.grid)],
+    ['Primes · divisors', `${fi.primes} · ${fi.divisors}`],
+    ...(placement !== 'hilbert' ? [['District sun', sun]] : []),
+    ['State', state],
+  ]);
+  openCockpit();
+}
+
+// CONNECTOR mode — a clicked Web's lineage + travel controls. Ported from the old #flight-detail web branch;
+// the travel buttons keep their inline Web-colour styling (the accent is per-Web and dynamic).
+function renderConnectorView(sel) {
+  if (!connectorBodyEl) return;
+  const web = activeWebs.get(sel.webId);
+  if (!web) { resetRhythmInspector(); return; }
+  const title = web.dynamic ? web.tag.replace(/^mn:/, '') : `mother ${web.tag}`;
+  setCardMode('connector', web.color);
+  setCardSub(`◈ ${title}`);
+  const homeCell = macroCell(web.homeGrid), originCell = macroCell(web.originGrid), apexCell = macroCell(web.apexGrid), camCell = macroCell(cam.anchor);
+  const homeDistance = Math.hypot(homeCell[0] - camCell[0], homeCell[1] - camCell[1], homeCell[2] - camCell[2]);
+  const originDistance = Math.hypot(originCell[0] - camCell[0], originCell[1] - camCell[1], originCell[2] - camCell[2]);
+  const apexDistance = Math.hypot(apexCell[0] - camCell[0], apexCell[1] - camCell[1], apexCell[2] - camCell[2]);
+  const riding = !!(web.routePlanning || (returnRide && returnRide.webId === web.tag));
+  const family = web.dynamic ? 'unbounded' : `${web.memberCount.toLocaleString()} grids`;
+  const status = web.routePlanning ? web.rideStatus : riding
+    ? `${Math.round((web.rideProgress || 0) * 100)}% · ${returnRide.duration.toFixed(0)}s bounded ride`
+    : (web.rideStatus || 'ready');
+  const travelButton = riding
+    ? `<button class="web-cancel-btn" style="width:100%;background:rgba(255,255,255,.05);border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-size:11px;padding:7px;border-radius:var(--border-radius);cursor:pointer">cancel Web travel</button>`
+    : `<button class="web-travel-btn" data-id="${web.tag}" data-destination="anchor" style="width:100%;background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Return to grid ${web.homeGrid.toLocaleString()}</button>` +
+      // Origin (smallest grid in this NR) and Apex (largest grid in the Hilbert cube for this NR) — the two lineage extremes.
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">` +
+        `<button class="web-travel-btn" data-id="${web.tag}" data-destination="origin" style="background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Origin · grid ${web.originGrid.toLocaleString()}</button>` +
+        `<button class="web-travel-btn" data-id="${web.tag}" data-destination="apex" style="background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Apex · grid ${web.apexGrid.toLocaleString()}</button>` +
+      `</div>`;
+  connectorBodyEl.innerHTML = metricList([
+    ['Network reach', family],
+    ['Visible nodes', (web.visibleNodes || 0).toLocaleString()],
+    ...(web.dynamic ? [['Nested-ratio base', web.base.toLocaleString()]] : []),
+    ['First-clicked grid', web.homeGrid.toLocaleString()],
+    ['Origin grid', web.originGrid.toLocaleString()],
+    ['Apex grid', web.apexGrid.toLocaleString()],
+    ['Anchor / origin / apex', `${homeDistance.toFixed(1)} / ${originDistance.toFixed(1)} / ${apexDistance.toFixed(1)} cells`],
+    ['Travel', status],
+  ]) +
+    (web.dynamic ? `<p class="lrc-mode-note">This family is infinite — travel samples qualifying NR grids adaptively while the local Web rebuilds around the camera.</p>` : '') +
+    `<div class="lrc-travel-actions">${travelButton}</div>`;
+  openCockpit();
 }
 
 // AUDIO LAB ← engine. The lab is a dev MIRROR now, so it paints itself from live engine state instead of
@@ -1379,8 +1432,7 @@ function resetRhythmInspector() {
   if (scaleCountEl) scaleCountEl.textContent = '— Pitches';
   if (scaleFundamentalEl) scaleFundamentalEl.textContent = 'Fundamental —';
   renderCockpitLayerControls();
-  if (rhythmInspectorEl) rhythmInspectorEl.hidden = true;
-  if (lrcEmptyEl) lrcEmptyEl.hidden = false;
+  setCardMode('empty');
   const sub = lrcHeadEl?.querySelector('.lrc-div-sub'); if (sub) sub.textContent = 'select a node to inspect';
   if (lrcDivEl) lrcDivEl.classList.remove('open');
   lrcPanelToggleEl?.setAttribute('aria-expanded', 'false');
@@ -1524,8 +1576,7 @@ function renderRhythmInspector(node) {
   if (!node?.layers) return;
   inspectedNode = node;
   rhythmInspectorModel = modelForRhythmNode(node);
-  if (lrcEmptyEl) lrcEmptyEl.hidden = true;
-  if (rhythmInspectorEl) rhythmInspectorEl.hidden = false;
+  setCardMode('rhythm');
   if (!rhythmInspectorModel) {
     // Too dense to build the composite model / audition without a synchronous O(layerSum) freeze. We still
     // show the CHEAP closed-form metrics (fundamental, density, groupings — all O(layers), computed without
@@ -1898,7 +1949,7 @@ function drawChordReadout() {
 // candidate triad (to see directly whether the field term is differentiating by location, rather than
 // guessing from the ear). Built once and updated on a throttle so it doesn't thrash the DOM every rAF
 // frame. The dense ratio readout uses a real table; the surrounding diagnostics remain preformatted.
-// product UI; see cosmos/FULL_SKY_HANDOFF.md and the state doc for where this might go next (Avery:
+// product UI; see cosmos/docs/FULL_SKY_HANDOFF.md and the state doc for where this might go next (Avery:
 // "maybe it can evolve into a semi-gamified thing users can play with").
 let skyDebugOn = false, skyDebugEl = null, skyDebugLast = 0;
 const SKY_DEBUG_MS = 200;   // DOM update cadence
@@ -2325,7 +2376,7 @@ function loop() {
 
   const root = currentSkyRoot();
   // Full Sky: the ambient bed's audible set — EVERY solved zone with a degree pool is eligible (not
-  // just bloomed/clicked stars, see cosmos/FULL_SKY_HANDOFF.md), nearest AUDIBLE_N wins.
+// just bloomed/clicked stars, see cosmos/docs/FULL_SKY_HANDOFF.md), nearest AUDIBLE_N wins.
   // No lead required — this is the un-gated bed, live from cosmos entry (flight-boot.js's unlock).
   // Hysteresis (AUDIBLE_MARGIN): pick from the wider N+margin window, but a star already in the field
   // keeps its seat over that same window — only genuinely falling further behind drops it. Plain

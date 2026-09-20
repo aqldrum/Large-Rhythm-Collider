@@ -1,5 +1,5 @@
 // sky-root.js — Sky Root handoff Feature B: anchor-independent root solve (see
-// cosmos/SKY_ROOT_HANDOFF_2026-07-22.md). Pure module: no DOM, no audio, no imports beyond
+// cosmos/docs/SKY_ROOT_HANDOFF_2026-07-22.md). Pure module: no DOM, no audio, no imports beyond
 // sky-walk.js's gainForDev + grid-core.js's nearestDegree/TONE_BIN_CENTS. Does NOT import
 // Playback/AdvancedPlayback/ProgressionSolver.js — that module is reference reading only (its
 // optimizeRoot/solveAll outer-loop-over-candidate-roots idea is the conceptual template, reimplemented
