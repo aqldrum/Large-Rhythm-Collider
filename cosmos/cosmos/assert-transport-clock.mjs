@@ -144,8 +144,10 @@ check('ROTATION alone never marks membership dirty — only translation does',
   flight.includes('if (translated) markFieldDirty()') && flight.includes('updateGridRowField(placed, basis, translationRate > 0, now)'));
 check('every other cause that CAN change membership marks it: chord, zone spawn/evict, a landed compile',
   (flight.match(/markFieldDirty\(\)/g) || []).length >= 5 &&
-  flight.includes('onZoneAdded: grid => { webZoneAdded.push(grid); markFieldDirty(); }') &&
-  flight.includes('onZoneRemoved: grid => { webZoneRemoved.push(grid); markFieldDirty(); }'));
+  // Gravity also flags gravitySyncDirty inside these hooks; the membership mark is what this guards, so
+  // match the hook body loosely (no nested braces) rather than the exact one-liner it used to be.
+  /onZoneAdded: grid => \{[^}]*webZoneAdded\.push\(grid\);[^}]*markFieldDirty\(\);[^}]*\}/.test(flight) &&
+  /onZoneRemoved: grid => \{[^}]*webZoneRemoved\.push\(grid\);[^}]*markFieldDirty\(\);[^}]*\}/.test(flight));
 check('a safety re-run bounds staleness, so an un-enumerated cause delays the field rather than stranding it',
   /FIELD_MEMBERSHIP_MAX_INTERVAL_MS = \d+/.test(flight));
 check('a fresh cosmos session always begins with a full membership pass',
@@ -170,7 +172,9 @@ check('membership is gated on the same causes as the row field, plus a root swap
   flight.includes('if (bedRootKey !== root.rootKey) { bedRootKey = root.rootKey; markFieldDirty(); }') &&
   flight.includes('if (fieldMembershipDirty || now - bedMembershipAt >= FIELD_MEMBERSHIP_MAX_INTERVAL_MS)'));
 check('the bed reads the solved root AFTER the root-policy block, so a same-frame swap still lands',
-  flight.indexOf('proposeRoot({') < flight.indexOf('const root = currentSkyRoot();\n  // Full Sky'));
+  // `const root = currentSkyRoot();` is unique in the file; gravity inserted a comment between it and the
+  // former `// Full Sky` anchor, so anchor on the (unique) read itself rather than the line that follows it.
+  flight.indexOf('proposeRoot({') < flight.indexOf('const root = currentSkyRoot();'));
 const audioSrc = audio;
 check('setSkyPose CANNOT create or release a voice — it only automates params',
   /export function setSkyPose\(items\)/.test(audioSrc) &&
