@@ -122,7 +122,7 @@ const audio = readFileSync(new URL('../cosmos-audio.js', import.meta.url), 'utf8
 check('the transport times its own tick arrival (main-thread starvation is the first link)',
   audio.includes('audioTelemetry.tick(wall - lastSchedulerTickAt)') && audio.includes('lastSchedulerTickAt = null'));
 check('the row player is handed the meter, and its counters are exposed for the panel',
-  audio.includes('new SpatialGridRowPlayer(audioCtx, rowsGain, detuneBus, midiBridge, audioTelemetry)') &&
+  audio.includes('new SpatialGridRowPlayer(audioCtx, rowsGain, detuneBus, midiBridge, audioTelemetry, currentInstrumentRecipe)') &&
   audio.includes('export function rowPlayerStats()'));
 const flight = readFileSync(new URL('../flight-view.js', import.meta.url), 'utf8');
 check('the frame classifies motion AFTER the camera steps, and closes the frame it opened',

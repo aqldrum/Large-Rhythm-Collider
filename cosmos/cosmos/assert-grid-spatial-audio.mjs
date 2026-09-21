@@ -9,6 +9,7 @@ import {
   SpatialGridRowPlayer, culledGridRowFrequency, nearestCulledToneVoices,
   nextRowLayerGapTicks, rowEnvelopePlan, shouldScheduleRowAction,
 } from '../spatial-grid-row-player.js';
+import { getRecipe } from '../instruments/instrument-presets.js';
 import { bedTargetsForPolicy, harmonyPolicySelectionKey, matchHarmonyTarget, normalizeHarmonyPolicy, signedCircularCentsDistance } from '../harmony-policy.js';
 import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP, toAudioListenerPosition } from '../spatial-audio-frame.js';
 import {
@@ -356,30 +357,38 @@ console.log('\n  Voice budget accounting');
 // only evidence was stats.budgetMisses.
 check('the voice ceiling is derived from the active-star count, so widening the field cannot starve it',
   rowPlayerSource.includes('ROW_ACTIVE_STARS * 4 * 2') && !/const MAX_ROW_OSC = \d+;/.test(rowPlayerSource));
-// Short gated voices end via osc.onended, not _releaseLayer — the slot must be freed exactly once on
-// either path or the count leaks to MAX_ROW_OSC and all later attacks are silently dropped.
+// Short gated voices end via the renderer handle's completion, not _releaseLayer — the slot must be
+// freed exactly once on either path or the count leaks to MAX_ROW_OSC and all later attacks are silently
+// dropped. The instrument seam moved the oscillator graph into the handle, so this fixture simulates a
+// voice ending by firing the last-created oscillator's onended (which the handle wired up); classic's
+// single-oscillator recipe keeps one source per voice, so cost is 1 and the accounting is unchanged.
 const fakeParam = () => ({ value: 0.0001, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, cancelScheduledValues() {}, setTargetAtTime() {} });
-const fakeCtx = () => ({
-  sampleRate: 48000, currentTime: 0,
-  createOscillator: () => ({ type: '', frequency: fakeParam(), connect() {}, disconnect() {}, start() {}, stop() {}, onended: null }),
-  createGain: () => ({ gain: fakeParam(), connect() {}, disconnect() {} }),
-});
+const fakeCtx = () => {
+  const ctx = {
+    sampleRate: 48000, currentTime: 0, _oscs: [],
+    createOscillator() { const o = { type: '', frequency: fakeParam(), detune: fakeParam(), connect() {}, disconnect() {}, start() {}, stop() {}, onended: null }; ctx._oscs.push(o); return o; },
+    createGain: () => ({ gain: fakeParam(), connect() {}, disconnect() {} }),
+  };
+  return ctx;
+};
+const classicRecipe = role => getRecipe('classic', role);
 const budgetPlayer = Object.create(SpatialGridRowPlayer.prototype);
 budgetPlayer.ctx = fakeCtx();
+budgetPlayer.getRecipe = classicRecipe;
 budgetPlayer.logicalVoiceCount = 0;
 budgetPlayer.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0 };
 budgetPlayer.stars = new Map();
-budgetPlayer._voicesByTone = new Map();      // _startVoice/onended maintain the tone index
+budgetPlayer._voicesByTone = new Map();      // _startVoice / handle.onComplete maintain the tone index
 budgetPlayer._claimToneVoice = () => true;   // isolate accounting from the per-tone spatial cap
-const budgetDeck = () => ({ program: { grid: 7, repeatCull: true }, voices: new Map(), oscillators: new Set(), lastToneByLayer: new Map() });
+const budgetDeck = () => ({ program: { grid: 7, repeatCull: true }, voices: new Map(), handles: new Set(), lastToneByLayer: new Map() });
 const deckA = budgetDeck();
 budgetPlayer._startVoice(deckA, { layer: 'A', rawRatio: 1, fraction: '1/1', rawFraction: '1/1' }, 0, false);
 check('a started voice occupies exactly one budget slot', budgetPlayer.logicalVoiceCount === 1);
-[...deckA.oscillators][0].onended();
+budgetPlayer.ctx._oscs.at(-1).onended();   // the voice's single source ends → handle completes → slot freed
 check('a voice ending naturally frees its slot (no leak → no eventual total silence)', budgetPlayer.logicalVoiceCount === 0);
 const deckB = budgetDeck();
 budgetPlayer._startVoice(deckB, { layer: 'A', rawRatio: 1, fraction: '1/1', rawFraction: '1/1' }, 0, false);
-const stolenOsc = [...deckB.oscillators][0];
+const stolenOsc = budgetPlayer.ctx._oscs.at(-1);
 budgetPlayer._startVoice(deckB, { layer: 'A', rawRatio: 1.25, fraction: '5/4', rawFraction: '5/4' }, 0, false);
 check('a same-layer steal keeps exactly one live slot', budgetPlayer.logicalVoiceCount === 1);
 stolenOsc.onended();
@@ -398,6 +407,7 @@ const holdCtx = {
 };
 const holdPlayer = Object.create(SpatialGridRowPlayer.prototype);
 holdPlayer.ctx = holdCtx;
+holdPlayer.getRecipe = classicRecipe;
 holdPlayer.logicalVoiceCount = 0;
 holdPlayer.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0 };
 holdPlayer.stars = new Map();
@@ -417,14 +427,15 @@ console.log('\n  Silent program swap');
 // The seed may only restore the repeat-cull memory a deck running since the loop start would hold.
 const swapPlayer = Object.create(SpatialGridRowPlayer.prototype);
 swapPlayer.ctx = fakeCtx();
+swapPlayer.getRecipe = classicRecipe;
 swapPlayer.logicalVoiceCount = 0;
 swapPlayer.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0 };
 swapPlayer.stars = new Map();
 swapPlayer._claimToneVoice = () => true;
-const swapDeck = { program, voices: new Map(), oscillators: new Set(), lastToneByLayer: new Map(), ownerKeyByFraction: new Map() };
+const swapDeck = { program, voices: new Map(), handles: new Set(), lastToneByLayer: new Map(), ownerKeyByFraction: new Map() };
 swapPlayer._seedDeck(swapDeck, 3 * program.grid + Math.floor(program.grid / 2));
 check('a program swap starts no voices and consumes no budget',
-  swapDeck.oscillators.size === 0 && swapDeck.voices.size === 0 && swapPlayer.logicalVoiceCount === 0);
+  swapDeck.handles.size === 0 && swapDeck.voices.size === 0 && swapPlayer.logicalVoiceCount === 0);
 check('a program swap still primes the repeat-cull memory for every canonical layer the loop uses',
   swapDeck.lastToneByLayer.size === new Set(program.events.flatMap(event => event.layerActions).map(action => action.layer)).size);
 check('the primed tone is the layer\'s last tone at or before the boundary, as a running deck would hold',
@@ -442,13 +453,14 @@ console.log('\n  Chord-exposure ledger');
 // tone's cents straight through from the program; cosmos-audio owns the root and does the folding.
 const ledgerPlayer = Object.create(SpatialGridRowPlayer.prototype);
 ledgerPlayer.ctx = fakeCtx();
+ledgerPlayer.getRecipe = classicRecipe;
 ledgerPlayer.logicalVoiceCount = 0;
 ledgerPlayer.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0 };
 ledgerPlayer.stars = new Map();
 ledgerPlayer.soundedTones = new Map();
 ledgerPlayer._voicesByTone = new Map();
 ledgerPlayer._claimToneVoice = () => true;
-const ledgerDeck = { program: { grid: 7, repeatCull: true }, voices: new Map(), oscillators: new Set(),
+const ledgerDeck = { program: { grid: 7, repeatCull: true }, voices: new Map(), handles: new Set(),
   lastToneByLayer: new Map(), centsByFraction: new Map([['1/1', 0], ['5/4', 386.31], ['3/2', 701.96]]) };
 ledgerPlayer.ctx.currentTime = 10;
 ledgerPlayer._startVoice(ledgerDeck, { layer: 'A', rawRatio: 1, fraction: '1/1', rawFraction: '1/1' }, 9.5);
@@ -580,6 +592,7 @@ const aura = readFileSync(new URL('../grid-row-aura.js', import.meta.url), 'utf8
 const worker = readFileSync(new URL('./cull2-program-worker.js', import.meta.url), 'utf8');
 const page = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
 const style = readFileSync(new URL('../../style.css', import.meta.url), 'utf8');
+const voiceRenderer = readFileSync(new URL('../instruments/instrument-voice.js', import.meta.url), 'utf8');
 check('compiler is a dedicated worker receiving compact finalized ownership',
   worker.includes('compileGridAudioProgram') && flight.includes('ProgramWorkerPool') && flight.includes('ratioOwners: z.ratioOwners'));
 check('main scheduler only schedules precompiled row programs',
@@ -587,9 +600,14 @@ check('main scheduler only schedules precompiled row programs',
 check('every Cosmos dry/wet path reaches the destination through a master trim then a fast safety limiter',
   audio.includes('createDynamicsCompressor()') && audio.includes('muteGainNode.connect(masterVolume)') &&
   audio.includes('masterVolume.connect(outputLimiter)') && audio.includes('outputLimiter.connect(audioCtx.destination)'));
-check('culled rows use their own tunable voice waveform while ambient keeps the shared contract',
-  audio.includes('osc.type = RHYTHM_VOICE_WAVEFORM') && player.includes('osc.type = ROW_WAVEFORM') &&
-  player.includes("ROW_WAVEFORM = 'triangle'"));
+// The instrument seam replaced the inline per-role oscillators with per-role RECIPES: row timbre is now
+// tuned independently of the ambient bed via the palette catalog, and the row player builds its voice
+// through the shared renderer instead of hardcoding a waveform. Classic reproduces today's split
+// (rows/audition triangle, bed sine), which is what keeps this a parity change rather than a new sound.
+check('each role has its own tunable voice recipe (rows distinct from the ambient bed), built via the renderer',
+  getRecipe('classic', 'row').components[0].wave === 'triangle' &&
+  getRecipe('classic', 'bed').components[0].wave === 'sine' &&
+  player.includes('createInstrumentVoice(') && player.includes("this.getRecipe('row')"));
 check('row voices are short-gated into a shared reverb send, not sustained legato',
   player.includes('ROW_GATE') && player.includes('_buildReverbSend') && player.includes('makeRowImpulse') &&
   !player.includes('_startLegato'));
@@ -631,8 +649,13 @@ check('the detune bus sums two independent offset sources — fundamental + modu
   audio.includes('modulationOffset = audioCtx.createConstantSource()') &&
   audio.includes('detuneBus = audioCtx.createGain()') &&
   audio.includes('fundamentalOffset.connect(detuneBus)') && audio.includes('modulationOffset.connect(detuneBus)'));
-check('every oscillator (bed, lead, rows) detunes off the summed bus, not a single offset',
-  audio.includes('detuneBus?.connect(osc.detune)') && player.includes('this.detuneBus?.connect(osc.detune)') &&
+// Every pitched voice still tracks the one summed bus — but the connection now lives once, in the shared
+// renderer, and each caller hands it the same bus (the row player through its constructor, cosmos-audio
+// through the row player and, for bed/lead, into createInstrumentVoice). Birth frequency stays base pitch
+// only, so transposition is applied exactly once (never folded into the frequency).
+check('every voice detunes off the summed bus via the renderer, applied once (never a single offset, never twice)',
+  voiceRenderer.includes('detuneBus.connect(osc.detune)') &&
+  player.includes('detuneBus: this.detuneBus') &&
   audio.includes('SpatialGridRowPlayer(audioCtx, rowsGain, detuneBus'));
 check('the row register ceiling stays DERIVED from the fundamental anchor, not a re-hardcoded literal',
   player.includes('CULLED_ROW_MAX_HZ = CULLED_ROW_FUNDAMENTAL_HZ * (2 ** CULLED_ROW_MAX_OCTAVES)') &&

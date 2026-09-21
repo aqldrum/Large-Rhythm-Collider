@@ -6,6 +6,14 @@ import {
 } from './cosmos-grid-audio-core.js';
 import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP } from './spatial-audio-frame.js';
 import { classifyLateEvent, LATE_CLAMP_TOLERANCE_SECONDS } from './transport-clock.js';
+// The instrument seam: a row voice's oscillator graph is now built by the shared renderer from a pure
+// per-role recipe, not inlined here. This module stays harmony-blind AND timbre-blind — it owns note
+// choice, timing, stealing, budget and the star bus; the renderer owns the nodes. The selected recipe
+// arrives through the injected `getRecipe` accessor (see the constructor), so no palette definition or
+// audio composition root is imported.
+import { getRecipe as presetRecipe, DEFAULT_INSTRUMENT } from './instruments/instrument-presets.js';
+import { planVoice } from './instruments/voice-plan.js';
+import { createInstrumentVoice } from './instruments/instrument-voice.js';
 
 const LAYERS = new Set(['A', 'B', 'C', 'D']);
 export const CULLED_ROW_FUNDAMENTAL_HZ = 220;
@@ -33,7 +41,6 @@ const VISUAL_ATTACK_SECONDS = 0.7;
 // releases into a shared reverb tail regardless of when the next onset lands. The reverb — not a
 // sustained oscillator — is what makes tones "hold", which keeps the polyrhythm's onset timing
 // crisp instead of smearing overlapping sustains. Everything the ear cares about is tunable here.
-const ROW_WAVEFORM = 'triangle';    // decoupled from ambient's RHYTHM_VOICE_WAVEFORM so row timbre tunes alone
 // Fixed-gate ADSR (seconds). ROW_GATE is the whole point: note length is decoupled from onset spacing.
 const ROW_ATTACK = 0.004;           // fast pluck attack — long enough to avoid a click, short enough to bite
 const ROW_DECAY = 0.46;             // attack peak → sustain fall
@@ -146,40 +153,9 @@ export function rowEnvelopePlan(gapSeconds = Infinity, sampleRate = 48000) {
   };
 }
 
-function exponentialValue(from, to, progress) {
-  if (progress <= 0) return from;
-  if (progress >= 1) return to;
-  return from * ((to / from) ** progress);
-}
-
-// Fallback for engines without AudioParam.cancelAndHoldAtTime(). AudioParam.value is the value at the
-// current render quantum, not at a future scheduled interruption, so it cannot safely seed the release.
-function rowEnvelopeValueAt(voice, when) {
-  const plan = voice.envelopePlan;
-  if (!plan || when <= voice.startTime) return ROW_ENV_FLOOR;
-  const elapsed = when - voice.startTime;
-  if (elapsed < plan.attack) {
-    return ROW_ENV_FLOOR + (plan.peak - ROW_ENV_FLOOR) * (elapsed / plan.attack);
-  }
-  if (plan.micro) return exponentialValue(plan.peak, ROW_ENV_FLOOR, (elapsed - plan.attack) / plan.release);
-  if (elapsed < plan.attack + plan.decay) {
-    return exponentialValue(plan.peak, plan.sustain, (elapsed - plan.attack) / plan.decay);
-  }
-  const releaseStart = plan.attack + plan.decay + plan.hold;
-  if (elapsed < releaseStart) return plan.sustain;
-  return exponentialValue(plan.sustain, ROW_ENV_FLOOR, (elapsed - releaseStart) / plan.release);
-}
-
-function holdEnvelopeAtTime(voice, when) {
-  const param = voice.env.gain;
-  if (typeof param.cancelAndHoldAtTime === 'function') {
-    param.cancelAndHoldAtTime(when);
-    return;
-  }
-  const value = Math.max(ROW_ENV_FLOOR, rowEnvelopeValueAt(voice, when));
-  param.cancelScheduledValues(when);
-  param.setValueAtTime(value, when);
-}
+// (The row-release envelope hold — cancelAndHoldAtTime or the analytic fallback that seeds a mid-ramp
+// interruption — now lives inside the instrument renderer's handle.release, since the handle owns the
+// amp-envelope node. rowEnvelopePlan above still describes the SHAPE; the renderer schedules it.)
 
 const layerRank = layer => Math.max(0, ['A', 'B', 'C', 'D'].indexOf(layer));
 
@@ -218,11 +194,16 @@ export class SpatialGridRowPlayer {
   // the summed detune offset, which is the one harmonic fact it does not own.
   // telemetry: an optional sink with lateEvent(latenessMs, emitted) — cosmos/audio-telemetry.js's meter.
   // Optional so the headless guards can build a player without one.
-  constructor(context, output, detuneBus = null, midiBridge = null, telemetry = null) {
+  // getRecipe: (role) => a frozen instrument role recipe (instrument-presets.js). The NARROW instrument
+  // dependency — the composition root injects one that reads the live selected palette, so a selection
+  // change is picked up by the next scheduled voice without this module importing the audio root or any
+  // palette catalog. Defaults to the classic (today's) recipe so headless guards render at parity.
+  constructor(context, output, detuneBus = null, midiBridge = null, telemetry = null, getRecipe = null) {
     this.ctx = context;
     this.detuneBus = detuneBus;
     this.midiBridge = midiBridge;
     this.telemetry = telemetry;
+    this.getRecipe = getRecipe || (role => presetRecipe(DEFAULT_INSTRUMENT, role));
     this.master = context.createGain();
     this.master.gain.value = 0;
     this.master.connect(output);                    // dry path
@@ -398,7 +379,7 @@ export class SpatialGridRowPlayer {
     const ownerKeyByFraction = new Map((program.selectedTones || []).map(tone => [tone.fraction, tone.ownerKey ?? null]));
     // Same projection for the tone's absolute cents — the only harmonic datum the exposure ledger carries.
     const centsByFraction = new Map((program.selectedTones || []).map(tone => [tone.fraction, tone.cents]));
-    return { program, gain, voices: new Map(), oscillators: new Set(), lastToneByLayer: new Map(), ownerKeyByFraction, centsByFraction, cursorCycle: 0, cursorEvent: 0, startTime: 0, retireAt: Infinity };
+    return { program, gain, voices: new Map(), handles: new Set(), lastToneByLayer: new Map(), ownerKeyByFraction, centsByFraction, cursorCycle: 0, cursorEvent: 0, startTime: 0, retireAt: Infinity };
   }
 
   _syncCursor(deck, absoluteTick) {
@@ -656,38 +637,26 @@ export class SpatialGridRowPlayer {
     if (!envelopePlan.render) return;
     this._releaseLayer(deck, action.layer, when, VOICE_RELEASE);
     if (!this._claimToneVoice(deck, action, when)) return;
-    if (this.logicalVoiceCount >= MAX_ROW_OSC) { this.stats.budgetMisses++; return; }
-    const osc = this.ctx.createOscillator();
-    const env = this.ctx.createGain();
-    osc.type = ROW_WAVEFORM;
-    osc.frequency.setValueAtTime(Math.min(this.ctx.sampleRate * 0.45, frequencyHz), when);
-    this.detuneBus?.connect(osc.detune);   // shared fundamental + modulation glide (cents), summed with this pitch
-    // Normal gaps keep the established fixed pluck. A micro-gap uses a full attack/release window that
-    // reaches the floor before the next onset, so dense spaces cannot accumulate interrupted tails.
-    const attackEnd = when + envelopePlan.attack;
-    const releaseStart = attackEnd + envelopePlan.decay + envelopePlan.hold;
+    // Plan the voice from the selected instrument's ROW recipe, then admit against the live-oscillator
+    // ceiling by its ACTUAL source cost — a multi-oscillator palette charges more than one, so a richer
+    // timbre lowers the max simultaneous voices instead of inflating the real oscillator count. Classic
+    // (today's single triangle) has cost 1, so this is byte-for-byte the previous budget behavior.
+    const plan = planVoice(this.getRecipe('row'), { role: 'row', baseFreq: frequencyHz, timing: envelopePlan, sampleRate: this.ctx.sampleRate });
+    if (this.logicalVoiceCount + plan.cost > MAX_ROW_OSC) { this.stats.budgetMisses++; return; }
     const endAt = when + envelopePlan.duration;
-    env.gain.setValueAtTime(ROW_ENV_FLOOR, when);
-    env.gain.linearRampToValueAtTime(envelopePlan.peak, attackEnd);
-    if (envelopePlan.micro) {
-      env.gain.exponentialRampToValueAtTime(ROW_ENV_FLOOR, endAt);
-    } else {
-      env.gain.exponentialRampToValueAtTime(envelopePlan.sustain, attackEnd + envelopePlan.decay);
-      env.gain.setValueAtTime(envelopePlan.sustain, releaseStart);
-      env.gain.exponentialRampToValueAtTime(ROW_ENV_FLOOR, endAt);
-    }
-    osc.connect(env);
-    env.connect(deck.gain);
+    // The renderer owns the oscillator graph, its detune-bus connections, and the gap-aware envelope; this
+    // module owns note choice, stealing, budget, the star bus, and the visual/MIDI/exposure side-channels.
+    const handle = createInstrumentVoice({ ctx: this.ctx, destination: deck.gain, plan, when, detuneBus: this.detuneBus });
     const voice = {
-      osc, env, layer: action.layer, fraction: action.fraction,
+      handle, cost: plan.cost, layer: action.layer, fraction: action.fraction,
       rawFraction: action.rawFraction, ratio: action.rawRatio, frequencyHz,
       toneKey: action.fraction || action.rawFraction || String(action.rawRatio), startTime: when,
       endAt, envelopePlan,
-      released: false,   // budget is freed exactly once — by whichever of onended / _releaseLayer runs first
+      released: false,   // budget is freed exactly once — by whichever of the handle completion / _releaseLayer runs first
     };
     deck.voices.set(action.layer, voice);
     this._indexAddVoice(deck, voice);
-    deck.oscillators.add(osc);
+    deck.handles.add(handle);
     const star = this.stars.get(deck.program.grid);
     if (star) {
       // Bounded life now (was Infinity for held legato voices): short notes make the aura pulse per
@@ -704,19 +673,15 @@ export class SpatialGridRowPlayer {
     this.midiBridge?.note(frequencyHz, when, endAt - when, this.stars.get(deck.program.grid)?.gain.gain.value ?? 1);
     const soundedCents = deck.centsByFraction?.get(action.fraction);
     if (Number.isFinite(soundedCents)) this.soundedTones.set(action.fraction, { cents: soundedCents, when });
-    this.logicalVoiceCount++;
-    osc.start(when);
-    osc.stop(endAt + (envelopePlan.micro ? 1 / this.ctx.sampleRate : 0.02));
-    osc.onended = () => {
-      try { this.detuneBus?.disconnect(osc.detune); } catch {}
-      deck.oscillators.delete(osc);
-      if (deck.voices.get(action.layer)?.osc === osc) deck.voices.delete(action.layer);
+    this.logicalVoiceCount += plan.cost;
+    // A voice that plays out its full gate ends HERE (the handle's last source), not via _releaseLayer — so
+    // free its cost here too, or the count leaks up to MAX_ROW_OSC and every later attack is silently dropped.
+    handle.onComplete(() => {
+      deck.handles.delete(handle);
+      if (deck.voices.get(action.layer)?.handle === handle) deck.voices.delete(action.layer);
       this._indexRemoveVoice(voice);   // the ended voice leaves the tone index even if a newer one took its layer
-      // A voice that plays out its full gate ends HERE, not via _releaseLayer — so free its budget slot
-      // here too, or the count leaks up to MAX_ROW_OSC and every later attack is silently dropped.
-      if (!voice.released) { voice.released = true; this.logicalVoiceCount = Math.max(0, this.logicalVoiceCount - 1); }
-      try { osc.disconnect(); } catch {} try { env.disconnect(); } catch {}
-    };
+      if (!voice.released) { voice.released = true; this.logicalVoiceCount = Math.max(0, this.logicalVoiceCount - voice.cost); }
+    });
   }
 
   _releaseLayer(deck, layer, when, release) {
@@ -724,25 +689,17 @@ export class SpatialGridRowPlayer {
     if (!voice) return;
     deck.voices.delete(layer);
     this._indexRemoveVoice(voice);
-    // Guarded so a later natural onended on the same osc can't double-free (and vice-versa).
-    if (!voice.released) { voice.released = true; this.logicalVoiceCount = Math.max(0, this.logicalVoiceCount - 1); }
+    // Guarded so a later natural completion of the same handle can't double-free (and vice-versa).
+    if (!voice.released) { voice.released = true; this.logicalVoiceCount = Math.max(0, this.logicalVoiceCount - voice.cost); }
     if (voice.visualLife) voice.visualLife.endTime = Math.min(voice.visualLife.endTime, when + release);
-    try {
-      holdEnvelopeAtTime(voice, when);
-      // A micro voice is already at the floor when the next articulation arrives. Stop it promptly
-      // instead of manufacturing a 70ms release tail; ordinary interrupted plucks keep the smooth tail.
-      const sampleSeconds = 1 / this.ctx.sampleRate;
-      const releaseTime = voice.envelopePlan?.micro && when >= voice.endAt - sampleSeconds
-        ? sampleSeconds
-        : Math.max(2 / this.ctx.sampleRate, release);
-      voice.env.gain.exponentialRampToValueAtTime(ROW_ENV_FLOOR, when + releaseTime);
-      voice.osc.stop(when + releaseTime + (voice.envelopePlan?.micro ? sampleSeconds : 0.002));
-    } catch {}
+    // The handle owns the micro-aware release curve and the source stop (including silencing a scheduled-
+    // but-unsounded future voice); its onComplete later removes it from deck.handles and frees nothing more.
+    voice.handle.release(when, release);
   }
 
   _destroyDeck(deck, now) {
     for (const layer of [...deck.voices.keys()]) this._releaseLayer(deck, layer, now, 0.035);
-    for (const osc of [...deck.oscillators]) { try { osc.stop(now + 0.04); } catch {} }
+    for (const handle of [...deck.handles]) handle.stop(now + 0.04);
     try { deck.gain.disconnect(); } catch {}
   }
 

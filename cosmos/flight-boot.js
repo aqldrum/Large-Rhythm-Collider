@@ -4,8 +4,9 @@
 // the full-canvas #cosmos-view. It never touches the engine modules (LRCModule/LRCSearch/LRCHudController).
 import { ensureFlight, stopFlight } from './flight-view.js';
 import { M } from './mode.js';
-import { initAudio, resumeAudio, panicMidiOut } from './cosmos-audio.js';
+import { initAudio, resumeAudio, panicMidiOut, setInstrument, currentInstrument, setMix } from './cosmos-audio.js';
 import { ensureRail, resetRailForEntry, applyRailToEngine } from './rail-view.js';
+import { INSTRUMENT_IDS, PRODUCTION_INSTRUMENT_IDS } from './instruments/instrument-presets.js';
 
 // ENTER: swallow the page and start flying. Add the class FIRST so the overlay/canvas have layout before
 // ensureFlight()'s resize() reads clientWidth/Height (the class change forces a synchronous reflow on read).
@@ -34,6 +35,18 @@ function exitCosmos() {
 
 window.enterCosmos = enterCosmos;   // exposed for console / future callers
 window.exitCosmos = exitCosmos;
+
+// Dev A/B hook for the instrument palettes, before the rail selector ships (Step 4). Namespaced like
+// __cosmosHealth and harmless in production — a listener switches palettes live from the console, e.g.
+// __cosmosInstrument.set('warm'). The live bed/audition crossfade lands with the rail; today a switch
+// simply changes what subsequently-scheduled voices use.
+window.__cosmosInstrument = {
+  set: id => setInstrument(id),
+  get: () => currentInstrument(),
+  list: () => [...INSTRUMENT_IDS],
+  production: () => [...PRODUCTION_INSTRUMENT_IDS],
+  mix: x => setMix(x),   // dev A/B helper: 1 = rows (which re-voice every onset → pick up a palette at once), 0 = bed
+};
 
 // Wire the icon once (idempotent — safe if this ever runs twice). #lrc-div's own interaction (cockpit
 // toggle / double-click exit) is wired by flight-view.js, which owns the overlay DOM + the loop + the
