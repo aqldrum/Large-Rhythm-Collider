@@ -755,6 +755,13 @@ export function gridRowVisualState() {
   return gridRowPlayer?.visualState() || [];
 }
 
+// Per-ATTACK feed for the note constellation, beside the aggregate visual state above. Same "reached, not
+// scheduled" rule; see SpatialGridRowPlayer.reachedAttacks for the cursor contract. Before initAudio has
+// built the player there is no clock to report, so the empty result reads as time zero and no attacks.
+export function gridRowReachedAttacks(since) {
+  return gridRowPlayer?.reachedAttacks(since) || { now: 0, attacks: [] };
+}
+
 // Live summed detune-bus value in cents: FUNDAMENTAL transpose + the root-modulation glide, read at its
 // current (mid-ramp) value. Read-only. Flight visuals fold this into orb pitch-colour so a note's hue
 // tracks its SOUNDING pitch, not its birth frequency — the whole sky's hue then drifts with a modulation.

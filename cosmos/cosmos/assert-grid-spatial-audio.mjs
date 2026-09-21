@@ -512,6 +512,56 @@ check('both overlapping owner rhythms now light their own nodes', (() => {
   return visual.sources.length === 2 && byKey.get('A').voices === 1 && byKey.get('B').voices === 1 && byKey.get('B').pulse > 0;
 })());
 
+console.log('\n  Reached-attack feed (note constellations)');
+// The constellation needs PER-ATTACK times, which visualState() collapses into one pulse and hides behind
+// a live-voice test. reachedAttacks is the additive read-only feed: same "reached, not scheduled" rule as
+// the orbs, but a note that has already ended still gets to have drawn its line.
+const feedPlayer = () => {
+  const p = Object.create(SpatialGridRowPlayer.prototype);
+  p.enabled = true;
+  p.ctx = { currentTime: 10 };
+  p.stars = new Map([
+    // grid 12's note is already OVER at now=10 — visualState() skips this star entirely, the feed must not.
+    [12, { id: 12, active: true,
+      visualAttacks: [{ when: 9.6, strength: 1, ownerKey: 'A', frequencyHz: 220 },
+        { when: 10.2, strength: 1, ownerKey: 'A', frequencyHz: 330 }],   // lookahead, not yet heard
+      visualLives: [{ startTime: 9.6, endTime: 9.7, ownerKey: 'A', frequencyHz: 220 }] }],
+    [5, { id: 5, active: true,
+      visualAttacks: [{ when: 9.8, strength: 1, ownerKey: 'B', frequencyHz: 440 }],
+      visualLives: [{ startTime: 9.8, endTime: 11, ownerKey: 'B', frequencyHz: 440 }] }],
+  ]);
+  return p;
+};
+const feeder = feedPlayer();
+const firstRead = feeder.reachedAttacks(9.5);
+check('the feed reports every reached attack across all stars, ascending by time',
+  firstRead.now === 10 && firstRead.attacks.map(a => `${a.id}@${a.when}`).join(',') === '12@9.6,5@9.8',
+  firstRead.attacks.map(a => `${a.id}@${a.when}`).join(','));
+check('a lookahead attack is excluded until audio-context time reaches it',
+  !firstRead.attacks.some(a => a.when === 10.2));
+check('an attack whose note has already ended is still reported (visualState skips that star)',
+  firstRead.attacks.some(a => a.id === 12 && a.when === 9.6) &&
+  !feeder.visualState().some(entry => entry.id === 12));
+check('carrying `now` forward as the next `since` never double-counts',
+  feeder.reachedAttacks(firstRead.now).attacks.length === 0);
+feeder.ctx.currentTime = 10.3;
+const secondRead = feeder.reachedAttacks(firstRead.now);
+check('the same attack counts exactly once, on the read after its time arrives',
+  secondRead.attacks.length === 1 && secondRead.attacks[0].when === 10.2 && secondRead.attacks[0].hz === 330);
+check('a non-finite cursor primes without replaying the retained backlog',
+  feedPlayer().reachedAttacks(null).attacks.length === 0 && feedPlayer().reachedAttacks(null).now === 10);
+check('the feed mutates nothing: visualState() is identical whether or not it was called', (() => {
+  const untouched = feedPlayer(), probed = feedPlayer();
+  probed.reachedAttacks(0); probed.reachedAttacks(9.9); probed.reachedAttacks(null);
+  return JSON.stringify(untouched.visualState()) === JSON.stringify(probed.visualState());
+})());
+check('the feed prunes nothing — the player\'s own attack ledger is left exactly as it was', (() => {
+  const probed = feedPlayer();
+  const before = probed.stars.get(12).visualAttacks.length;
+  probed.reachedAttacks(0);
+  return before === 2 && probed.stars.get(12).visualAttacks.length === 2;
+})());
+
 console.log('\n  Camera/WebAudio coordinate frame');
 const basis = { r: [1, 0, 0], u: [0, 1, 0], d: [0, 0, 1] };
 check('fixed listener uses WebAudio right-handed defaults',

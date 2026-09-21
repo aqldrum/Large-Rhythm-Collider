@@ -775,6 +775,35 @@ export class SpatialGridRowPlayer {
     return out;
   }
 
+  // Every scheduled attack whose audio-context time has REACHED, across all stars, in (since, now], ascending.
+  // Modelled on soundedSince above: same "reached, not merely scheduled" rule the orbs use, so a lookahead
+  // attack never draws a constellation line early. Unlike visualState() this does NOT require a live voice —
+  // visualState skips a voiceless star, and a note short enough to have already ended (or one hidden by a
+  // hitched frame) must still be able to draw the line it caused. Read-only: it prunes nothing and mutates
+  // nothing, so visualState() keeps its 0.7s retention and its semantics exactly as they were.
+  //
+  // The caller carries `now` forward as the next `since`, which is what makes the feed lossless and
+  // double-count-free. A non-finite `since` means "no history yet" and reports only the clock, so a caller
+  // can prime its cursor without replaying the whole retained backlog on entry. After a stall longer than
+  // VISUAL_ATTACK_SECONDS the missed attacks are simply gone — acceptable, and the caller re-primes.
+  //
+  // CAVEAT (pre-existing, shared with the orbs): a visualAttacks entry is not withdrawn if its voice is
+  // stolen or cancelled before it sounds, so a rare phantom attack is possible here too.
+  reachedAttacks(since) {
+    const now = this.ctx.currentTime;
+    const attacks = [];
+    if (!Number.isFinite(since)) return { now, attacks };
+    for (const star of this.stars.values()) {
+      for (const attack of star.visualAttacks) {
+        if (attack.when > since && attack.when <= now) attacks.push({ id: star.id, when: attack.when, hz: attack.frequencyHz || 0 });
+      }
+    }
+    // Grid number breaks the tie so a coincident group arrives in a stable order even before the caller
+    // re-orders it by proximity; two runs of the same field can never disagree.
+    attacks.sort((a, b) => a.when - b.when || a.id - b.id);
+    return { now, attacks };
+  }
+
   // How many active stars hold a program that can actually articulate — an installed deck with events, or
   // one pending at the next switch boundary. The sky's exposure floor asks this to tell two situations
   // apart that produce the identical empty ledger: "the rows have not finished saying this chord yet" and

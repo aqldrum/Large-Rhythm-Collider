@@ -16,7 +16,7 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, classifyLeadHarmony, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, gridRowDetuneCents, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, classifyLeadHarmony, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, gridRowReachedAttacks, gridRowDetuneCents, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
 // The RAIL owns the engine's user-facing state (rail-view.js mounts it; flight-boot restores it on entry).
 // Every parameter BOTH surfaces express — mute, mix, modulation, MIDI out — is written through railParams so
 // there is exactly one owner and the two surfaces cannot disagree. See the audio-lab section below.
@@ -30,9 +30,14 @@ import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREW
 import { rootPolicyStableKey } from './harmony-policy.js';
 import { ProgramWorkerPool } from './program-worker-pool.js';
 import { toAudioListenerPosition } from './spatial-audio-frame.js';
-import { drawGridRowAura } from './grid-row-aura.js';
+import { createGridRowAuraBatch, resetGridRowAuraSprites } from './grid-row-aura.js';
 import { buildRhythmInspectorModel, lightRhythmMetrics } from './rhythm-inspector-model.js';
 import { shouldScheduleRowAction } from './spatial-grid-row-player.js';
+// Note constellations (Order B of cosmos/docs/COSMOS_NOTE_VISUALS_WORK_ORDER_2026-09-20.md): a pure state
+// machine for which lines exist, and a canvas-only renderer for drawing them. Both are fed from here —
+// they import nothing from playback, the runtime or this file.
+import { createConstellation, chainCoincidentAttacks } from './constellation-core.js';
+import { drawGridRowConstellation } from './grid-row-constellation.js';
 import { SolverWorkerPool } from './cosmos/solver-worker-pool.js';
 import { QUALITY_ORDER, detectDefaultTier, devicePoolMax, resolveTier } from './cosmos-quality.js';
 // Full Sky (cosmos/docs/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
@@ -247,6 +252,15 @@ let rootCompiler = null;
 let rootSolvePending = false;
 let rowGeneration = 0;
 let rowSelectionKey = '';
+// ── note constellations (Order B) ────────────────────────────────────────────────────────────
+// One pure core plus one cursor into the row player's per-attack feed. The cursor is an AUDIO-clock
+// time: reachedAttacks hands back the `now` it used, and carrying exactly that forward as the next
+// `since` is what makes the feed lossless and double-count-free. null = not primed yet.
+const constellation = createConstellation();
+let constellationCursor = null;
+// Re-prime rather than ingest if the clock jumps (a fresh AudioContext reads 0, and a stall longer than
+// the player's attack retention would otherwise deliver a burst of stale attacks all at once).
+const CONSTELLATION_RESYNC_SECONDS = 0.7;
 
 // Sky Root handoff, Feature B3: camera/gather-side knobs (flight-view owns camera state — root-state
 // display depth ROOT_TOP_K lives in cosmos-audio.js's SKY KNOBS, same split as AUDIBLE_N above).
@@ -978,6 +992,15 @@ export function ensureFlight(canvas, hudEl) {
   // Live quality handle for tuning before the Stage-2 slider exists: __cosmosQuality.set('low'|'medium'
   // |'high'|'ultra') re-points every knob on the running engine so a tier can be felt instantly.
   if (typeof window !== 'undefined') window.__cosmosQuality = { get: () => activeQualityId, set: applyQuality, tiers: QUALITY_ORDER, detected: activeQualityId };
+  // Note-constellation tuning handle, same precedent and same reason: no UI exists yet, and these want to
+  // be felt by eye on a live field. __cosmosConstellation.set({ lifespan: 5, drawIn: 0.25 }) re-points the
+  // ONE options object the core and the renderer both read. A fresh session starts with an empty figure
+  // and an unprimed cursor, so nothing survives a re-entry.
+  constellation.reset(); constellationCursor = null;
+  if (typeof window !== 'undefined') window.__cosmosConstellation = {
+    get: () => ({ ...constellation.options, ...constellation.stats() }),
+    set: patch => ({ ...constellation.configure(patch) }),
+  };
   last = performance.now();
   requestAnimationFrame(loop);
 }
@@ -1000,6 +1023,9 @@ export function stopFlight() {
   activeWebs.clear(); webColorN = 0; bloomWebId = null;
   returnRide = null; selected = null; hover = null; hoverWeb = null;
   leadVoice = null; stopAudio(); audibleIds = new Set(); rowActiveIds = new Set(); rowPrewarmIds = new Set();   // kill the cosmos-audio transport, mirroring the worker teardown
+  constellation.reset(); constellationCursor = null;   // no figure, no cursor and no dev handle survive an exit
+  if (typeof window !== 'undefined') delete window.__cosmosConstellation;
+  resetGridRowAuraSprites();   // glow textures (≤360 hue buckets) are rebuilt lazily — hand the memory back on exit
   if (skyDebugEl) skyDebugEl.style.display = 'none';   // dev overlay — hide, don't destroy (cheap to reuse on re-entry)
   if (audioLabEl) audioLabEl.hidden = true;
   if (ctx && cv) { ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0); ctx.clearRect(0, 0, W, H); }
@@ -2456,6 +2482,42 @@ function loop() {
       ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(p.s.x, p.s.y); ctx.stroke();
     }
   }
+  // ── note constellations (Order B): the connector slot — behind stars and glows, after `blots` are
+  // computed, so a bloom painted later correctly hides the lines passing behind it. Endpoints come from
+  // `placed`, NOT `proj`: `placed` is camera-relative world position including bloom-bubble deformation,
+  // so a line stays welded to its star through flight and through a bloom (a bloomed grid is simply a
+  // vertex at its bloom centre), and the renderer can clip at the near plane for notes sounding behind us.
+  if (constellation.options.enabled) {
+    const feed = gridRowReachedAttacks(constellationCursor);
+    const gap = constellationCursor === null ? Infinity : feed.now - constellationCursor;
+    const positionOf = grid => placed.get(grid) || null;   // camera-relative world, bloom deformation included
+    if (gap >= 0 && gap < CONSTELLATION_RESYNC_SECONDS && feed.attacks.length) {
+      const isInFigure = grid => constellation.inFigure(grid);
+      // Rule 5: coincident attacks across grids are routine here (all rows share one transport), so a
+      // simultaneous group is chained greedily by 3D world distance — nearest to the tip first, then
+      // nearest to THAT grid. Each group is ordered against the tip the previous group left behind, then
+      // ingested, so a multi-group frame is identical to feeding the attacks one at a time.
+      for (let i = 0; i < feed.attacks.length;) {
+        let j = i + 1;
+        while (j < feed.attacks.length && feed.attacks[j].when === feed.attacks[i].when) j++;
+        const group = feed.attacks.slice(i, j);
+        constellation.ingest(j - i === 1 ? group : chainCoincidentAttacks(group, constellation.tip, positionOf, isInFigure), feed.now);
+        i = j;
+      }
+    }
+    constellationCursor = feed.now;
+    // Rule 6 membership. rowActiveIds is the row field flight-view last INSTALLED (updateGridRowField
+    // above) — the most faithful "is in the row field" signal we hold. rowActivity would be the wrong
+    // set: visualState() skips a star with no live voice, so a still-active row star that is merely
+    // between notes would be torn out of the figure and its lines would flicker every rest.
+    constellation.retain(rowActiveIds, feed.now);
+    drawGridRowConstellation(ctx, constellation.edges(feed.now), {
+      positionOf, basis, focal, cx, cy, near: NEAR, fogAt,
+      // Read here rather than reusing the star loop's auraDetuneCents: this slot runs before it, and the
+      // lines must fold in the same live detune so their hues drift with the orbs on a modulation.
+      detuneCents: gridRowDetuneCents(), now: feed.now, drawIn: constellation.options.drawIn,
+    });
+  }
   drawAgents(basis);   // Collider-Battle ships (over the web, under the picking rings)
   // ── picking: as we draw, note the star/node nearest the cursor and the pinned selection's live pos ──
   const havePtr = mouseX >= 0;
@@ -2472,6 +2534,11 @@ function loop() {
   // (1/48 ≈ sub-perceptual) so ~1500 per-dot fills collapse to a few dozen. Colour is never quantised — the
   // dust→sun gradient is untouched. Only the tiny cores defer; they flush before the blots, so z-order holds.
   const dotBuckets = new Map();
+  // Aura batching, same idea one layer up. Glows are no longer interleaved with the stars: they are
+  // collected here and flushed in ONE additive pass (below, and again per bloom) so overlapping notes ADD
+  // light instead of each greying the one behind it. Additive blending is order-independent, so the glows
+  // need no painter's order of their own. One batch serves both passes — flush() empties it.
+  const auras = createGridRowAuraBatch();
   for (const { z, s } of order) {
     const fog = fogAt(s.z); if (fog <= 0) continue;
     // Cache projected motion even while a star is occluded so uncovering it cannot produce a stale,
@@ -2510,7 +2577,7 @@ function loop() {
       }
     }
     const activity = rowActivity.get(z.grid);
-    if (activity && !bloomed.has(z.grid)) drawGridRowAura(ctx, s, r, fog, activity, auraDetuneCents);
+    if (activity && !bloomed.has(z.grid)) auras.add(s, r, fog, activity, auraDetuneCents);   // deferred → additive flush
     if (travelGlow > 0.01 && travelStarColor) {                // route-energy halo around unfinished stars
       const haloR = r * (2.4 + travelGlow * 2.2);
       const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, haloR);
@@ -2532,6 +2599,7 @@ function loop() {
     // circle win over a nearer star actually under the cursor. No z-comparison needed; draw order IS depth order.
     if (havePtr) { const dx = s.x - mouseX, dy = s.y - mouseY, d2 = dx * dx + dy * dy, hit = r + STAR_HIT; if (d2 <= hit * hit) { pickStarD2 = d2; pickStar = { kind: 'star', grid: z.grid, z, x: s.x, y: s.y, r }; } }
   }
+  auras.flush(ctx);   // additive glow pass — BEFORE the cores, so every star still shines through its own light
   // one fill per (colour, alpha-band) instead of one per star — the steady-state main-thread win
   for (const b of dotBuckets.values()) { ctx.globalAlpha = b.a; ctx.fillStyle = b.col; ctx.fill(b.path); }
   ctx.globalAlpha = 1;
@@ -2644,9 +2712,15 @@ function loop() {
       }
     }
 
+    // Node auras batch per bloom at node scale, flushed here so they still sit BENEATH the node dots —
+    // one additive pass instead of one veiling orb per node, which matters most exactly where nodes are
+    // dense and their glows overlap hardest.
+    if (nodeSources) {
+      for (const { p, sp, fog, r } of renderedNodes) { const src = nodeSources.get(p.key); if (src) auras.add(sp, r, fog, src, auraDetuneCents); }
+      auras.flush(ctx);
+    }
     // Rhythm nodes remain above the Web detail so every connected rhythm stays legible and clickable.
     for (const { p, pi, sp, fog, a0, r } of renderedNodes) {
-      if (nodeSources) { const src = nodeSources.get(p.key); if (src) drawGridRowAura(ctx, sp, r, fog, src, auraDetuneCents); }
       ctx.globalAlpha = a0; ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, 7); ctx.fill();
       if (p.dense) { ctx.globalAlpha = a0 * 0.5; ctx.strokeStyle = p.col; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sp.x, sp.y, r + 1.6, 0, 7); ctx.stroke(); }
       const nid = g + ':' + pi;
