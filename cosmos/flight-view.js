@@ -33,6 +33,7 @@ import { toAudioListenerPosition } from './spatial-audio-frame.js';
 import { drawGridRowAura } from './grid-row-aura.js';
 import { buildRhythmInspectorModel, lightRhythmMetrics } from './rhythm-inspector-model.js';
 import { shouldScheduleRowAction } from './spatial-grid-row-player.js';
+import { DEFAULT_GRAVITY_OPTIONS, gravityWindowWeight } from './gravity-core.js';
 import { SolverWorkerPool } from './cosmos/solver-worker-pool.js';
 import { QUALITY_ORDER, detectDefaultTier, devicePoolMax, resolveTier } from './cosmos-quality.js';
 // Full Sky (cosmos/docs/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
@@ -189,6 +190,13 @@ let   swarm = null;
 // to dark, not a hard-edged tube. Set per placement in ensureFlight.
 let FOG_NEAR = 3500, FOG_FAR = 13000, placement = 'spine';
 const fogAt = vz => Math.max(0, Math.min(1, 1 - (vz - FOG_NEAR) / (FOG_FAR - FOG_NEAR)));
+function gravityWebVisibility(position) {
+  const activation = gravityRenderer?.activation || 0;
+  if (!(activation > 0) || !position) return 1;
+  const distance = Math.hypot(position[0], position[1], position[2]);
+  const weight = gravityWindowWeight(distance);
+  return Math.max(0, 1 - activation * weight);
+}
 
 // ── cosmos-audio spatialization mapping: distance (view-depth z) → gain/register for the lead voice ──
 const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -206,6 +214,14 @@ const AUDIBLE_MARGIN = 4;     // hysteresis: a currently-audible star stays audi
 const distCutoff = z => mapRange(z, FOG_NEAR, FOG_FAR, 8000, 600);   // near→open, far→muffled lowpass (Hz)
 let audibleIds = new Set();   // current audible-set membership, for the hysteresis above
 let bedMembershipAt = -Infinity, bedRootKey = -1;   // bed membership runs on cause, not per frame (see the block)
+
+// G-gravity production integration. The worker retains enough capacity for the radius-six bubble plus a
+// short spring-return wake while the player flies. This is deliberately not a quality-tier knob: the force
+// law and body population stay identical on every device, and the measured 925-body core step is sub-ms.
+const GRAVITY_CAPACITY = 2048;
+const GRAVITY_SYNC_INTERVAL_MS = 160;
+const GRAVITY_SYNC_RADIUS = DEFAULT_GRAVITY_OPTIONS.windowOuter + CELL * 0.5;
+const GRAVITY_RETURN_EPSILON = 0.05;
 
 // The bed's POSE for one star: view-relative stereo placement + distance-derived loudness/brightness. Split
 // out because both the membership pass and the per-frame pose pass must derive it identically.
@@ -324,6 +340,97 @@ class WebRenderer {
   terminate() { if (this.closed) return; this._failAll('Web worker terminated.'); this.worker.terminate(); }
 }
 
+// Gravity uses the same newest-frame backpressure pattern as the Web renderer. Two fixed transfer
+// buffers ping-pong so the last completed offsets remain readable while the worker advances the next
+// frame; the simulation's own Float64 typed arrays never leave the worker.
+class GravityRenderer {
+  constructor(url, capacity = GRAVITY_CAPACITY) {
+    this.capacity = capacity;
+    this.worker = new Worker(url, { type: 'module' });
+    this.worker.onmessage = event => this._message(event.data || {});
+    this.worker.onerror = event => {
+      event.preventDefault?.();
+      console.warn('[cosmos gravity worker]', event.message || event);
+      this.closed = true; this.busy = false;
+    };
+    this.display = new Float32Array(capacity * 3);
+    this.transfer = new Float32Array(capacity * 3);
+    this.displayIndex = new Map();
+    this.syncedIds = new Set();
+    this.revisionIndexes = new Map();
+    this.revision = 0;
+    this.busy = false; this.latestFrame = null; this.closed = false;
+    this.activation = 0; this.strength = 0; this.clampEngagements = 0;
+    this.worker.postMessage({ type: 'init', capacity, options: DEFAULT_GRAVITY_OPTIONS });
+  }
+  sync(bodies) {
+    if (this.closed) return;
+    const ordered = [...bodies].sort((a, b) => a.id - b.id).slice(0, this.capacity);
+    const count = ordered.length;
+    const ids = new Int32Array(count), rest = new Float64Array(count * 3);
+    const sizes = new Float32Array(count), pins = new Uint8Array(count), axes = new Float32Array(count * 3);
+    const index = new Map();
+    for (let i = 0; i < count; i++) {
+      const body = ordered[i], base = i * 3;
+      ids[i] = body.id; index.set(body.id, i);
+      rest[base] = body.rest[0]; rest[base + 1] = body.rest[1]; rest[base + 2] = body.rest[2];
+      sizes[i] = body.size; pins[i] = body.pinned ? 1 : 0;
+      axes[base] = body.spinAxis[0]; axes[base + 1] = body.spinAxis[1]; axes[base + 2] = body.spinAxis[2];
+    }
+    const revision = ++this.revision;
+    this.syncedIds = new Set(index.keys());
+    this.revisionIndexes.set(revision, index);
+    while (this.revisionIndexes.size > 4) this.revisionIndexes.delete(this.revisionIndexes.keys().next().value);
+    this.worker.postMessage({ type: 'sync', revision, ids, rest, sizes, pins, axes },
+      [ids.buffer, rest.buffer, sizes.buffer, pins.buffer, axes.buffer]);
+  }
+  frame(frame) {
+    if (this.closed) return;
+    this.latestFrame = frame;
+    if (!this.busy && this.transfer) this._sendFrame();
+  }
+  _sendFrame() {
+    if (!this.latestFrame || !this.transfer || this.closed) return;
+    const frame = this.latestFrame; this.latestFrame = null; this.busy = true;
+    const buffer = this.transfer.buffer; this.transfer = null;
+    this.worker.postMessage({ type: 'frame', ...frame, buffer }, [buffer]);
+  }
+  _message(message) {
+    if (message.type === 'error') { console.warn('[cosmos gravity worker]', message.error); return; }
+    if (message.type !== 'frameDone') return;
+    this.busy = false;
+    const returned = new Float32Array(message.buffer);
+    const index = this.revisionIndexes.get(message.revision);
+    if (!message.error && index) {
+      const oldDisplay = this.display;
+      this.display = returned; this.displayIndex = index; this.transfer = oldDisplay;
+      this.activation = message.activation || 0;
+      this.strength = message.strength || 0;
+      this.clampEngagements = message.clampEngagements || 0;
+    } else {
+      this.transfer = returned;
+      if (message.error) console.warn('[cosmos gravity frame]', message.error);
+    }
+    this._sendFrame();
+  }
+  hasBody(grid) { return this.syncedIds.has(grid); }
+  hasDisplay(grid) { return this.displayIndex.has(grid); }
+  offsetMagnitude(grid) {
+    const index = this.displayIndex.get(grid); if (index == null) return Infinity;
+    const base = index * 3;
+    return Math.hypot(this.display[base], this.display[base + 1], this.display[base + 2]);
+  }
+  addOffset(grid, point) {
+    const index = this.displayIndex.get(grid); if (index == null) return point;
+    const base = index * 3;
+    return [point[0] + this.display[base], point[1] + this.display[base + 1], point[2] + this.display[base + 2]];
+  }
+  terminate() {
+    if (this.closed) return;
+    this.closed = true; this.busy = false; this.latestFrame = null; this.worker.terminate();
+  }
+}
+
 // ── vec helpers ──
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -432,6 +539,43 @@ function toggleMNWeb(id, base, srcGrid) {
 //  • dynamic (MN): infinite family, so members = the current LOD stars divisible by base, rebuilt on a
 //    cadence → the web flows endlessly with the camera (smart LOD).
 const cameraAbsolute = () => { const c = macroCell(cam.anchor), s = macroScale(); return [c[0] * s + cam.off[0], c[1] * s + cam.off[1], c[2] * s + cam.off[2]]; };
+
+function gravityRestPosition(grid) {
+  const cell = macroCell(grid), scale = macroScale(), hash = backboneHash(grid);
+  return [cell[0] * scale + hash[0], cell[1] * scale + hash[1], cell[2] * scale + hash[2]];
+}
+
+function collectGravityBodies(cameraWorld) {
+  if (!gravityRenderer || placement !== 'hilbert') return [];
+  const candidates = [];
+  for (const z of cosmos.zones.values()) {
+    const rest = gravityRestPosition(z.grid);
+    const distance = Math.hypot(rest[0] - cameraWorld[0], rest[1] - cameraWorld[1], rest[2] - cameraWorld[2]);
+    const inside = distance <= GRAVITY_SYNC_RADIUS;
+    const retained = gravityRenderer.hasBody(z.grid) &&
+      (!gravityRenderer.hasDisplay(z.grid) || gravityRenderer.offsetMagnitude(z.grid) > GRAVITY_RETURN_EPSILON);
+    if (!inside && !retained) continue;
+    if (z._gravitySizeEstimate == null) z._gravitySizeEstimate = approximateStarSize(z.divisors || factorInfo(z.grid).divisors);
+    candidates.push({
+      id: z.grid,
+      rest,
+      size: z.state === 'solved' ? z.size : z._gravitySizeEstimate,
+      pinned: bloomed.has(z.grid),
+      spinAxis: z.slotDir,
+      distance,
+      priority: inside ? 0 : 1,
+    });
+  }
+  candidates.sort((a, b) => a.priority - b.priority || a.distance - b.distance || a.id - b.id);
+  return candidates.slice(0, GRAVITY_CAPACITY);
+}
+
+function syncGravity(now, cameraWorld) {
+  if (!gravityRenderer || placement !== 'hilbert') return;
+  if (!gravitySyncDirty && now - gravitySyncAt < GRAVITY_SYNC_INTERVAL_MS) return;
+  gravitySyncAt = now; gravitySyncDirty = false;
+  gravityRenderer.sync(collectGravityBodies(cameraWorld));
+}
 
 function cancelWebReturn(status = 'ride cancelled') {
   const webId = returnRide?.webId || (selected?.kind === 'web' ? selected.webId : null);
@@ -617,6 +761,7 @@ function drawAgents(basis) {
 }
 
 let cv, ctx, hud, cosmos, pool, cam, webCanvas = null, webRenderer = null, webRouteGeneration = 0;
+let gravityRenderer = null, gravitySyncAt = -Infinity, gravitySyncDirty = true, gravityLastTick = 0, gravityDebugHold = false;
 let webZoneAdded = [], webZoneRemoved = [], keys = {}, W = 0, H = 0, cx = 0, cy = 0, focal = 800, last = 0, started = false, bound = false;
 let hbLast = 0, hbPlans = 0, hbShards = 0, hbSolved = 0;   // per-second solve-progress heartbeat
 // Picking state. Cursor is tracked in CSS px (canvas-relative for hit-tests, client for the tooltip).
@@ -934,17 +1079,22 @@ export function ensureFlight(canvas, hudEl) {
   webCanvas = previousWebCanvas.cloneNode(false); previousWebCanvas.replaceWith(webCanvas);
   if (!webCanvas.transferControlToOffscreen) throw new Error('Cosmos Webs require OffscreenCanvas support.');
   webZoneAdded = []; webZoneRemoved = []; webRouteGeneration++;
-  webRenderer = new WebRenderer(new URL('./cosmos/web-render-worker.js?v=2', import.meta.url), webCanvas, placement, message => {
+  webRenderer = new WebRenderer(new URL('./cosmos/web-render-worker.js?v=3', import.meta.url), webCanvas, placement, message => {
     hoverWeb = message.hover || null;
     for (const [id, visibleNodes, localNodes] of message.counts || []) {
       const web = activeWebs.get(id); if (web) { web.visibleNodes = visibleNodes; web.localNodes = localNodes; }
     }
     if (message.error) console.warn('[cosmos Web frame]', message.error);
   });
+  gravityRenderer = placement === 'hilbert'
+    ? new GravityRenderer(new URL('./cosmos/gravity-worker.js?v=1', import.meta.url))
+    : null;
+  gravityDebugHold = new URLSearchParams(location.search).get('gravityHold') === '1';
+  gravitySyncAt = -Infinity; gravitySyncDirty = true; gravityLastTick = currentTicks();
   if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none';
   if (audioLabEl) audioLabEl.hidden = !audioLabOn;
   if (controlsEl) {
-    const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['arrows', 'steer'], ['scroll', 'dolly'],
+    const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['G', 'hold local gravity'], ['arrows', 'steer'], ['scroll', 'dolly'],
                   ['click star', 'bloom'], ['click node', 'inspect / apply'], ['click Web', 'inspect / return'],
                   ['Esc', 'cancel Web travel'], ['right-click', 'collapse'], ['1–0', 'toggle webs'],
                   ['Z', 'audio lab'], ['C', 'full sky debug'], ['T', 'audio clock table']];
@@ -955,8 +1105,8 @@ export function ensureFlight(canvas, hudEl) {
   // markFieldDirty: a spawned zone can enter the audible set and an evicted one must leave it, so both are
   // membership events even when the camera itself has not moved (the frontier streams in on its own).
   const zoneHooks = {
-    onZoneAdded: grid => { webZoneAdded.push(grid); markFieldDirty(); },
-    onZoneRemoved: grid => { webZoneRemoved.push(grid); markFieldDirty(); },
+    onZoneAdded: grid => { webZoneAdded.push(grid); gravitySyncDirty = true; markFieldDirty(); },
+    onZoneRemoved: grid => { webZoneRemoved.push(grid); gravitySyncDirty = true; markFieldDirty(); },
   };
   if (placement === 'hilbert') {
     // 3D-proximity frontier: spawn/evict by cell distance; grids rest at their own cells (no puffs).
@@ -994,6 +1144,8 @@ export function stopFlight() {
   if (rootCompiler) { rootCompiler.terminate(); rootCompiler = null; }
   rootSolvePending = false;
   if (webRenderer) { webRenderer.terminate(); webRenderer = null; }
+  if (gravityRenderer) { gravityRenderer.terminate(); gravityRenderer = null; }
+  gravitySyncAt = -Infinity; gravitySyncDirty = true; gravityLastTick = 0;
   webRouteGeneration++; webZoneAdded = []; webZoneRemoved = [];
   cosmos = null;
   bloomed.clear(); bloomCache.clear(); bloomPlanning.clear(); bloomInFlight = 0;
@@ -1012,6 +1164,7 @@ export function warpTo(G) {
   if (!isValid(G)) G = G < INDEX_COUNT - 1 ? G + 1 : G - 1;
   cam.anchor = G;
   cam.off = [0, 0, 0];
+  gravitySyncDirty = true;
   cosmos.setCamera(cam.anchor);
 }
 
@@ -1754,7 +1907,7 @@ function cachedAudioCompileEligibility(z) {
   return verdict;
 }
 
-function updateGridRowField(placed, basis, translated, nowMs) {
+function updateGridRowField(membershipPositions, posePositions, basis, translated, nowMs) {
   const root = currentSkyRoot(), policy = currentHarmonyPolicy();
   const selectionKey = harmonicSelectionKey(root, policy, ROW_CONSONANCE_CENTS);
   if (selectionKey !== rowSelectionKey) {
@@ -1773,9 +1926,9 @@ function updateGridRowField(placed, basis, translated, nowMs) {
   if (!runMembership) {
     const pose = [];
     for (const id of rowActiveIds) {
-      const position = placed.get(id);
-      if (!position) continue;       // evicted between passes — its zone hook already marked us dirty
-      const distance = Math.hypot(position[0], position[1], position[2]);
+      const resting = membershipPositions.get(id), position = posePositions.get(id);
+      if (!resting || !position) continue;       // evicted between passes — its zone hook already marked us dirty
+      const distance = Math.hypot(resting[0], resting[1], resting[2]);
       pose.push({ id, position: toAudioListenerPosition(position, basis), distance,
         gain: rowDistanceGain(distance), cutoff: rowDistanceCutoff(distance) });
     }
@@ -1786,10 +1939,11 @@ function updateGridRowField(placed, basis, translated, nowMs) {
   fieldSoftDirty = false;
   fieldMembershipAt = nowMs;
   const candidates = [];
-  for (const [grid, position] of placed) {
+  for (const [grid, resting] of membershipPositions) {
     const z = cosmos.zones.get(grid);
     if (!cachedAudioCompileEligibility(z).eligible) continue;
-    const distance = Math.hypot(position[0], position[1], position[2]);
+    const position = posePositions.get(grid); if (!position) continue;
+    const distance = Math.hypot(resting[0], resting[1], resting[2]);
     candidates.push({ id: grid, z, position, distance, ready: !!z._rowAudio?.program });
   }
   // ONE distance sort yields both prewarm and active. The active set used to be re-selected after
@@ -2211,6 +2365,15 @@ function loop() {
   }
   if (swarm && swarm.agents.length) swarm.update(dt, cam.anchor);
 
+  const gravityCameraWorld = placement === 'hilbert' ? cameraAbsolute() : null;
+  if (gravityRenderer && gravityCameraWorld) {
+    syncGravity(now, gravityCameraWorld);
+    const gravityTick = currentTicks();
+    const gravityTickRate = dt > 0 ? Math.max(0, (gravityTick - gravityLastTick) / dt) : 0;
+    gravityLastTick = gravityTick;
+    gravityRenderer.frame({ dt, held: !!keys.g || gravityDebugHold, center: gravityCameraWorld, tick: gravityTick, ticksPerSecond: gravityTickRate });
+  }
+
   ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
   ctx.clearRect(0, 0, W, H);
   const basis = camBasis();
@@ -2218,12 +2381,14 @@ function loop() {
   webRenderer?.frame({
     now, anchor: cam.anchor, off: [...cam.off], d: basis.d, r: basis.r, u: basis.u,
     mouseX, mouseY, cx, cy, focal, fogNear: FOG_NEAR, fogFar: FOG_FAR, tailFrac: webTailFrac,
+    gravity: gravityRenderer ? { activation: gravityRenderer.activation,
+      inner: DEFAULT_GRAVITY_OPTIONS.windowInner, outer: DEFAULT_GRAVITY_OPTIONS.windowOuter } : null,
   });
   phase('web');
 
   // bloom bookkeeping: drop any bloomed star that flew out of the world; keep the rest streaming their FULL
   // clouds (runtime priority-solves the most-recent click via setFocus; we stream all of them here).
-  for (const g of bloomed) if (!cosmos.zones.has(g)) { bloomed.delete(g); if (cosmos.focusGrid === g) cosmos.setFocus(null); }
+  for (const g of bloomed) if (!cosmos.zones.has(g)) { bloomed.delete(g); gravitySyncDirty = true; if (cosmos.focusGrid === g) cosmos.setFocus(null); }
   for (const g of bloomed) ensureFocusBloom(cosmos.zones.get(g));
   pumpBlooms();
   updateFilterUI();
@@ -2231,6 +2396,21 @@ function loop() {
   // undeformed world positions (bloom centres come from these — a bloom shouldn't move itself)
   const rpOf = new Map();
   for (const z of cosmos.zones.values()) rpOf.set(z.grid, renderPosCam(z, cam.anchor, cam.off));
+
+  // Gravity composes immediately after immutable/resting placement and before bloom deformation. The
+  // worker returns offsets only; convert them into this camera-relative frame and clamp the displaced
+  // point to the Hilbert cube walls. `rpOf` remains untouched for audio membership and root geography.
+  const gravityOf = new Map();
+  for (const z of cosmos.zones.values()) {
+    const resting = rpOf.get(z.grid);
+    let moved = gravityRenderer ? gravityRenderer.addOffset(z.grid, resting) : resting;
+    if (gravityCameraWorld && moved !== resting) {
+      const absolute = moved.map((value, axis) => value + gravityCameraWorld[axis]);
+      const clamped = clampHilbertWorld(absolute);
+      moved = clamped.map((value, axis) => value - gravityCameraWorld[axis]);
+    }
+    gravityOf.set(z.grid, moved);
+  }
 
   // Web-travel star lookahead. Sample only a short curved rail around the current ride position,
   // expressed camera-relative so it compares directly with rpOf without forming huge grid floats.
@@ -2253,9 +2433,9 @@ function loop() {
   // projection — the "black hole" screen disk. Near a cube wall, translate the whole deformation
   // envelope inward; contained blooms retain their exact natural centre and deform space normally.
   const bubbles = [];
-  const frameCameraWorld = placement === 'hilbert' ? cameraAbsolute() : null;
+  const frameCameraWorld = gravityCameraWorld;
   for (const g of bloomed) {
-    const rp = rpOf.get(g), data = bloomCache.get(g);
+    const rp = gravityOf.get(g), data = bloomCache.get(g);
     if (!rp || !data || !data.systems.length) continue;
     // rscale uses the FULL range (stable node positions); the footprint (deform bubble + blot) tracks the
     // outermost VISIBLE shell so filtering to low cardinalities shrinks the bubble/blot to match the cloud.
@@ -2279,7 +2459,7 @@ function loop() {
   const proj = new Map(), placed = new Map();
   for (const z of cosmos.zones.values()) {
     const ownBubble = bubbleOf.get(z.grid);
-    const base = ownBubble ? ownBubble.c : rpOf.get(z.grid);
+    const base = ownBubble ? ownBubble.c : gravityOf.get(z.grid);
     let rp = deforming ? deform(base, z.grid, bubbles) : base;
     // A second bloom may deform this centre after its initial wall fit. Recontain the visible sphere
     // without changing ordinary interior deformation.
@@ -2375,6 +2555,10 @@ function loop() {
   }
 
   const root = currentSkyRoot();
+  // Gravity must never change WHICH stars sound or their distance-derived gain/key. In the cube the
+  // membership pass therefore reads immutable resting positions, while the per-frame pose reads the
+  // fully displaced/deformed positions so only spatial direction follows the orbit.
+  const audioMembershipPositions = gravityRenderer ? rpOf : placed;
   // Full Sky: the ambient bed's audible set — EVERY solved zone with a degree pool is eligible (not
 // just bloomed/clicked stars, see cosmos/docs/FULL_SKY_HANDOFF.md), nearest AUDIBLE_N wins.
   // No lead required — this is the un-gated bed, live from cosmos entry (flight-boot.js's unlock).
@@ -2400,8 +2584,9 @@ function loop() {
     const skyCandidates = [];
     for (const z of cosmos.zones.values()) {
       if (!z.skyPool) continue;
-      const position = placed.get(z.grid); if (!position) continue;
-      skyCandidates.push({ z, position, distance: Math.hypot(position[0], position[1], position[2]) });
+      const resting = audioMembershipPositions.get(z.grid), position = placed.get(z.grid);
+      if (!resting || !position) continue;
+      skyCandidates.push({ z, position, distance: Math.hypot(resting[0], resting[1], resting[2]) });
     }
     skyCandidates.sort((a, b) => a.distance - b.distance);
     const skyWindow = skyCandidates.slice(0, AUDIBLE_N + AUDIBLE_MARGIN);
@@ -2420,14 +2605,15 @@ function loop() {
     // created or released — which is the entire point.
     const pose = [];
     for (const id of audibleIds) {
-      const position = placed.get(id); if (!position) continue;
-      pose.push({ id, ...skyPoseFor(position, Math.hypot(position[0], position[1], position[2]), basis) });
+      const resting = audioMembershipPositions.get(id), position = placed.get(id);
+      if (!resting || !position) continue;
+      pose.push({ id, ...skyPoseFor(position, Math.hypot(resting[0], resting[1], resting[2]), basis) });
     }
     setSkyPose(pose);
   }
 
   // translationRate is Infinity on an anchor hop; either way, only translation can change the selection.
-  updateGridRowField(placed, basis, translationRate > 0, now);
+  updateGridRowField(audioMembershipPositions, placed, basis, translationRate > 0, now);
   phase('field');
   drawCockpitPlot();
   drawChordReadout();
@@ -2481,7 +2667,7 @@ function loop() {
     if (!bloomed.has(z.grid) && occluded(s.x, s.y, s.z, z.grid)) continue;   // behind a black-hole blot → no draw, no click
     const dim = (bloomed.has(z.grid) && z._bloom && z._bloom.pts.length) ? 0.18 : 1;   // bloomed dot dissolves into its cloud
     const travelTarget = returnRide && z.state !== 'solved'
-      ? travelBloomWeight(rpOf.get(z.grid), travelStarSamples, travelStarRadius) : 0;
+      ? travelBloomWeight(gravityOf.get(z.grid), travelStarSamples, travelStarRadius) : 0;
     const glowRate = travelTarget > (z._travelGlow || 0) ? 10 : 4.5;
     z._travelGlow = (z._travelGlow || 0) + (travelTarget - (z._travelGlow || 0)) * (1 - Math.exp(-dt * glowRate));
     if (z._travelGlow < 0.002 && !returnRide) delete z._travelGlow;
@@ -2609,7 +2795,8 @@ function loop() {
         if (p._motherTag === undefined && indexKeys) p._motherTag = mtagOfKey(p.key) || null;
         return p._motherTag === bloomWeb.tag;
       });
-      if (matches.length) {
+      const webGravityFade = gravityWebVisibility(crp);
+      if (matches.length && webGravityFade > 0.01) {
         let hub = toScreen(crp, basis);
         if (!hub) {
           const sum = matches.reduce((acc, node) => [acc[0] + node.sp.x, acc[1] + node.sp.y], [0, 0]);
@@ -2619,7 +2806,7 @@ function loop() {
         ctx.save();
         ctx.strokeStyle = bloomWeb.color; ctx.fillStyle = bloomWeb.color; ctx.lineCap = 'round';
         ctx.lineWidth = 1.65;
-        ctx.globalAlpha = Math.max(0.12, 0.44 / Math.max(1, Math.log10(matches.length + 1))) * meanFog;
+        ctx.globalAlpha = Math.max(0.12, 0.44 / Math.max(1, Math.log10(matches.length + 1))) * meanFog * webGravityFade;
         ctx.beginPath();
         for (const node of matches) {
           ctx.moveTo(hub.x, hub.y); ctx.lineTo(node.sp.x, node.sp.y);
@@ -2632,7 +2819,7 @@ function loop() {
           }
         }
         ctx.stroke();
-        ctx.globalAlpha = 0.82 * meanFog;
+        ctx.globalAlpha = 0.82 * meanFog * webGravityFade;
         ctx.beginPath();
         for (const node of matches) {
           const beadR = Math.max(1.1, Math.min(2.2, node.r + 0.55));
@@ -2686,7 +2873,9 @@ function loop() {
     webHud = ` · ◈ ${chips}`;
   }
   const rideHud = returnRide ? ` · <span style="color:${activeWebs.get(returnRide.webId)?.color || 'var(--known)'}">↢ ${returnRide.destination === 'anchor' ? `grid ${returnRide.targetGrid.toLocaleString()}` : returnRide.destination} ${Math.round((activeWebs.get(returnRide.webId)?.rideProgress || 0) * 100)}%</span>` : '';
-  hud.innerHTML = `grid <b>${cam.anchor.toLocaleString()}</b>${focusHud}${webHud}${rideHud}`;
+  const gravityHud = gravityRenderer && (keys.g || gravityDebugHold || gravityRenderer.activation > 0.001)
+    ? ` · <span style="color:var(--known)">◎ gravity ${Math.round(gravityRenderer.activation * 100)}%</span>` : '';
+  hud.innerHTML = `grid <b>${cam.anchor.toLocaleString()}</b>${focusHud}${webHud}${rideHud}${gravityHud}`;
   // live solve queue → the help popup (only while open, so it's free when closed)
   if (helpPanelEl && liveEl && helpPanelEl.classList.contains('open')) {
     const errRow = (pool.errors || ev.errors) ? `<div class="help-kv"><span>errors</span><b style="color:#e88">${pool.errors + ev.errors}</b></div>` : '';
@@ -2741,7 +2930,7 @@ function bindControls() {
       const g = hover.grid, gz = cosmos.zones.get(g);
       if (gz && (gz.unsolvable || gz.monster)) { selected = hover; }   // frontier dust / monster → inspect only (monster has a SOLVE ANYWAY button)
       else {
-        if (!bloomed.has(g)) { if (gz) delete gz._bloom; bloomed.add(g); }   // fresh grow
+        if (!bloomed.has(g)) { if (gz) delete gz._bloom; bloomed.add(g); gravitySyncDirty = true; }   // fresh grow; open blooms pin under gravity
         cosmos.setFocus(g); ensureFocusBloom(gz); selected = hover;
       }
     } else if (hover && hover.kind === 'node') {
@@ -2763,6 +2952,7 @@ function bindControls() {
     const g = hover && hover.grid;
     if (g != null && bloomed.has(g)) {
       bloomed.delete(g);
+      gravitySyncDirty = true;
       const z = cosmos.zones.get(g); if (z) delete z._bloom;
       if (cosmos.focusGrid === g) cosmos.setFocus(null);
       if (selected && selected.grid === g) { selected = null; showDetail(null); }
@@ -2802,5 +2992,6 @@ function bindControls() {
     if (k.startsWith('arrow') || k === ' ') e.preventDefault();   // don't scroll the page
   });
   window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+  window.addEventListener('blur', () => { keys.g = false; });   // never strand gravity held when the tab loses focus
   window.addEventListener('resize', () => { if (cv) resize(); });
 }

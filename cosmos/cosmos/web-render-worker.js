@@ -6,6 +6,7 @@ import { setPlacement, macroCell, macroScale, backboneHash, CELL } from './spine
 import { hilbertEncode, SIDE } from './hilbert.js';
 import { buildWebGraph, familyMembers } from './web-graph.js';
 import { planFamilyGrids, monotonicWebPath, shortestWebPath, buildArcPath, unitDelta, rideDuration } from './web-return.js';
+import { gravityWindowWeight } from '../gravity-core.js';
 
 const WEB_K = 3, WEB_BUCKET = 8, WEB_LINE_W = 2, WEB_STRAND_A = 0.3, WEB_HIT = 9;
 const WEB_REVEAL_FRAC = 0.75, WEB_ROUTE_MAX = 96, WEB_ROUTE_SUBDIV = 8, MN_REFRESH_MS = 200;
@@ -79,13 +80,20 @@ function render(frame) {
   const tailR2 = (frame.fogFar * frame.tailFrac) ** 2, tailKnee = tailR2 * 0.49;
   const distance2 = point => point[0] ** 2 + point[1] ** 2 + point[2] ** 2;
   const tailFade = value => value <= tailKnee ? 1 : Math.max(0, (tailR2 - value) / (tailR2 - tailKnee));
+  const gravityVisibility = value => {
+    const gravity = frame.gravity;
+    if (!gravity || !(gravity.activation > 0) || !(gravity.outer > gravity.inner)) return 1;
+    const weight = gravityWindowWeight(Math.sqrt(value), gravity.inner, gravity.outer);
+    return Math.max(0, 1 - gravity.activation * weight);
+  };
   let hover = null, pickD2 = WEB_HIT * WEB_HIT;
 
   const drawEdge = (web, aGrid, bGrid) => {
     const ar = gridRelative(aGrid), br = gridRelative(bGrid), ad = distance2(ar), bd = distance2(br);
     if (ad > tailR2 && bd > tailR2) return;
     const a = toScreen(ar), b = toScreen(br); if (!a || !b) return;
-    const fade = Math.min(fogAt(a.z), fogAt(b.z)) * Math.min(tailFade(ad), tailFade(bd)); if (fade <= 0) return;
+    const gravityFade = (gravityVisibility(ad) + gravityVisibility(bd)) * 0.5;
+    const fade = Math.min(fogAt(a.z), fogAt(b.z)) * Math.min(tailFade(ad), tailFade(bd)) * gravityFade; if (fade <= 0.01) return;
     const selected = selectedId === web.tag;
     ctx.lineWidth = selected ? WEB_LINE_W * 1.8 : WEB_LINE_W;
     ctx.globalAlpha = (selected ? 0.68 : WEB_STRAND_A) * fade;
@@ -98,7 +106,7 @@ function render(frame) {
   const drawBead = (web, grid) => {
     const relative = gridRelative(grid), d2 = distance2(relative); if (d2 > tailR2) return;
     const screen = toScreen(relative); if (!screen) return;
-    const fade = fogAt(screen.z) * tailFade(d2); if (fade <= 0) return;
+    const fade = fogAt(screen.z) * tailFade(d2) * gravityVisibility(d2); if (fade <= 0.01) return;
     const selected = selectedId === web.tag;
     ctx.globalAlpha = (selected ? 0.88 : 0.6) * fade;
     ctx.beginPath(); ctx.arc(screen.x, screen.y, WEB_LINE_W * (selected ? 1.55 : 1.1), 0, 7); ctx.fill();
@@ -137,10 +145,10 @@ function render(frame) {
     const web = webs.get(routePath.webId), points = [...routePath.path.points, routePath.homePoint];
     if (web) {
       ctx.strokeStyle = web.color; ctx.lineWidth = WEB_LINE_W * 2.2; ctx.lineCap = 'round';
-      let previousView = null;
+      let previousView = null, previousGravityFade = 1;
       for (const point of points) {
         const relative = [point[0] - cameraAbsolute[0], point[1] - cameraAbsolute[1], point[2] - cameraAbsolute[2]];
-        const view = toView(relative);
+        const view = toView(relative), pointGravityFade = gravityVisibility(distance2(relative));
         if (previousView && (previousView.z > WEB_ROUTE_CAMERA_EPS || view.z > WEB_ROUTE_CAMERA_EPS)) {
           let a = previousView, b = view;
           // Travel strands persist to the camera itself, rather than using the normal 5-unit render
@@ -155,11 +163,11 @@ function render(frame) {
           if (as && bs) {
             // A segment remains readable while either endpoint is within fog; it disappears only
             // once both ends are behind the player or beyond the forward visibility envelope.
-            const fade = Math.max(fogAt(as.z), fogAt(bs.z));
+            const fade = Math.max(fogAt(as.z), fogAt(bs.z)) * (previousGravityFade + pointGravityFade) * 0.5;
             if (fade > 0) { ctx.globalAlpha = 0.76 * fade; ctx.beginPath(); ctx.moveTo(as.x, as.y); ctx.lineTo(bs.x, bs.y); ctx.stroke(); }
           }
         }
-        previousView = view;
+        previousView = view; previousGravityFade = pointGravityFade;
       }
 
       // Travel waypoints use an unmistakable diamond + core instead of the normal tiny Web bead.
@@ -169,7 +177,7 @@ function render(frame) {
       for (let i = 0; i < routePath.grids.length; i++) {
         const grid = routePath.grids[i], relative = gridRelative(grid), screen = toScreen(relative);
         if (!screen) continue;
-        const fade = fogAt(screen.z); if (fade <= 0) continue;
+        const fade = fogAt(screen.z) * gravityVisibility(distance2(relative)); if (fade <= 0.01) continue;
         const home = i === routePath.grids.length - 1, radius = home ? 6.5 : 5;
         ctx.globalAlpha = (home ? 1 : 0.88) * fade;
         ctx.fillStyle = web.color; ctx.strokeStyle = web.color; ctx.lineWidth = home ? 2 : 1.4;

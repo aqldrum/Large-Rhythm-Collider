@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cosmos Gravity Lab</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink:#f4f0ff; --muted:#a19ab9; --panel:#111020; --line:#34304b;
+      --violet:#a77cff; --cyan:#72f5ec; --gold:#ffd36d; --rose:#ff7196; --bg:#080711;
+    }
+    * { box-sizing:border-box; }
+    html,body { margin:0; min-height:100%; background:var(--bg); color:var(--ink); }
+    body { font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-x:hidden; }
+    body::before { content:""; position:fixed; inset:0; pointer-events:none; background:radial-gradient(circle at 55% -20%,rgba(111,74,210,.28),transparent 46%),radial-gradient(circle at 0 70%,rgba(14,118,134,.13),transparent 38%); }
+    main { position:relative; width:min(1680px,calc(100% - 28px)); margin:24px auto 54px; }
+    header { display:flex; justify-content:space-between; align-items:end; gap:24px; margin-bottom:16px; }
+    h1 { margin:0; font:650 clamp(25px,4vw,43px)/1 system-ui,sans-serif; letter-spacing:-.045em; }
+    header p { max-width:780px; margin:9px 0 0; color:var(--muted); }
+    kbd { padding:2px 7px; border:1px solid #615a7a; border-bottom-width:3px; border-radius:5px; background:#1a172a; color:white; }
+    .status-pill { flex:none; padding:8px 12px; border:1px solid var(--line); border-radius:999px; color:var(--muted); background:rgba(17,16,32,.8); }
+    .status-pill.live { color:var(--cyan); border-color:var(--cyan); box-shadow:0 0 24px rgba(114,245,236,.15); }
+    .workspace { display:grid; grid-template-columns:minmax(0,1fr) 345px; gap:14px; align-items:start; }
+    .stage,.side,.readouts,.source-controls { border:1px solid var(--line); background:rgba(17,16,32,.88); border-radius:14px; box-shadow:0 18px 60px rgba(0,0,0,.22); }
+    .stage { position:relative; min-height:680px; overflow:hidden; background:radial-gradient(circle at 50% 45%,#111329 0,#080811 64%); }
+    canvas { display:block; width:100%; height:680px; cursor:grab; touch-action:none; }
+    canvas.dragging { cursor:grabbing; }
+    .stage-help { position:absolute; left:14px; bottom:12px; color:#77718d; font-size:10px; pointer-events:none; }
+    .legend { position:absolute; top:13px; left:14px; display:flex; flex-wrap:wrap; gap:10px; color:#8d87a1; font-size:10px; pointer-events:none; }
+    .legend i { display:inline-block; width:7px; height:7px; margin-right:5px; border-radius:50%; vertical-align:1px; }
+    .hold-button { position:absolute; right:16px; bottom:16px; width:104px; height:104px; border:1px solid #745db2; border-radius:50%; background:radial-gradient(circle at 35% 30%,#3f2d6e,#171225 68%); color:white; font:700 26px/1 system-ui,sans-serif; cursor:pointer; user-select:none; box-shadow:0 8px 30px rgba(0,0,0,.35); }
+    .hold-button.active { border-color:var(--cyan); color:var(--cyan); transform:scale(.97); box-shadow:0 0 36px rgba(114,245,236,.24); }
+    .hold-button small { display:block; margin-top:6px; color:#9289aa; font:9px/1 monospace; letter-spacing:.1em; text-transform:uppercase; }
+    .side { padding:13px; max-height:680px; overflow:auto; }
+    .source-controls { display:grid; grid-template-columns:repeat(5,minmax(110px,1fr)) auto; gap:10px; padding:12px; margin-bottom:14px; }
+    label { display:grid; gap:5px; color:var(--muted); font-size:10px; letter-spacing:.025em; }
+    input,select,button { font:inherit; }
+    input[type=number],select { width:100%; min-width:0; padding:8px 9px; border:1px solid #46405f; border-radius:7px; background:#090813; color:var(--ink); }
+    button.action { align-self:end; min-height:34px; padding:8px 12px; border:1px solid #594e78; border-radius:7px; background:#211a37; color:var(--ink); cursor:pointer; }
+    button.action:hover { border-color:var(--violet); }
+    .control-group + .control-group { margin-top:18px; padding-top:15px; border-top:1px solid #2a273c; }
+    .control-group h2 { margin:0 0 11px; font:650 12px/1 system-ui,sans-serif; letter-spacing:.04em; text-transform:uppercase; color:#d9d2eb; }
+    .range { margin-bottom:11px; }
+    .range-head { display:flex; justify-content:space-between; gap:10px; }
+    .range output { color:var(--cyan); }
+    input[type=range] { width:100%; accent-color:var(--violet); }
+    .axis-row { display:grid; grid-template-columns:1fr 1fr; gap:9px; align-items:end; }
+    .actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .export { grid-column:1/-1; }
+    #export-output { display:none; margin:10px 0 0; padding:10px; max-height:180px; overflow:auto; white-space:pre-wrap; border:1px solid #39334e; border-radius:7px; background:#080711; color:#c4f7ee; font-size:10px; }
+    .readouts { display:grid; grid-template-columns:repeat(7,minmax(120px,1fr)); gap:1px; margin-top:14px; overflow:hidden; background:var(--line); }
+    .metric { min-height:71px; padding:11px 12px; background:#0e0d19; }
+    .metric span { display:block; margin-bottom:4px; color:#817a96; font-size:9px; text-transform:uppercase; letter-spacing:.08em; }
+    .metric b { font-size:15px; font-weight:600; }
+    .metric.alert b { color:var(--rose); }
+    @media (max-width:1050px) {
+      .workspace { grid-template-columns:1fr; }
+      .side { max-height:none; }
+      .source-controls { grid-template-columns:repeat(3,1fr); }
+      .readouts { grid-template-columns:repeat(3,1fr); }
+    }
+    @media (max-width:620px) {
+      main { width:min(100% - 16px,1680px); margin-top:14px; }
+      header { align-items:start; flex-direction:column; }
+      .source-controls { grid-template-columns:1fr 1fr; }
+      .readouts { grid-template-columns:1fr 1fr; }
+      .stage,canvas { min-height:560px; height:560px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Gravity / force-law lab</h1>
+      <p>A real Hilbert neighbourhood under abundance-as-mass gravity. Hold <kbd>G</kbd> or the gravity button; drag the field to rotate it, and scroll to zoom. Ghosts mark every star’s resting position.</p>
+    </div>
+    <div id="status" class="status-pill">gravity idle</div>
+  </header>
+
+  <section class="source-controls" aria-label="Lab source controls">
+    <label>centre grid <input id="centre-grid" type="number" min="1" max="16777215" step="1" value="1000000"></label>
+    <label>radius (cells) <input id="radius" type="number" min="2" max="6" step="1" value="5"></label>
+    <label>ticks / second <input id="tick-rate" type="number" min="0" max="120" step="1" value="10"></label>
+    <label>session age (seconds) <input id="session-age" type="number" min="0" max="10000000" step="1" value="0"></label>
+    <label>camera scale <input id="camera-scale" type="number" min="0.05" max="2" step="0.05" value="0.28"></label>
+    <button id="rebuild" class="action" type="button">Build neighbourhood</button>
+  </section>
+
+  <div class="workspace">
+    <section class="stage">
+      <canvas id="view" aria-label="Three-dimensional gravity simulation"></canvas>
+      <div class="legend"><span><i style="background:#ffd36d"></i>attractor</span><span><i style="background:#72f5ec"></i>body</span><span><i style="border:1px solid #70698a"></i>rest ghost</span><span><i style="background:#ff7196"></i>beyond window</span></div>
+      <div class="stage-help">drag: orbit camera · wheel: zoom · bubble sliders move gravity without moving the stars</div>
+      <button id="gravity-button" class="hold-button" type="button">G<small>hold gravity</small></button>
+    </section>
+
+    <aside class="side">
+      <section class="control-group">
+        <h2>Force and launch</h2>
+        <label class="range"><span class="range-head"><span>strength ceiling</span><output data-for="strengthCeiling"></output></span><input data-option="strengthCeiling" type="range" min="100000" max="6000000" step="100000" value="2000000"></label>
+        <label class="range"><span class="range-head"><span>ramp time</span><output data-for="rampTime"></output></span><input data-option="rampTime" type="range" min="1" max="30" step="0.5" value="5"></label>
+        <label class="range"><span class="range-head"><span>spin-up time</span><output data-for="spinUpTime"></output></span><input data-option="spinUpTime" type="range" min="0.1" max="3" step="0.1" value="1"></label>
+        <label class="range"><span class="range-head"><span>softening</span><output data-for="softening"></output></span><input data-option="softening" type="range" min="10" max="300" step="5" value="110"></label>
+        <label class="range"><span class="range-head"><span>pointer blend</span><output data-for="pointerBlend"></output></span><input data-option="pointerBlend" type="range" min="0" max="1" step="0.01" value="0.22"></label>
+        <div class="axis-row">
+          <label>axis mode <select id="axis-mode" data-option="axisMode"><option value="per-star">per-star</option><option value="shared">shared world-up</option></select></label>
+          <label class="range"><span class="range-head"><span>attractors</span><output data-for="attractorCount"></output></span><input data-option="attractorCount" type="range" min="1" max="64" step="1" value="24"></label>
+        </div>
+      </section>
+
+      <section class="control-group">
+        <h2>Mass and return</h2>
+        <label class="range"><span class="range-head"><span>mass exponent p</span><output data-for="massExponent"></output></span><input data-option="massExponent" type="range" min="0.05" max="0.8" step="0.01" value="0.32"></label>
+        <label class="range"><span class="range-head"><span>inner window (cells)</span><output id="inner-window-value"></output></span><input id="inner-window" type="range" min="1" max="6" step="0.1" value="4"></label>
+        <label class="range"><span class="range-head"><span>outer window (cells)</span><output id="outer-window-value"></output></span><input id="outer-window" type="range" min="2" max="8" step="0.1" value="6"></label>
+        <label class="range"><span class="range-head"><span>spring time</span><output data-for="springTime"></output></span><input data-option="springTime" type="range" min="0.2" max="1.5" step="0.05" value="0.65"></label>
+      </section>
+
+      <section class="control-group">
+        <h2>Move the bubble (cells)</h2>
+        <label class="range"><span class="range-head"><span>x</span><output data-slide-for="x">0.0</output></span><input data-slide="x" type="range" min="-10" max="10" step="0.1" value="0"></label>
+        <label class="range"><span class="range-head"><span>y</span><output data-slide-for="y">0.0</output></span><input data-slide="y" type="range" min="-10" max="10" step="0.1" value="0"></label>
+        <label class="range"><span class="range-head"><span>z</span><output data-slide-for="z">0.0</output></span><input data-slide="z" type="range" min="-10" max="10" step="0.1" value="0"></label>
+      </section>
+
+      <section class="control-group actions">
+        <button id="reset" class="action" type="button">Reset motion</button>
+        <button id="reset-controls" class="action" type="button">Default controls</button>
+        <button id="export" class="action export" type="button">Export constants</button>
+        <pre id="export-output"></pre>
+      </section>
+    </aside>
+  </div>
+
+  <section class="readouts" aria-label="Simulation readouts">
+    <div class="metric"><span>bodies</span><b id="body-count">—</b></div>
+    <div class="metric"><span>step mean / worst</span><b id="step-time">—</b></div>
+    <div class="metric"><span>largest offset</span><b id="largest-offset">—</b></div>
+    <div id="clamp-metric" class="metric"><span>clamp engagements</span><b id="clamps">—</b></div>
+    <div class="metric"><span>beyond window</span><b id="beyond">—</b></div>
+    <div class="metric"><span>angular momentum |L|</span><b id="angular">—</b></div>
+    <div class="metric"><span>coupling</span><b id="coupling">—</b></div>
+  </section>
+</main>
+<script type="module" src="./gravity-lab.js"></script>
+</body>
+</html>
