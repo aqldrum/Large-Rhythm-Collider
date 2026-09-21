@@ -184,12 +184,15 @@ check('chord voicing rides the AUDIO clock, so a chord change is not gated by th
 // The logical budget is freed the instant a voice is released, ~2.55s before its oscillator actually stops —
 // deliberately, so a release tail cannot starve incoming voices. That is precisely why it cannot be the
 // ceiling on live nodes, and why a second, real count is needed.
+// The live count is now charged by the voice's ACTUAL source cost (a multi-oscillator palette costs more
+// than one), so the hard ceiling bounds real nodes regardless of timbre — the admission still gates on both
+// the logical musical-voice budget and the real-source ceiling before any graph is built.
 check('there are TWO counts: the eagerly-freed logical budget and a hard ceiling on live oscillators',
   audioSrc.includes('const MAX_BED_LIVE_OSC = MAX_BED_OSC * 3') &&
-  audioSrc.includes('if (bedOscCount >= MAX_BED_OSC || bedLiveOscCount >= MAX_BED_LIVE_OSC)'));
-check('the live count is decremented only when the oscillator actually ENDS, not at release',
-  /onended = \(\) => \{\n\s*bedLiveOscCount = Math\.max\(0, bedLiveOscCount - 1\)/.test(audioSrc) &&
-  !/bedLiveOscCount = Math\.max\(0, bedLiveOscCount - 1\)[\s\S]{0,200}?const rel = immediate/.test(audioSrc));
+  audioSrc.includes('if (bedOscCount >= MAX_BED_OSC || bedLiveOscCount + plan.cost > MAX_BED_LIVE_OSC)'));
+check('the live count is decremented only when the oscillator actually ENDS (handle.onComplete), not at release',
+  /onComplete\(\(\) => \{\n\s*bedLiveOscCount = Math\.max\(0, bedLiveOscCount - v\.cost\)/.test(audioSrc) &&
+  !/bedLiveOscCount = Math\.max\(0, bedLiveOscCount - v\.cost\)[\s\S]{0,200}?const rel = immediate/.test(audioSrc));
 check('a refused voice is COUNTED — the pathology reports itself instead of the sound merely dying',
   audioSrc.includes('bedCounters.refused++') && audioSrc.includes('export function bedStats()'));
 check('both counts reset with the graph, in initAudio and stopAudio',

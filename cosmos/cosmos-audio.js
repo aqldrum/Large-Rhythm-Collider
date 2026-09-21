@@ -11,7 +11,7 @@ import { CHORDS, START_CHORD_ID, chooseNextChord, candidateCosts, pushTabu, chor
   RICHNESS_LEVELS, RICHNESS_LEVEL_MIN, RICHNESS_LEVEL_MAX, maxCardinalityForRichness } from './sky-walk.js';
 import { normalizeRootLadder, resetPhraseTracker, observePhraseBoundary, pushRecentRoot,
   classifyRootDestinations, rankModulationDestinations, decideRootAtBoundary } from './sky-modulation.js';
-import { AUDIO_MODES, RHYTHM_VOICE_WAVEFORM, ownerHarmonyMatch } from './cosmos-grid-audio-core.js';
+import { AUDIO_MODES, ownerHarmonyMatch } from './cosmos-grid-audio-core.js';
 import { SpatialGridRowPlayer, shouldScheduleRowAction } from './spatial-grid-row-player.js';
 import {
   DEFAULT_HARMONY_SOURCE, DEFAULT_HARMONY_TOLERANCE_CENTS, DEFAULT_SCALE_POLICY,
@@ -24,6 +24,13 @@ import { CosmosMidiOut } from './cosmos-midi-out.js';
 import { audioTelemetry } from './audio-telemetry.js';
 // The transport's pulse + how far ahead it commits. Off the main thread deliberately — see that header.
 import { TransportClock, TRANSPORT_TICK_MS, SCHEDULE_AHEAD_SECONDS } from './transport-clock.js';
+// The instrument seam: bed, audition (lead) and rows all render through one shared voice renderer built
+// from pure per-role recipes. This module is the composition root — it owns the SELECTED palette and the
+// role/pitch/timing each voice is scheduled with, injects the recipe into the row player, and keeps its
+// own MIDI/visual/exposure side-channels. It never inlines an oscillator graph or a patch catalog.
+import { getRecipe as instrumentRecipe, normalizeInstrumentId, DEFAULT_INSTRUMENT } from './instruments/instrument-presets.js';
+import { planVoice } from './instruments/voice-plan.js';
+import { createInstrumentVoice } from './instruments/instrument-voice.js';
 
 const ROOT_HZ = 220;             // Phase 0: one root for every voice (per-star root is a later phase)
 const LOOKAHEAD_MS = TRANSPORT_TICK_MS;      // scheduler tick cadence (the pulse now comes from a worker)
@@ -201,9 +208,12 @@ let leadFilter = null, leadReverbSend = null;   // lead round-off: one shared lo
 let masterVolume = null;          // VOLUME knob: master gain between muteGainNode and the safety limiter
 let lastVolume = MASTER_VOLUME_DEFAULT;   // persisted musical setting (readout + re-entry); node tracks it
 let lastSpace = SPACE_DEFAULT;    // persisted SPACE position; drives both reverb sends (see setSpace)
-let liveOscs = null;              // Set of live OscillatorNodes (capacity-capped)
-let leadVoices = null;            // Set of held/releasing rhythm-card voice records
+let leadLiveSources = 0;          // REAL lead source nodes still rendering (incl. release tails) — the capacity cap
+let leadVoices = null;            // Set of held/releasing rhythm-card voice records (also the teardown handle set)
 let leadLayerVoices = null;       // current scheduled voice for each A-D layer
+// The selected instrument palette. The composition root owns this one piece of state; the row player reads
+// it through the injected recipe accessor, and bed/audition read it directly when scheduling a voice.
+let selectedInstrument = DEFAULT_INSTRUMENT;
 let schedulerClock = null;        // TransportClock — the worker-driven pulse (see transport-clock.js)
 let mix = 0;                      // 0 = bed, 1 = rows; constant-power crossfade
 let auditionListening = true;     // audition bus on/off (independent of mix)
@@ -298,6 +308,21 @@ let bedLiveOscCount = 0;          // REAL oscillators still rendering (freed in 
 const bedCounters = { created: 0, released: 0, refused: 0 };
 let bedBus = null, reverbConv = null, reverbWet = null;   // bedBus -> muteGainNode (dry) and -> reverb -> muteGainNode (wet)
 
+// The selected palette's recipe for a role — the narrow accessor injected into the row player and read
+// directly by bed/audition. Reads live `selectedInstrument`, so a selection change is picked up by the
+// next scheduled voice with no extra plumbing (queued row voices already created keep their snapshot).
+function currentInstrumentRecipe(role) { return instrumentRecipe(selectedInstrument, role); }
+
+export function currentInstrument() { return selectedInstrument; }
+
+// Choose the palette. Unknown ids normalize to the safe default. This sets the state so subsequently
+// scheduled voices use it; the bounded, onset-free live transition for HELD bed/audition voices lands with
+// the rail wiring. It never resets transport, harmonic exposure, chord position, or rhythm programs.
+export function setInstrument(id) {
+  selectedInstrument = normalizeInstrumentId(id);
+  return selectedInstrument;
+}
+
 export function initAudio() {
   if (audioCtx && audioCtx.state !== 'closed') return;   // idempotent; also tolerates re-init after stopAudio()
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -361,7 +386,7 @@ export function initAudio() {
   const midiBridge = {
     note: (hz, when, seconds, gain) => cosmosMidi?.note(hz, when, seconds, { cents: totalDetuneCentsAt(when), gain }),
   };
-  gridRowPlayer = new SpatialGridRowPlayer(audioCtx, rowsGain, detuneBus, midiBridge, audioTelemetry);
+  gridRowPlayer = new SpatialGridRowPlayer(audioCtx, rowsGain, detuneBus, midiBridge, audioTelemetry, currentInstrumentRecipe);
   gridRowPlayer.setEnabled(true);   // always on — rowsGain handles the crossfade
   gridRowPlayer.setRowFundamental(rowFundamental);
   mix = 0; auditionListening = true; auditionPinned = false;
@@ -380,7 +405,8 @@ export function initAudio() {
   lastModulationCents = 0; modulationGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   lastFundamentalCents = 0; fundamentalGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   scaledMedianGrid = 0; fieldOnsetTicks = 0;
-  liveOscs = new Set();
+  selectedInstrument = DEFAULT_INSTRUMENT;   // engine default; the rail restores the user's palette on entry
+  leadLiveSources = 0;
   leadVoices = new Set();
   leadLayerVoices = [null, null, null, null];
   schedIdx = 0; schedCycle = 0;
@@ -1038,16 +1064,12 @@ export function reattachStepFor(id, seconds) {
   return Math.floor(seconds / REATTACK_PERIODS[hashId(id) % REATTACK_PERIODS.length]);
 }
 
-// Ramp an envelope's gain from wherever it currently sits UP to `peak` (BED_ATTACK) then settle to a
-// held sustain floor (BED_RELEASE) — a swell, never a hard retrigger (chord changes and periodic
-// reattacks both call this; only voice birth starts from 0).
-function swellEnvelope(param, peak, now) {
-  const cur = Math.max(0.0001, param.value);
-  param.cancelScheduledValues(now);
-  param.setValueAtTime(cur, now);
-  param.linearRampToValueAtTime(Math.max(0.0002, peak), now + BED_ATTACK);
-  param.exponentialRampToValueAtTime(Math.max(0.0001, peak * BED_SUSTAIN_FRAC), now + BED_ATTACK + BED_RELEASE);
-}
+// The bed swell — ramp the amp envelope from wherever it currently sits UP to `peak` then settle to a held
+// sustain floor, a swell rather than a hard retrigger (chord changes and periodic reattacks both do this;
+// only voice birth starts from the floor) — now lives inside the renderer handle (handle.swell), because
+// the renderer owns the amp-envelope node. This module owns WHEN to swell and to what peak (see createVoice,
+// syncBedDegrees, pumpReattacks). The bed recipe has no timbral sub-envelope, so a swell never re-triggers
+// a keys transient — which is exactly the "much less attack coloration" the bed role calls for.
 
 function makeBedStar(id) {
   const filter = audioCtx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 4000;
@@ -1087,49 +1109,46 @@ function finalizeStarChain(bs) {
 // New voice for one (star, degree): true JI cents of that pool slot (NOT the 12TET degree pitch),
 // scaled by gainForDev, register-spread by the star's distance octave. Silent-born, swells in.
 function createVoice(bs, degree, now) {
-  // Two ceilings: the logical budget (eagerly freed, keeps a release tail from starving new voices) and the
-  // real-node backstop. A refusal is COUNTED rather than silent — if this ever fires, something upstream is
-  // churning membership and the panel will say so instead of the sound merely dying.
-  if (bedOscCount >= MAX_BED_OSC || bedLiveOscCount >= MAX_BED_LIVE_OSC) { bedCounters.refused++; return null; }
   const slot = bs.pool[degree]; if (!slot) return null;
   const ratio = 2 ** (slot.cents / 1200);
-  const osc = audioCtx.createOscillator(); osc.type = 'sine'; osc.frequency.value = ROOT_HZ * ratio * (2 ** bs.octave);
-  detuneBus?.connect(osc.detune);   // shared fundamental + modulation glide — see initAudio
-  const env = audioCtx.createGain(); env.gain.value = 0.0001;
-  osc.connect(env); env.connect(bs.filter);
-  osc.start(now);
-  bedOscCount++; bedLiveOscCount++; bedCounters.created++;
+  const baseFreq = ROOT_HZ * ratio * (2 ** bs.octave);   // birth pitch only; the shared detune bus adds transposition
+  const plan = planVoice(currentInstrumentRecipe('bed'), { role: 'bed', baseFreq, timing: { attack: BED_ATTACK, release: BED_RELEASE, sustainFrac: BED_SUSTAIN_FRAC }, sampleRate: audioCtx.sampleRate });
+  // Two ceilings: the logical MUSICAL-voice budget (eagerly freed so a release tail can't starve new voices)
+  // and the real-source backstop, now charged by ACTUAL source COST so a richer palette lowers polyphony
+  // rather than the live node count. A refusal is COUNTED rather than silent — if it fires, something
+  // upstream is churning membership and the panel says so instead of the sound merely dying.
+  if (bedOscCount >= MAX_BED_OSC || bedLiveOscCount + plan.cost > MAX_BED_LIVE_OSC) { bedCounters.refused++; return null; }
+  const handle = createInstrumentVoice({ ctx: audioCtx, destination: bs.filter, plan, when: now, detuneBus });
+  bedOscCount++; bedLiveOscCount += plan.cost; bedCounters.created++;
   // Sky Root B3: stamp the voice with its slot's fraction (voice-identity gotcha — voices key by
   // degree only, and a root swap can re-map the same degree to a DIFFERENT tone; syncBedDegrees
   // compares this against the current pool to detect that and release+recreate).
-  const v = { osc, env, degree, dev: slot.dev, fraction: slot.fraction };
-  v.midi = cosmosMidi?.noteOn(osc.frequency.value, now, { cents: totalDetuneCentsAt(now), gain: bs.gainNode.gain.value });
+  const v = { handle, cost: plan.cost, degree, dev: slot.dev, fraction: slot.fraction, baseFreq };
+  v.midi = cosmosMidi?.noteOn(baseFreq, now, { cents: totalDetuneCentsAt(now), gain: bs.gainNode.gain.value });
   bs.oscMap.set(degree, v);
-  swellEnvelope(env.gain, BED_PEAK * gainForDev(slot.dev), now);
+  // Silent-born, then swells in — the renderer owns the amp envelope; this owns WHEN to swell and to what peak.
+  v.handle.swell(BED_PEAK * gainForDev(slot.dev), now);
+  // The REAL source count frees only when the oscillator actually ENDS (~BED_RELEASE after release), not at
+  // the eager logical free — and this is where a dropped star's chain is finalized once its last voice fades.
+  v.handle.onComplete(() => {
+    bedLiveOscCount = Math.max(0, bedLiveOscCount - v.cost);
+    if (bs.fadingCount != null) { bs.fadingCount--; if (bs.fadingCount <= 0) finalizeStarChain(bs); }
+  });
   return v;
 }
 
 function releaseVoice(bs, v, now, immediate) {
   bs.oscMap.delete(v.degree);
   if (v.midi) cosmosMidi?.noteOff(v.midi, now);
-  // Free the budget NOW, not when the ~2.5s fade-out actually finishes — otherwise a burst of churn
-  // (several stars releasing at once while flying) starves incoming voices of MAX_BED_OSC headroom
-  // for the whole release tail, which read as "the bed gets quieter while moving" (part of the same bug).
+  // Free the LOGICAL budget NOW, not when the ~2.5s fade-out actually finishes — otherwise a burst of churn
+  // (several stars releasing at once while flying) starves incoming voices of MAX_BED_OSC headroom for the
+  // whole release tail, which read as "the bed gets quieter while moving". The REAL source count is freed
+  // later, by the handle's onComplete (set at birth), so the hard ceiling still bounds live nodes.
   bedOscCount = Math.max(0, bedOscCount - 1);
   bedCounters.released++;
   const rel = immediate ? 0.05 : BED_RELEASE;
-  try {
-    v.env.gain.cancelScheduledValues(now);
-    v.env.gain.setValueAtTime(Math.max(0.0001, v.env.gain.value), now);
-    v.env.gain.linearRampToValueAtTime(0.0001, now + rel);
-  } catch {}
-  try { v.osc.stop(now + rel + 0.05); } catch {}
-  v.osc.onended = () => {
-    bedLiveOscCount = Math.max(0, bedLiveOscCount - 1);   // the REAL node is gone only now, ~2.55s after release
-    try { detuneBus?.disconnect(v.osc.detune); } catch {}
-    try { v.osc.disconnect(); } catch {} try { v.env.disconnect(); } catch {}
-    if (bs.fadingCount != null) { bs.fadingCount--; if (bs.fadingCount <= 0) finalizeStarChain(bs); }
-  };
+  // The renderer owns the env fade to floor and the oscillator stop (and the detune-bus/node teardown).
+  v.handle.release(now, rel);
 }
 
 // Reconcile every bed star's voices against the CURRENT chord's 3 degrees ∩ its pool coverage. Called
@@ -1169,7 +1188,7 @@ function syncBedDegrees(now) {
     for (const d of desired) {
       const v = bs.oscMap.get(d);
       if (!v) createVoice(bs, d, now);
-      else if (chordChanged) swellEnvelope(v.env.gain, BED_PEAK * gainForDev(v.dev), now);
+      else if (chordChanged) v.handle.swell(BED_PEAK * gainForDev(v.dev), now);
     }
   }
 }
@@ -1185,7 +1204,7 @@ function pumpReattacks(now, seconds) {
     if (bs.reattachStep === undefined) { bs.reattachStep = stepNow; continue; }
     if (stepNow === bs.reattachStep) continue;
     bs.reattachStep = stepNow;
-    for (const v of bs.oscMap.values()) swellEnvelope(v.env.gain, BED_PEAK * gainForDev(v.dev), now);
+    for (const v of bs.oscMap.values()) v.handle.swell(BED_PEAK * gainForDev(v.dev), now);
   }
 }
 
@@ -1518,7 +1537,7 @@ export function debugSkyState() {
     pool: bs.pool,
     voiced: [...bs.oscMap.values()].map(v => ({
       degree: v.degree, fraction: v.fraction, dev: Math.round(v.dev * 10) / 10, gainLaw: Math.round(gainForDev(v.dev) * 100) / 100,
-      envGain: Math.round(v.env.gain.value * 1000) / 1000, freqHz: Math.round(v.osc.frequency.value),
+      envGain: Math.round(v.handle.currentGain() * 1000) / 1000, freqHz: Math.round(v.baseFreq),
     })),
   }));
   // Sky Root handoff Feature A: the SAME ranking chooseNextChord used for its last step, against the
@@ -1681,7 +1700,7 @@ export function stopAudio() {
   const ctx = audioCtx, gain = muteGainNode;
   // Capture the OLD graph before resetting module state, so a fast re-entry (initAudio right after
   // exitCosmos) starts clean immediately instead of waiting on this fade.
-  const oldLiveOscs = liveOscs, oldBedStars = bedStars, oldDyingStars = dyingStars;
+  const oldLeadVoices = leadVoices, oldBedStars = bedStars, oldDyingStars = dyingStars;
   const oldMidi = cosmosMidi, oldRowPlayer = gridRowPlayer;
   const oldFundamentalOffset = fundamentalOffset, oldModulationOffset = modulationOffset;
 
@@ -1699,14 +1718,14 @@ export function stopAudio() {
   modulationGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   fundamentalGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   leadMask = null; leadMaskChordId = -1; leadMaskRootKey = -1;
-  audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; outputLimiter = null; liveOscs = null;
+  audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; outputLimiter = null; leadLiveSources = 0;
   leadVoices = null; leadLayerVoices = null;
   bedGain = null; rowsGain = null; auditionGain = null; masterVolume = null;
   bedBus = null; reverbConv = null; reverbWet = null; leadFilter = null; leadReverbSend = null;
   mix = 0; auditionListening = true; auditionPinned = false;
 
   const teardown = () => {
-    if (oldLiveOscs) for (const osc of oldLiveOscs) { try { osc.stop(0); } catch {} try { osc.disconnect(); } catch {} }
+    if (oldLeadVoices) for (const voice of oldLeadVoices) { try { voice.handle.stop(0); } catch {} }
     if (ctx) { for (const bs of oldBedStars.values()) teardownBedStar(bs, ctx.currentTime); for (const bs of oldDyingStars) teardownBedStar(bs, ctx.currentTime); }
     oldMidi?.disable();
     oldRowPlayer?.destroy();
@@ -1821,59 +1840,44 @@ function scheduleNote(note, time, noteIdx) {
 }
 
 function startLeadLegatoVoice(note, noteIdx, layerIndex, freq, time) {
-  if (!audioCtx || !liveOscs || !leadVoices || !leadLayerVoices) return;
+  if (!audioCtx || !leadVoices || !leadLayerVoices) return;
   const when = Math.max(audioCtx.currentTime, time);
-
-  // Exactly one sustained voice owns a layer. A harmony-filtered onset never reaches this function, so
-  // the previous pitch continues just as it does when Scale Selection skips a note on the main page.
-  if (liveOscs.size >= MAX_LIVE_OSC) return;
-  releaseLeadVoice(leadLayerVoices[layerIndex], when);
-
-  const osc = audioCtx.createOscillator(); osc.type = RHYTHM_VOICE_WAVEFORM; osc.frequency.value = freq;
-  detuneBus?.connect(osc.detune);   // shared fundamental + modulation glide — see initAudio
-  const env = audioCtx.createGain();
   const peak = NOTE_PEAK;
   const sustain = peak * LEAD_SUSTAIN;
-  env.gain.setValueAtTime(0, when);
-  env.gain.linearRampToValueAtTime(peak, when + LEAD_ATTACK);
-  env.gain.linearRampToValueAtTime(sustain, when + LEAD_ATTACK + LEAD_DECAY);
-  env.gain.setValueAtTime(sustain, when + LEAD_ATTACK + LEAD_DECAY + 0.01);
-  osc.connect(env); env.connect(leadFilter);
+  const plan = planVoice(currentInstrumentRecipe('audition'), { role: 'audition', baseFreq: freq, timing: { peak, attack: LEAD_ATTACK, decay: LEAD_DECAY, sustain }, sampleRate: audioCtx.sampleRate });
+
+  // Exactly one sustained voice owns a layer. A harmony-filtered onset never reaches this function, so the
+  // previous pitch continues just as it does when Scale Selection skips a note on the main page. Admission
+  // is by ACTUAL source cost against the live-source ceiling (release tails included), so a richer palette
+  // lowers max audition polyphony rather than inflating the live node count.
+  if (leadLiveSources + plan.cost > MAX_LIVE_OSC) return;
+  releaseLeadVoice(leadLayerVoices[layerIndex], when);
+
+  // The renderer owns the oscillator graph, the detune-bus connection, and the held ADSR; this owns note
+  // choice, the per-layer legato steal, the source budget, and the MIDI note (noteOn/noteOff stay here).
+  const handle = createInstrumentVoice({ ctx: audioCtx, destination: leadFilter, plan, when, detuneBus });
   const voice = {
-    osc, env, note, noteIdx, layerIndex, sustain,
+    handle, cost: plan.cost, note, noteIdx, layerIndex, sustain,
     midi: cosmosMidi?.noteOn(freq, when, { cents: totalDetuneCentsAt(when), gain: peak / NOTE_PEAK }) || null,
     releaseAt: Infinity,
   };
   leadVoices.add(voice);
   leadLayerVoices[layerIndex] = voice;
-  liveOscs.add(osc);
-  osc.start(when);
-  osc.onended = () => {
-    liveOscs?.delete(osc);
+  leadLiveSources += plan.cost;
+  handle.onComplete(() => {
+    leadLiveSources = Math.max(0, leadLiveSources - voice.cost);   // the REAL sources are gone only now
     leadVoices?.delete(voice);
     if (leadLayerVoices?.[layerIndex] === voice) leadLayerVoices[layerIndex] = null;
-    try { osc.disconnect(); } catch {}
-    try { env.disconnect(); } catch {}
-  };
+  });
 }
 
 function releaseLeadVoice(voice, when, release = LEAD_RELEASE) {
   if (!voice || !audioCtx || when >= voice.releaseAt) return;
   const at = Math.max(audioCtx.currentTime, when);
-  const stopAt = at + Math.max(0.01, release);
   voice.releaseAt = at;
-  try {
-    if (typeof voice.env.gain.cancelAndHoldAtTime === 'function') {
-      voice.env.gain.cancelAndHoldAtTime(at);
-    } else {
-      voice.env.gain.cancelScheduledValues(at);
-      voice.env.gain.setValueAtTime(Math.max(0.0001, voice.env.gain.value || voice.sustain), at);
-    }
-    voice.env.gain.linearRampToValueAtTime(0, stopAt);
-    voice.osc.stop(stopAt + 0.01);
-  } catch {
-    try { voice.osc.stop(at); } catch {}
-  }
+  // The renderer owns the cancelAndHold/fallback hold, the ramp to 0, and the oscillator stop (including a
+  // scheduled-but-unsounded future voice). This keeps the MIDI note-off and the per-layer bookkeeping.
+  voice.handle.release(at, release);
   if (voice.midi) cosmosMidi?.noteOff(voice.midi, at);
   if (leadLayerVoices?.[voice.layerIndex] === voice) leadLayerVoices[voice.layerIndex] = null;
 }
