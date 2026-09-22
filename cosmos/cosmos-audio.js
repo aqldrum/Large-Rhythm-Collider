@@ -110,6 +110,12 @@ const MAX_BED_LIVE_OSC = MAX_BED_OSC * 3;
 const BED_ATTACK = 1.5, BED_RELEASE = 2.5;   // seconds — long swells, this is half the product
 const BED_PEAK = 0.12;           // per-voice envelope peak (modest — many sustained voices sum)
 const BED_SUSTAIN_FRAC = 0.4;    // a swell settles to this fraction of its peak, not to silence (held pad)
+// Live VOICE-selector crossfade: switching the palette hot-swaps the SYNTHESIS of every sounding sustained
+// voice while its MIDI note stays held (no re-onset). The bed morphs slowly (it is a pad); the held lead
+// crosses fast to keep its articulate character. Rapid click-through is coalesced onto the FINAL palette.
+const INSTRUMENT_XFADE_BED = 0.5;         // seconds — smooth pad morph
+const INSTRUMENT_XFADE_LEAD = 0.12;       // seconds — snappy held-lead cross
+const INSTRUMENT_XFADE_DEBOUNCE_MS = 45;  // one crossfade pass per settle, to the latest selection
 const REATTACK_PERIODS = [4.5, 5.6, 6.4, 8.1, 10];   // SKY-CLOCK seconds; mutually near-coprime so the sky
                                   // breathes as a polyrhythm, not a synchronized pad — REATTACK_PERIODS[hash(id)%n]
 // SCALED SPEED. A row program's loop is `grid` ticks long, so at a fixed rate a star's cycle lasts
@@ -214,6 +220,8 @@ let leadLayerVoices = null;       // current scheduled voice for each A-D layer
 // The selected instrument palette. The composition root owns this one piece of state; the row player reads
 // it through the injected recipe accessor, and bed/audition read it directly when scheduling a voice.
 let selectedInstrument = DEFAULT_INSTRUMENT;
+let appliedInstrument = DEFAULT_INSTRUMENT;   // the palette the currently-SOUNDING sustained voices use; a change crossfades toward selectedInstrument
+let instrumentXfadeTimer = null;              // coalesces a rapid click-through into one crossfade pass
 let schedulerClock = null;        // TransportClock — the worker-driven pulse (see transport-clock.js)
 let mix = 0;                      // 0 = bed, 1 = rows; constant-power crossfade
 let auditionListening = true;     // audition bus on/off (independent of mix)
@@ -320,7 +328,76 @@ export function currentInstrument() { return selectedInstrument; }
 // the rail wiring. It never resets transport, harmonic exposure, chord position, or rhythm programs.
 export function setInstrument(id) {
   selectedInstrument = normalizeInstrumentId(id);
+  // Newly-scheduled voices already pick up the selection through currentInstrumentRecipe; the sustained
+  // voices already sounding are morphed by a coalesced crossfade so a switch is heard at once, not only on
+  // the next chord. No-op with no live graph (there is nothing sounding yet).
+  scheduleInstrumentCrossfade();
   return selectedInstrument;
+}
+
+// One crossfade pass per settle. A rapid Classic→Glass→Warm click-through schedules a single pass that reads
+// the LATEST selection when it fires, so intermediate palettes are never synthesised — the coalescing the
+// "no burst of onsets" requirement asks for.
+function scheduleInstrumentCrossfade() {
+  if (!audioCtx || instrumentXfadeTimer !== null) return;
+  instrumentXfadeTimer = setTimeout(() => {
+    instrumentXfadeTimer = null;
+    try { crossfadeInstrument(audioCtx.currentTime); } catch {}
+  }, INSTRUMENT_XFADE_DEBOUNCE_MS);
+}
+
+// Hot-swap the synthesis of every sounding SUSTAINED voice (bed + held audition) from appliedInstrument to
+// selectedInstrument. Each swap builds the new palette's graph at the same pitch, fades it in from silence
+// while releasing the old graph over the same window, and leaves the MIDI note-on untouched — the audible
+// timbre morphs with no re-strike. Rows are deliberately excluded: they are per-onset and re-voice into the
+// new palette on their very next note on their own.
+function crossfadeInstrument(now) {
+  if (!audioCtx || selectedInstrument === appliedInstrument) return;
+  appliedInstrument = selectedInstrument;
+  for (const bs of bedStars.values()) {
+    for (const v of [...bs.oscMap.values()]) swapBedVoiceInstrument(bs, v, now);
+  }
+  if (leadVoices) for (const v of [...leadVoices]) {
+    if (v.releaseAt === Infinity) swapLeadVoiceInstrument(v, now);   // skip a voice already fading out
+  }
+}
+
+// Replace one bed voice's synthesis in place. bedOscCount (the LOGICAL musical-voice budget) is unchanged —
+// the same voice is simply re-synthesised — but the real-source count carries both graphs during the cross,
+// so the new cost is charged now and each graph frees ITS OWN cost when its sources end (the old handle's
+// birth onComplete is overridden to capture the cost it was born with, since v.cost is about to be reassigned).
+function swapBedVoiceInstrument(bs, v, now) {
+  const plan = planVoice(currentInstrumentRecipe('bed'), { role: 'bed', baseFreq: v.baseFreq, timing: { attack: BED_ATTACK, release: BED_RELEASE, sustainFrac: BED_SUSTAIN_FRAC }, sampleRate: audioCtx.sampleRate });
+  const oldHandle = v.handle, oldCost = v.cost;
+  const newHandle = createInstrumentVoice({ ctx: audioCtx, destination: bs.filter, plan, when: now, detuneBus });
+  bedLiveOscCount += plan.cost;
+  newHandle.crossIn(BED_PEAK * gainForDev(v.dev), now, INSTRUMENT_XFADE_BED);
+  oldHandle.onComplete(() => { bedLiveOscCount = Math.max(0, bedLiveOscCount - oldCost); });
+  oldHandle.release(now, INSTRUMENT_XFADE_BED);
+  v.handle = newHandle; v.cost = plan.cost;
+  // Mirror createVoice's completion: free the new cost, and finalize a star that dropped mid-cross.
+  newHandle.onComplete(() => {
+    bedLiveOscCount = Math.max(0, bedLiveOscCount - v.cost);
+    if (bs.fadingCount != null) { bs.fadingCount--; if (bs.fadingCount <= 0) finalizeStarChain(bs); }
+  });
+}
+
+// Replace one held audition voice's synthesis in place — fades straight to its held sustain (crossIn skips
+// the audition role's attack overshoot), and mirrors startLeadLegatoVoice's completion bookkeeping.
+function swapLeadVoiceInstrument(v, now) {
+  const plan = planVoice(currentInstrumentRecipe('audition'), { role: 'audition', baseFreq: v.baseFreq, timing: { peak: NOTE_PEAK, attack: LEAD_ATTACK, decay: LEAD_DECAY, sustain: v.sustain }, sampleRate: audioCtx.sampleRate });
+  const oldHandle = v.handle, oldCost = v.cost;
+  const newHandle = createInstrumentVoice({ ctx: audioCtx, destination: leadFilter, plan, when: now, detuneBus });
+  leadLiveSources += plan.cost;
+  newHandle.crossIn(v.sustain, now, INSTRUMENT_XFADE_LEAD);
+  oldHandle.onComplete(() => { leadLiveSources = Math.max(0, leadLiveSources - oldCost); });
+  oldHandle.release(now, INSTRUMENT_XFADE_LEAD);
+  v.handle = newHandle; v.cost = plan.cost;
+  newHandle.onComplete(() => {
+    leadLiveSources = Math.max(0, leadLiveSources - v.cost);
+    leadVoices?.delete(v);
+    if (leadLayerVoices?.[v.layerIndex] === v) leadLayerVoices[v.layerIndex] = null;
+  });
 }
 
 export function initAudio() {
@@ -406,6 +483,8 @@ export function initAudio() {
   lastFundamentalCents = 0; fundamentalGlide = { from: 0, to: 0, at: 0, timeConstant: 0.01 };
   scaledMedianGrid = 0; fieldOnsetTicks = 0;
   selectedInstrument = DEFAULT_INSTRUMENT;   // engine default; the rail restores the user's palette on entry
+  appliedInstrument = DEFAULT_INSTRUMENT;     // the fresh graph is born classic; the rail's restore crossfades if needed
+  if (instrumentXfadeTimer !== null) { clearTimeout(instrumentXfadeTimer); instrumentXfadeTimer = null; }
   leadLiveSources = 0;
   leadVoices = new Set();
   leadLayerVoices = [null, null, null, null];
@@ -1705,6 +1784,8 @@ export function stopAudio() {
   const oldFundamentalOffset = fundamentalOffset, oldModulationOffset = modulationOffset;
 
   cosmosMidi = null; gridRowPlayer = null;
+  if (instrumentXfadeTimer !== null) { clearTimeout(instrumentXfadeTimer); instrumentXfadeTimer = null; }
+  appliedInstrument = DEFAULT_INSTRUMENT;
   bedStars = new Map(); dyingStars = []; bedOscCount = 0; bedLiveOscCount = 0; currentField = [];
   skyChordId = START_CHORD_ID; skyTabu = null; skyStep = -1; lastSyncedChordId = null;
   harmonySource = DEFAULT_HARMONY_SOURCE; harmonyScale = DEFAULT_SCALE_POLICY; harmonyHold = false; rowFundamental = true;
@@ -1857,7 +1938,7 @@ function startLeadLegatoVoice(note, noteIdx, layerIndex, freq, time) {
   // choice, the per-layer legato steal, the source budget, and the MIDI note (noteOn/noteOff stay here).
   const handle = createInstrumentVoice({ ctx: audioCtx, destination: leadFilter, plan, when, detuneBus });
   const voice = {
-    handle, cost: plan.cost, note, noteIdx, layerIndex, sustain,
+    handle, cost: plan.cost, note, noteIdx, layerIndex, sustain, baseFreq: freq,   // baseFreq so a live VOICE swap can re-plan at the same pitch
     midi: cosmosMidi?.noteOn(freq, when, { cents: totalDetuneCentsAt(when), gain: peak / NOTE_PEAK }) || null,
     releaseAt: Infinity,
   };

@@ -307,5 +307,17 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
       param.linearRampToValueAtTime(Math.max(0.0002, peak), at + amp.attack);
       param.exponentialRampToValueAtTime(Math.max(0.0001, peak * amp.sustainFrac), at + amp.attack + amp.release);
     },
+
+    // Crossfade fade-IN for a no-onset instrument hot-swap. Cancels whatever attack this voice scheduled at
+    // birth and ramps from silence up to `level` over `seconds`. Role-agnostic (the audition role's attack
+    // overshoots to a peak before its sustain; this replaces it with a plain rise, so the swap never
+    // re-articulates). The caller pairs it with the OLD voice's release() — the two graphs cross while the
+    // logical MIDI note stays held, so no note-on/off reaches a DAW.
+    crossIn(level, at, seconds) {
+      const param = ampEnv.gain;
+      param.cancelScheduledValues(at);
+      param.setValueAtTime(ENV_FLOOR, at);
+      param.linearRampToValueAtTime(Math.max(0.0002, level), at + Math.max(0.005, seconds));
+    },
   };
 }

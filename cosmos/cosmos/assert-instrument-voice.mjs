@@ -132,6 +132,23 @@ console.log('\n  Audition voice — held ADSR, cancelAndHold release');
     ampEnv.gain._calls.slice(-2).map(c => c[0]).join(',') === 'hold,lin' && near(osc.stopped[0], 4 + 0.3 + 0.01));
 }
 
+console.log('\n  crossIn — the no-onset fade for a live VOICE hot-swap');
+{
+  const { ctx, nodes } = makeCtx();
+  const dest = ctx.createGain();
+  const plan = planVoice(getRecipe('classic', 'audition'), { role: 'audition', baseFreq: 660, timing: { peak: 0.32, attack: 0.006, decay: 0.2, sustain: 0.224 }, sampleRate: 48000 });
+  const h = createInstrumentVoice({ ctx, destination: dest, plan, when: 3, detuneBus: makeBus() });
+  const oscAtBirth = nodes.osc.length;
+  const ampEnv = nodes.gain.find(g => g.connections.includes(dest));
+  h.crossIn(0.224, 3, 0.12);
+  // Cancels the audition role's own attack (which would overshoot to 0.32 peak) and ramps silence -> the
+  // held sustain instead — so a live palette swap crosses in without re-articulating the note.
+  check('crossIn cancels the birth attack and ramps from the floor straight to the level (cancel,set,lin)',
+    ampEnv.gain._calls.slice(-3).map(c => c[0]).join(',') === 'cancel,set,lin' &&
+    near(ampEnv.gain._calls.at(-2)[1], ENV_FLOOR) && near(ampEnv.gain.value, 0.224));
+  check('crossIn re-synthesises nothing — the SAME graph fades in (no new oscillator)', nodes.osc.length === oscAtBirth);
+}
+
 console.log('\n  Multi-source voice — cost, detune per pitched source, completion on the LAST end');
 {
   const { ctx, nodes } = makeCtx();
