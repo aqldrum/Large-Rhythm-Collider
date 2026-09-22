@@ -3719,13 +3719,26 @@ body.cosmos-active #cosmos-view {
     min-height: 28px; border: 1px solid var(--hud-border); border-radius: 4px; background: #11161a;
     color: var(--hud-text); font: 9px var(--sans); letter-spacing: .5px;
 }
-#cosmos-rail .rail-switches {
-    min-width: 145px; display: flex; flex-direction: column; gap: 7px;
+/* The three toggles consolidated into pill switches. Dropping the ON/OFF readout column (kept only for MIDI
+   OUT, whose status is a port name) narrows the block from 145px and lets VOICE share the strip. */
+#cosmos-rail .rail-switches { min-width: 112px; display: flex; flex-direction: column; gap: 8px; }
+#cosmos-rail .rail-switch { display: flex; flex-direction: column; gap: 3px; cursor: pointer; }
+#cosmos-rail .rail-switch-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#cosmos-rail .rail-switch-label { letter-spacing: .6px; text-transform: uppercase; font: 9px var(--sans); color: var(--hud-text-muted); }
+/* A restyled checkbox — still keyboard/AT-native, but drawn as a sliding pill that fills accent when on. */
+#cosmos-rail .rail-switch-pill {
+    box-sizing: border-box; appearance: none; -webkit-appearance: none; margin: 0; flex: 0 0 auto; cursor: pointer;
+    position: relative; width: 30px; height: 16px; border-radius: 999px;
+    border: 1px solid var(--hud-border); background: rgba(255,255,255,.04);
+    transition: background var(--transition-speed), border-color var(--transition-speed);
 }
-#cosmos-rail .rail-switch { display: flex; align-items: center; gap: 8px; cursor: pointer; font: 10px var(--sans); color: var(--hud-text-muted); }
-#cosmos-rail .rail-switch-label { flex: 0 0 auto; letter-spacing: .6px; text-transform: uppercase; font-size: 9px; }
-#cosmos-rail .rail-switch input { margin: 0; accent-color: var(--hud-accent); }
-#cosmos-rail .rail-switch-readout { margin-left: auto; color: var(--hud-accent); font: 9px var(--mono); text-align: right; }
+#cosmos-rail .rail-switch-pill::before {
+    content: ""; position: absolute; top: 1px; left: 1px; width: 12px; height: 12px; border-radius: 50%;
+    background: var(--hud-text-muted); transition: transform var(--transition-speed), background var(--transition-speed);
+}
+#cosmos-rail .rail-switch-pill:checked { background: var(--hud-accent); border-color: var(--hud-accent); }
+#cosmos-rail .rail-switch-pill:checked::before { transform: translateX(14px); background: #0b0d10; }
+#cosmos-rail .rail-switch-readout { color: var(--hud-accent); font: 9px var(--mono); text-align: right; }
 #cosmos-rail button:focus-visible,
 #cosmos-rail select:focus-visible,
 #cosmos-rail input:focus-visible,

@@ -31,8 +31,10 @@ import { railParams } from './rail-params.js';
 import {
   setMix, setVolume, setSpace, setRichness, setFundamentalOffset, setTargetOnsetRate,
   setMuted, setHarmonyHold, setHarmonySource, setHarmonyScale, setRowFundamental, setModulation, setMidiOut,
+  setInstrument,
 } from './cosmos-audio.js';
 import { HARMONY_SOURCES, SCALE_POLICIES } from './harmony-policy.js';
+import { INSTRUMENTS } from './instruments/instrument-presets.js';
 
 // param → engine setter. Each is a thin, guarded, additive setter whose default reproduces the intended
 // entry sound (assert-rail-bindings.mjs). Values are in ENGINE units: cents for PITCH/FUNDAMENTAL,
@@ -55,6 +57,7 @@ export const ENGINE_SETTERS = Object.freeze({
   scale: setHarmonyScale,              // normalized cent-target preset ID
   rowFundamental: setRowFundamental,   // bool — schedule-time literal 1/1 attacks only
   modulation: setModulation,           // bool — retune each newly solved root to the fundamental
+  instrument: setInstrument,           // choice — synthesis palette (classic | glass | warm)
 });
 
 // Front-face ROTARY knobs, ordered within their groups. RICHNESS is a named back-face segment;
@@ -62,7 +65,7 @@ export const ENGINE_SETTERS = Object.freeze({
 export const RAIL_KNOBS = Object.freeze(['fundamental', 'speed', 'volume', 'mix', 'space']);
 export const RAIL_BUTTONS = Object.freeze(['mute', 'hold']);
 export const RAIL_SWITCHES = Object.freeze(['rowFundamental', 'modulation', 'midiOut']);
-export const RAIL_SEGMENTS = Object.freeze(['harmonySource', 'richness']);
+export const RAIL_SEGMENTS = Object.freeze(['harmonySource', 'richness', 'instrument']);
 export const RAIL_SELECTS = Object.freeze(['scale']);
 
 const GROUP_ORDER = ['transport', 'pitch', 'time', 'harmony', 'texture'];
@@ -118,7 +121,9 @@ function paintControl(name, value) {
   const sw = switchEls.get(name);
   if (sw) {
     sw.input.checked = !!value;
-    sw.readout.textContent = (name === 'midiOut' && midiStatus) ? midiStatus : formatReadout(railParams.spec(name), value);
+    // Only MIDI OUT carries a readout now — the pill itself is the ON/OFF for the pure booleans. Its status
+    // is the port name, a '…' while connecting, or a failure reason; '' when off, which renders as nothing.
+    if (sw.readout) sw.readout.textContent = midiStatus;
     return;
   }
   const segment = segmentEls.get(name);
@@ -215,24 +220,32 @@ function buildButton(name) {
   return wrap;
 }
 
-// A boolean switch for the harmony face (ROW 1/1 / MODULATION / MIDI OUT), with its own live readout — MODULATION
-// reads ON/OFF, MIDI OUT reports the real outcome (port name, or why enabling failed).
+// A pill toggle for the harmony face (ROW 1/1 / MODULATION / MIDI OUT). The pill is a restyled checkbox, so
+// it stays keyboard- and screen-reader-native, and the pill state IS the readout — which is why the two pure
+// booleans drop their ON/OFF word. MIDI OUT alone keeps a sub-line, because its state is a port name, a '…'
+// while connecting, or the reason it failed — information the pill cannot show.
 function buildSwitch(name) {
   const spec = railParams.spec(name);
   const row = document.createElement('label');
   row.className = 'rail-switch'; row.dataset.param = name;
 
+  const head = document.createElement('span');
+  head.className = 'rail-switch-head';
   const label = document.createElement('span');
   label.className = 'rail-switch-label'; label.textContent = spec.label;
 
   const input = document.createElement('input');
-  input.type = 'checkbox'; input.setAttribute('aria-label', spec.label);
+  input.type = 'checkbox'; input.className = 'rail-switch-pill'; input.setAttribute('aria-label', spec.label);
   input.addEventListener('change', () => railParams.set(name, input.checked));
+  head.append(label, input);
+  row.append(head);
 
-  const readout = document.createElement('b');
-  readout.className = 'rail-switch-readout';
-
-  row.append(label, input, readout);
+  let readout = null;
+  if (name === 'midiOut') {
+    readout = document.createElement('b');
+    readout.className = 'rail-switch-readout';
+    row.append(readout);
+  }
   switchEls.set(name, { input, readout });
   paintControl(name, railParams.get(name));
   return row;
@@ -401,10 +414,14 @@ export function ensureRail() {
   ]);
   scaleControl = buildSelect('scale', Object.values(SCALE_POLICIES).map(policy => ({ value: policy.id, label: policy.label })));
   richnessControl = buildSegmented('richness', railParams.spec('richness').stops.map((label, index) => ({ value: index + 1, label: label.toUpperCase() })));
+  // VOICE: the synthesis palette, rendered exactly like HARMONY SOURCE / RICHNESS. Labels come from the
+  // presets so a future palette's display name stays single-sourced; the order follows the spec's `choices`.
+  const voice = buildSegmented('instrument',
+    railParams.spec('instrument').choices.map(id => ({ value: id, label: (INSTRUMENTS[id]?.label || id).toUpperCase() })));
   const switches = document.createElement('div'); switches.className = 'rail-switches';
   for (const name of RAIL_SWITCHES) switches.appendChild(buildSwitch(name));
   harmonyFaceToggle = buildFaceToggle('performance');
-  harmonyFace.append(source, scaleControl, richnessControl, switches, harmonyFaceToggle);
+  harmonyFace.append(source, scaleControl, richnessControl, voice, switches, harmonyFaceToggle);
 
   stage.append(performanceFace, harmonyFace);
   rail.appendChild(stage);

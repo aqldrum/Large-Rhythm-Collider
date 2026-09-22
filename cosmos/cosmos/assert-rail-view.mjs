@@ -30,8 +30,12 @@ check('RICHNESS is hidden from the front but retained for the future harmony/bac
 check('MUTE/HOLD are transport buttons and the back face owns ROW 1/1 / MODULATION / MIDI OUT',
   RAIL_BUTTONS.join(',') === 'mute,hold' && RAIL_BUTTONS.every(n => RAIL_PARAMS[n]?.group === 'transport') &&
   RAIL_SWITCHES.join(',') === 'rowFundamental,modulation,midiOut' && RAIL_SWITCHES.every(n => RAIL_PARAMS[n]?.group === 'advanced'));
-check('harmony source, scale, and named RICHNESS choices are explicit back-face controls',
-  RAIL_SEGMENTS.join(',') === 'harmonySource,richness' && RAIL_SELECTS.join(',') === 'scale');
+check('harmony source, scale, RICHNESS, and VOICE choices are explicit back-face controls',
+  RAIL_SEGMENTS.join(',') === 'harmonySource,richness,instrument' && RAIL_SELECTS.join(',') === 'scale');
+check('VOICE is a choice segment wired to setInstrument, defaulting to classic so the entry sound is unchanged',
+  RAIL_SEGMENTS.includes('instrument') && RAIL_PARAMS.instrument?.curve === 'choice' &&
+  RAIL_PARAMS.instrument.choices.join(',') === 'classic,glass,warm' && RAIL_PARAMS.instrument.default === 'classic' &&
+  RAIL_PARAMS.instrument.persist === true && typeof ENGINE_SETTERS.instrument === 'function');
 check('every rendered knob/button is a real param with a live engine setter',
   [...RAIL_KNOBS, ...RAIL_BUTTONS].every(n => RAIL_PARAMS[n] && typeof ENGINE_SETTERS[n] === 'function'));
 check('every ENGINE_SETTERS key is a real param — the map can never bind a name the state layer lacks',
