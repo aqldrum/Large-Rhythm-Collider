@@ -2,7 +2,7 @@
 // cosmos/docs/COSMOS_NOTE_VISUALS_WORK_ORDER_2026-09-20.md). These assert what the figure DOES, not what
 // the source says: the rules, the lifecycle, the coincidence ordering, and the renderer's clipping maths
 // against a recording mock context. Nothing here touches audio, a browser or a real canvas.
-import { CONSTELLATION_DEFAULTS, chainCoincidentAttacks, createConstellation, lifespanFade } from '../constellation-core.js';
+import { CONSTELLATION_DEFAULTS, CONSTELLATION_FIGURE_CEILING, CONSTELLATION_LIFECYCLES, chainCoincidentAttacks, chordHold, createConstellation, lifespanFade } from '../constellation-core.js';
 import { drawGridRowConstellation } from '../grid-row-constellation.js';
 import { pitchHue } from '../grid-row-aura.js';
 import { SpatialGridRowPlayer } from '../spatial-grid-row-player.js';
@@ -15,8 +15,10 @@ const check = (label, ok, detail = '') => {
 
 console.log('═══ COSMOS NOTE CONSTELLATIONS — assertions ═══');
 
-// Attacks as the feed delivers them: { id: grid, when: audio-context seconds, hz }.
+// Attacks as the feed delivers them: { id: grid, when: audio-context seconds, hz, harmonyKey? }.
 const at = (id, when, hz = 220 * id) => ({ id, when, hz });
+const under = (harmonyKey, attack) => ({ ...attack, harmonyKey });
+const LIFESPAN = { lifecycle: 'lifespan' };
 const edgeKeys = list => list.map(e => `${e.from}-${e.to}`).join(',');
 
 console.log('\n  Rules 1–3 (seed, connect, replay)');
@@ -116,7 +118,7 @@ console.log('\n  Rule 6 (leaving the field splits the chain — never bridge)');
 console.log('\n  Lifecycle (lifespan policy)');
 {
   const T = CONSTELLATION_DEFAULTS.lifespan, F = CONSTELLATION_DEFAULTS.fade;
-  const c = createConstellation();
+  const c = createConstellation(LIFESPAN);
   c.ingest([at(1, 0), at(2, 0)], 0);
   check('an edge is fully opaque until its fade window begins', c.edges(T - F - 0.01)[0].fade === 1);
   check('it fades linearly across the last `fade` seconds', (() => {
@@ -138,11 +140,111 @@ console.log('\n  Lifecycle (lifespan policy)');
     lifespanFade({ bornAt: 0 }, 2, { lifespan: 2, fade: 1 }) === 0);
   check('configure re-points the one options object the core and renderer share', (() => {
     const tuned = createConstellation();
-    tuned.configure({ lifespan: 1, fade: 0.5, drawIn: 0.25, enabled: false });
+    tuned.configure({ lifecycle: 'lifespan', lifespan: 1, fade: 0.5, drawIn: 0.25, enabled: false });
     tuned.ingest([at(1, 0), at(2, 0)], 0);
     return tuned.options.drawIn === 0.25 && tuned.options.enabled === false &&
       tuned.edges(0.4)[0].fade === 1 && tuned.edges(0.75)[0].fade === 0.5 && tuned.edges(1).length === 0;
   })());
+}
+
+console.log('\n  Lifecycle (chord policy — the default)');
+{
+  check('the default lifecycle holds the figure until the chord changes',
+    CONSTELLATION_DEFAULTS.lifecycle === 'chord' && CONSTELLATION_LIFECYCLES.join(',') === 'chord,lifespan' &&
+    chordHold({ bornAt: 0 }, 1e6, CONSTELLATION_DEFAULTS) === 1);
+  const c = createConstellation();
+  const A = 'harmony-A', B = 'harmony-B';
+  c.ingest(c.admit([under(A, at(1, 0))], A), 0);
+  c.ingest(c.admit([under(A, at(2, 0.5))], A), 0.5);
+  c.ingest(c.admit([under(A, at(3, 1))], A), 1);
+  check('edges never age out under one chord: fully opaque and still structural long past any lifespan',
+    c.edges(600).length === 2 && c.edges(600).every(e => e.fade === 1) && c.stats().structural === 2);
+  // The walk has decided B, but the rows are still sounding A while their programs recompile.
+  c.ingest(c.admit([under(A, at(4, 601))], B), 601);
+  check('until a note of the new harmony sounds, old-harmony notes keep extending the figure',
+    edgeKeys(c.edges(601)) === '1-2,2-3,3-4' && c.stats().structural === 3);
+  // The first B note lands at 602.
+  c.ingest(c.admit([under(B, at(5, 602))], B), 602);
+  check('the first note of the new harmony flushes the figure and seeds the next one, drawing no line',
+    c.stats().structural === 0 && c.stats().vertices === 0 && c.tip === 5 &&
+    c.edges(602).length === 3 && c.edges(602).every(e => e.to !== 5));
+  check('the old figure fades from THAT note\'s time, over `fade`, then really leaves the collections', (() => {
+    const F = CONSTELLATION_DEFAULTS.fade;
+    const half = c.edges(602 + F / 2);
+    return half.length === 3 && half.every(e => Math.abs(e.fade - 0.5) < 1e-9) &&
+      c.edges(602 + F).length === 0 && c.stats().edges === 0;
+  })());
+  c.ingest(c.admit([under(A, at(6, 603))], B), 603);
+  check('a straggler still sounding the OLD harmony draws nothing and does not move the tip',
+    c.tip === 5 && c.stats().edges === 0);
+  c.ingest(c.admit([under(B, at(1, 604))], B), 604);
+  check('a grid from the flushed figure is free to join the new one',
+    edgeKeys(c.edges(604)) === '5-1' && c.tip === 1);
+}
+{
+  // A coincident group straddling the change: admit must flush BEFORE chaining, so the chain is ordered
+  // against the post-flush figure (no tip → seed at the lowest grid) and the old-harmony member is dropped.
+  const c = createConstellation();
+  c.ingest(c.admit([under('A', at(1, 0)), under('A', at(2, 0))], 'A'), 0);
+  const points = new Map([[1, [0, 0, 0]], [2, [1, 0, 0]], [7, [50, 0, 0]], [8, [60, 0, 0]], [9, [55, 0, 0]]]);
+  const group = c.admit([under('B', at(9, 1)), under('A', at(8, 1)), under('B', at(7, 1))], 'B');
+  check('a mixed group admits only the new harmony\'s members', group.map(a => a.id).join(',') === '9,7');
+  c.ingest(chainCoincidentAttacks(group, c.tip, g => points.get(g) || null, g => c.inFigure(g)), 1);
+  check('and chains them against the flushed figure, not the old tip',
+    edgeKeys(c.edges(1)) === '1-2,7-9' && c.stats().structural === 1 && c.stats().ghosts === 1 && c.tip === 9,
+    `got ${edgeKeys(c.edges(1))}, tip ${c.tip}`);
+}
+{
+  const c = createConstellation();
+  c.ingest(c.admit([at(1, 0), at(2, 0)], 'A'), 0);
+  check('an untagged attack always belongs to the figure (fixtures and pre-tag programs keep working)',
+    c.stats().structural === 1 && c.admit([at(3, 1)], 'B').length === 1 && c.stats().structural === 1);
+  check('no harmony information this frame is a pass-through that never flushes',
+    c.admit([under('Z', at(4, 2))], '').length === 1 && c.admit([under('Z', at(4, 2))], null).length === 1 &&
+    c.stats().structural === 1);
+}
+{
+  const c = createConstellation(LIFESPAN);
+  c.ingest(c.admit([under('A', at(1, 0)), under('A', at(2, 0))], 'A'), 0);
+  const passed = c.admit([under('B', at(3, 0.5)), under('A', at(4, 0.5))], 'B');
+  check('under lifespan, admit is a pure pass-through (no flush, no filtering)',
+    passed.length === 2 && c.stats().structural === 1);
+  c.ingest(passed, 0.5);
+  c.configure({ lifecycle: 'chord' });
+  c.ingest(c.admit([under('B', at(5, 1))], 'B'), 1);
+  check('switching back to chord mid-harmony continues the figure instead of flushing it',
+    c.stats().structural === 4 && c.tip === 5);
+  c.configure({ lifecycle: 'no-such-policy' });
+  check('configure ignores an unknown lifecycle name', c.options.lifecycle === 'chord');
+}
+{
+  // Rapid chord changes: every flush turns the whole figure into ghosts at once. The live collections must
+  // stay bounded however fast the harmony turns over.
+  const c = createConstellation();
+  let maxEdges = 0, maxGhosts = 0;
+  for (let step = 0; step < 6000; step++) {
+    const now = step / 100, key = `h${Math.floor(step / 7)}`;   // a new harmony every 70ms: absurdly fast
+    c.ingest(c.admit([under(key, at(1 + (step * 7) % 20, now))], key), now);
+    c.retain(null, now);
+    c.edges(now);
+    maxEdges = Math.max(maxEdges, c.stats().edges); maxGhosts = Math.max(maxGhosts, c.stats().ghosts);
+  }
+  check('flush ghosts stay under the ceiling at any rate of chord change',
+    maxEdges <= 20 + 64 && maxGhosts <= 64, `max edges ${maxEdges}, max ghosts ${maxGhosts}`);
+}
+{
+  // Rule 6 is keyed on the LOADED field now, so one long chord spent flying can join far more than the
+  // ~20 row stars. Past the draw-cost ceiling the OLDEST structural edge fades out; nothing else changes.
+  const N = CONSTELLATION_FIGURE_CEILING, c = createConstellation();
+  for (let g = 1; g <= N + 1; g++) c.ingest(c.admit([under('A', at(g, g / 10))], 'A'), g / 10);
+  check('a figure the size of the ceiling is kept whole', c.stats().structural === N && c.stats().ghosts === 0);
+  c.ingest(c.admit([under('A', at(N + 2, 99))], 'A'), 99);
+  const ghost = c.edges(99).find(e => e.fade === 1 && e.from === 1 && e.to === 2);
+  check('one more join departs exactly the oldest edge (1–2), leaving the ceiling intact',
+    c.stats().structural === N && c.stats().ghosts === 1 && !!ghost && c.edges(99 + CONSTELLATION_DEFAULTS.fade + 0.01).every(e => !(e.from === 1 && e.to === 2)));
+  c.ingest(c.admit([under('B', at(9999, 100))], 'B'), 100);
+  check('a chord change flushes even a ceiling-sized figure as ghosts — none culled, all fading together',
+    c.stats().structural === 0 && c.stats().ghosts === N && c.edges(100 + CONSTELLATION_DEFAULTS.fade / 2).length === N);
 }
 
 console.log('\n  Boundedness and birth rate');
@@ -150,7 +252,7 @@ console.log('\n  Boundedness and birth rate');
   // Edges ≤ vertices − 1 by construction: a grid can only take an edge while it is NOT in the figure, so
   // every birth adds exactly one new vertex. The structure is a forest — there is nothing to cap.
   const STARS = 20, T = CONSTELLATION_DEFAULTS.lifespan;
-  const c = createConstellation();
+  const c = createConstellation(LIFESPAN);
   const field = new Set();
   for (let i = 1; i <= STARS; i++) field.add(i);
   let seed = 1337;
@@ -315,13 +417,13 @@ console.log('\n  Composition (the wiring flight-view performs, end to end)');
   player.ctx = { currentTime: 0 };
   const star = (id, attacks) => [id, { id, active: true, visualAttacks: attacks, visualLives: [] }];
   player.stars = new Map([
-    star(10, [{ when: 1, frequencyHz: 220 }]),
-    star(20, [{ when: 1.05, frequencyHz: 330 }]),   // coincident with 30, but six times farther from the tip
-    star(30, [{ when: 1.05, frequencyHz: 440 }]),
+    star(10, [{ when: 1, frequencyHz: 220, harmonyKey: 'A' }]),
+    star(20, [{ when: 1.05, frequencyHz: 330, harmonyKey: 'A' }]),   // coincident with 30, but six times farther from the tip
+    star(30, [{ when: 1.05, frequencyHz: 440, harmonyKey: 'A' }]),
   ]);
   const placed = new Map([[10, [0, 0, 100]], [20, [300, 0, 100]], [30, [50, 0, 100]]]);
   const core = createConstellation();
-  let cursor = null;
+  let cursor = null, harmony = 'A';
   const field = new Set([10, 20, 30]);
   const frame = (clock, live = field) => {
     player.ctx.currentTime = clock;
@@ -332,8 +434,8 @@ console.log('\n  Composition (the wiring flight-view performs, end to end)');
       for (let i = 0; i < feed.attacks.length;) {
         let j = i + 1;
         while (j < feed.attacks.length && feed.attacks[j].when === feed.attacks[i].when) j++;
-        const group = feed.attacks.slice(i, j);
-        core.ingest(j - i === 1 ? group : chainCoincidentAttacks(group, core.tip, positionOf, g => core.inFigure(g)), feed.now);
+        const group = core.admit(feed.attacks.slice(i, j), harmony);
+        core.ingest(group.length < 2 ? group : chainCoincidentAttacks(group, core.tip, positionOf, g => core.inFigure(g)), feed.now);
         i = j;
       }
     }
@@ -348,6 +450,8 @@ console.log('\n  Composition (the wiring flight-view performs, end to end)');
   const chained = frame(1.08);
   check('a coincident pair chains nearest-to-the-tip first, by 3D world distance',
     edgeKeys(chained) === '10-30,30-20', `got ${edgeKeys(chained)}`);
+  check('the feed carries each attack\'s harmony key through to the core',
+    player.reachedAttacks(0).attacks.every(a => a.harmonyKey === 'A'));
   const split = frame(1.12, new Set([10, 20]));   // 30 drops out of the row field
   check('a mid-chain departure splits the figure in the live wiring, with no bridge 10–20',
     core.stats().structural === 0 && !split.some(e => (e.from === 10 && e.to === 20) || (e.from === 20 && e.to === 10)));
@@ -361,6 +465,20 @@ console.log('\n  Composition (the wiring flight-view performs, end to end)');
     const after = frame(5.0);   // a long stall: the missed attacks are gone, and none arrive late
     return core.tip === tipBefore && after.length === 0 && cursor === 5.0;
   })());
+  // A chord change in the live wiring: rebuild a figure under A, then the walk moves to B. An A note that
+  // was already scheduled still extends the figure; the first B note flushes it on its own beat.
+  core.reset(); cursor = null; harmony = 'A';
+  player.stars.get(10).visualAttacks = [{ when: 6.0, frequencyHz: 220, harmonyKey: 'A' }];
+  player.stars.get(20).visualAttacks = [{ when: 6.1, frequencyHz: 330, harmonyKey: 'A' }, { when: 6.4, frequencyHz: 330, harmonyKey: 'B' }];
+  player.stars.get(30).visualAttacks = [{ when: 6.3, frequencyHz: 440, harmonyKey: 'A' }];
+  frame(5.9); frame(6.15);
+  harmony = 'B';
+  const held = frame(6.35);
+  check('after the walk moves on, notes still sounding the old chord keep drawing its figure',
+    edgeKeys(held) === '10-20,20-30' && held.every(e => e.fade === 1));
+  const flushed = frame(6.45);
+  check('the first new-chord note flushes the figure in the live wiring and seeds the next',
+    core.stats().structural === 0 && core.tip === 20 && flushed.length === 2 && flushed.every(e => e.fade < 1));
 }
 
 console.log(PASS ? '\n✓ COSMOS NOTE CONSTELLATIONS OK\n' : '\n✗ COSMOS NOTE CONSTELLATIONS FAILED\n');

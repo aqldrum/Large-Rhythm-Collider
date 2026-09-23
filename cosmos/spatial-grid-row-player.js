@@ -668,7 +668,9 @@ export class SpatialGridRowPlayer {
       // orb's hue tracks the sounding pitch; storing it here would freeze the colour against a live modulation.
       voice.visualLife = { startTime: when, endTime: endAt, ownerKey, frequencyHz };
       star.visualLives.push(voice.visualLife);
-      star.visualAttacks.push({ when, strength: 1, ownerKey, frequencyHz });
+      // harmonyKey is the program's own selection key, forwarded as an opaque label — this module stays
+      // harmony-blind. The constellation holds its figure until a note sounded under a NEW harmony arrives.
+      star.visualAttacks.push({ when, strength: 1, ownerKey, frequencyHz, harmonyKey: deck.program.selectionKey ?? null });
     }
     this.midiBridge?.note(frequencyHz, when, endAt - when, this.stars.get(deck.program.grid)?.gain.gain.value ?? 1);
     const soundedCents = deck.centsByFraction?.get(action.fraction);
@@ -752,7 +754,7 @@ export class SpatialGridRowPlayer {
     if (!Number.isFinite(since)) return { now, attacks };
     for (const star of this.stars.values()) {
       for (const attack of star.visualAttacks) {
-        if (attack.when > since && attack.when <= now) attacks.push({ id: star.id, when: attack.when, hz: attack.frequencyHz || 0 });
+        if (attack.when > since && attack.when <= now) attacks.push({ id: star.id, when: attack.when, hz: attack.frequencyHz || 0, harmonyKey: attack.harmonyKey ?? null });
       }
     }
     // Grid number breaks the tie so a coincident group arrives in a stable order even before the caller

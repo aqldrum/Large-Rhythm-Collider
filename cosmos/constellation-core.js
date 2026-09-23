@@ -1,7 +1,8 @@
 // constellation-core.js — the pure state machine behind the note constellation (Order B of
 // cosmos/docs/COSMOS_NOTE_VISUALS_WORK_ORDER_2026-09-20.md). Successive notes landing on DIFFERENT grids
-// chain into a transient figure; a grid already in the figure re-sounds (its orb still flashes) but draws
-// no new line and does not move the tip.
+// chain into a figure; a grid already in the figure re-sounds (its orb still flashes) but draws no new line
+// and does not move the tip. How long the figure lasts is the LIFECYCLE option: held until the chord
+// changes (default), or each edge fading on its own clock.
 //
 // Deliberately headless: no canvas, no DOM, no audio-clock reads, no positions, no projection. It is handed
 // an ALREADY-ORDERED list of REACHED attacks plus a clock value, and answers with the edges that should
@@ -10,32 +11,45 @@
 
 // ONE options object for the whole order, with defaults — the future "visual options" panel binds to this
 // rather than hunting scattered literals (see the work order's "Direction of travel"). `enabled` is read by
-// flight-view and `drawIn` by the renderer; the core itself only consumes `lifespan` and `fade`. They live
-// together anyway so there is exactly one thing to bind, one thing to log and one thing to tune by eye.
+// flight-view and `drawIn` by the renderer; the core itself consumes `lifecycle`, `lifespan` and `fade`. They
+// live together anyway so there is exactly one thing to bind, one thing to log and one thing to tune by eye.
 export const CONSTELLATION_DEFAULTS = {
   enabled: true,
-  lifespan: 3.0,   // seconds an edge lives, measured from the ATTACK that drew it (not from the frame)
-  fade: 0.6,       // the last `fade` seconds of that life are the fade-out — and a departure's fade too
+  lifecycle: 'chord',   // 'chord' = the figure holds until the harmony changes; 'lifespan' = edges age out
+  lifespan: 3.0,   // 'lifespan' only: seconds an edge lives, measured from the ATTACK that drew it
+  fade: 0.6,       // seconds of fade-out — a lifespan's tail, a chord change's flush, and a departure's too
   drawIn: 0.1,     // seconds for a fresh edge to grow from the tip to its target (RENDERER reads this)
 };
 
-// Decorative-only ceiling. Structural edges are bounded by construction (≤ vertices − 1 ≤ 19, see below),
-// but a *departed* edge lingers for `fade` seconds purely as a visual, outside that invariant. Real field
-// churn produces a handful at a time; this exists only so a pathological churn rate cannot grow the draw
-// list without bound. This project has a history of slow leaks — the cheap ceiling is worth the two lines.
-const GHOST_CEILING = 64;
+// Draw-cost ceilings. A figure lives as long as its stars stay LOADED (rule 6), so it is no longer held to
+// the ~20-star row field: flying drags a trail of connected stars behind the player until the chord turns
+// over or the trail's stars are evicted. That is bounded by the loaded field, but a long held chord spent
+// wandering one region could still join hundreds of stars, and every drawn edge costs two gradient strokes.
+// Past FIGURE_CEILING the OLDEST structural edge departs (fades out), so only a pathological session ever
+// sees it — a normal flight's trail is well under it.
+export const CONSTELLATION_FIGURE_CEILING = 160;
+// A *departed* edge lingers for `fade` seconds purely as a visual, outside the structure. A chord change
+// departs a whole figure at once, so this sits a full figure above the structural ceiling; it exists only so
+// a pathological churn rate cannot grow the draw list without bound. This project has a history of slow
+// leaks — the cheap ceilings are worth the lines.
+const GHOST_CEILING = CONSTELLATION_FIGURE_CEILING + 64;
 
 const clamp01 = value => (value < 0 ? 0 : value > 1 ? 1 : value);
 
-// ── the ONE replaceable lifecycle policy ─────────────────────────────────────────────────────────────
-// LIFESPAN (Avery's decision, 2026-09-20): an edge lives `lifespan` seconds from its attack, spending the
-// last `fade` seconds fading out. Returns visibility in 0..1; 0 means dead, and the sweep then actually
-// drops it. Self-rate-limiting by construction — a connected grid cannot take a new edge, so edge births
-// cannot exceed about stars/lifespan per second however dense the music gets.
+// ── lifecycle policies ───────────────────────────────────────────────────────────────────────────────
+// A policy maps one edge to visibility 0..1 from its own age; 0 means dead, and the sweep then actually
+// drops it. `options.lifecycle` picks one by name — the future visual-options panel is a selector over
+// CONSTELLATION_LIFECYCLES.
 //
-// The deferred per-chord policy (flush the figure at each chord boundary) is a drop-in replacement for
-// THIS FUNCTION ALONE: the rules above it never learn which policy is installed. Not built now, and there
-// is deliberately no selector — swap `state.policy` when that phase arrives.
+// CHORD (Avery, 2026-09-23 — the default): an edge never ages out. The whole figure is held until the
+// harmony changes, then flushed at once by admit() below, so the lines trace every note the rows sounded
+// under one chord. Bounded without a lifespan: the structure is a forest over the loaded stars, capped at
+// CONSTELLATION_FIGURE_CEILING, and a flush turns it into ghosts that fade over `fade` seconds.
+export function chordHold() { return 1; }
+
+// LIFESPAN (Avery's decision, 2026-09-20): an edge lives `lifespan` seconds from its attack, spending the
+// last `fade` seconds fading out. Self-rate-limiting by construction — a connected grid cannot take a new
+// edge, so edge births cannot exceed about stars/lifespan per second however dense the music gets.
 export function lifespanFade(edge, now, options) {
   const life = options.lifespan > 0 ? options.lifespan : 0;
   const age = now - edge.bornAt;
@@ -47,9 +61,12 @@ export function lifespanFade(edge, now, options) {
   return fade > 0 ? clamp01((life - age) / fade) : 0;
 }
 
-// Rule 6's fade. A departed edge is already non-structural (the chain split the instant its grid left the
-// field); this only governs how long the ghost remains visible. Kept OUT of the policy function so that
-// swapping the lifecycle policy can never accidentally change what happens when a star leaves.
+const LIFECYCLES = { chord: chordHold, lifespan: lifespanFade };
+export const CONSTELLATION_LIFECYCLES = Object.keys(LIFECYCLES);
+
+// Rule 6's fade. A departed edge is already non-structural (the chain split the instant its grid was
+// evicted, or the chord changed under it); this only governs how long the ghost remains visible. Kept OUT of
+// the policy function so that swapping the lifecycle policy can never change what happens when a star leaves.
 function departureFade(edge, now, options) {
   if (edge.departedAt === null) return 1;
   const fade = options.fade > 0 ? options.fade : 0;
@@ -58,7 +75,8 @@ function departureFade(edge, now, options) {
 }
 
 function visibility(state, edge, now) {
-  return Math.min(state.policy(edge, now, state.options), departureFade(edge, now, state.options));
+  const policy = LIFECYCLES[state.options.lifecycle] || chordHold;
+  return Math.min(policy(edge, now, state.options), departureFade(edge, now, state.options));
 }
 
 // An edge's two ends stop being held by it. A grid whose count reaches zero is DELETED from the map, not
@@ -73,6 +91,28 @@ function releaseEnds(state, edge) {
 
 function holdEnds(state, edge) {
   for (const grid of [edge.from, edge.to]) state.vertices.set(grid, (state.vertices.get(grid) || 0) + 1);
+}
+
+// Past the draw-cost ceiling: the oldest structural edge departs at `at` (the attack that overflowed it).
+// Only reached once edges.length exceeds the ceiling, so the scan is off the steady-state path.
+function trimOldest(state, at) {
+  let structural = 0;
+  for (const edge of state.edges) if (edge.departedAt === null) structural++;
+  if (structural <= CONSTELLATION_FIGURE_CEILING) return;
+  const oldest = state.edges.find(edge => edge.departedAt === null);
+  oldest.departedAt = at;
+  releaseEnds(state, oldest);
+}
+
+// The chord changed: every structural edge departs at `at` — the new harmony's first attack, so the old
+// figure begins fading on the note that ended it — and the tip clears so that note seeds the next figure.
+function flush(state, at) {
+  for (const edge of state.edges) {
+    if (edge.departedAt !== null) continue;
+    edge.departedAt = at;
+    releaseEnds(state, edge);
+  }
+  state.tip = null; state.tipHz = 0;
 }
 
 // Drop everything that has faded to nothing. Called at the head of ingest/retain/edges, so expired edges
@@ -145,14 +185,15 @@ export function chainCoincidentAttacks(group, tip, positionOf, isInFigure) {
 
 // ── the machine ──────────────────────────────────────────────────────────────────────────────────────
 // Vertices are unique and a grid can only take an edge while it is NOT in the figure, so every birth adds
-// exactly one new vertex: the structure is a forest, edges ≤ vertices − 1 ≤ 19. Nothing to cap.
+// exactly one new vertex: the structure is a forest, edges ≤ vertices − 1 ≤ loaded stars − 1, and the
+// draw-cost ceiling above trims the oldest edge if a figure ever outgrows it.
 export function createConstellation(options) {
   const state = {
     options: { ...CONSTELLATION_DEFAULTS, ...(options || null) },
-    policy: lifespanFade,
+    harmonyKey: null,       // the harmony the current figure was drawn under (opaque; see admit)
     tip: null,
     tipHz: 0,
-    edges: [],              // living edges, append-ordered (oldest first); ≤19 structural + ghosts
+    edges: [],              // living edges, append-ordered (oldest first); ≤ FIGURE_CEILING structural + ghosts
     vertices: new Map(),    // grid → count of living STRUCTURAL edges touching it (ghosts never counted)
   };
 
@@ -164,12 +205,37 @@ export function createConstellation(options) {
     // Merge a patch into the one options object and hand back the result (the dev handle echoes it).
     configure(patch) {
       if (patch) for (const key of Object.keys(CONSTELLATION_DEFAULTS)) {
-        if (patch[key] !== undefined) state.options[key] = patch[key];
+        if (patch[key] === undefined) continue;
+        if (key === 'lifecycle' && !LIFECYCLES[patch[key]]) continue;   // an unknown name keeps the current one
+        state.options[key] = patch[key];
       }
       return state.options;
     },
 
     inFigure(grid) { return inFigure(state, grid); },
+
+    // The CHORD lifecycle's gate, run on each coincident group BEFORE rule-5 chaining, so the chain is
+    // ordered against the figure as it stands after any flush. `harmonyKey` is the harmony in force now;
+    // each attack carries the key of the row program that sounded it. Both are opaque strings to the core.
+    //  • The first attack sounded under a NEW harmony flushes the figure at that attack's time, and seeds
+    //    the next figure. Rows reach a new chord a little after the walk decides it (programs recompile,
+    //    then wait for a switch boundary), so keying on the note — not the decision — keeps the flush on
+    //    the beat where the new chord is actually heard in the rows.
+    //  • Until then, attacks under the figure's own harmony keep extending it: the old chord is still what
+    //    the rows are sounding.
+    //  • Afterwards, stragglers still sounding the old harmony draw nothing (their orbs still flash), so a
+    //    figure only ever joins notes of one chord.
+    // An untagged attack always belongs to the figure. Under 'lifespan' this passes the group through,
+    // only tracking the harmony so a switch back to 'chord' continues the figure instead of flushing it.
+    admit(group, harmonyKey) {
+      if (!group || !group.length || !harmonyKey) return group || [];
+      if (state.options.lifecycle !== 'chord') { state.harmonyKey = harmonyKey; return group; }
+      if (state.harmonyKey !== harmonyKey) {
+        const arrival = group.find(attack => attack.harmonyKey === harmonyKey);
+        if (arrival) { flush(state, arrival.when); state.harmonyKey = harmonyKey; }
+      }
+      return group.filter(attack => attack.harmonyKey == null || attack.harmonyKey === state.harmonyKey);
+    },
 
     // Feed REACHED attacks, already ordered (rule 5 is flight-view's job — it has the positions). Feeding
     // a batch here is identical to feeding the same attacks one at a time: every attack is an independent
@@ -196,14 +262,18 @@ export function createConstellation(options) {
         state.edges.push(edge);
         holdEnds(state, edge);
         state.tip = grid; state.tipHz = hz;
+        if (state.edges.length > CONSTELLATION_FIGURE_CEILING) trimOldest(state, bornAt);
       }
     },
 
-    // Rule 6. `liveIds` is the set of grids currently IN THE ROW FIELD (a Set or an array). An edge with an
-    // end outside it splits the chain immediately — it stops being structural at once, freeing its other
-    // end to take a new edge — and merely fades out as a ghost. We never bridge the gap: a line no note
-    // caused is a lie. A null/undefined `liveIds` means "no membership information this frame" and is a
-    // no-op, so a gap in the feed cannot tear the figure down.
+    // Rule 6. `liveIds` is the set of grids still LOADED this frame — a Set, a Map (anything with .has) or
+    // an array. It is deliberately NOT the row field: a star that stops sounding keeps its lines, which fade
+    // with distance exactly as the star does and leave only when the star itself is evicted (Avery,
+    // 2026-09-23 — the figure should outlast a fly-by). An edge with an end outside the set splits the chain
+    // immediately — it stops being structural at once, freeing its other end to take a new edge — and
+    // merely fades out as a ghost. We never bridge the gap: a line no note caused is a lie. A null/undefined
+    // `liveIds` means "no membership information this frame" and is a no-op, so a gap in the feed cannot
+    // tear the figure down.
     retain(liveIds, now) {
       sweep(state, now);
       if (!liveIds) return;
@@ -230,6 +300,7 @@ export function createConstellation(options) {
     },
 
     reset() {
+      state.harmonyKey = null;
       state.tip = null; state.tipHz = 0;
       state.edges = [];
       state.vertices.clear();

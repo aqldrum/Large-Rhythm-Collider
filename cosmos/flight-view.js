@@ -1143,9 +1143,9 @@ export function ensureFlight(canvas, hudEl) {
   // |'high'|'ultra') re-points every knob on the running engine so a tier can be felt instantly.
   if (typeof window !== 'undefined') window.__cosmosQuality = { get: () => activeQualityId, set: applyQuality, tiers: QUALITY_ORDER, detected: activeQualityId };
   // Note-constellation tuning handle, same precedent and same reason: no UI exists yet, and these want to
-  // be felt by eye on a live field. __cosmosConstellation.set({ lifespan: 5, drawIn: 0.25 }) re-points the
-  // ONE options object the core and the renderer both read. A fresh session starts with an empty figure
-  // and an unprimed cursor, so nothing survives a re-entry.
+  // be felt by eye on a live field. __cosmosConstellation.set({ lifecycle: 'lifespan', lifespan: 5 })
+  // re-points the ONE options object the core and the renderer both read. A fresh session starts with an
+  // empty figure and an unprimed cursor, so nothing survives a re-entry.
   constellation.reset(); constellationCursor = null;
   if (typeof window !== 'undefined') window.__cosmosConstellation = {
     get: () => ({ ...constellation.options, ...constellation.stats() }),
@@ -2682,21 +2682,24 @@ function loop() {
       // Rule 5: coincident attacks across grids are routine here (all rows share one transport), so a
       // simultaneous group is chained greedily by 3D world distance — nearest to the tip first, then
       // nearest to THAT grid. Each group is ordered against the tip the previous group left behind, then
-      // ingested, so a multi-group frame is identical to feeding the attacks one at a time.
+      // ingested, so a multi-group frame is identical to feeding the attacks one at a time. admit() runs
+      // first: under the 'chord' lifecycle it flushes the figure on the first note of a new harmony (the
+      // row selection key — chord, root or scale) and drops old-harmony stragglers before chaining.
       for (let i = 0; i < feed.attacks.length;) {
         let j = i + 1;
         while (j < feed.attacks.length && feed.attacks[j].when === feed.attacks[i].when) j++;
-        const group = feed.attacks.slice(i, j);
-        constellation.ingest(j - i === 1 ? group : chainCoincidentAttacks(group, constellation.tip, positionOf, isInFigure), feed.now);
+        const group = constellation.admit(feed.attacks.slice(i, j), rowSelectionKey);
+        constellation.ingest(group.length < 2 ? group : chainCoincidentAttacks(group, constellation.tip, positionOf, isInFigure), feed.now);
         i = j;
       }
     }
     constellationCursor = feed.now;
-    // Rule 6 membership. rowActiveIds is the row field flight-view last INSTALLED (updateGridRowField
-    // above) — the most faithful "is in the row field" signal we hold. rowActivity would be the wrong
-    // set: visualState() skips a star with no live voice, so a still-active row star that is merely
-    // between notes would be torn out of the figure and its lines would flicker every rest.
-    constellation.retain(rowActiveIds, feed.now);
+    // Rule 6 membership is the LOADED field — every zone placed this frame — not the ~20-star row field:
+    // flying churns the row field constantly, and a line should outlast the notes that drew it for as
+    // long as its stars are on the map. Visibility then needs nothing extra: the renderer fades each line
+    // by its endpoints' fogAt, the same fog law the star loop uses, and a line leaves when a star's zone
+    // is evicted. Keyed on the camera's position, never its rotation, so turning your head tears nothing.
+    constellation.retain(placed, feed.now);
     drawGridRowConstellation(ctx, constellation.edges(feed.now), {
       positionOf, basis, focal, cx, cy, near: NEAR, fogAt,
       // Read here rather than reusing the star loop's auraDetuneCents: this slot runs before it, and the
