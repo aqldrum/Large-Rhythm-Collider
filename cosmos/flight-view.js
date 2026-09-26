@@ -7,7 +7,7 @@ import { M } from './mode.js';
 import { Cosmos } from './cosmos/cosmos-runtime.js';
 import { renderPosCam, setPlacement, macroCell, macroScale, backboneHash, SPACING, CELL } from './cosmos/spine.js';
 import { hilbertDecode, hilbertEncode, neighborGrids, INDEX_COUNT, SIDE } from './cosmos/hilbert.js';
-import { clampHilbertWorld, containHilbertSphere, nearbyHilbertWalls, rebaseHilbertCamera } from './cosmos/hilbert-boundary.js';
+import { HILBERT_WORLD_MAX, HILBERT_WORLD_MIN, clampHilbertWorld, containHilbertSphere, nearbyHilbertWalls, rebaseHilbertCamera } from './cosmos/hilbert-boundary.js';
 import { GOLDEN, cardColor, CHARTED } from './cosmos/bloom-core.js';
 import { rhythmTriples, rhythmDoubles, rhythmMotifKeys } from './cosmos/mn-core.js';
 import { routeCameraBasis, sampleArcPath } from './cosmos/web-return.js';
@@ -40,6 +40,12 @@ import { createConstellation, chainCoincidentAttacks } from './constellation-cor
 import { drawGridRowConstellation } from './grid-row-constellation.js';
 import { DEFAULT_GRAVITY_OPTIONS, gravityWindowWeight } from './gravity-core.js';
 import { SolverWorkerPool } from './cosmos/solver-worker-pool.js';
+// Third-person flight (cosmos/docs/COSMOS_THIRD_PERSON_WORK_ORDER_2026-09-23.md). ONE projection for every
+// renderer (view-frame.js — the Web worker and the constellation use it too), a pure chase pose, and a
+// canvas-only ship. The SHIP keeps `cam` / camBasis() and everything heard; only what is SEEN moves.
+import { composeViewFrames } from './view-frame.js';
+import { CHASE_DEFAULTS, chaseOptions, chasePose, smoothstep, stepChaseProgress } from './chase-camera.js';
+import { drawPlayerShip } from './player-ship.js';
 import { QUALITY_ORDER, detectDefaultTier, devicePoolMax, resolveTier } from './cosmos-quality.js';
 // Full Sky (cosmos/docs/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
@@ -277,6 +283,21 @@ let constellationCursor = null;
 // Re-prime rather than ingest if the clock jumps (a fresh AudioContext reads 0, and a stall longer than
 // the player's attack retention would otherwise deliver a burst of stale attacks all at once).
 const CONSTELLATION_RESYNC_SECONDS = 0.7;
+
+// ── third-person view ────────────────────────────────────────────────────────────────────────────
+// V toggles the chase view in the Hilbert cube (a no-op in spine placement, matching gravity). The ship stays
+// where the first-person camera is and keeps its basis for controls and hearing; each frame builds TWO view
+// frames — `shipView` (today's projection exactly) and `renderView` (the chase pose blended by t) — and every
+// DRAWING site reads renderView while every HEARING site keeps the ship's basis. Every entry starts in first
+// person; the tuning in `chase` persists across re-entries within a page load, like the constellation's.
+let viewMode = 'first';            // 'first' | 'chase' — the V target
+let viewProgress = 0;              // linear transition progress 0 (cockpit) … 1 (chase); the pose reads smoothstep
+let chase = chaseOptions();        // CHASE_DEFAULTS copy — the one options object, tuned via __cosmosView.set
+let shipBoost = 0;                 // eased Space level: the rim lights and wake swell with boost
+// Decision 3 (Avery, 2026-09-23): Web return rides STAY in the chase view. Flip to false and rides ease back to
+// first person for their duration (and out to chase again on arrival) — the one line to change if the ride
+// reads better from the cockpit.
+const CHASE_DURING_WEB_RIDES = true;
 
 // Sky Root handoff, Feature B3: camera/gather-side knobs (flight-view owns camera state — root-state
 // display depth ROOT_TOP_K lives in cosmos-audio.js's SKY KNOBS, same split as AUDIBLE_N above).
@@ -720,11 +741,12 @@ function stepWebReturn(now, dt) {
 // Draw the Collider-Battle ships: each agent's tunnel-trail (fading polyline) + a velocity-oriented cube
 // frame; a crashing agent flashes an expanding ring. Agents live in absolute cube world coords, so we
 // project them relative to the camera's absolute position (cellAbs), the same frame the trail is stored in.
-function drawAgents(basis) {
+// `view` is the frame's render view (view-frame.js): fog reads a projection's `f`, perspective size its `z`.
+function drawAgents(view) {
   if (!swarm || !swarm.agents.length) return;
   const cc = macroCell(cam.anchor), s = macroScale();
   const camAbs = [cc[0] * s + cam.off[0], cc[1] * s + cam.off[1], cc[2] * s + cam.off[2]];
-  const proj = wp => toScreen([wp[0] - camAbs[0], wp[1] - camAbs[1], wp[2] - camAbs[2]], basis);
+  const proj = wp => view.project([wp[0] - camAbs[0], wp[1] - camAbs[1], wp[2] - camAbs[2]]);
   const cellW = g => { const c = macroCell(g); return [c[0] * s, c[1] * s, c[2] * s]; };
   const sgn = b => b ? 1 : -1;
   for (const a of swarm.agents) {
@@ -735,22 +757,22 @@ function drawAgents(basis) {
     let prev = N ? proj(cellW(nodes[0])) : null;
     for (let i = 1; i < N; i++) {
       const sp = proj(cellW(nodes[i]));
-      if (sp && prev) { const fog = fogAt(sp.z); if (fog > 0) { ctx.globalAlpha = AGENT_WEB_STRAND_A * fog * (i / N); ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(sp.x, sp.y); ctx.stroke(); } }
+      if (sp && prev) { const fog = fogAt(sp.f); if (fog > 0) { ctx.globalAlpha = AGENT_WEB_STRAND_A * fog * (i / N); ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(sp.x, sp.y); ctx.stroke(); } }
       prev = sp;
     }
     const c0 = proj(a.p);
-    if (a.alive && prev && c0) { const fog = fogAt(c0.z); if (fog > 0) { ctx.globalAlpha = AGENT_WEB_STRAND_A * fog; ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(c0.x, c0.y); ctx.stroke(); } }   // growing edge
+    if (a.alive && prev && c0) { const fog = fogAt(c0.f); if (fog > 0) { ctx.globalAlpha = AGENT_WEB_STRAND_A * fog; ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(c0.x, c0.y); ctx.stroke(); } }   // growing edge
     ctx.fillStyle = a.color;
-    for (let i = 0; i < N; i++) { const sp = proj(cellW(nodes[i])); if (!sp) continue; const fog = fogAt(sp.z); if (fog <= 0) continue; ctx.globalAlpha = 0.55 * fog * (0.3 + 0.7 * i / N); ctx.beginPath(); ctx.arc(sp.x, sp.y, AGENT_WEB_LINE_W * 1.1, 0, 7); ctx.fill(); }
+    for (let i = 0; i < N; i++) { const sp = proj(cellW(nodes[i])); if (!sp) continue; const fog = fogAt(sp.f); if (fog <= 0) continue; ctx.globalAlpha = 0.55 * fog * (0.3 + 0.7 * i / N); ctx.beginPath(); ctx.arc(sp.x, sp.y, AGENT_WEB_LINE_W * 1.1, 0, 7); ctx.fill(); }
     if (!a.alive) {                                   // crash flash: expanding rings
-      if (c0) { const t = Math.max(0, Math.min(1, 1 - a.crashT / swarm.respawnMs)), fog = fogAt(c0.z);
+      if (c0) { const t = Math.max(0, Math.min(1, 1 - a.crashT / swarm.respawnMs)), fog = fogAt(c0.f);
         const rr = swarm.cubeR * (1 + 4 * t) * focal / c0.z;
         ctx.globalAlpha = (1 - t) * fog; ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.arc(c0.x, c0.y, Math.max(1, rr), 0, 7); ctx.stroke();
         ctx.strokeStyle = a.color; ctx.beginPath(); ctx.arc(c0.x, c0.y, Math.max(1, rr * 0.6), 0, 7); ctx.stroke(); }
       continue;
     }
     if (!c0) continue;
-    const fog = fogAt(c0.z); if (fog <= 0) continue;
+    const fog = fogAt(c0.f); if (fog <= 0) continue;
     // cube frame oriented to velocity
     const R = swarm.cubeR, f = norm(a.v);
     let right = cross([0, 1, 0], f); if (Math.hypot(right[0], right[1], right[2]) < 1e-4) right = [1, 0, 0]; right = norm(right);
@@ -1093,7 +1115,7 @@ export function ensureFlight(canvas, hudEl) {
   webCanvas = previousWebCanvas.cloneNode(false); previousWebCanvas.replaceWith(webCanvas);
   if (!webCanvas.transferControlToOffscreen) throw new Error('Cosmos Webs require OffscreenCanvas support.');
   webZoneAdded = []; webZoneRemoved = []; webRouteGeneration++;
-  webRenderer = new WebRenderer(new URL('./cosmos/web-render-worker.js?v=3', import.meta.url), webCanvas, placement, message => {
+  webRenderer = new WebRenderer(new URL('./cosmos/web-render-worker.js?v=4', import.meta.url), webCanvas, placement, message => {
     hoverWeb = message.hover || null;
     for (const [id, visibleNodes, localNodes] of message.counts || []) {
       const web = activeWebs.get(id); if (web) { web.visibleNodes = visibleNodes; web.localNodes = localNodes; }
@@ -1108,7 +1130,8 @@ export function ensureFlight(canvas, hudEl) {
   if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none';
   if (audioLabEl) audioLabEl.hidden = !audioLabOn;
   if (controlsEl) {
-    const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['G', 'hold local gravity'], ['arrows', 'steer'], ['scroll', 'dolly'],
+    const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['G', 'hold local gravity'], ...(placement === 'hilbert' ? [['V', 'chase view']] : []),
+                  ['arrows', 'steer'], ['scroll', 'dolly'],
                   ['click star', 'bloom'], ['click node', 'inspect / apply'], ['click Web', 'inspect / return'],
                   ['Esc', 'cancel Web travel'], ['right-click', 'collapse'], ['1–0', 'toggle webs'],
                   ['Z', 'audio lab'], ['C', 'full sky debug'], ['T', 'audio clock table']];
@@ -1151,6 +1174,18 @@ export function ensureFlight(canvas, hudEl) {
     get: () => ({ ...constellation.options, ...constellation.stats() }),
     set: patch => ({ ...constellation.configure(patch) }),
   };
+  // Third-person view: every entry starts in first person (Decision 5), with no transition in flight. The dev
+  // handle follows the same precedent — no UI yet; the future visual-options panel binds to `chase`.
+  //   __cosmosView.mode('chase')                  → same as pressing V (cube only)
+  //   __cosmosView.set({ distance: 8 })           → chase distance in CELLS (also elevation°, lookAhead,
+  //                                                  transition s, shipScale cells; `mode` is accepted too)
+  //   __cosmosView.set({ transition: 0 })         → snap instead of easing (handy for the draw-cost table)
+  viewMode = 'first'; viewProgress = 0; shipBoost = 0;
+  if (typeof window !== 'undefined') window.__cosmosView = {
+    get: () => ({ mode: viewMode, t: smoothstep(viewProgress), ...chase, defaults: { ...CHASE_DEFAULTS }, placement }),
+    set: patch => { chase = chaseOptions(patch, chase); if (patch?.mode) setViewMode(patch.mode); return { mode: viewMode, ...chase }; },
+    mode: next => (next === undefined ? viewMode : setViewMode(next)),
+  };
   last = performance.now();
   requestAnimationFrame(loop);
 }
@@ -1177,6 +1212,8 @@ export function stopFlight() {
   leadVoice = null; stopAudio(); audibleIds = new Set(); rowActiveIds = new Set(); rowPrewarmIds = new Set();   // kill the cosmos-audio transport, mirroring the worker teardown
   constellation.reset(); constellationCursor = null;   // no figure, no cursor and no dev handle survive an exit
   if (typeof window !== 'undefined') delete window.__cosmosConstellation;
+  viewMode = 'first'; viewProgress = 0; shipBoost = 0;   // the chase view never outlives the session
+  if (typeof window !== 'undefined') delete window.__cosmosView;
   resetGridRowAuraSprites();   // glow textures (≤360 hue buckets) are rebuilt lazily — hand the memory back on exit
   if (skyDebugEl) skyDebugEl.style.display = 'none';   // dev overlay — hide, don't destroy (cheap to reuse on re-entry)
   if (audioLabEl) audioLabEl.hidden = true;
@@ -1262,23 +1299,44 @@ function stepControls(dt, allowTranslation = true) {
   camSpeed = dt > 0 ? Math.hypot(actualMove[0], actualMove[1], actualMove[2]) / dt : 0;
 }
 
-// world-relative (camera at origin, integer-spine) → view space (+z forward) → screen
-function toScreen(rp, basis) {
-  const vx = dot(rp, basis.r), vy = dot(rp, basis.u), vz = dot(rp, basis.d);
-  if (vz <= NEAR) return null;
-  return { x: cx + vx * focal / vz, y: cy - vy * focal / vz, z: vz };
+// Projection lives in view-frame.js (createViewFrame): the ONE perspective law flight-view, the constellation and
+// the Web worker all draw through. loop() builds this frame's `shipView` and `renderView` from it.
+
+// Third-person view state machine. V (and __cosmosView) set the TARGET; loop() eases toward it on the frame clock.
+// Cube only — spine placement stays first person, matching gravity (Decision 2).
+function setViewMode(mode) {
+  if (placement !== 'hilbert' || (mode !== 'first' && mode !== 'chase')) return viewMode;
+  viewMode = mode;
+  return viewMode;
+}
+// Where the view is heading this frame: the chase target unless a Web ride is set to drop to first person.
+const chaseTarget = () => (viewMode === 'chase' && placement === 'hilbert' && (CHASE_DURING_WEB_RIDES || !returnRide)) ? 1 : 0;
+// The ship's HULL orientation. In free flight it is the ship basis itself (arrows turn the ship, so hull and
+// view turn together). During a Web ride camBasis() is the route LOOK basis — arrow-look swings the view — but
+// the hull always points along the route: the tangent, with the route's lift as up. It flies along the Web,
+// never sideways.
+function hullBasis(shipBasis) {
+  return returnRide?.tangent && returnRide?.lift ? routeCameraBasis(returnRide.tangent, returnRide.lift, 0, 0) : shipBasis;
+}
+// The Hilbert world as a ship-relative box, padded exactly like the ship's own collision: the chase eye is
+// shortened where the ship→eye segment would leave it, so the view never looks at the cube from outside.
+function hilbertEyeBox(shipWorld) {
+  const lo = HILBERT_WORLD_MIN + HIL_CAMERA_RADIUS, hi = HILBERT_WORLD_MAX - HIL_CAMERA_RADIUS;
+  return { min: shipWorld.map(value => lo - value), max: shipWorld.map(value => hi - value) };
 }
 
 // Render only the camera-local tiles of nearby faces. Collision and visuals share
 // hilbert-boundary.js, so the glow always resolves onto the plane that actually stops the camera.
-function drawHilbertBoundaryWalls(basis) {
+// REVEAL is keyed on the SHIP's position (walls warn where the ship will stop); projection and the incidence
+// term read `view`, the frame's render view, so in chase view the walls are drawn from the eye.
+function drawHilbertBoundaryWalls(view) {
   if (placement !== 'hilbert') return;
   const camera = cameraAbsolute(), reveal = HIL_WALL_REVEAL_CELLS * CELL;
   const walls = nearbyHilbertWalls(camera, reveal);
   if (!walls.length) return;
   const colors = ['110,203,255', '197,139,255', '255,110,199'];
   const parallelAxes = axis => axis === 0 ? [1, 2] : (axis === 1 ? [0, 2] : [0, 1]);
-  const projected = absolute => toScreen(absolute.map((value, axis) => value - camera[axis]), basis);
+  const projected = absolute => view.project(absolute.map((value, axis) => value - camera[axis]));
   const smooth = value => value * value * (3 - 2 * value);
 
   ctx.save();
@@ -1291,7 +1349,7 @@ function drawHilbertBoundaryWalls(basis) {
     const a0 = Math.max(0, centreA - HIL_WALL_PATCH_CELLS), a1 = Math.min(SIDE - 1, centreA + HIL_WALL_PATCH_CELLS);
     const b0 = Math.max(0, centreB - HIL_WALL_PATCH_CELLS), b1 = Math.min(SIDE - 1, centreB + HIL_WALL_PATCH_CELLS);
     const proximity = smooth(Math.max(0, 1 - wall.distance / reveal));
-    const incidence = Math.abs(basis.d[wall.axis]);
+    const incidence = Math.abs(view.basis.d[wall.axis]);
     const color = colors[wall.axis];
 
     for (let ia = a0; ia <= a1; ia++) for (let ib = b0; ib <= b1; ib++) {
@@ -2402,10 +2460,23 @@ function loop() {
 
   ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
   ctx.clearRect(0, 0, W, H);
+  // `basis` is the SHIP's: controls, hearing, the bed and row poses. It is never the eye.
   const basis = camBasis();
-  drawHilbertBoundaryWalls(basis);
+  // ── the two view frames (third-person work order §1) ──
+  // shipView is today's first-person projection exactly; renderView is the chase pose blended by t, and IS
+  // shipView at t = 0 (same object), so first person is untouched by construction. Drawing reads renderView;
+  // the one audio path that ever read the screen (the lead voice, below) reads shipView.
+  viewProgress = stepChaseProgress(viewProgress, chaseTarget(), dt, chase.transition);
+  const viewT = smoothstep(viewProgress);
+  const pose = viewT > 0
+    ? chasePose(basis, chase, viewT, { unit: CELL, box: placement === 'hilbert' ? hilbertEyeBox(cameraAbsolute()) : null })
+    : null;
+  const { shipView, renderView } = composeViewFrames({ shipBasis: basis, pose, fog: viewT, focal, cx, cy, near: NEAR });
+  shipBoost += ((keys[' '] ? 1 : 0) - shipBoost) * (1 - Math.exp(-dt * 6));
+  drawHilbertBoundaryWalls(renderView);
   webRenderer?.frame({
-    now, anchor: cam.anchor, off: [...cam.off], d: basis.d, r: basis.r, u: basis.u,
+    now, anchor: cam.anchor, off: [...cam.off], d: renderView.basis.d, r: renderView.basis.r, u: renderView.basis.u,
+    eye: renderView.eye, near: NEAR, fogBlend: renderView.fog,
     mouseX, mouseY, cx, cy, focal, fogNear: FOG_NEAR, fogFar: FOG_FAR, tailFrac: webTailFrac,
     gravity: gravityRenderer ? { activation: gravityRenderer.activation,
       inner: DEFAULT_GRAVITY_OPTIONS.windowInner, outer: DEFAULT_GRAVITY_OPTIONS.windowOuter } : null,
@@ -2495,17 +2566,19 @@ function loop() {
         .map((value, axis) => value - frameCameraWorld[axis]);
     }
     placed.set(z.grid, rp);
-    const s = toScreen(rp, basis);
+    const s = renderView.project(rp);   // { x, y, z: eye depth, f: fog depth }
     if (s) proj.set(z.grid, { z, s, rp });
   }
   phase('proj');
 
-  // cosmos-audio: drive the lead voice's spatialization from its star's live projection this frame.
+  // cosmos-audio: drive the lead voice's spatialization from its star's live projection this frame. It is the
+  // one audio path derived from the SCREEN, so it projects through shipView — the ship's own first-person
+  // frame — never renderView: bit-identical to before in first person, still ship-relative in chase view.
   if (leadVoice) {
     if (!cosmos.zones.has(leadVoice.node.grid)) { setLead(null); leadVoice = null; updateRhythmActionState(); }   // evicted → clear the lead
     else {
-      const lp = proj.get(leadVoice.node.grid);
-      if (lp) setSpatial(clampN((cx - lp.s.x) / cx, -1, 1), distGain(lp.s.z), distOctave(lp.s.z));   // screen-right → pan right (Avery: was backwards)
+      const leadRp = placed.get(leadVoice.node.grid), lp = leadRp ? shipView.project(leadRp) : null;
+      if (lp) setSpatial(clampN((cx - lp.x) / cx, -1, 1), distGain(lp.z), distOctave(lp.z));   // screen-right → pan right (Avery: was backwards)
       else setSpatial(0, 0, 0);   // flew out of view (still loaded) → silence via gain 0, don't crash
     }
   }
@@ -2649,9 +2722,13 @@ function loop() {
   const blots = [];
   for (const b of bubbles) {
     const p = proj.get(b.g); if (!p) continue;
-    const vz = p.s.z, fade = Math.max(0, Math.min(1, (vz - b.outerR) / b.outerR));   // fade out as camera enters the cloud
-    if (fade <= 0) continue;                                                          // inside the bloom → no blot, see everything
-    blots.push({ x: p.s.x, y: p.s.y, vz, r: b.outerR * BLOT_FRAC * focal / vz, fade, g: b.g });
+    const vz = p.s.z;
+    let fade = Math.max(0, Math.min(1, (vz - b.outerR) / b.outerR));   // fade out as the EYE enters the cloud
+    // Chase view: "inside the bloom → see everything" holds when the SHIP or the eye is inside. Otherwise a ship
+    // parked in a bloom would hide the bloom's own surroundings behind its blot. (First person: ship = eye.)
+    if (pose) { const shipGap = Math.hypot(p.rp[0], p.rp[1], p.rp[2]); fade = Math.min(fade, Math.max(0, Math.min(1, (shipGap - b.outerR) / b.outerR))); }
+    if (fade <= 0) continue;                                            // inside the bloom → no blot, see everything
+    blots.push({ x: p.s.x, y: p.s.y, vz, f: p.s.f, r: b.outerR * BLOT_FRAC * focal / vz, fade, g: b.g });
   }
   // a plain star is occluded if it sits behind (farther than) a nearer bloom's disk — culled from draw AND pick
   const occluded = (sx, sy, vz, g) => { for (const bl of blots) { if (bl.g === g || bl.vz >= vz) continue; const dx = sx - bl.x, dy = sy - bl.y; if (dx * dx + dy * dy < bl.r * bl.r) return true; } return false; };
@@ -2663,7 +2740,7 @@ function loop() {
     for (const { z, s } of proj.values()) {
       if (z.parentGrid === z.grid) continue;
       const p = proj.get(z.parentGrid); if (!p) continue;
-      const f = fogAt(s.z); if (f <= 0) continue;
+      const f = fogAt(s.f); if (f <= 0) continue;
       ctx.strokeStyle = `rgba(120,150,200,${0.10 * f})`;
       ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(p.s.x, p.s.y); ctx.stroke();
     }
@@ -2701,13 +2778,13 @@ function loop() {
     // is evicted. Keyed on the camera's position, never its rotation, so turning your head tears nothing.
     constellation.retain(placed, feed.now);
     drawGridRowConstellation(ctx, constellation.edges(feed.now), {
-      positionOf, basis, focal, cx, cy, near: NEAR, fogAt,
+      positionOf, frame: renderView, fogAt,
       // Read here rather than reusing the star loop's auraDetuneCents: this slot runs before it, and the
       // lines must fold in the same live detune so their hues drift with the orbs on a modulation.
       detuneCents: gridRowDetuneCents(), now: feed.now, drawIn: constellation.options.drawIn,
     });
   }
-  drawAgents(basis);   // Collider-Battle ships (over the web, under the picking rings)
+  drawAgents(renderView);   // Collider-Battle ships (over the web, under the picking rings)
   // ── picking: as we draw, note the star/node nearest the cursor and the pinned selection's live pos ──
   const havePtr = mouseX >= 0;
   let pickNode = null, pickNodeD2 = NODE_HIT * NODE_HIT;
@@ -2729,7 +2806,7 @@ function loop() {
   // need no painter's order of their own. One batch serves both passes — flush() empties it.
   const auras = createGridRowAuraBatch();
   for (const { z, s } of order) {
-    const fog = fogAt(s.z); if (fog <= 0) continue;
+    const fog = fogAt(s.f); if (fog <= 0) continue;
     // Cache projected motion even while a star is occluded so uncovering it cannot produce a stale,
     // full-screen streak. Space is the shared free-flight/Web-travel boost, so one law serves both.
     const previousScreen = z._starScreen;
@@ -2796,7 +2873,7 @@ function loop() {
   // black-hole disks: a soft dark sphere behind each bloom (drawn over the culled background, under the
   // cloud) so the bloom reads as a focal object floating in a clearing — no background noise bleeding through.
   for (const bl of blots) {
-    const fog = fogAt(bl.vz); if (fog <= 0) continue;
+    const fog = fogAt(bl.f); if (fog <= 0) continue;
     const g = ctx.createRadialGradient(bl.x, bl.y, 0, bl.x, bl.y, bl.r);
     g.addColorStop(0, 'rgba(5,7,11,0.96)'); g.addColorStop(0.72, 'rgba(5,7,11,0.9)'); g.addColorStop(1, 'transparent');
     ctx.globalAlpha = fog * bl.fade; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(bl.x, bl.y, bl.r, 0, 7); ctx.fill();
@@ -2847,8 +2924,8 @@ function loop() {
       else { p.px += (tx - p.px) * BLOOM_EASE; p.py += (ty - p.py) * BLOOM_EASE; p.pz += (tz - p.pz) * BLOOM_EASE; }
       if (g === cosmos.focusGrid && !cardVisible(p.c)) continue;          // band filter applies to the FOCUSED bloom only
       const wx = p.px * cs + p.pz * sn, wz = -p.px * sn + p.pz * cs;      // spin around Y
-      const sp = toScreen([crp[0] + wx, crp[1] + p.py, crp[2] + wz], basis); if (!sp) continue;   // per-node near cull
-      const fog = fogAt(sp.z); if (fog <= 0) continue;                    // per-node fog (far side of a big bloom fades)
+      const sp = renderView.project([crp[0] + wx, crp[1] + p.py, crp[2] + wz]); if (!sp) continue;   // per-node near cull
+      const fog = fogAt(sp.f); if (fog <= 0) continue;                    // per-node fog (far side of a big bloom fades)
       const rv = Math.min(1, (now - p.bt) / BLOOM_RV_MS), a0 = fog * rv;   // per-node birth ease
       const r = Math.max(0.4, Math.min(2.6 * focal / sp.z, 6)) * (0.5 + 0.5 * rv);
       renderedNodes.push({ p, pi, sp, fog, rv, a0, r });
@@ -2868,7 +2945,7 @@ function loop() {
       });
       const webGravityFade = gravityWebVisibility(crp);
       if (matches.length && webGravityFade > 0.01) {
-        let hub = toScreen(crp, basis);
+        let hub = renderView.project(crp);
         if (!hub) {
           const sum = matches.reduce((acc, node) => [acc[0] + node.sp.x, acc[1] + node.sp.y], [0, 0]);
           hub = { x: sum[0] / matches.length, y: sum[1] / matches.length, z: matches[0].sp.z };
@@ -2917,6 +2994,17 @@ function loop() {
       if (selected && selected.kind === 'node' && selected.id === nid) selPos = { x: sp.x, y: sp.y, r };
       if (havePtr) { const dx = sp.x - mouseX, dy = sp.y - mouseY, d2 = dx * dx + dy * dy; if (d2 < pickNodeD2) { pickNodeD2 = d2; pickNode = { kind: 'node', id: nid, grid: g, c: p.c, dense: p.dense, layers: p.layers, fund: p.fund, rs: p.rs, key: p.key, charted: p.charted, x: sp.x, y: sp.y, r }; } }
     }
+  }
+  // ── the player's ship (chase view only): after the stars, auras, cores and bloom clouds, before the picking
+  // rings and the HUD. It sits exactly where the first-person camera is and fades in with the V blend, so it
+  // never appears in first person. Not pickable. Known limitation (accepted in the work order): a star lying
+  // between the eye and the ship draws beneath the ship — rare at the chase distance.
+  if (pose) {
+    const shipLength = chase.shipScale * CELL;
+    // When a wall squeezes the eye onto the hull, fade the ship out rather than let it fill the screen.
+    const eyeGap = Math.hypot(pose.eye[0], pose.eye[1], pose.eye[2]);
+    const clearance = smoothstep((eyeGap - 1.5 * shipLength) / (1.5 * shipLength));
+    drawPlayerShip(ctx, { view: renderView, hull: hullBasis(basis), length: shipLength, alpha: viewT * clearance, boost: shipBoost, time: now / 1000 });
   }
   // resolve hover (a node under the cursor wins — it's the specific target), draw the selection + hover
   // rings on their live screen positions, and drive the tooltip. The detail panel is pinned on click.
@@ -3053,6 +3141,9 @@ function bindControls() {
     if (firstPress && /^[0-9]$/.test(k)) { toggleSlot(k === '0' ? 9 : +k - 1); if (selected) showDetail(selected); }   // 1-9,0 → hide/show web slots
     if (firstPress && k === 'b' && swarm) { if (swarm.agents.length) swarm.clear(); else swarm.spawn(AGENT_COUNT, cam.anchor); }   // B → toggle Collider-Battle ships
     if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)
+    // V → chase view: pull back behind and above the ship, and back to the cockpit. Cube only (setViewMode
+    // refuses spine placement). Only what is SEEN moves — the ship keeps the controls, the hearing and the key.
+    if (firstPress && k === 'v' && !e.metaKey && !e.ctrlKey && !e.altKey) setViewMode(viewMode === 'chase' ? 'first' : 'chase');
     if (firstPress && k === 'h') toggleHarmonyHold();   // H → freeze/release chord + solved root; transport keeps running
     if (firstPress && k === 'c') { skyDebugOn = !skyDebugOn; if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none'; }   // C → toggle the Full Sky debug overlay (dev)
     // T → dump the audio-clock table (one row per motion mode) and start a fresh window. The protocol:
