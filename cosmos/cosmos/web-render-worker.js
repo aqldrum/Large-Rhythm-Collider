@@ -7,6 +7,9 @@ import { hilbertEncode, SIDE } from './hilbert.js';
 import { buildWebGraph, familyMembers } from './web-graph.js';
 import { planFamilyGrids, monotonicWebPath, shortestWebPath, buildArcPath, unitDelta, rideDuration } from './web-return.js';
 import { gravityWindowWeight } from '../gravity-core.js';
+// The one projection every Cosmos layer draws through. The frame message carries the EYE and the view basis,
+// which equal the ship's own in first person and pull back behind it in chase view.
+import { createViewFrame } from '../view-frame.js';
 
 const WEB_K = 3, WEB_BUCKET = 8, WEB_LINE_W = 2, WEB_STRAND_A = 0.3, WEB_HIT = 9;
 const WEB_REVEAL_FRAC = 0.75, WEB_ROUTE_MAX = 96, WEB_ROUTE_SUBDIV = 8, MN_REFRESH_MS = 200;
@@ -21,7 +24,6 @@ const gridAbsolute = grid => {
   return [c[0] * scale + h[0], c[1] * scale + h[1], c[2] * scale + h[2]];
 };
 const distance3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
 function rebuild(web) {
   const members = web.dynamic ? familyMembers(zoneGrids, web.base) : web.sourceMembers;
@@ -57,15 +59,10 @@ function render(frame) {
             (c[1] - camCell[1]) * scale + h[1] - frame.off[1],
             (c[2] - camCell[2]) * scale + h[2] - frame.off[2]];
   };
-  const toView = point => {
-    const x = dot(point, frame.r), y = dot(point, frame.u), z = dot(point, frame.d);
-    return { x, y, z };
-  };
-  const projectView = view => {
-    const { x, y, z } = view;
-    if (z <= 5) return null;
-    return { x: frame.cx + x * frame.focal / z, y: frame.cy - y * frame.focal / z, z };
-  };
+  // Points stay SHIP-relative (tail, reveal and gravity fades are distances from the player); only the eye moves.
+  const viewFrame = createViewFrame({ basis: { r: frame.r, u: frame.u, d: frame.d }, eye: frame.eye || null,
+    focal: frame.focal, cx: frame.cx, cy: frame.cy, near: frame.near ?? 5, fog: frame.fogBlend || 0 });
+  const toView = viewFrame.toView;
   const projectRouteView = view => {
     const x = frame.cx + view.x * frame.focal / view.z, y = frame.cy - view.y * frame.focal / view.z;
     // The camera-plane intersection can project extremely far off-canvas. Keep that endpoint well
@@ -74,7 +71,7 @@ function render(frame) {
     const shrink = Math.max(1, Math.abs(dx) / Math.max(1, W * 2), Math.abs(dy) / Math.max(1, H * 2));
     return { x: frame.cx + dx / shrink, y: frame.cy + dy / shrink, z: view.z };
   };
-  const toScreen = point => projectView(toView(point));
+  const toScreen = viewFrame.project;   // → { x, y, z, f } | null; fog reads f, size and order read z
   const fogAt = z => Math.max(0, Math.min(1, 1 - (z - frame.fogNear) / (frame.fogFar - frame.fogNear)));
   const revealR2 = (frame.fogFar * WEB_REVEAL_FRAC) ** 2;
   const tailR2 = (frame.fogFar * frame.tailFrac) ** 2, tailKnee = tailR2 * 0.49;
@@ -93,7 +90,7 @@ function render(frame) {
     if (ad > tailR2 && bd > tailR2) return;
     const a = toScreen(ar), b = toScreen(br); if (!a || !b) return;
     const gravityFade = (gravityVisibility(ad) + gravityVisibility(bd)) * 0.5;
-    const fade = Math.min(fogAt(a.z), fogAt(b.z)) * Math.min(tailFade(ad), tailFade(bd)) * gravityFade; if (fade <= 0.01) return;
+    const fade = Math.min(fogAt(a.f), fogAt(b.f)) * Math.min(tailFade(ad), tailFade(bd)) * gravityFade; if (fade <= 0.01) return;
     const selected = selectedId === web.tag;
     ctx.lineWidth = selected ? WEB_LINE_W * 1.8 : WEB_LINE_W;
     ctx.globalAlpha = (selected ? 0.68 : WEB_STRAND_A) * fade;
@@ -106,7 +103,7 @@ function render(frame) {
   const drawBead = (web, grid) => {
     const relative = gridRelative(grid), d2 = distance2(relative); if (d2 > tailR2) return;
     const screen = toScreen(relative); if (!screen) return;
-    const fade = fogAt(screen.z) * tailFade(d2) * gravityVisibility(d2); if (fade <= 0.01) return;
+    const fade = fogAt(screen.f) * tailFade(d2) * gravityVisibility(d2); if (fade <= 0.01) return;
     const selected = selectedId === web.tag;
     ctx.globalAlpha = (selected ? 0.88 : 0.6) * fade;
     ctx.beginPath(); ctx.arc(screen.x, screen.y, WEB_LINE_W * (selected ? 1.55 : 1.1), 0, 7); ctx.fill();
@@ -145,7 +142,7 @@ function render(frame) {
     const web = webs.get(routePath.webId), points = [...routePath.path.points, routePath.homePoint];
     if (web) {
       ctx.strokeStyle = web.color; ctx.lineWidth = WEB_LINE_W * 2.2; ctx.lineCap = 'round';
-      let previousView = null, previousGravityFade = 1;
+      let previousView = null, previousRelative = null, previousGravityFade = 1;
       for (const point of points) {
         const relative = [point[0] - cameraAbsolute[0], point[1] - cameraAbsolute[1], point[2] - cameraAbsolute[2]];
         const view = toView(relative), pointGravityFade = gravityVisibility(distance2(relative));
@@ -162,12 +159,14 @@ function render(frame) {
           const as = projectRouteView(a), bs = projectRouteView(b);
           if (as && bs) {
             // A segment remains readable while either endpoint is within fog; it disappears only
-            // once both ends are behind the player or beyond the forward visibility envelope.
-            const fade = Math.max(fogAt(as.z), fogAt(bs.z)) * (previousGravityFade + pointGravityFade) * 0.5;
+            // once both ends are behind the player or beyond the forward visibility envelope. Fog depth is the
+            // frame's: the (clipped) view depth in first person, each point's unclipped ship distance in chase.
+            const fade = Math.max(fogAt(viewFrame.fogDepth(previousRelative, a)), fogAt(viewFrame.fogDepth(relative, b)))
+              * (previousGravityFade + pointGravityFade) * 0.5;
             if (fade > 0) { ctx.globalAlpha = 0.76 * fade; ctx.beginPath(); ctx.moveTo(as.x, as.y); ctx.lineTo(bs.x, bs.y); ctx.stroke(); }
           }
         }
-        previousView = view; previousGravityFade = pointGravityFade;
+        previousView = view; previousRelative = relative; previousGravityFade = pointGravityFade;
       }
 
       // Travel waypoints use an unmistakable diamond + core instead of the normal tiny Web bead.
@@ -177,7 +176,7 @@ function render(frame) {
       for (let i = 0; i < routePath.grids.length; i++) {
         const grid = routePath.grids[i], relative = gridRelative(grid), screen = toScreen(relative);
         if (!screen) continue;
-        const fade = fogAt(screen.z) * gravityVisibility(distance2(relative)); if (fade <= 0.01) continue;
+        const fade = fogAt(screen.f) * gravityVisibility(distance2(relative)); if (fade <= 0.01) continue;
         const home = i === routePath.grids.length - 1, radius = home ? 6.5 : 5;
         ctx.globalAlpha = (home ? 1 : 0.88) * fade;
         ctx.fillStyle = web.color; ctx.strokeStyle = web.color; ctx.lineWidth = home ? 2 : 1.4;

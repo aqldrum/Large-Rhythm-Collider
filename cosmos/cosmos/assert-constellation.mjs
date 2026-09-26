@@ -4,6 +4,7 @@
 // against a recording mock context. Nothing here touches audio, a browser or a real canvas.
 import { CONSTELLATION_DEFAULTS, CONSTELLATION_FIGURE_CEILING, CONSTELLATION_LIFECYCLES, chainCoincidentAttacks, chordHold, createConstellation, lifespanFade } from '../constellation-core.js';
 import { drawGridRowConstellation } from '../grid-row-constellation.js';
+import { createViewFrame } from '../view-frame.js';
 import { pitchHue } from '../grid-row-aura.js';
 import { SpatialGridRowPlayer } from '../spatial-grid-row-player.js';
 
@@ -349,10 +350,12 @@ console.log('\n  Renderer: camera-plane clipping and the additive pass');
     return rec;
   };
   const basis = { r: [1, 0, 0], u: [0, 1, 0], d: [0, 0, 1] };   // identity: view space === world-relative
+  // The renderer projects through a view-frame.js frame; a first-person frame (eye at the ship) is exactly the
+  // bare basis/focal/cx/cy/near contract these checks were written against.
+  const frame = createViewFrame({ basis, focal: 800, cx: 400, cy: 300, near: 5 });
   const view = (points, extra = {}) => ({
     positionOf: g => points.get(g) || null,
-    basis, focal: 800, cx: 400, cy: 300, near: 5,
-    fogAt: () => 1, detuneCents: 0, now: 10, drawIn: 0.1, ...extra,
+    frame, fogAt: () => 1, detuneCents: 0, now: 10, drawIn: 0.1, ...extra,
   });
   const edge = (extra = {}) => ({ from: 1, to: 2, fromHz: 220, toHz: 330, bornAt: 0, fade: 1, ...extra });
 
@@ -403,6 +406,19 @@ console.log('\n  Renderer: camera-plane clipping and the additive pass');
   const faded = makeCtx();
   drawGridRowConstellation(faded, [edge({ fade: 0.5 })], view(new Map([[1, [0, 0, 100]], [2, [100, 0, 100]]]), { fogAt: () => 0.4 }));
   check('alpha is min endpoint fog × lifecycle fade', Math.abs(faded.strokes[0] - 0.2) < 1e-9, `got ${faded.strokes[0]}`);
+
+  // Chase view: the eye pulls back and up, and fog reads each endpoint's distance from the SHIP — the same
+  // sphere-of-light law the stars use — including an endpoint clipped at the eye's near plane.
+  const chaseFrame = createViewFrame({ basis, eye: [0, 400, -1200], focal: 800, cx: 400, cy: 300, near: 5, fog: 1 });
+  const depths = [];
+  const recordFog = depth => { depths.push(depth); return 1; };
+  drawGridRowConstellation(makeCtx(), [edge()], view(new Map([[1, [30, 0, 40]], [2, [0, 0, -3000]]]), { frame: chaseFrame, fogAt: recordFog }));
+  check('chase fog reads each endpoint\'s UNCLIPPED ship distance (50 and 3000), not its eye depth',
+    depths.length === 2 && Math.abs(depths[0] - 50) < 1e-9 && Math.abs(depths[1] - 3000) < 1e-9, `got ${depths}`);
+  const firstDepths = [];
+  drawGridRowConstellation(makeCtx(), [edge()], view(new Map([[1, [0, 0, 100]], [2, [0, 0, -400]]]), { fogAt: d => { firstDepths.push(d); return 1; } }));
+  check('first-person fog still reads the CLIPPED view depth, exactly as before the view frame',
+    firstDepths.length === 2 && firstDepths[0] === 100 && firstDepths[1] === 5 * 1.01, `got ${firstDepths}`);
 
   check('lines and orbs share one pitch→colour law, so a modulation drifts them together',
     typeof pitchHue === 'function' && pitchHue(440, 0) === pitchHue(220, 0) && pitchHue(220, 1200) === pitchHue(220, 0));
