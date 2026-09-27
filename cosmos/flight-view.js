@@ -153,6 +153,10 @@ const BUBBLE_MARGIN = 0.5 * CELL; // cube: neighbours inside (bloom outer radius
 const BLOT_FRAC = 1.12;       // "black hole": screen disk radius = this × bloom outer radius. Background stars
                               //   behind it (farther in view depth) are culled from BOTH draw and hit-test — no
                               //   background noise behind a bloom, and no accidental clicks through it.
+                              //   The same radius is the bloom's SHELL: with the eye inside it, everything
+                              //   outside is hidden (a veil + cull), so the orb stays opaque from within too.
+const BLOT_SHELL_BAND = 0.08; // eye-crossing band (± × shell radius) over which the outside disk hands off to
+                              //   the inside veil — a short crossfade instead of a pop at the surface.
 const BLOOM_OMEGA = 0;     // bloom spin (rad/sec) — 0: static so nodes stay clickable
 const BLOOM_RV_MS = 320;   // per-node birth ease (each node fades + scales in)
 const BLOOM_EASE = 0.14;   // re-flow easing: nodes glide as their sphere fills (recreates the solve animation)
@@ -2718,20 +2722,34 @@ function loop() {
   drawChordReadout();
   renderSkyDebug(now);
 
-  // black-hole blots: a screen disk per bloom (from its projected centre) that occludes farther stars behind it
-  const blots = [];
+  // black-hole blots: each bloom is an opaque orb of radius outerR × BLOT_FRAC. Seen from OUTSIDE it is a screen
+  // disk (from its projected centre) that occludes farther stars behind it. Seen from INSIDE it is a shell: every
+  // ray from an interior eye exits the sphere exactly once, so anything outside the shell is behind it — a
+  // full-screen veil covers what's already painted and those stars are culled. The EYE decides inside/outside
+  // (chase view included): a ship parked in a bloom, seen from outside, still sits in front of its disk.
+  const blots = [], shells = [];
+  const eye = renderView.eye;   // ship-relative, like `placed` ([0,0,0] in first person)
   for (const b of bubbles) {
-    const p = proj.get(b.g); if (!p) continue;
-    const vz = p.s.z;
-    let fade = Math.max(0, Math.min(1, (vz - b.outerR) / b.outerR));   // fade out as the EYE enters the cloud
-    // Chase view: "inside the bloom → see everything" holds when the SHIP or the eye is inside. Otherwise a ship
-    // parked in a bloom would hide the bloom's own surroundings behind its blot. (First person: ship = eye.)
-    if (pose) { const shipGap = Math.hypot(p.rp[0], p.rp[1], p.rp[2]); fade = Math.min(fade, Math.max(0, Math.min(1, (shipGap - b.outerR) / b.outerR))); }
-    if (fade <= 0) continue;                                            // inside the bloom → no blot, see everything
-    blots.push({ x: p.s.x, y: p.s.y, vz, f: p.s.f, r: b.outerR * BLOT_FRAC * focal / vz, fade, g: b.g });
+    const c = placed.get(b.g); if (!c) continue;
+    const shellR = b.outerR * BLOT_FRAC;
+    const d = Math.hypot(c[0] - eye[0], c[1] - eye[1], c[2] - eye[2]);
+    const inside = smoothstep((shellR * (1 + BLOT_SHELL_BAND) - d) / (2 * BLOT_SHELL_BAND * shellR));
+    if (inside > 0) shells.push({ g: b.g, c, r2: shellR * shellR, inside });
+    const p = proj.get(b.g), fade = 1 - inside; if (!p || fade <= 0) continue;
+    blots.push({ x: p.s.x, y: p.s.y, vz: p.s.z, f: p.s.f, r: shellR * focal / p.s.z, fade, g: b.g });
   }
-  // a plain star is occluded if it sits behind (farther than) a nearer bloom's disk — culled from draw AND pick
-  const occluded = (sx, sy, vz, g) => { for (const bl of blots) { if (bl.g === g || bl.vz >= vz) continue; const dx = sx - bl.x, dy = sy - bl.y; if (dx * dx + dy * dy < bl.r * bl.r) return true; } return false; };
+  const veil = shells.reduce((a, sh) => Math.max(a, sh.inside), 0);
+  // outside the shell of a bloom the eye is FULLY inside (the crossfade band leaves it to the veil alone)
+  const shelled = (rp, g) => { for (const sh of shells) { if (sh.g === g || sh.inside < 1) continue; const dx = rp[0] - sh.c[0], dy = rp[1] - sh.c[1], dz = rp[2] - sh.c[2]; if (dx * dx + dy * dy + dz * dz > sh.r2) return true; } return false; };
+  // a plain star is occluded if it sits behind (farther than) a nearer bloom's disk, or outside a shell we're
+  // in — culled from draw AND pick
+  // bloom clouds draw OVER the veil, so a node outside another bloom's shell fades with that shell's crossfade
+  const shellVisibility = (rp, g) => {
+    let v = 1;
+    for (const sh of shells) { if (sh.g === g) continue; const dx = rp[0] - sh.c[0], dy = rp[1] - sh.c[1], dz = rp[2] - sh.c[2]; if (dx * dx + dy * dy + dz * dz > sh.r2) v = Math.min(v, 1 - sh.inside); }
+    return v;
+  };
+  const occluded = (sx, sy, vz, rp, g) => { for (const bl of blots) { if (bl.g === g || bl.vz >= vz) continue; const dx = sx - bl.x, dy = sy - bl.y; if (dx * dx + dy * dy < bl.r * bl.r) return true; } return shelled(rp, g); };
 
   // connectors (behind stars), faded by depth — spine only. In the cube there's no district reorg,
   // so a connector would just be a random thread across space; the Hilbert layout carries structure.
@@ -2805,13 +2823,13 @@ function loop() {
   // light instead of each greying the one behind it. Additive blending is order-independent, so the glows
   // need no painter's order of their own. One batch serves both passes — flush() empties it.
   const auras = createGridRowAuraBatch();
-  for (const { z, s } of order) {
+  for (const { z, s, rp } of order) {
     const fog = fogAt(s.f); if (fog <= 0) continue;
     // Cache projected motion even while a star is occluded so uncovering it cannot produce a stale,
     // full-screen streak. Space is the shared free-flight/Web-travel boost, so one law serves both.
     const previousScreen = z._starScreen;
     z._starScreen = { x: s.x, y: s.y, at: now };
-    if (!bloomed.has(z.grid) && occluded(s.x, s.y, s.z, z.grid)) continue;   // behind a black-hole blot → no draw, no click
+    if (!bloomed.has(z.grid) && occluded(s.x, s.y, s.z, rp, z.grid)) continue;   // behind a black-hole blot → no draw, no click
     const dim = (bloomed.has(z.grid) && z._bloom && z._bloom.pts.length) ? 0.18 : 1;   // bloomed dot dissolves into its cloud
     const travelTarget = returnRide && z.state !== 'solved'
       ? travelBloomWeight(gravityOf.get(z.grid), travelStarSamples, travelStarRadius) : 0;
@@ -2870,6 +2888,9 @@ function loop() {
   for (const b of dotBuckets.values()) { ctx.globalAlpha = b.a; ctx.fillStyle = b.col; ctx.fill(b.path); }
   ctx.globalAlpha = 1;
 
+  // inside a bloom's shell: veil everything painted so far (background stars, walls, constellation lines, the
+  // Web canvas beneath) — the inside face of the orb. Only the bloom clouds, drawn next, sit in front of it.
+  if (veil > 0) { ctx.globalAlpha = veil; ctx.fillStyle = 'rgb(5,7,11)'; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
   // black-hole disks: a soft dark sphere behind each bloom (drawn over the culled background, under the
   // cloud) so the bloom reads as a focal object floating in a clearing — no background noise bleeding through.
   for (const bl of blots) {
@@ -2924,8 +2945,10 @@ function loop() {
       else { p.px += (tx - p.px) * BLOOM_EASE; p.py += (ty - p.py) * BLOOM_EASE; p.pz += (tz - p.pz) * BLOOM_EASE; }
       if (g === cosmos.focusGrid && !cardVisible(p.c)) continue;          // band filter applies to the FOCUSED bloom only
       const wx = p.px * cs + p.pz * sn, wz = -p.px * sn + p.pz * cs;      // spin around Y
-      const sp = renderView.project([crp[0] + wx, crp[1] + p.py, crp[2] + wz]); if (!sp) continue;   // per-node near cull
-      const fog = fogAt(sp.f); if (fog <= 0) continue;                    // per-node fog (far side of a big bloom fades)
+      const nrp = [crp[0] + wx, crp[1] + p.py, crp[2] + wz];
+      const sp = renderView.project(nrp); if (!sp) continue;             // per-node near cull
+      let fog = fogAt(sp.f); if (fog <= 0) continue;                      // per-node fog (far side of a big bloom fades)
+      if (shells.length) { fog *= shellVisibility(nrp, g); if (fog <= 0) continue; }   // another bloom's shell hides it
       const rv = Math.min(1, (now - p.bt) / BLOOM_RV_MS), a0 = fog * rv;   // per-node birth ease
       const r = Math.max(0.4, Math.min(2.6 * focal / sp.z, 6)) * (0.5 + 0.5 * rv);
       renderedNodes.push({ p, pi, sp, fog, rv, a0, r });
