@@ -42,7 +42,7 @@ class PartitionsPlayback {
             this.stop();
         });
         window.addEventListener('playbackTempoChanged', () => {
-            if (this.isRunning) this.handleSharedClockChange();
+            if (this.isRunning) this.handleTempoChange();
         });
         window.addEventListener('rhythmGenerated', () => {
             if (this.isRunning) this.rebuildAndReschedule();
@@ -132,12 +132,42 @@ class PartitionsPlayback {
         this.flashEpoch += 1;
     }
 
-    // A cycle-duration/tempo change doesn't move any event's tick position - ticks are
-    // shared-tick-relative (musical), only absTickToTime's wall-clock mapping changes -
-    // so this only needs to resync the schedule pointer, never rebuild layerEvents.
-    handleSharedClockChange() {
+    // A cycle-duration (tempo) change rescales cycleTicks, and partition event ticks are
+    // baked as a function of cycleTicks (see buildLayerEvents' sharedTicksPerGridUnit), so
+    // - exactly like the tone row's own handleCycleDurationChange - we must cull in-flight
+    // output, rebuild layerEvents against the new cycleTicks, and re-snap the pointer.
+    // The tone row emits playbackTempoChanged only AFTER it has re-anchored the transport
+    // (preserving phase), so by the time we run, timeToAbsTick(now) already reflects the
+    // new mapping and snapping to it lands us at the correct musical position.
+    handleTempoChange() {
         if (!this.audioContext || !window.toneRowPlayback) return;
+
+        // Cull everything committed under the old mapping - audio sources already start()ed,
+        // pending flash timeouts (invalidated by bumping flashEpoch), and drum MIDI whose
+        // note-offs were queued at old-tempo offsets. Unconditional, unlike
+        // rebuildAndReschedule's fingerprint gate: a tempo change always moves ticks.
+        this.stopAllActiveSources();
+        window.partitionsBlockLights?.clearAll?.();
+        this.flashEpoch += 1;
+        window.lrcMidiOut?.releaseAllPartitionNotes?.();
+
+        // Rebuild against the new cycleTicks/cycleDuration (the tone row has already set
+        // them before emitting the event). No rhythm data -> just resync the pointer.
+        const rhythmInfo = window.lrcModule?.getRhythmInfoData?.();
+        if (rhythmInfo && rhythmInfo.grid) {
+            this.layerEvents = this.buildLayerEvents(rhythmInfo);
+            this._lastEventsFingerprint = this.fingerprintEvents(this.layerEvents);
+        }
+
         this.snapScheduleToNow();
+
+        // Restart the lookahead loop immediately so the refill uses the new mapping
+        // without waiting up to scheduleIntervalMs, mirroring the tone row's clear+rerun.
+        if (this.schedulerTimer) {
+            clearTimeout(this.schedulerTimer);
+            this.schedulerTimer = null;
+        }
+        this.runScheduler();
     }
 
     snapScheduleToNow() {

@@ -464,7 +464,7 @@ class ToneRowPlayback {
     }
 
     updateFundamentalFreq(rawValue, options = {}) {
-        const { syncInput = true } = options;
+        const { syncInput = true, glideSec = 0.05 } = options;
         const previousFreq = this.fundamentalFreq;
         const numericValue = Number.isFinite(rawValue) ? rawValue : previousFreq;
         const { min, max } = this.fundamentalLimits;
@@ -484,7 +484,7 @@ class ToneRowPlayback {
 
         if (clampedValue !== previousFreq) {
             console.log(`🎼 Fundamental frequency updated: ${clampedValue}Hz (cap: ${this.maxFrequencyHz}Hz)`);
-            this.handleFundamentalChange();
+            this.handleFundamentalChange(glideSec);
         }
     }
 
@@ -747,18 +747,30 @@ class ToneRowPlayback {
         if (!this.audioContext || !this.isPlaying) return;
         const now = this.audioContext.currentTime;
 
+        const glideParam = (param, target) => {
+            const safeTarget = Math.max(0.0001, target);
+            const duration = Math.max(0, Number(glideTime) || 0);
+            if (typeof param.cancelAndHoldAtTime === 'function') param.cancelAndHoldAtTime(now);
+            else {
+                param.cancelScheduledValues(now);
+                param.setValueAtTime(Math.max(0.0001, param.value), now);
+            }
+            if (duration > 0.001) param.exponentialRampToValueAtTime(safeTarget, now + duration);
+            else param.setValueAtTime(safeTarget, now);
+        };
+
         for (let i = 0; i < 4; i++) {
             const voice = this.activeLayerVoices[i];
             if (voice?.oscillator && voice.noteData?.ratio) {
                 const newFreq = this.fundamentalFreq * voice.noteData.ratio;
                 voice.noteData.frequency = newFreq;
-                voice.oscillator.frequency.setTargetAtTime(newFreq, now, glideTime);
+                glideParam(voice.oscillator.frequency, newFreq);
             }
 
             const bridge = this.bridgeVoices[i];
             if (bridge?.osc && bridge.ratio) {
                 const newFreq = this.fundamentalFreq * bridge.ratio;
-                bridge.osc.frequency.setTargetAtTime(newFreq, now, glideTime);
+                glideParam(bridge.osc.frequency, newFreq);
             }
         }
     }

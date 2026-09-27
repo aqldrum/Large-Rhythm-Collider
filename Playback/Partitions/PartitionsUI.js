@@ -443,6 +443,21 @@ class PartitionsUI {
                                     <button class="prog-solve" id="part-prog-solve">Solve &amp; voice</button>
                                     <button class="prog-mini-btn" id="part-prog-clear" title="Clear voicing + restore">Clear</button>
                                 </div>
+                                <div class="prog-anchors" id="part-prog-anchors" style="display:none">
+                                    <div class="prog-anchor-head">
+                                        <span class="prog-anchor-title">Anchor <span id="part-prog-anchor-position"></span></span>
+                                        <span class="prog-anchor-fit" id="part-prog-anchor-fit"></span>
+                                    </div>
+                                    <div class="prog-anchor-nav">
+                                        <button class="prog-mini-btn prog-anchor-step" id="part-prog-anchor-prev" title="Previous root solution ([)">‹</button>
+                                        <span class="prog-anchor-readout" id="part-prog-anchor-readout" title="Root ratio"></span>
+                                        <button class="prog-mini-btn prog-anchor-step" id="part-prog-anchor-next" title="Next root solution (])">›</button>
+                                    </div>
+                                    <div class="prog-anchor-foot">
+                                        <label>Glide <input type="number" id="part-prog-anchor-glide" class="prog-mini" value="0.40" min="0" max="5" step="0.05"> <span>s</span></label>
+                                        <span class="prog-anchor-fold" id="part-prog-anchor-fold" style="display:none"></span>
+                                    </div>
+                                </div>
                                 <div class="prog-status" id="part-prog-status"></div>
                             </div>
                         </div>
@@ -503,6 +518,13 @@ class PartitionsUI {
         const win = document.getElementById('part-prog-window');
         const solveBtn = document.getElementById('part-prog-solve');
         const clearBtn = document.getElementById('part-prog-clear');
+        const anchorBar = document.getElementById('part-prog-anchors');
+        const anchorPosition = document.getElementById('part-prog-anchor-position');
+        const anchorReadout = document.getElementById('part-prog-anchor-readout');
+        const anchorFit = document.getElementById('part-prog-anchor-fit');
+        const anchorPrev = document.getElementById('part-prog-anchor-prev');
+        const anchorNext = document.getElementById('part-prog-anchor-next');
+        const anchorGlide = document.getElementById('part-prog-anchor-glide');
         const status = document.getElementById('part-prog-status');
         const PB = window.ProgressionBar;
         const main = id => document.getElementById(id);
@@ -512,12 +534,36 @@ class PartitionsUI {
         if (rootEl && main('prog-root')) rootEl.value = main('prog-root').value;
         if (win && main('prog-window')) win.value = main('prog-window').value;
         if (thick && main('prog-thick')) thick.classList.toggle('active', main('prog-thick').classList.contains('active'));
+        if (anchorGlide && main('prog-anchor-glide')) anchorGlide.value = main('prog-anchor-glide').value;
         // If a voicing is already active, open the bar and echo its status.
         if (PB && PB.timeline) {
             bar.style.display = 'block';
             toggle.classList.add('active');
             if (status && main('prog-status')) status.textContent = main('prog-status').textContent;
+            if (PB.anchorState && anchorBar) {
+                anchorBar.style.display = 'grid';
+                const candidate = PB.anchorState.candidates[PB.anchorState.index];
+                if (anchorPosition) anchorPosition.textContent = `${PB.anchorState.index + 1} of ${PB.anchorState.candidates.length}`;
+                if (anchorReadout && candidate) anchorReadout.textContent = candidate.rootFraction;
+                if (anchorFit && candidate) {
+                    anchorFit.textContent = `${(candidate.strength * 100).toFixed(0)}% fit`;
+                    anchorFit.className = `prog-anchor-fit ${candidate.strength >= 0.8 ? 'fit-high' : candidate.strength >= 0.5 ? 'fit-mid' : 'fit-low'}`;
+                }
+            }
         }
+
+        const syncAnchor = () => {
+            if (!PB?.anchorState) return;
+            const state = PB.anchorState, candidate = state.candidates[state.index];
+            if (anchorBar) anchorBar.style.display = 'grid';
+            if (anchorPosition) anchorPosition.textContent = `${state.index + 1} of ${state.candidates.length}`;
+            if (anchorReadout && candidate) anchorReadout.textContent = candidate.rootFraction;
+            if (anchorFit && candidate) {
+                anchorFit.textContent = `${(candidate.strength * 100).toFixed(0)}% fit`;
+                anchorFit.className = `prog-anchor-fit ${candidate.strength >= 0.8 ? 'fit-high' : candidate.strength >= 0.5 ? 'fit-mid' : 'fit-low'}`;
+            }
+            if (status && main('prog-status')) status.textContent = main('prog-status').textContent;
+        };
 
         const doSolve = () => {
             if (!PB || !PB.solveFromExternal) return;
@@ -528,6 +574,7 @@ class PartitionsUI {
                 thick: thick ? thick.classList.contains('active') : true,
                 statusEl: 'part-prog-status'
             });
+            syncAnchor();
         };
 
         toggle.addEventListener('click', () => {
@@ -540,7 +587,15 @@ class PartitionsUI {
             if (PB && PB.timeline) doSolve(); // re-voice live, like the main bar
         });
         solveBtn.addEventListener('click', doSolve);
-        clearBtn.addEventListener('click', () => { if (PB && PB.clearFromExternal) PB.clearFromExternal('part-prog-status'); });
+        clearBtn.addEventListener('click', () => {
+            if (PB && PB.clearFromExternal) PB.clearFromExternal('part-prog-status');
+            if (anchorBar) anchorBar.style.display = 'none';
+        });
+        if (anchorGlide) anchorGlide.addEventListener('input', () => {
+            const mainGlide = main('prog-anchor-glide'); if (mainGlide) mainGlide.value = anchorGlide.value;
+        });
+        if (anchorPrev) anchorPrev.addEventListener('click', () => { PB?.stepAnchorFromExternal?.(-1, 'part-prog-status'); syncAnchor(); });
+        if (anchorNext) anchorNext.addEventListener('click', () => { PB?.stepAnchorFromExternal?.(1, 'part-prog-status'); syncAnchor(); });
         if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSolve(); } });
     }
 

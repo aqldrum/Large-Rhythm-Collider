@@ -25,6 +25,7 @@
         _drag: null,
         _undoStack: [],   // boundary snapshots (before-state), capped
         _redoStack: [],
+        anchorState: null,
 
         init() {
             let tries = 0;
@@ -60,6 +61,21 @@
                         <button class="prog-solve" id="prog-solve">Solve &amp; voice</button>
                         <button class="prog-mini-btn" id="prog-clear" title="Clear voicing + restore">Clear</button>
                     </div>
+                    <div class="prog-anchors" id="prog-anchors" style="display:none">
+                        <div class="prog-anchor-head">
+                            <span class="prog-anchor-title">Anchor <span id="prog-anchor-position"></span></span>
+                            <span class="prog-anchor-fit" id="prog-anchor-fit"></span>
+                        </div>
+                        <div class="prog-anchor-nav">
+                            <button class="prog-mini-btn prog-anchor-step" id="prog-anchor-prev" title="Previous root solution ([)">‹</button>
+                            <span class="prog-anchor-readout" id="prog-anchor-readout" title="Root ratio"></span>
+                            <button class="prog-mini-btn prog-anchor-step" id="prog-anchor-next" title="Next root solution (])">›</button>
+                        </div>
+                        <div class="prog-anchor-foot">
+                            <label>Glide <input type="number" id="prog-anchor-glide" class="prog-mini" value="0.40" min="0" max="5" step="0.05"> <span>s</span></label>
+                            <span class="prog-anchor-fold" id="prog-anchor-fold" style="display:none"></span>
+                        </div>
+                    </div>
                     <div class="prog-status" id="prog-status"></div>
                 </div>
             `;
@@ -77,6 +93,8 @@
             document.getElementById('prog-toggle').addEventListener('click', () => this.toggle());
             document.getElementById('prog-solve').addEventListener('click', () => this.solve());
             document.getElementById('prog-clear').addEventListener('click', () => this.clear());
+            document.getElementById('prog-anchor-prev').addEventListener('click', () => this.stepAnchor(-1));
+            document.getElementById('prog-anchor-next').addEventListener('click', () => this.stepAnchor(1));
             const thick = document.getElementById('prog-thick');
             thick.addEventListener('click', () => { thick.classList.toggle('active'); if (this.timeline) this.solve(); });
             document.getElementById('prog-input').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); this.solve(); } });
@@ -99,6 +117,11 @@
                 if (!this.open || !this.timeline) return;
                 const t = e.target;
                 if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+                if (e.key === '[' || e.key === ']') {
+                    e.preventDefault();
+                    this.stepAnchor(e.key === '[' ? -1 : 1);
+                    return;
+                }
                 if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
                 e.preventDefault();
                 e.shiftKey ? this._redo() : this._undo();
@@ -164,11 +187,14 @@
             if (this.paintEngine) this.paintEngine.disable();
             this._lockScale(false);
             this.timeline = null;
+            this.anchorState = null;
             this.selectedSection = 0;
             this.multiSelect = new Set();
             this._undoStack = []; this._redoStack = []; this._dragSnap = null;
             this._reflectedMode = null; this._centriSection = null;
             this.overlay.innerHTML = '';
+            const anchors = document.getElementById('prog-anchors'); if (anchors) anchors.style.display = 'none';
+            const partAnchors = document.getElementById('part-prog-anchors'); if (partAnchors) partAnchors.style.display = 'none';
             const pb = window.toneRowPlayback;
             // restore the full scale: re-select everything (also re-dispatches plot visibility)
             try { pb.scaleSelectionUI && pb.scaleSelectionUI.selectAllNotes(); } catch (e) {}
@@ -194,6 +220,10 @@
         },
         clearFromExternal(statusEl) {
             this.clear();
+            this._mirrorStatus(statusEl);
+        },
+        stepAnchorFromExternal(delta, statusEl) {
+            this.stepAnchor(delta);
             this._mirrorStatus(statusEl);
         },
         _mirrorStatus(targetId) {
@@ -223,6 +253,15 @@
             this.timeline = new window.PaintTimeline();
             this.timeline.setAvailableFractions(scale.map(r => r.fraction));
             this.timeline.deriveEqual(n);
+            this.anchorState = {
+                candidates: res.candidates || [res.candidate],
+                parsed: res.parsed,
+                ratioRows: res.ratioRows || window.ProgressionSolver.buildRatioRows(scale),
+                windowCents,
+                thick,
+                index: 0,
+                relaxed: !!res.relaxed
+            };
             this._undoStack = []; this._redoStack = []; this._dragSnap = null; // fresh voicing → fresh history
             res.perChord.forEach((c, i) => {
                 this.timeline.setStageMask(i, thick ? c.windowFractions : c.fractions);
@@ -234,7 +273,7 @@
             });
             this.paintEngine.setTimeline(this.timeline);
             this.paintEngine.enable();
-            this._retune(res.candidate);
+            const retune = this._retune(res.candidate, 0.05);
 
             this.selectedSection = 0;
             this._reflectedMode = this._mode(); this._centriSection = null;
@@ -243,21 +282,108 @@
             try { window.toneRowPlayback.scaleSelectionUI && window.toneRowPlayback.scaleSelectionUI.updateScaleDisplay(); } catch (e) {}
             this._paintChartForSection(0);
 
-            const fits = res.perChord.map(c => Math.round(c.strength * 100) + '%').join(' ');
-            status.textContent = `${n} chords — ${(res.strength * 100).toFixed(0)}% (${fits}). Scale panel locked; Clear to edit.`;
+            this._updateAnchorUI(res.perChord, retune);
             this._renderBrackets();
         },
 
-        _retune(candidate) {
+        stepAnchor(delta) {
+            const state = this.anchorState;
+            if (!state || state.candidates.length < 2 || !this.timeline) return;
+            const count = state.candidates.length;
+            state.index = (state.index + delta + count) % count;
+            const candidate = state.candidates[state.index];
+            const perChord = window.ProgressionSolver.analyzePerChord(
+                state.parsed, candidate, state.ratioRows, state.windowCents
+            );
+            perChord.forEach((chord, i) => {
+                this.timeline.setStageMask(i, state.thick ? chord.windowFractions : chord.fractions);
+            });
+            if (this.paintEngine) this.paintEngine.markDirty();
+
+            const glideEl = document.getElementById('prog-anchor-glide');
+            const glideSec = Math.max(0, Math.min(5, parseFloat(glideEl?.value) || 0));
+            const retune = this._retune(candidate, glideSec);
+            this._reflect();
+            try { window.toneRowPlayback.scaleSelectionUI && window.toneRowPlayback.scaleSelectionUI.updateScaleDisplay(); } catch (e) {}
+            this._paintChartForSection(this._activeSection());
+            this._updateAnchorUI(perChord, retune);
+            this._renderBrackets();
+        },
+
+        _retune(candidate, glideSec = 0.05) {
             const noteText = (document.getElementById('prog-root').value || 'C3').trim();
             const hz = window.ProgressionSolver.noteToHz(noteText);
-            if (!hz) return;
+            if (!hz) return { error: `Invalid root note: ${noteText}` };
             const rootRow = this.scale().find(r => r.fraction === candidate.rootFraction);
             const rootDecimal = rootRow ? rootRow.ratio : Math.pow(2, candidate.rootCents / 1200);
             let fundamental = hz / rootDecimal;
-            while (fundamental < 55) fundamental *= 2;
-            while (fundamental > 880) fundamental /= 2;
-            window.toneRowPlayback.updateFundamentalFreq(fundamental);
+            let octaveFold = 0;
+            while (fundamental < 55) { fundamental *= 2; octaveFold += 1; }
+            while (fundamental > 880) { fundamental /= 2; octaveFold -= 1; }
+            window.toneRowPlayback.updateFundamentalFreq(fundamental, { glideSec });
+            return { noteText, hz, fundamental, rootDecimal, octaveFold };
+        },
+
+        _updateAnchorUI(perChord, retune) {
+            const state = this.anchorState;
+            if (!state) return;
+            const candidate = state.candidates[state.index];
+            const anchors = document.getElementById('prog-anchors');
+            const position = document.getElementById('prog-anchor-position');
+            const readout = document.getElementById('prog-anchor-readout');
+            const fit = document.getElementById('prog-anchor-fit');
+            const fold = document.getElementById('prog-anchor-fold');
+            if (anchors) anchors.style.display = 'grid';
+            if (position) position.textContent = `${state.index + 1} of ${state.candidates.length}`;
+            if (readout) readout.textContent = candidate.rootFraction;
+            if (fit) {
+                fit.textContent = `${(candidate.strength * 100).toFixed(0)}% fit`;
+                fit.className = `prog-anchor-fit ${candidate.strength >= 0.8 ? 'fit-high' : candidate.strength >= 0.5 ? 'fit-mid' : 'fit-low'}`;
+            }
+            const disabled = state.candidates.length < 2;
+            ['prog-anchor-prev', 'prog-anchor-next'].forEach(id => {
+                const el = document.getElementById(id); if (el) el.disabled = disabled;
+            });
+
+            const fits = perChord.map(c => Math.round(c.strength * 100) + '%').join(' ');
+            let rootReport = '';
+            if (retune?.error) rootReport = ` ${retune.error}.`;
+            else if (retune?.octaveFold) {
+                const direction = retune.octaveFold > 0 ? 'up' : 'down';
+                const count = Math.abs(retune.octaveFold);
+                rootReport = ` Root ${retune.noteText} octave-folded ${direction} ${count} octave${count === 1 ? '' : 's'} to stay within 55–880 Hz.`;
+            }
+            if (fold) {
+                if (retune?.octaveFold) {
+                    const direction = retune.octaveFold > 0 ? 'up' : 'down';
+                    const count = Math.abs(retune.octaveFold);
+                    fold.textContent = `↕ ${direction} ${count} oct`;
+                    fold.title = rootReport.trim();
+                    fold.style.display = 'inline-flex';
+                } else fold.style.display = 'none';
+            }
+            const status = document.getElementById('prog-status');
+            if (status) status.textContent = `${perChord.length} chords — ${(candidate.strength * 100).toFixed(0)}% (${fits}). Anchor ${state.index + 1}/${state.candidates.length}, root ${candidate.rootFraction}.${rootReport} Scale panel locked; Clear to edit.`;
+
+            const partAnchors = document.getElementById('part-prog-anchors');
+            const partPosition = document.getElementById('part-prog-anchor-position');
+            const partReadout = document.getElementById('part-prog-anchor-readout');
+            const partFit = document.getElementById('part-prog-anchor-fit');
+            const partFold = document.getElementById('part-prog-anchor-fold');
+            if (partAnchors) partAnchors.style.display = 'grid';
+            if (partPosition) partPosition.textContent = position?.textContent || '';
+            if (partReadout) partReadout.textContent = readout?.textContent || '';
+            if (partFit && fit) { partFit.textContent = fit.textContent; partFit.className = fit.className; }
+            if (partFold && fold) {
+                partFold.textContent = fold.textContent;
+                partFold.title = fold.title;
+                partFold.style.display = fold.style.display;
+            }
+            ['part-prog-anchor-prev', 'part-prog-anchor-next'].forEach(id => {
+                const el = document.getElementById(id); if (el) el.disabled = disabled;
+            });
+            const partStatus = document.getElementById('part-prog-status');
+            if (partStatus && status) partStatus.textContent = status.textContent;
         },
 
         // Clicking a bracket selects it; the (locked) Scale Selection panel then shows that
