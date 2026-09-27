@@ -178,13 +178,21 @@ console.log('\n  Multi-source voice — cost, detune per pitched source, complet
 console.log('\n  Bed drift — one shared LFO per context, torn off cleanly per voice');
 {
   const { ctx, nodes } = makeCtx();
-  const plan = planVoice(getRecipe('warm-v1', 'bed'), { role: 'bed', baseFreq: 110, timing: { attack: 1.5, release: 2.5, sustainFrac: 0.4 }, sampleRate: 48000 });
+  // Three saws + a drifting LP: the shape of the retired warm-v1 bed, kept inline because it is the case that
+  // exercises the shared LFO with several oscillators per voice.
+  const driftBed = {
+    components: [0, 6, -6].map((detuneCents, i) => ({ wave: 'sawtooth', ratio: 1, level: i ? 0.36 : 0.5, detuneCents })),
+    noise: null,
+    filters: [{ type: 'highpass', freq: 110, Q: 0.7071 }, { type: 'lowpass', freq: 3400, Q: 0.7071, drift: { rateHz: 0.06, depthCents: 250 } }],
+    outputTrim: 0.95,
+  };
+  const plan = planVoice(driftBed, { role: 'bed', baseFreq: 110, timing: { attack: 1.5, release: 2.5, sustainFrac: 0.4 }, sampleRate: 48000 });
   const d1 = ctx.createGain();
   const v1 = createInstrumentVoice({ ctx, destination: d1, plan, when: 1, detuneBus: makeBus() });
   const oscCountAfterFirst = nodes.osc.length;   // 3 saws + 1 shared drift LFO = 4
   const d2 = ctx.createGain();
   const v2 = createInstrumentVoice({ ctx, destination: d2, plan, when: 1, detuneBus: makeBus() });
-  check('the drift LFO is shared: a second Warm bed voice adds only its saws, not another LFO',
+  check('the drift LFO is shared: a second drifting bed voice adds only its saws, not another LFO',
     oscCountAfterFirst === 4 && nodes.osc.length === 7);
   // the LFO (nodes.osc[0]) drives a per-voice depth gain into the LP filter's detune.
   const lfo = nodes.osc[0];
@@ -193,7 +201,7 @@ console.log('\n  Bed drift — one shared LFO per context, torn off cleanly per 
   let done1 = 0; v1.onComplete(() => done1++);
   // end v1's saws (the oscs created right after the LFO: indices 1..3).
   nodes.osc[1]._end(); nodes.osc[2]._end(); nodes.osc[3]._end();
-  check('a completed Warm bed voice detaches its depth gain from the shared LFO and completes once', done1 === 1);
+  check('a completed drifting bed voice detaches its depth gain from the shared LFO and completes once', done1 === 1);
 }
 
 console.log('\n  Warm — harmonic-table osc, brass cutoff sweep, swell brightness');

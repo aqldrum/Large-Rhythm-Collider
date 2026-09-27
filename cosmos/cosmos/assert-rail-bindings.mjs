@@ -51,11 +51,11 @@ check('the engine\'s own default agrees with the rail\'s, so the two surfaces ca
   currentModulation().on === true);
 
 console.log('\n  RICHNESS — a vocabulary-ceiling DETENT, not a weight');
-check('setRichness snaps to an integer stop and clamps to 1–4',
-  setRichness(9) === 4 && setRichness(-3) === 1 && setRichness(2.4) === 2 && setRichness(2.6) === 3);
+check('setRichness snaps to an integer stop and clamps to 1–3',
+  setRichness(9) === 3 && setRichness(-3) === 1 && setRichness(2.4) === 2 && setRichness(2.6) === 3);
 check('currentRichness reports the stop, its ceiling and a name the readout can show',
   setRichness(1) === 1 && currentRichness().maxCardinality === 3 && currentRichness().label === 'triads' &&
-  setRichness(4) === 4 && currentRichness().maxCardinality === 6 && currentRichness().max === 4);
+  setRichness(3) === 3 && currentRichness().maxCardinality === 6 && currentRichness().label === 'ext.' && currentRichness().max === 3);
 setRichness(3);   // hygiene: back to the default stop
 
 console.log('\n  VOLUME — master trim ahead of the limiter');

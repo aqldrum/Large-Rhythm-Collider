@@ -86,10 +86,10 @@ let LAMBDA_FIELD = LAMBDA_FIELD_FROZEN;   // live only so the lab probe can swee
 // It saturates past ~0.12 (leveling the field term leaves triads and 7ths near-tied, so a small nudge
 // moves most of them at once). 0.05 keeps the triad a real home base while making the 7th the sky's
 // common currency; 0 reproduces the previous triad-dominated walk.
-// RICHNESS is now the vocabulary CEILING (a 1–4 detent; see RICHNESS_LEVELS in sky-walk.js), not a weight.
-// Default stop 3 (≤5-note) is the closest reproduction of the shipped 0.05 weight's measured distribution —
-// that sweep ran 20/50/25/5 triad/7th/9th/11–13, so capping at 9ths drops only its 5% tail. To ship the
-// whole vocabulary by default instead, move this to 4; nothing else changes.
+// RICHNESS is now the vocabulary CEILING (a 1–3 detent; see RICHNESS_LEVELS in sky-walk.js), not a weight.
+// Default stop 3 is EXT., the whole vocabulary. (Until 2026-09-27 the default was a ≤5-note "9ths" stop that
+// dropped the 5% 11–13 tail of the shipped 0.05 weight's 20/50/25/5 triad/7th/9th/11–13 sweep; merging 9ths
+// and 11–13 into one EXT. stop lets that tail back in.)
 const RICHNESS_LEVEL_DEFAULT = 3;
 let richnessLevel = RICHNESS_LEVEL_DEFAULT;
 // …and the earned extension incentive goes back to being a constant at the swept knee. It still has a job

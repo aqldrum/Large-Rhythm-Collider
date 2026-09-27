@@ -593,8 +593,8 @@ const cardsAt = level => new Set(candidateCosts(chI.id, noTabu, () => 0.5,
   .map(r => r.cardinality));
 check('each stop admits exactly the cardinalities at or below its ceiling',
   [...cardsAt(1)].sort().join() === '3' && [...cardsAt(2)].sort().join() === '3,4' &&
-  [...cardsAt(3)].sort().join() === '3,4,5' && [...cardsAt(4)].sort().join() === '3,4,5,6',
-  [1, 2, 3, 4].map(l => `${l}:[${[...cardsAt(l)].sort()}]`).join(' '));
+  [...cardsAt(3)].sort().join() === '3,4,5,6',
+  [1, 2, 3].map(l => `${l}:[${[...cardsAt(l)].sort()}]`).join(' '));
 check('the ceiling REMOVES chords — something no value of the incentive can do',
   (() => {
     const at = level => candidateCosts(chI.id, noTabu, () => 0.5,
@@ -602,7 +602,7 @@ check('the ceiling REMOVES chords — something no value of the incentive can do
     // 12 roots × qualities of each size: 6 three-note, 14 four-note, 9 five-note, 4 six-note = 33.
     // Each count is one short of the full class because the current chord (I) is its own rename and the
     // no-renames rule refuses it — with an empty tabu that is the only thing standing the walk still.
-    return at(1) === 71 && at(2) === 239 && at(3) === 347 && at(4) === 12 * QUALITY_COUNT - 1;
+    return at(1) === 71 && at(2) === 239 && at(3) === 12 * QUALITY_COUNT - 1;
   })());
 // A ceiling that merely made big chords expensive would still let one through on a strong enough field.
 // This is the guarantee the knob is actually making, and it has to hold at every field shape.
@@ -624,9 +624,10 @@ check('an absent ceiling is the full vocabulary — every existing caller and gu
 check('a ceiling starved by an oversized tabu falls back to the vocabulary rather than returning nothing',
   chooseNextChord(chI.id, CHORDS.filter(c => c.cardinality === 3).map(c => c.id), () => 0.5,
     { lambdaField: 1, richness: 0, maxCardinality: 3 }) !== null);
-check('the level table is the four stops, ascending, spanning triads through the whole vocabulary',
-  RICHNESS_LEVELS.length === 4 &&
-  RICHNESS_LEVELS.every((s, i) => s.level === i + 1 && s.maxCardinality === i + 3 && !!s.label) &&
+check('the level table is the three stops — triads, 7ths, ext. (every extension: the whole vocabulary)',
+  RICHNESS_LEVELS.length === 3 &&
+  RICHNESS_LEVELS.map(s => s.maxCardinality).join() === '3,4,6' &&
+  RICHNESS_LEVELS.every((s, i) => s.level === i + 1 && !!s.label) &&
   maxCardinalityForRichness(0) === 3 && maxCardinalityForRichness(99) === 6);
 
 // ══ A move must MOVE — no renames (2026-07-30) ══════════════════════════════════════════════════

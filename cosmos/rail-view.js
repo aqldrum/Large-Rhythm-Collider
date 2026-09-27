@@ -47,7 +47,7 @@ import { INSTRUMENTS } from './instruments/instrument-presets.js';
 export const ENGINE_SETTERS = Object.freeze({
   fundamental: setFundamentalOffset,   // cents (railParams 'fundamental' value is already in cents, ±1200 knob)
   speed: setTargetOnsetRate,           // notes/sec — puts the engine in ONSET mode (SPEED replaces fixed/scaled)
-  richness: setRichness,               // detent 1–4 — the largest chord the walk may reach for
+  richness: setRichness,               // detent 1–3 — the largest chord the walk may reach for
   volume: setVolume,                   // [0,1] master trim ahead of the limiter
   mix: setMix,                         // [0,1] constant-power bed↔rows crossfade
   space: setSpace,                     // [0,1] both reverb sends (0.5 = today's levels)
@@ -57,7 +57,7 @@ export const ENGINE_SETTERS = Object.freeze({
   scale: setHarmonyScale,              // normalized cent-target preset ID
   rowFundamental: setRowFundamental,   // bool — schedule-time literal 1/1 attacks only
   modulation: setModulation,           // bool — retune each newly solved root to the fundamental
-  instrument: setInstrument,           // choice — synthesis palette (classic | glass | warm | warm-v1 dev A/B)
+  instrument: setInstrument,           // choice — synthesis palette (classic | glass | warm)
 });
 
 // Front-face ROTARY knobs, ordered within their groups. RICHNESS is a named back-face segment;
@@ -77,7 +77,7 @@ export function formatReadout(spec, value) {
   if (spec.curve === 'bool') return value ? 'ON' : 'OFF';
   if (spec.curve === 'choice') return String(value).toUpperCase().replaceAll('-', ' ');
   // A detent with `stops` reads its stop's NAME — a rail knob's readout is the only thing telling the
-  // listener what a stop means, and "9ths" says it where "3" does not. Unnamed detents still read numeric.
+  // listener what a stop means, and "ext." says it where "3" does not. Unnamed detents still read numeric.
   if (spec.curve === 'detent') return spec.stops?.[value - spec.min] ?? String(value);
   const digits = spec.unit === '¢' ? 0 : Math.abs(spec.max) <= 1 ? 2 : 1;   // cents are ints; unit-fractions read to 2dp
   return `${(+value).toFixed(digits)}${spec.unit || ''}`;

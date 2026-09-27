@@ -20,9 +20,9 @@ check('the default instrument is a known id (the safe fallback == today\'s sound
 check('an unknown id normalizes to the default, a known id passes through',
   normalizeInstrumentId('bogus') === DEFAULT_INSTRUMENT && normalizeInstrumentId('classic') === 'classic' &&
   normalizeInstrumentId(undefined) === DEFAULT_INSTRUMENT && normalizeInstrumentId(42) === DEFAULT_INSTRUMENT);
-check('the dev-only classic and warm-v1 palettes exist but are NOT production palettes',
+check('the dev-only classic palette exists but is NOT a production palette; the retired warm-v1 is gone',
   INSTRUMENT_IDS.includes('classic') && !PRODUCTION_INSTRUMENT_IDS.includes('classic') &&
-  INSTRUMENT_IDS.includes('warm-v1') && !PRODUCTION_INSTRUMENT_IDS.includes('warm-v1') && normalizeInstrumentId('warm-v1') === 'warm-v1');
+  !INSTRUMENT_IDS.includes('warm-v1') && normalizeInstrumentId('warm-v1') === DEFAULT_INSTRUMENT);
 check('every catalog instrument defines all three roles',
   INSTRUMENT_IDS.every(id => INSTRUMENT_ROLES.every(role => INSTRUMENTS[id].roles[role])));
 check('a label is available for a known and an unknown id (never throws)',
@@ -125,11 +125,6 @@ check('Glass BED has no bell/noise transient (a swell can never re-trigger a key
 const bellLow = planVoice(getRecipe('glass', 'row'), { role: 'row', baseFreq: 220, timing: { duration: 0.2 }, sampleRate: sr }).components[1].level;
 const bellHigh = planVoice(getRecipe('glass', 'row'), { role: 'row', baseFreq: 880, timing: { duration: 0.2 }, sampleRate: sr }).components[1].level;
 check('the Glass bell is register-scaled: quieter high, louder low, never zero', bellHigh < bellLow && bellHigh > 0);
-const warmV1Bed = planVoice(getRecipe('warm-v1', 'bed'), { role: 'bed', baseFreq: 220, timing: { attack: 1.5, release: 2.5, sustainFrac: 0.4 }, sampleRate: sr });
-check('Warm v1 (dev A/B) bed = minimally-detuned saws (center + flankers) through HP→LP with a slow cutoff drift (cost 3)',
-  warmV1Bed.cost === 3 && warmV1Bed.components.every(c => c.wave === 'sawtooth') &&
-  warmV1Bed.components.every(c => Math.abs(c.detuneCents) <= 10) && warmV1Bed.filters[0].type === 'highpass' &&
-  warmV1Bed.filters[1].type === 'lowpass' && warmV1Bed.filters[1].drift.depthCents > 0);
 const warmRow = planVoice(getRecipe('warm', 'row'), { role: 'row', baseFreq: 220, timing: {}, sampleRate: sr });
 check('Warm = ONE harmonic-table osc, zero static detune (nothing beats), every role cost 1',
   INSTRUMENT_ROLES.every(role => {

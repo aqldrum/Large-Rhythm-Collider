@@ -99,12 +99,13 @@ export const START_CHORD_ID = 0;   // I major — the frame's anchor chord (root
 // five-note qualities that land beside maj9 — but "how big" and "how spicy" are genuinely different axes,
 // and one knob should travel along one of them. The dissonance axis, if it ever gets a control, is its own.
 //
-// The counts are uneven because the vocabulary is: stop 2 admits 14 new qualities, stop 4 only 4.
+// 2026-09-27 (Avery): three stops, not four — a separate 9ths stop and 11–13 stop was one distinction too many
+// for a performance control. The top stop is EXT., every extension (5- and 6-note) at once, which makes it the
+// whole vocabulary. The counts are uneven because the vocabulary is: stop 2 admits 14 new qualities, ext. 13.
 export const RICHNESS_LEVELS = Object.freeze([
   { level: 1, maxCardinality: 3, label: 'triads',  detail: 'maj · m · sus4 · dim · aug · quartal' },
   { level: 2, maxCardinality: 4, label: '7ths',    detail: '+ 7ths, 6ths, add9, dim7, m7b5, augMaj7, It6, Fr6' },
-  { level: 3, maxCardinality: 5, label: '9ths',    detail: '+ 9ths, 9sus4, 13sus4, and the altered dominants' },
-  { level: 4, maxCardinality: 6, label: '11–13',   detail: '+ 11ths and 13ths — the whole vocabulary' },
+  { level: 3, maxCardinality: 6, label: 'ext.',    detail: '+ 9ths, 11ths, 13ths, sus extensions and the altered dominants — the whole vocabulary' },
 ]);
 export const RICHNESS_LEVEL_MIN = 1, RICHNESS_LEVEL_MAX = RICHNESS_LEVELS.length;
 // Level → the ceiling rankCandidates filters on. Out-of-range clamps rather than throwing, so a stale

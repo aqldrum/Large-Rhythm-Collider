@@ -100,42 +100,6 @@ const GLASS = deepFreeze({
   },
 });
 
-// Warm v1 — the first Warm, kept as a DEV A/B path (like classic) while the harmonic-table Warm below is
-// auditioned. OB8-inspired: a center saw plus two ±6 ¢ flankers through a static HP 110 → LP 4 kHz. Heard
-// problems it demonstrates: the fixed 4 kHz cutoff leaves harmonics ~5–18 of a low note flat in the ear's
-// most sensitive band (nasal/buzzy low, thin high), and the flankers make harmonic n beat at n × 0.35 % of
-// the pitch — rough in the upper partials and a smear on the exact partial coincidences Cosmos's ratios make.
-const WARM_V1_SAWS = [
-  { wave: 'sawtooth', ratio: 1, level: 0.5, detuneCents: 0 },
-  { wave: 'sawtooth', ratio: 1, level: 0.36, detuneCents: 6 },
-  { wave: 'sawtooth', ratio: 1, level: 0.36, detuneCents: -6 },
-];
-const WARM_V1_HP = { type: 'highpass', freq: 110, Q: 0.7071 };
-const WARM_V1 = deepFreeze({
-  id: 'warm-v1',
-  label: 'Warm v1',
-  roles: {
-    row: {
-      components: WARM_V1_SAWS.map(c => ({ ...c })),
-      noise: null,
-      filters: [{ ...WARM_V1_HP }, { type: 'lowpass', freq: 4000, Q: 0.7071 }],
-      outputTrim: 0.95,
-    },
-    bed: {
-      components: WARM_V1_SAWS.map(c => ({ ...c })),
-      noise: null,
-      filters: [{ ...WARM_V1_HP }, { type: 'lowpass', freq: 3400, Q: 0.7071, drift: { rateHz: 0.06, depthCents: 250 } }],
-      outputTrim: 0.95,
-    },
-    audition: {
-      components: WARM_V1_SAWS.map(c => ({ ...c })),
-      noise: null,
-      filters: [{ ...WARM_V1_HP }, { type: 'lowpass', freq: 4000, Q: 0.7071 }],
-      outputTrim: 0.95,
-    },
-  },
-});
-
 // Warm — a warm-brass voice built for exact ratios. ONE oscillator playing an authored harmonic table (a
 // PeriodicWave): strictly harmonic, so nothing beats and the partial coincidences of a just interval lock
 // exactly. The table leans on h2–h4 (horn/trombone body) and falls away fast after h6, keeping the energy in
@@ -148,7 +112,7 @@ const WARM_V1 = deepFreeze({
 //     brighter), on top of the existing slow drift.
 // Q −3.0103 is a true Butterworth: Web Audio reads lowpass/highpass Q in dB, so 0.7071 would be a small bump.
 // No saturation: on a shared bus it breeds difference tones that sit outside the tuning.
-// Trims are an A-weighted steady-state match to Warm v1 (the single coherent osc is ~1.5 dB hotter); final
+// Trims are an A-weighted steady-state match to the retired saw-stack Warm v1 (the single coherent osc is ~1.5 dB hotter); final
 // loudness is still an ear trim.
 const WARM_HORN = [1, 0.7, 0.45, 0.3, 0.2, 0.13, 0.08, 0.05, 0.03, 0.018];
 const WARM_TONE = { wave: 'custom', harmonics: WARM_HORN, ratio: 1, level: 1 };
@@ -183,11 +147,10 @@ const WARM = deepFreeze({
 });
 
 // The catalog. normalizeInstrumentId folds any unknown id here, so a stale stored value or an early rail
-// selection can never brick audio. Production palettes are Glass and Warm; classic and warm-v1 stay dev A/B paths.
+// selection can never brick audio. Production palettes are Glass and Warm; classic stays a dev A/B path.
 export const INSTRUMENTS = Object.freeze({
   glass: GLASS,
   warm: WARM,
-  'warm-v1': WARM_V1,
   classic: CLASSIC,
 });
 
@@ -195,9 +158,9 @@ export const INSTRUMENTS = Object.freeze({
 export const INSTRUMENT_IDS = Object.freeze(Object.keys(INSTRUMENTS));
 
 // Dev A/B paths: reachable by id, never counted as production palettes.
-export const DEV_INSTRUMENT_IDS = Object.freeze(['classic', 'warm-v1']);
+export const DEV_INSTRUMENT_IDS = Object.freeze(['classic']);
 
-// The production palettes. classic and warm-v1 are intentionally excluded — dev A/B paths, not choices.
+// The production palettes. classic is intentionally excluded — dev A/B paths, not choices.
 export const PRODUCTION_INSTRUMENT_IDS = Object.freeze(INSTRUMENT_IDS.filter(id => !DEV_INSTRUMENT_IDS.includes(id)));
 
 export const INSTRUMENT_ROLES = Object.freeze(['row', 'bed', 'audition']);

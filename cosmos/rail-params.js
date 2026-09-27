@@ -35,8 +35,10 @@ export const RAIL_PARAMS = Object.freeze({
   // heard the old linear knob as "~3–4 discrete musical levels, not a continuum", and it was, because an
   // incentive can only re-weight a vocabulary it cannot shrink. `stops` are the readout labels; the engine's
   // RICHNESS_LEVELS (sky-walk.js) is the authority on what each one admits.
-  richness:    { default: 3,    min: 1,     max: 4,    curve: 'detent', persist: true,  unit: '',         group: 'harmony',   label: 'RICHNESS',
-                 stops: ['triads', '7ths', '9ths', '11–13'] },
+  // Three stops since 2026-09-27 (9ths and 11–13 merged into EXT.). No schema bump: a stored 4 clamps to 3,
+  // which is exactly its old vocabulary, and a stored 3 only gains the 6-note chords.
+  richness:    { default: 3,    min: 1,     max: 3,    curve: 'detent', persist: true,  unit: '',         group: 'harmony',   label: 'RICHNESS',
+                 stops: ['triads', '7ths', 'ext.'] },
   // MIX 0.8 = rows-forward blend (Avery, 2026-07-29): rows are the identity, the bed audible underneath as a
   // wash. The pre-transfer engine came up at 1.0 (pure rows) because the audio lab's entry default selected
   // culled-grid-rows; 0.8 is the deliberate replacement now that the rail owns entry state.
@@ -51,9 +53,9 @@ export const RAIL_PARAMS = Object.freeze({
   // safe default: a returning listener (or an old v4 blob that predates this key) comes up with the entry
   // sound unchanged. glass/warm are the production palettes. Persisted like the other musical choices; adding
   // it needs NO schema bump because a stored blob simply lacks the key and falls back to this default.
-  // warm-v1 is a TEMPORARY dev pill for the Warm rework A/B — drop it once the new Warm is signed off (a
-  // stored 'warm-v1' then folds back to the default, like any unknown choice).
-  instrument:  { default: 'classic', curve: 'choice', choices: ['classic', 'glass', 'warm', 'warm-v1'], persist: true,  group: 'harmony',   label: 'VOICE' },
+  // (The temporary warm-v1 A/B pill was dropped 2026-09-27 once the new Warm was signed off; a stored
+  // 'warm-v1' folds back to the default like any unknown choice.)
+  instrument:  { default: 'classic', curve: 'choice', choices: ['classic', 'glass', 'warm'], persist: true,  group: 'harmony',   label: 'VOICE' },
   // ── transient (entry always resets these; they never enter localStorage) ──
   mute:        { default: false,                       curve: 'bool',   persist: false,                   group: 'transport', label: 'MUTE' },
   hold:        { default: false,                       curve: 'bool',   persist: false,                   group: 'transport', label: 'HOLD' },

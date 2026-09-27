@@ -34,7 +34,7 @@ check('harmony source, scale, RICHNESS, and VOICE choices are explicit back-face
   RAIL_SEGMENTS.join(',') === 'harmonySource,richness,instrument' && RAIL_SELECTS.join(',') === 'scale');
 check('VOICE is a choice segment wired to setInstrument, defaulting to classic so the entry sound is unchanged',
   RAIL_SEGMENTS.includes('instrument') && RAIL_PARAMS.instrument?.curve === 'choice' &&
-  RAIL_PARAMS.instrument.choices.join(',') === 'classic,glass,warm,warm-v1' && RAIL_PARAMS.instrument.default === 'classic' &&
+  RAIL_PARAMS.instrument.choices.join(',') === 'classic,glass,warm' && RAIL_PARAMS.instrument.default === 'classic' &&
   RAIL_PARAMS.instrument.persist === true && typeof ENGINE_SETTERS.instrument === 'function');
 check('every rendered knob/button is a real param with a live engine setter',
   [...RAIL_KNOBS, ...RAIL_BUTTONS].every(n => RAIL_PARAMS[n] && typeof ENGINE_SETTERS[n] === 'function'));
@@ -51,11 +51,11 @@ console.log('\n  Readout formatting (spec + engine value → string)');
 check('booleans read ON / OFF',
   formatReadout(RAIL_PARAMS.modulation, true) === 'ON' && formatReadout(RAIL_PARAMS.mute, false) === 'OFF');
 check('a fixed choice reads as an uppercase label', formatReadout(RAIL_PARAMS.harmonySource, 'chord-walk') === 'CHORD WALK');
-// A rail readout is the only thing telling the listener what a stop MEANS. "3" says nothing; "9ths" says
+// A rail readout is the only thing telling the listener what a stop MEANS. "3" says nothing; "ext." says
 // where the vocabulary ceiling is without opening the debug overlay.
 check('a detent with named stops reads its stop\'s name (RICHNESS)',
-  formatReadout(RAIL_PARAMS.richness, 1) === 'triads' && formatReadout(RAIL_PARAMS.richness, 3) === '9ths' &&
-  formatReadout(RAIL_PARAMS.richness, 4) === '11–13');
+  formatReadout(RAIL_PARAMS.richness, 1) === 'triads' && formatReadout(RAIL_PARAMS.richness, 2) === '7ths' &&
+  formatReadout(RAIL_PARAMS.richness, 3) === 'ext.');
 check('cents read as a signed integer with the ¢ unit',
   formatReadout(RAIL_PARAMS.fundamental, -700) === '-700¢' && formatReadout(RAIL_PARAMS.fundamental, 0) === '0¢');
 check('unit-fraction knobs read to two decimals (MIX / VOLUME / SPACE)',
