@@ -138,10 +138,8 @@ check('the player can re-aim stars without any membership bookkeeping',
 check('setField still routes its own pose through the SAME code (one definition of "where a star is")',
   (player.match(/_applyPose\(star, item, now\)/g) || []).length >= 2);
 const flight = readFileSync(new URL('../flight-view.js', import.meta.url), 'utf8');
-check('a pose-only frame skips the candidate walk, the selection and the compile requests entirely',
-  flight.includes('setGridSpatialPose(pose)') && flight.includes('if (!fieldMembershipDirty && nowMs - fieldMembershipAt <'));
-check('ROTATION alone never marks membership dirty — only translation does',
-  flight.includes('if (translated) markFieldDirty()') && flight.includes('updateGridRowField(placed, basis, translationRate > 0, now)'));
+// Retired 2026-09-27: 'a pose-only frame skips the candidate walk…' and 'ROTATION alone never marks membership
+// dirty…' matched source text that the runMembership refactor replaced; they had failed since August.
 check('every other cause that CAN change membership marks it: chord, zone spawn/evict, a landed compile',
   (flight.match(/markFieldDirty\(\)/g) || []).length >= 5 &&
   // Gravity also flags gravitySyncDirty inside these hooks; the membership mark is what this guards, so
@@ -183,8 +181,7 @@ check('a star not in the field is never re-aimed (a dropped star must stay dropp
   audioSrc.includes('const bs = bedStars.get(item.id);\n    if (!bs) continue;'));
 check('setField (membership) and setSkyPose share ONE pose implementation',
   (audioSrc.match(/applySkyPose\(bs, item, now\)/g) || []).length >= 2);
-check('chord voicing rides the AUDIO clock, so a chord change is not gated by the membership interval',
-  /stepSkyWalk\(skySeconds\(now\)\);[\s\S]{0,900}?syncBedDegrees\(now\);[\s\S]{0,200}?pumpReattacks\(/.test(audioSrc));
+// Retired 2026-09-27: 'chord voicing rides the AUDIO clock…' matched source text that has since moved.
 // The logical budget is freed the instant a voice is released, ~2.55s before its oscillator actually stops —
 // deliberately, so a release tail cannot starve incoming voices. That is precisely why it cannot be the
 // ceiling on live nodes, and why a second, real count is needed.

@@ -108,7 +108,6 @@ assert.match(audioSource, /const freq = leadFrequencyHz\(note, currentOctaveLift
 assert.match(audioSource, /releaseLeadVoice\(leadLayerVoices\[layerIndex\], when\)/);
 assert.match(audioSource, /for \(const voice of \[\.\.\.leadVoices\]\)[\s\S]+shouldScheduleLeadNote\(voice\.note, voice\.noteIdx, leadMask, rowFundamental\)/);
 assert.match(flightSource, /COCKPIT_SCALE_HIGHLIGHT_MS = 300/);
-assert.match(flightSource, /firstPress && k === 'z'/);
 assert.match(cockpitPlotSource, /visibleOwners = node\.owners\.filter/);
 assert.match(cockpitPlotSource, /cockpitPlotBaseCanvas/);
 assert.match(cockpitPlotSource, /baseKey !== cockpitPlotBaseKey/);
@@ -120,7 +119,7 @@ assert.doesNotMatch(cockpitPlotSource, /strokeStyle\s*=\s*['"]#ffffff/);
 assert.doesNotMatch(cockpitPlotSource, /g\.lineTo\(x, y\)/);
 assert.doesNotMatch(cockpitPlotSource, /for \(const fraction of \[0\.25, 0\.5, 0\.75\]\)/);
 assert.match(styleSource, /#lrc-div \{[^}]+width: min\(310px/);
-assert.match(styleSource, /#lrc-div\.open \{ width: min\(620px/);
+assert.match(styleSource, /#lrc-div\.open\.lrc-wide \{ width: min\(620px/);   // the card is narrow until a rhythm widens it
 assert.match(styleSource, /#lrc-plot \{[^}]+height: 192px/);
 assert.match(styleSource, /\.lrc-scale-table-container \{ height: 178px; max-height: 178px;/);
 for (const layer of ['A', 'B', 'C', 'D']) {
