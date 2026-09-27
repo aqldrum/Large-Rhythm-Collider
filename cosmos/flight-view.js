@@ -1549,9 +1549,8 @@ function renderGridView(sel) {
     gridBodyEl.innerHTML = metricList([
       ['Factors', factorString(sel.grid)],
       ['Divisors', z.divisors ?? fi.divisors],
-      ['Class', 'combinatorial monster'],
     ]) +
-      `<p class="lrc-mode-note warn">Expensive to solve live — gated so the field keeps flowing. Solving may take a few seconds.</p>` +
+      `<p class="lrc-mode-note warn">Highly composite grid — solving may take a few seconds.</p>` +
       `<button class="ov-btn lrc-mode-btn warn" data-g="${sel.grid}">◉ solve anyway</button>`;
     openCockpit(); return;
   }
