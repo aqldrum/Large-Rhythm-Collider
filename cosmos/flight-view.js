@@ -2282,7 +2282,7 @@ function drawChordOverlay() {
   const face = chordFaces[chordFace], rootEl = document.createElement('b');
   appendKerned(rootEl, label.root);
   face.replaceChildren(rootEl);
-  appendKerned(face, label.quality);
+  if (label.quality) { const quality = document.createElement('span'); quality.className = 'quality'; appendKerned(quality, label.quality); face.appendChild(quality); }
   if (label.detail) { const detail = document.createElement('small'); detail.textContent = label.detail; face.appendChild(detail); }
   face.classList.add('on'); chordFaces[chordFace ^ 1].classList.remove('on');
   chordEl.setAttribute('aria-label', `chord ${label.text}`);

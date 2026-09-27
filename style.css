@@ -3677,7 +3677,10 @@ body.cosmos-active #cosmos-view {
 #cosmos-chord .chord-face b { font-weight: 600; }
 /* ♭ / ♯ carry wide side-bearings in most sans faces — tuck them in against their letter / digit. */
 #cosmos-chord .chord-face .acc { margin: 0 -.07em 0 -.09em; }
-#cosmos-chord .chord-face small { margin-left: 5px; font: 400 10px var(--mono); color: var(--dim); }
+/* Root full size; the quality in the HUD's small tracked caps (the VIEW labels' voice), lifted to sit on the
+   root's cap-height line rather than hang off its baseline. */
+#cosmos-chord .chord-face .quality { margin-left: 5px; font: 600 10px var(--sans); letter-spacing: .9px; vertical-align: 1px; }
+#cosmos-chord .chord-face small { margin-left: 6px; font: 400 10px var(--mono); color: var(--dim); }
 
 /* CLEAN screen (VIEW → Screen): the bare sky. The chord stays; the view button stays faint as the way back. */
 #cosmos-view.clean-screen #cosmos-hud, #cosmos-view.clean-screen #tooltip, #cosmos-view.clean-screen #cosmos-home-btn,

@@ -13,16 +13,21 @@ import { HARMONY_SOURCES } from './harmony-policy.js';
 
 // Degree 0 at fundamental 0 is ROOT_HZ = 220 Hz = A. Flats except F♯, the usual lead-sheet spelling.
 const NOTE_NAMES = ['A', 'B♭', 'B', 'C', 'D♭', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭'];
-// Quality suffixes as a lead sheet writes them. The bare major triad is just its root in note mode, but a bare
-// ratio reads as a pitch, not a chord, so ratio mode keeps "maj".
-const QUALITY_TEXT = { maj: '', q: ' quartal', It6: ' It6', Fr6: ' Fr6' };
+// The quality is set in small tracked CAPS beside a full-size root (the HUD's own label voice), so the two can
+// never run together the way "AaugMaj7" did. Caps make a bare "M" ambiguous (major? minor?), so minor is spelled
+// MIN and compound qualities get a space: m7 → MIN7, mMaj7 → MIN MAJ7, augMaj7 → AUG MAJ7, m7b5 → MIN7♭5.
+// The bare major triad is just its root in note mode, but a bare ratio reads as a pitch, not a chord, so ratio
+// mode keeps MAJ.
+const QUALITY_CAPS = { maj: 'MAJ', mMaj7: 'MIN MAJ7', augMaj7: 'AUG MAJ7', q: 'QUARTAL' };
 const accidentals = s => s.replace(/#/g, '♯').replace(/b(?=\d)/g, '♭');
 const mod12 = n => ((n % 12) + 12) % 12;
 
 function qualityText(chord, ratioMode) {
-  if (chord.qualitySymbol === 'maj') return ratioMode ? ' maj' : '';
-  const text = QUALITY_TEXT[chord.qualitySymbol] ?? chord.qualitySymbol;
-  return accidentals(ratioMode && !text.startsWith(' ') ? ` ${text}` : text);
+  const symbol = chord.qualitySymbol;
+  if (symbol === 'maj' && !ratioMode) return '';
+  if (QUALITY_CAPS[symbol]) return QUALITY_CAPS[symbol];
+  const text = accidentals(symbol);   // ♭/♯ first: uppercasing would turn the flat's "b" into a B
+  return /^m(?!aj)/.test(text) ? `MIN${text.slice(1).toUpperCase()}` : text.toUpperCase();
 }
 
 // The ratio the field is actually sounding at `degree`: the most common playable fraction across the audible
@@ -43,7 +48,8 @@ export function dominantFraction(pools, degree) {
   return best;
 }
 
-// → { root, quality, detail, text } — `text` is the whole label (for aria + change detection).
+// → { root, quality, detail, text } — `text` is the whole label (for aria + change detection); `quality` is caps,
+// with no leading space (the renderer sets the gap).
 //   chord           currentSkyChord(): { id, source, symbol }
 //   modulationOn    currentModulation().on
 //   fundamentalCents currentFundamental().cents (the rail FUNDAMENTAL transpose)
@@ -60,13 +66,13 @@ export function chordLabel({ chord, modulationOn, fundamentalCents = 0, rootCent
     const nearest = Math.round(semis), off = Math.round((semis - nearest) * 100);
     root = NOTE_NAMES[mod12(nearest)];
     if (Math.abs(off) >= 3) detail = `${off > 0 ? '+' : '−'}${Math.abs(off)}¢`;
-    quality = isScale ? ` ${chord.symbol.toLowerCase()}` : qualityText(entry, false);
+    quality = isScale ? chord.symbol : qualityText(entry, false);
   } else {
     root = dominantFraction(pools, degree) || (degree === 0 ? rootFraction : null);
     // No star nearby covers the chord root (rare — the walk favours covered chords): say where it is in cents
     // above 1/1 rather than invent a ratio.
     if (!root) root = `${Math.round((((rootCents + degree * 100) % 1200) + 1200) % 1200)}¢`;
-    quality = isScale ? ` ${chord.symbol.toLowerCase()}` : qualityText(entry, true);
+    quality = isScale ? chord.symbol : qualityText(entry, true);
   }
-  return { root, quality, detail, text: `${root}${quality}${detail ? ` ${detail}` : ''}` };
+  return { root, quality, detail, text: [root, quality, detail].filter(Boolean).join(' ') };
 }
