@@ -1470,7 +1470,7 @@ function updateTooltip() {
   if (hover.kind === 'web') {
     const web = activeWebs.get(hover.webId);
     if (!web) { tipEl.style.display = 'none'; return; }
-    tipEl.innerHTML = `<div class="t-l" style="color:${web.color}">◈ ${web.dynamic ? web.tag.replace(/^mn:/, '') : web.tag}</div>` +
+    tipEl.innerHTML = `<div class="t-l" style="color:${web.color}">◈ ${webLabel(web)}</div>` +
       `<div class="t-d">click to inspect · anchor ${web.homeGrid.toLocaleString()} · origin ${web.originGrid.toLocaleString()}</div>`;
   } else if (hover.kind === 'node') {
     tipEl.innerHTML = `<div class="t-l">${hover.layers ? hover.layers.join(' : ') : hover.c + '-tone'}</div>` +
@@ -1560,24 +1560,24 @@ function renderGridView(sel) {
   openCockpit();
 }
 
+// A Web's display label: the motif ratios alone. Triples read like doubles (9:8:5, not CT:9:8:5) — the
+// CT/IT/RDCP class is internal bookkeeping that means nothing on screen without context.
+function webLabel(web) { return web.dynamic ? motifLabel(web.tag.replace(/^mn:/, '')) : web.tag; }
+function motifLabel(key) { return key.replace(/^(CT|IT|RDCP):/, ''); }
+
 // CONNECTOR mode — a clicked Web's lineage + travel controls. Ported from the old #flight-detail web branch;
 // the travel buttons keep their inline Web-colour styling (the accent is per-Web and dynamic).
 function renderConnectorView(sel) {
   if (!connectorBodyEl) return;
   const web = activeWebs.get(sel.webId);
   if (!web) { resetRhythmInspector(); return; }
-  const title = web.dynamic ? web.tag.replace(/^mn:/, '') : `mother ${web.tag}`;
+  const title = web.dynamic ? webLabel(web) : `mother ${web.tag}`;
   setCardMode('connector', web.color);
   setCardSub(`◈ ${title}`);
-  const homeCell = macroCell(web.homeGrid), originCell = macroCell(web.originGrid), apexCell = macroCell(web.apexGrid), camCell = macroCell(cam.anchor);
-  const homeDistance = Math.hypot(homeCell[0] - camCell[0], homeCell[1] - camCell[1], homeCell[2] - camCell[2]);
-  const originDistance = Math.hypot(originCell[0] - camCell[0], originCell[1] - camCell[1], originCell[2] - camCell[2]);
-  const apexDistance = Math.hypot(apexCell[0] - camCell[0], apexCell[1] - camCell[1], apexCell[2] - camCell[2]);
   const riding = !!(web.routePlanning || (returnRide && returnRide.webId === web.tag));
-  const family = web.dynamic ? 'unbounded' : `${web.memberCount.toLocaleString()} grids`;
   const status = web.routePlanning ? web.rideStatus : riding
     ? `${Math.round((web.rideProgress || 0) * 100)}% · ${returnRide.duration.toFixed(0)}s bounded ride`
-    : (web.rideStatus || 'ready');
+    : web.rideStatus;
   const travelButton = riding
     ? `<button class="web-cancel-btn" style="width:100%;background:rgba(255,255,255,.05);border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-size:11px;padding:7px;border-radius:var(--border-radius);cursor:pointer">cancel Web travel</button>`
     : `<button class="web-travel-btn" data-id="${web.tag}" data-destination="anchor" style="width:100%;background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Return to grid ${web.homeGrid.toLocaleString()}</button>` +
@@ -1587,16 +1587,13 @@ function renderConnectorView(sel) {
         `<button class="web-travel-btn" data-id="${web.tag}" data-destination="apex" style="background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Apex · grid ${web.apexGrid.toLocaleString()}</button>` +
       `</div>`;
   connectorBodyEl.innerHTML = metricList([
-    ['Network reach', family],
     ['Visible nodes', (web.visibleNodes || 0).toLocaleString()],
-    ...(web.dynamic ? [['Nested-ratio base', web.base.toLocaleString()]] : []),
     ['First-clicked grid', web.homeGrid.toLocaleString()],
     ['Origin grid', web.originGrid.toLocaleString()],
     ['Apex grid', web.apexGrid.toLocaleString()],
-    ['Anchor / origin / apex', `${homeDistance.toFixed(1)} / ${originDistance.toFixed(1)} / ${apexDistance.toFixed(1)} cells`],
-    ['Travel', status],
   ]) +
-    (web.dynamic ? `<p class="lrc-mode-note">This family is infinite — travel samples qualifying NR grids adaptively while the local Web rebuilds around the camera.</p>` : '') +
+    // Travel status gets its own full-width line — as a metric cell it truncated mid-sentence.
+    (status ? `<p class="lrc-mode-note">Travel · ${inspectorEscape(status)}</p>` : '') +
     `<div class="lrc-travel-actions">${travelButton}</div>`;
   openCockpit();
 }
@@ -1806,7 +1803,7 @@ function renderRhythmConnections() {
   if (tag && members?.length) actions.push(`<button type="button" class="lrc-connection-btn${motherWeb ? ' active' : ''}" data-rhythm-web="${inspectorEscape(tag)}">${motherWeb ? 'Clear' : 'Trace'} mother · ${members.length.toLocaleString()}</button>`);
   for (const motif of motifs) {
     const id = `mn:${motif.key}`, active = activeWebs.has(id);
-    actions.push(`<button type="button" class="lrc-connection-btn${active ? ' active' : ''}" data-rhythm-mn="${inspectorEscape(id)}" data-base="${motif.base}">${inspectorEscape(motif.key.replace(/^(CT|IT|RDCP):/, '$1 '))}</button>`);
+    actions.push(`<button type="button" class="lrc-connection-btn${active ? ' active' : ''}" data-rhythm-mn="${inspectorEscape(id)}" data-base="${motif.base}">${inspectorEscape(motifLabel(motif.key))}</button>`);
   }
   connectionsEl.innerHTML = rows.join('') + (actions.length
     ? `<div class="lrc-connection-actions">${actions.join('')}</div>`
