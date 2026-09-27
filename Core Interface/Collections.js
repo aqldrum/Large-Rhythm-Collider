@@ -1,7 +1,7 @@
 // Collections.js - Community Collections & Voting scaffold for Large Rhythm Collider
 // This module wires the UI to a serverless backend (Firebase Firestore) for anonymous rhythm submissions and voting.
 // Implementation notes:
-//   • The actual Firebase configuration lives in firebase-config.js (gitignored). Use firebase-config.template.js as a guide.
+//   • The Firebase configuration lives in firebase-config.js (tracked; the live page loads it). firebase-config.template.js shows the shape.
 //   • Firebase compat SDKs (app, auth optional, firestore) must be loaded before this script.
 //   • All Firestore calls are stubbed; fill in the TODO sections once credentials are available.
 

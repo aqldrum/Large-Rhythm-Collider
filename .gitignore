@@ -31,9 +31,10 @@ coverage/
 .env
 .env.*
 
-# Firebase local artifacts / config #
-####################################
-Core Interface/firebase-config.js
+# Firebase local artifacts #
+############################
+# (Core Interface/firebase-config.js is deliberately TRACKED: the live page loads it. Firebase web config is
+#  public by design; access is enforced by the Firestore security rules.)
 .firebase/
 firestore-debug.log
 ui-debug.log
@@ -42,7 +43,12 @@ ui-debug.log
 ###########################
 LRC Concept Animation/assets
 
-# Cosmos sound design testing #
-###########################
-/cosmos/sound-design
-/cosmos/docs/
+# Cosmos working material (not served) #
+#######################################
+/Cosmos/sound-design/
+/Cosmos/docs/
+/Cosmos/labs/
+
+# Local tooling #
+#################
+.claude/

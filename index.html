@@ -609,7 +609,7 @@
         <div id="cosmos-chord" aria-label="chord"><span class="chord-face"></span><span class="chord-face"></span></div>
         <!-- help button (top-right) → toggles an info popup: flight controls + live solve queue (more to come) -->
         <button id="cosmos-help-btn" title="Controls &amp; status" aria-label="Controls and status">?</button>
-        <!-- view button (between help and home) → toggles the VIEW options popup (pills built from cosmos/view-options.js) -->
+        <!-- view button (between help and home) → toggles the VIEW options popup (pills built from Cosmos/ui/view-options.js) -->
         <button id="cosmos-view-btn" title="View options" aria-label="View options" aria-expanded="false" aria-controls="cosmos-view-panel">
             <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path>
@@ -744,7 +744,7 @@
         <!-- RETIRED (2026-09-27): nothing opens this any more — the rail replaced it and the chord moved on screen
              (#cosmos-chord). Kept dormant rather than deleted; flight-view.js still holds its wiring.
              Was: DEV-ONLY Cosmos audio lab (?audioLab=1 seeds it open; Z toggles — same shape as ?skyDebug=1 / C).
-             The performance RAIL owns the engine (cosmos/rail-view.js); this overlay MIRRORS engine state and
+             The performance RAIL owns the engine (Cosmos/ui/rail-view.js); this overlay MIRRORS engine state and
              only writes on a gesture. Mute / audio mode / modulation / MIDI out route through railParams so
              both surfaces stay one state; ticks-per-second, scaled speed, grid cycle and tuning λ are debug
              PROBES with no rail control, and they override the rail until the next cosmos entry. -->
@@ -791,7 +791,7 @@
                     </label>
         </aside>
     </div>
-    <script type="module" src="cosmos/flight-boot.js"></script>
+    <script type="module" src="Cosmos/flight-boot.js"></script>
 
 </body>
 </html>

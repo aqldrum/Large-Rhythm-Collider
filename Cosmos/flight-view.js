@@ -1,0 +1,3351 @@
+// flight-view.js — fly the live, cache-free cosmos. Dependency-free canvas 3D (same engine as
+// the bloom view; not Three.js). A real Web Worker pool solves grid abundances on approach; the
+// proven cosmos runtime spawns/evicts/competes; stars are sized by abundance and orbit their
+// district suns; connectors tether each zone to its anchor. Camera is free-fly with the
+// integer-spine floating origin, so precision holds at any grid.
+import { M } from './ui/mode.js';
+import { Cosmos } from './engine/cosmos-runtime.js';
+import { renderPosCam, setPlacement, macroCell, macroScale, backboneHash, SPACING, CELL } from './engine/spine.js';
+import { hilbertDecode, hilbertEncode, neighborGrids, INDEX_COUNT, SIDE } from './engine/hilbert.js';
+import { HILBERT_WORLD_MAX, HILBERT_WORLD_MIN, clampHilbertWorld, containHilbertSphere, nearbyHilbertWalls, rebaseHilbertCamera } from './engine/hilbert-boundary.js';
+import { GOLDEN, cardColor, CHARTED } from './engine/bloom-core.js';
+import { rhythmTriples, rhythmDoubles, rhythmMotifKeys } from './engine/mn-core.js';
+import { routeCameraBasis, sampleArcPath } from './engine/web-return.js';
+import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from './engine/web-travel-bloom.js';
+// agents.js (Collider-Battle ships / dragon-tail game) is DEFERRED for the POC and intentionally not ported.
+import { binarySearch } from './engine/oracle-core.js';
+// Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
+// engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
+import { deriveVoice, classifyLeadHarmony, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, gridRowReachedAttacks, gridRowDetuneCents, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext, currentFundamental } from './audio/cosmos-audio.js';
+// The RAIL owns the engine's user-facing state (rail-view.js mounts it; flight-boot restores it on entry).
+// Every parameter BOTH surfaces express — mute, mix, modulation, MIDI out — is written through railParams so
+// there is exactly one owner and the two surfaces cannot disagree. See the audio-lab section below.
+import { railParams } from './ui/rail-params.js';
+// Audio-clock instrument panel. flight-view owns the frame, so it times the frame's phases and classifies
+// the camera's motion; cosmos-audio times the transport. See audio-telemetry.js for the mechanism under
+// investigation (motion → main-thread jank → late events clamped into a flam → MIDI channel steals).
+import { audioTelemetry, formatLive, formatTable } from './audio/audio-telemetry.js';
+import { sampleRecovery } from './audio/recovery-timing.js';   // TEMP DEBUG (Phase 2.4) — remove with the module
+import { AUDIO_MODES, CULLED_ROW_MAX_VOICES_PER_TONE, ROW_ACTIVE_STARS, ROW_PREWARM_STARS, ROW_RADIUS, ROW_CONSONANCE_CENTS, ROW_MAX_PLAYBACK_ONSETS, audioCompileEligibility, chooseSpatialRows, harmonicSelectionKey, selectedOwnerFractions } from './audio/cosmos-grid-audio-core.js';
+import { rootPolicyStableKey } from './audio/harmony-policy.js';
+import { ProgramWorkerPool } from './engine/program-worker-pool.js';
+import { toAudioListenerPosition } from './audio/spatial-audio-frame.js';
+import { createGridRowAuraBatch, resetGridRowAuraSprites } from './ui/grid-row-aura.js';
+import { buildRhythmInspectorModel, lightRhythmMetrics } from './ui/rhythm-inspector-model.js';
+import { shouldScheduleRowAction } from './audio/spatial-grid-row-player.js';
+// Note constellations (Order B of Cosmos/docs/COSMOS_NOTE_VISUALS_WORK_ORDER_2026-09-20.md): a pure state
+// machine for which lines exist, and a canvas-only renderer for drawing them. Both are fed from here —
+// they import nothing from playback, the runtime or this file.
+import { createConstellation, chainCoincidentAttacks } from './ui/constellation-core.js';
+import { drawGridRowConstellation } from './ui/grid-row-constellation.js';
+import { DEFAULT_GRAVITY_OPTIONS, gravityWindowWeight } from './engine/gravity-core.js';
+import { SolverWorkerPool } from './engine/solver-worker-pool.js';
+// Third-person flight (Cosmos/docs/COSMOS_THIRD_PERSON_WORK_ORDER_2026-09-23.md). ONE projection for every
+// renderer (view-frame.js — the Web worker and the constellation use it too), a pure chase pose, and a
+// canvas-only ship. The SHIP keeps `cam` / camBasis() and everything heard; only what is SEEN moves.
+import { composeViewFrames } from './ui/view-frame.js';
+import { CHASE_DEFAULTS, chaseOptions, chasePose, smoothstep, stepChaseProgress } from './ui/chase-camera.js';
+import { drawPlayerShip } from './ui/player-ship.js';
+import { QUALITY_ORDER, QUALITY_TIERS, createQualityPrefs, qualityWarning, devicePoolMax, resolveTier } from './engine/cosmos-quality.js';
+// The help popup's VIEW section (constellations · gravity · camera · screen) and the on-screen chord name.
+import { VIEW_OPTIONS, createViewOptions, constellationPatch, gravityHeld, gravityControlLabel } from './ui/view-options.js';
+import { chordLabel } from './ui/chord-label.js';
+// Full Sky (Cosmos/docs/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
+// path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
+// Sky Root handoff (Cosmos/docs/SKY_ROOT_HANDOFF_2026-07-22.md): anchor-independent root solve, Feature B.
+import { poolFromTones, rootCompetitionTones } from './audio/sky-root.js';
+
+const STAR_SCALE = 4, NEAR = 5;
+// ══ FLIGHT / LOD KNOBS ═══════════════════════════════════════════════════════════════════════
+// Helix-style flight feel: arrow keys steer, WASD/QE translate, scroll dollies for fast travel.
+const TURN = 1.5;          // camera turn rate (rad/sec)
+const BOOST = 6;           // spacebar speed multiplier on top of WASD (cam.speed is the base)
+const WEB_RETURN_LIFT_CELLS = 0.24; // ride slightly above the strand so it reads as a route, not a near-plane seam
+const WEB_RETURN_LIFT_SPINE = 180;
+const WEB_RETURN_LIFT_RAMP = 0.08;  // fraction of the ride used to ease onto/off the elevated camera rail
+const WEB_RETURN_FRAME_CELLS = 2.2; // arc-length window used for a continuous heading across synthetic nodes
+const WEB_RETURN_FRAME_SPINE = 900;
+const WEB_RETURN_STAR_AHEAD_CELLS = 100.5; // illuminate the nearby sky before the camera reaches it
+const WEB_RETURN_STAR_BEHIND_CELLS = 1.4; // short fading wake keeps passed stars from popping dark
+const WEB_RETURN_STAR_RADIUS_CELLS = 12.35; // soft radius of the synthetic hyperspace tunnel
+const WEB_RETURN_STAR_AHEAD_SPINE = 20200;
+const WEB_RETURN_STAR_BEHIND_SPINE = 1100;
+const WEB_RETURN_STAR_RADIUS_SPINE = 6000;
+const WEB_RETURN_STAR_SAMPLES = 14;
+const BOOST_STAR_STREAK_SCALE = 10.4; // extend one frame of true screen motion into a readable trail
+const BOOST_STAR_STREAK_MAX = 100;    // px cap keeps close stars from drawing giant slashes
+const BOOST_STAR_STREAK_ALPHA = 10.34;
+const DOLLY = 700;         // SPINE: world units per scroll notch (fast travel down the codex line)
+const HIL_DOLLY_CELLS = 0.7; // HILBERT: cells per scroll notch — small on purpose so you don't
+                             //   rocket across the cube (spatial hops = huge grid-index jumps) and
+                             //   outrun the solver. Raise for faster travel, lower if it still races.
+const HIL_WALL_REVEAL_CELLS = 7; // forcefield fades in only near a face; collision uses the exact same box
+const HIL_WALL_PATCH_CELLS = 9;  // local half-width — never construct/render an entire 256-by-256 face
+const HIL_CAMERA_RADIUS = CELL * 0.12; // keeps the viewpoint in front of the near plane at contact
+// ── PERFORMANCE QUALITY (cosmos-quality.js) ──────────────────────────────────────────────────────────
+// The resource knobs below are no longer fixed consts: the quality authority owns them. The tier
+// the listener's saved choice (or, with none saved, the tier detected for THIS machine) seeds their initial
+// values, and applyQuality() (just below) re-points them live when a QUALITY pill in the View popup is tapped
+// (qualityPrefs → subscribe, wired in buildQualitySection). Physically the solver pool is still spawned at the
+// device maximum (see startFlight); a tier only throttles cosmos.poolSize — concurrency — so dialing down
+// idles workers rather than tearing them down. Harmony is deliberately NOT a quality knob (module enforces).
+const qualityPrefs = createQualityPrefs();        // saved choice, else the detected tier (re-detected every load)
+let   activeQualityId = qualityPrefs.get();
+const currentQuality = () => resolveTier(activeQualityId);
+let   poolPhysicalMax = 8;                         // set in startFlight() to the device pool size; ceils poolCap
+const _q0 = currentQuality();
+// Hilbert-cube LOD window (in CELL units). CRITICAL: HIL_EVICT is the distance BEHIND you that zones
+// survive, so evict ≫ spawn keeps the whole TRAIL you fly (evict 20 → ~10k+ zones → jank). Keep evict
+// ≈ spawn + 2. Zone count while flying ≈ 4.2·HIL_EVICT³·0.9: evict 8 → ~1900 · 10 → ~3800 · 12 → ~6500.
+let   HIL_SPAWN = _q0.spawn; // spawn grids within this many cells of the camera (frontier reach / density) — tier-owned
+// HIL_EVICT does DOUBLE DUTY in hilbert mode (see ~L875): it is both the retention radius (→ the all-zones
+// projection loop every frame) AND FOG_FAR = HIL_EVICT·CELL (→ how deep the star-wake is drawn/processed).
+// So it is the master perf lever: it governs the two dominant per-frame costs at once. 40 gave a 13.6k-unit
+// wake that was as expensive as it was deep; 20 halves the rear wake we fly away from while HIL_SPAWN keeps
+// the forward density we fly into. Raise for a deeper field at linear-in-volume cost; lower for headroom.
+let   HIL_EVICT = _q0.evict;   // tier-owned retention/wake depth
+// Fill-rate cap. The main scene is Canvas 2D on the main thread, so cost scales with backing-store PIXELS:
+// a DPR-3 phone fills 9× the area of DPR-1 for the same view. DPR_CAP clamps the backing store so hi-DPI
+// screens don't pay a fill-rate tax the design never asked for. 2 = no change on Retina; a lower tier lowers it.
+let   DPR_CAP = _q0.dprCap;    // tier-owned backing-store DPR clamp
+let   renderScale = 1;     // live capped DPR — set once in resize(), reused by every setTransform so the
+                           //   backing store and the context transform can never disagree (mismatch = blur/clip)
+// Backpressure: when the solve backlog (pending+solving in-window) exceeds SOLVE_BACKLOG, the frontier reach eases
+// down toward HIL_SPAWN_MIN so we stop piling on work, and recovers when it catches up. Magnitude-agnostic — the
+// natural home for a future LOD slider (raise HIL_SPAWN / SOLVE_BACKLOG for a denser, hungrier field).
+let   HIL_SPAWN_MIN = _q0.spawnMin;   // tier-owned floor for the adaptive reach under load
+let   SOLVE_BACKLOG = _q0.solveBacklog; // tier-owned backlog above which the frontier starts shrinking
+let   hilSpawn = HIL_SPAWN;// live (eased) frontier reach in the cube
+// applyQuality — re-point every live knob to a tier and push the cheap-live parts into the running engine
+// at once: the concurrency gate (cosmos.poolSize, physical workers stay warm), the DPR clamp (via resize),
+// and — hilbert only — the fog/evict shell. Called whenever qualityPrefs changes (pill tap or the dev
+// handle); on the tier that matches today's shipped constants it is exactly behavior-preserving. Harmony is
+// never touched here.
+function applyQuality(id) {
+  const q = resolveTier(id);
+  const prevRange = currentQuality().bloomMaxRange;   // capture before the id flips
+  activeQualityId = q.id;
+  HIL_SPAWN = q.spawn; HIL_EVICT = q.evict; HIL_SPAWN_MIN = q.spawnMin;
+  SOLVE_BACKLOG = q.solveBacklog; DPR_CAP = q.dprCap;
+  hilSpawn = Math.min(hilSpawn, HIL_SPAWN);   // a downshift bites immediately; recovery re-eases upward
+  if (cosmos) {
+    cosmos.poolSize = Math.min(q.poolCap, poolPhysicalMax);   // throttle concurrency; workers stay alive
+    if (placement === 'hilbert') { cosmos.evictRadius = HIL_EVICT; FOG_NEAR = HIL_SPAWN * CELL * 0.4; FOG_FAR = HIL_EVICT * CELL; }
+    // the range cull is applied on shard-receive, so a threshold change only takes on ALREADY-open blooms
+    // if they re-fetch: drop their caches + growth state and the next tick re-blooms them at the new range.
+    if (q.bloomMaxRange !== prevRange) {
+      for (const g of bloomed) { bloomCache.delete(g); const z = cosmos.zones.get(g); if (z) delete z._bloom; }
+    }
+  }
+  if (cv && ctx) resize();   // re-clamp the backing store to the new DPR cap
+  return q.id;
+}
+// Star bloom is CLICK-GATED: the ambient field stays a clean starry sky, and only the focused (clicked)
+// star renders its cardinality-sphere point cloud — the FULL cloud, no point cap. Clicking a star focuses
+// it (priority-solves via cosmos.setFocus if unsolved) and streams its whole cloud in; clicking empty
+// space clears it. This keeps disjoint singletons/lines from small grids out of the sky.
+const BLOOM_R = 6;         // world units per bloom radius step (overall bloom size)
+const BLOOM_KNEE = 18;     // cardinality steps (above cmin) that grow the radius at FULL BLOOM_R; the common
+                           //   bulk lives here so it stays proportional/spiky.
+const BLOOM_TAIL = 0.35;   // beyond the knee, each extra cardinality step adds only this fraction of BLOOM_R —
+                           //   so a lone very-high-cardinality outlier still pokes out (a spike) but doesn't
+                           //   fling the bloom's outer radius (and its blot/bubble) way out. Economy > proportion.
+const BLOOM_MAX_R_FRAC = 3.0; // cube: LOOSE safety ceiling on a bloom's outer radius (× CELL). Blooms grow to
+                              //   the full BLOOM_R scale (big exciting stars); local DEFORMATION pushes the
+                              //   neighbours out of the way, so this only bites a truly pathological grid.
+let   BLOOM_MAX_R = Infinity; // resolved from CELL in ensureFlight (hilbert only; spine is left unbounded)
+const BUBBLE_MARGIN = 0.5 * CELL; // cube: neighbours inside (bloom outer radius + this) are pushed out to that
+                              //   shell — a big bloom carves a clearing; small blooms (shell+margin < CELL) don't disturb.
+const BLOT_FRAC = 1.12;       // "black hole": screen disk radius = this × bloom outer radius. Background stars
+                              //   behind it (farther in view depth) are culled from BOTH draw and hit-test — no
+                              //   background noise behind a bloom, and no accidental clicks through it.
+                              //   The same radius is the bloom's SHELL: with the eye inside it, everything
+                              //   outside is hidden (a veil + cull), so the orb stays opaque from within too.
+const BLOT_SHELL_BAND = 0.08; // eye-crossing band (± × shell radius) over which the outside disk hands off to
+                              //   the inside veil — a short crossfade instead of a pop at the surface.
+const BLOOM_OMEGA = 0;     // bloom spin (rad/sec) — 0: static so nodes stay clickable
+const BLOOM_RV_MS = 320;   // per-node birth ease (each node fades + scales in)
+const BLOOM_EASE = 0.14;   // re-flow easing: nodes glide as their sphere fills (recreates the solve animation)
+const FOCUS_FILL_MS = 2500; // reveal the whole focused cloud over ~this long regardless of size (big grids
+                            //   like 27720's ~19k systems fill just as fast as small ones — rate scales)
+let   FOCUS_FETCH_CONC = 6; // bloom-shard fetches in flight across ALL bloomed grids (set from pool size in
+                            //   ensureFlight): blooms DIVERT most of the pool to filling their clouds fast.
+// Click-to-inspect: hover a star or bloom node → tooltip; click (no drag) → pin a detail panel.
+const NODE_HIT = 9;        // px radius to grab a bloom node under the cursor (nodes take priority)
+const STAR_HIT = 7;        // px padding added to a star's drawn radius for grabbing it
+const BLOOM_WEB_HIT = 9;   // px radius around an intra-bloom spoke, matching the macro Web worker
+const DRAG_SLOP = 5;       // px of pointer travel before a press counts as a look-drag (not a click)
+// ── NETWORK SPIDERWEB: connect all 12T grids that share a mother scale (oracle-index `mtag`), drawn
+// PROGRESSIVELY — a strand lights up only once you've flown near both its endpoints, so warping from
+// zone to zone traces a cosmic web across the cube. Membership is the codex index already loaded for the
+// charted lookup (no new data); placement is deterministic (macroCell), so members that aren't loaded as
+// stars still get positioned + connected. Node-level: click a node → trace ITS mother's family. ──
+// Membership, graph construction, reveal, projection, picking, and drawing all live in the dedicated
+// OffscreenCanvas worker. This thread keeps only tiny Web metadata for the HUD/card.
+// Dragon-tail trim: cap how far behind/around the camera web strands draw, as a fraction of FOG_FAR, with a
+// soft fade over the last stretch. The FUTURE graphics slider drives `webTailFrac` (lower = shorter tail =
+// cheaper: low graphics keeps a stub, high graphics streams a long tail). Default 1.0 ≈ the fog range (no
+// visible change until the slider lowers it).
+let   webTailFrac = 1.0;
+const WEB_COLORS = ['#ff6ec7', '#6ecbff', '#ffd86e', '#8dff6e', '#c58bff', '#ff9a6e'];
+let   webColorN = 0;
+const activeWebs = new Map(); // web id -> web { tag, color, slot, visible, dynamic?, ... }
+let   hoverWeb = null;         // nearest visible strand, returned asynchronously by the Web worker
+let   returnRide = null;       // active camera autopilot along a selected Web back to its authored grid
+let   bloomWebId = null;       // Web whose exact rhythm membership is expanded inside open blooms
+const WEB_MAX = 10;           // max simultaneous webs (mother + MN); number keys 1-9,0 hide/show each slot,
+                              //   a hidden slot is reclaimed by the next trace (so you can swap webs in/out)
+// MN "hyperlane" web: a motif (Root Double or CT/IT/RDCP triple) scanned live from a node's layers is
+// realized at scalar s by layers (values·s), so its family = grids divisible by the motif's base-LCM.
+// Cross-cardinality, cache-free, and EFFECTIVELY INFINITE (all multiples), so it's drawn as a DYNAMIC
+// camera-local web: members = the current LOD stars divisible by base, rebuilt as you fly → it never
+// "stops short", it flows with you. (Mother webs are finite lineages → stay global + persistent.)
+const MN_CHIP_MAX = 12;       // most motif chips to show on a node panel (triples first, rarer first)
+// Collider-Battle prototype: AI cube-frame ships that each SELECT a network and fly its family, leaving a
+// tunnel-trail, crashing into one another. Toggle with the B key (off by default). All sim lives in agents.js.
+const AGENT_COUNT = 6;        // ships spawned by the B toggle
+const AGENT_WEB_LINE_W = 2, AGENT_WEB_STRAND_A = 0.3;
+let   swarm = null;
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+// Depth fog: stars fade to black between these view-depths so the field reads as deep space fading
+// to dark, not a hard-edged tube. Set per placement in ensureFlight.
+let FOG_NEAR = 3500, FOG_FAR = 13000, placement = 'spine';
+const fogAt = vz => Math.max(0, Math.min(1, 1 - (vz - FOG_NEAR) / (FOG_FAR - FOG_NEAR)));
+function gravityWebVisibility(position) {
+  const activation = gravityRenderer?.activation || 0;
+  if (!(activation > 0) || !position) return 1;
+  const distance = Math.hypot(position[0], position[1], position[2]);
+  const weight = gravityWindowWeight(distance);
+  return Math.max(0, 1 - activation * weight);
+}
+
+// ── cosmos-audio spatialization mapping: distance (view-depth z) → gain/register for the lead voice ──
+const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const mapRange = (v, a, b, c, d) => clampN((v - a) / (b - a), 0, 1) * (d - c) + c;
+const distGain = z => clampN(mapRange(z, FOG_NEAR, FOG_FAR, 1, 0.15), 0.05, 1);   // near→loud, far→quiet
+const distOctave = z => Math.min(2, Math.floor(mapRange(z, FOG_NEAR, FOG_FAR, 0, 2.99)));   // near→0, far→+1/+2
+// Full Sky (Cosmos/docs/FULL_SKY_HANDOFF.md): the ambient bed's audible-set selection. AUDIBLE_N here
+// pairs with cosmos-audio.js's own SKY KNOBS block (CHORD_TICKS/TABU_K/LAMBDA_FIELD/etc — audio-side
+// knobs live there; this is the camera/projection-side knob for WHICH zones feed the bed).
+const AUDIBLE_N = 10;         // nearest zones (by view depth) with a non-empty skyPool feed the bed
+const AUDIBLE_MARGIN = 4;     // hysteresis: a currently-audible star stays audible until it falls outside
+                               // AUDIBLE_N+this — without it, a star sitting near the Nth-nearest boundary
+                               // flickers in/out of the field every frame while flying (churns cosmos-audio's
+                               // bed voices constantly — part of the "flight cuts the bed" fix).
+const distCutoff = z => mapRange(z, FOG_NEAR, FOG_FAR, 8000, 600);   // near→open, far→muffled lowpass (Hz)
+let audibleIds = new Set();   // current audible-set membership, for the hysteresis above
+let bedMembershipAt = -Infinity, bedRootKey = -1;   // bed membership runs on cause, not per frame (see the block)
+
+// G-gravity production integration. The worker retains enough capacity for the radius-six bubble plus a
+// short spring-return wake while the player flies. This is deliberately not a quality-tier knob: the force
+// law and body population stay identical on every device, and the measured 925-body core step is sub-ms.
+const GRAVITY_CAPACITY = 2048;
+const GRAVITY_SYNC_INTERVAL_MS = 160;
+const GRAVITY_SYNC_RADIUS = DEFAULT_GRAVITY_OPTIONS.windowOuter + CELL * 0.5;
+const GRAVITY_RETURN_EPSILON = 0.05;
+
+// The bed's POSE for one star: view-relative stereo placement + distance-derived loudness/brightness. Split
+// out because both the membership pass and the per-frame pose pass must derive it identically.
+//
+// PAN is the azimuth sine in the listener frame (x / hypot(x, z)): hard left/right when the star is directly
+// beside you, centre when it is straight ahead — or straight behind, which a StereoPanner cannot distinguish
+// (the row field uses a real HRTF panner; the bed is a wash and does not need to). The old law was
+// screen-space ((cx - s.x) / cx), which simply does not exist for a star outside the frustum — that is why
+// membership had to be view-dependent, and now it doesn't.
+//
+// GAIN / CUTOFF / OCTAVE take TRUE 3D distance where they used to take view depth. Same units (FOG_NEAR /
+// FOG_FAR), so the curves are unchanged; what changes is that a star beside or behind you is now placed by
+// how far away it actually is instead of by how far down the view axis it happens to project.
+function skyPoseFor(position, distance, basis) {
+  const listener = toAudioListenerPosition(position, basis);
+  const azimuth = Math.hypot(listener[0], listener[2]);
+  return {
+    pan: azimuth > 1e-6 ? clampN(listener[0] / azimuth, -1, 1) : 0,
+    gain: distGain(distance), octave: distOctave(distance), cutoff: distCutoff(distance),
+  };
+}
+
+// Cull2 grid-row mode: true-3D, head-turn-independent movement field. Only this nearest prewarm set
+// is allowed to touch the dedicated audio compiler; the thousands of other loaded zones remain pure
+// visual/number-theory state. The consonance window is intentionally one constant ready for a UI knob.
+// 2, not 1: a chord change serializes up to ROW_PREWARM_STARS (30) recompiles through this pool,
+// nearest-first, so with a single worker the far prewarm stars wait behind the whole queue before they can
+// sound the new chord. Two workers roughly halve time-to-full-field re-arm. The pool dedups by key above
+// worker assignment, and landings are coalesced (≥60 ms), so two near-simultaneous completions don't
+// double-trigger a field rebuild. Program bursts (compiling already-solved zones) rarely coincide with
+// solver saturation (solving fresh zones), so this doesn't meaningfully contend with the solver pool.
+const ROW_COMPILE_WORKERS = 2;
+const rowDistanceGain = d => clampN(mapRange(d, 0, ROW_RADIUS, 0.9, 0.06), 0.04, 0.9);
+const rowDistanceCutoff = d => mapRange(d, 0, ROW_RADIUS, 9000, 900);
+let rowActiveIds = new Set();
+let rowPrewarmIds = new Set();
+let rowCompiler = null;
+let rootCompiler = null;
+let rootSolvePending = false;
+let rowGeneration = 0;
+let rowSelectionKey = '';
+// ── note constellations (Order B) ────────────────────────────────────────────────────────────
+// One pure core plus one cursor into the row player's per-attack feed. The cursor is an AUDIO-clock
+// time: reachedAttacks hands back the `now` it used, and carrying exactly that forward as the next
+// `since` is what makes the feed lossless and double-count-free. null = not primed yet.
+const constellation = createConstellation();
+let constellationCursor = null;
+// Re-prime rather than ingest if the clock jumps (a fresh AudioContext reads 0, and a stall longer than
+// the player's attack retention would otherwise deliver a burst of stale attacks all at once).
+const CONSTELLATION_RESYNC_SECONDS = 0.7;
+
+// ── third-person view ────────────────────────────────────────────────────────────────────────────
+// V toggles the chase view in the Hilbert cube (a no-op in spine placement, matching gravity). The ship stays
+// where the first-person camera is and keeps its basis for controls and hearing; each frame builds TWO view
+// frames — `shipView` (today's projection exactly) and `renderView` (the chase pose blended by t) — and every
+// DRAWING site reads renderView while every HEARING site keeps the ship's basis. Every entry starts in first
+// person; the tuning in `chase` persists across re-entries within a page load, like the constellation's.
+let viewMode = 'first';            // 'first' | 'chase' — the V target
+let viewProgress = 0;              // linear transition progress 0 (cockpit) … 1 (chase); the pose reads smoothstep
+let chase = chaseOptions();        // CHASE_DEFAULTS copy — the one options object, tuned via __cosmosView.set
+let shipBoost = 0;                 // eased Space level: the rim lights and wake swell with boost
+// Decision 3 (Avery, 2026-09-23): Web return rides STAY in the chase view. Flip to false and rides ease back to
+// first person for their duration (and out to chase again on arrival) — the one line to change if the ride
+// reads better from the cockpit.
+const CHASE_DURING_WEB_RIDES = true;
+
+// Sky Root handoff, Feature B3: camera/gather-side knobs (flight-view owns camera state — root-state
+// display depth ROOT_TOP_K lives in cosmos-audio.js's SKY KNOBS, same split as AUDIBLE_N above).
+const ROOT_RADIUS = 1400;        // world units — a true-3D-distance gather radius around the camera, NOT
+                                  // the view-depth-sorted audible set (the root must not change on turning
+                                  // your head). Start ≈ hilbert's FOG_NEAR; Avery tunes by ear/eye.
+const SETTLE_SPEED = 5;          // world units/sec below which the camera counts as "stopped"
+// Both on the SKY clock (rate-independent wall seconds), not the grid tick clock — scaled speed can put
+// the tick rate in the thousands, and "settled" must mean the same duration to a listener at any speed.
+const SETTLE_SECONDS = 3;        // seconds speed must stay under SETTLE_SPEED before solving (was 30 ticks)
+const ROOT_RESOLVE_MIN_SECONDS = 29.7;   // rate limit: at most one solve this often (coprime with CHORD_SECONDS=25.6)
+let camSpeed = 0;                // this frame's actual world-space translation speed (units/sec) — stepControls sets it
+let settleSinceSecond = null;    // sky second when speed first dropped below SETTLE_SPEED, or null (moving)
+let lastRootResolveSecond = -Infinity;   // sky second of the last proposed solve (rate limit)
+let rootGeographyEpoch = 0;      // invalidates a settled solve once meaningful movement resumes
+let lastRootHarmonyPolicyKey = null;
+let lastRootFundamentalPolicy = true;
+let rootPolicyWasSettled = false;
+
+// ── number theory (frontier validity + solve cost proxy) ──
+function factorInfo(n) {
+  let m = n, primes = 0, divisors = 1;
+  for (let p = 2; p * p <= m; p++) if (m % p === 0) { let e = 0; while (m % p === 0) { m /= p; e++; } primes++; divisors *= e + 1; }
+  if (m > 1) { primes++; divisors *= 2; }
+  return { primes, divisors };
+}
+const isValid = g => factorInfo(g).primes >= 2;
+
+// One worker owns the complete Web pipeline and its transferred overlay canvas. Frames are
+// backpressured: if the worker is still drawing, only the newest camera snapshot is retained.
+class WebRenderer {
+  constructor(url, canvas, placementMode, onFrame) {
+    this.worker = new Worker(url, { type: 'module' });
+    this.onFrame = onFrame; this.frameId = 0; this.requestId = 0; this.pending = new Map();
+    this.busy = false; this.latestFrame = null; this.closed = false;
+    this.worker.onmessage = event => this._message(event.data || {});
+    this.worker.onerror = event => { event.preventDefault?.(); console.warn('[cosmos Web worker]', event.message || event); this._failAll(event.message || 'Web worker failed'); };
+    const offscreen = canvas.transferControlToOffscreen();
+    this.worker.postMessage({ type: 'init', canvas: offscreen, placement: placementMode }, [offscreen]);
+  }
+  post(message, transfer = []) { if (!this.closed) this.worker.postMessage(message, transfer); }
+  resize(width, height, dpr) { this.post({ type: 'resize', width, height, dpr }); }
+  upsert(web) { this.post({ type: 'upsert', web }); }
+  remove(webId) { this.post({ type: 'remove', webId }); }
+  visibility(webId, visible) { this.post({ type: 'visibility', webId, visible }); }
+  select(webId) { this.post({ type: 'select', webId }); }
+  clearRoute() { this.post({ type: 'clearRoute' }); }
+  zones(added, removed) {
+    if (!added.length && !removed.length) return;
+    const a = Int32Array.from(added), r = Int32Array.from(removed);
+    this.post({ type: 'zones', added: a, removed: r }, [a.buffer, r.buffer]);
+  }
+  frame(frame) { this.latestFrame = frame; if (!this.busy) this._sendFrame(); }
+  _sendFrame() {
+    if (!this.latestFrame || this.closed) return;
+    const frame = this.latestFrame; this.latestFrame = null; this.busy = true;
+    this.post({ type: 'frame', frameId: ++this.frameId, frame });
+  }
+  request(op, payload = {}) {
+    if (this.closed) return Promise.reject(new Error('Web worker is closed.'));
+    const id = ++this.requestId;
+    return new Promise((resolve, reject) => { this.pending.set(id, { resolve, reject }); this.post({ type: 'request', id, op, ...payload }); });
+  }
+  _message(message) {
+    if (message.type === 'frameDone') {
+      this.busy = false; this.onFrame?.(message); this._sendFrame(); return;
+    }
+    if (message.type === 'response') {
+      const pending = this.pending.get(message.id); if (!pending) return;
+      this.pending.delete(message.id);
+      if (message.error) pending.reject(new Error(message.error)); else pending.resolve(message.result);
+    }
+  }
+  _failAll(reason) { this.closed = true; this.busy = false; for (const job of this.pending.values()) job.reject(new Error(reason)); this.pending.clear(); }
+  terminate() { if (this.closed) return; this._failAll('Web worker terminated.'); this.worker.terminate(); }
+}
+
+// Gravity uses the same newest-frame backpressure pattern as the Web renderer. Two fixed transfer
+// buffers ping-pong so the last completed offsets remain readable while the worker advances the next
+// frame; the simulation's own Float64 typed arrays never leave the worker.
+class GravityRenderer {
+  constructor(url, capacity = GRAVITY_CAPACITY) {
+    this.capacity = capacity;
+    this.worker = new Worker(url, { type: 'module' });
+    this.worker.onmessage = event => this._message(event.data || {});
+    this.worker.onerror = event => {
+      event.preventDefault?.();
+      console.warn('[cosmos gravity worker]', event.message || event);
+      this.closed = true; this.busy = false;
+    };
+    this.display = new Float32Array(capacity * 3);
+    this.transfer = new Float32Array(capacity * 3);
+    this.displayIndex = new Map();
+    this.syncedIds = new Set();
+    this.revisionIndexes = new Map();
+    this.revision = 0;
+    this.busy = false; this.latestFrame = null; this.closed = false;
+    this.activation = 0; this.strength = 0; this.clampEngagements = 0;
+    this.worker.postMessage({ type: 'init', capacity, options: DEFAULT_GRAVITY_OPTIONS });
+  }
+  sync(bodies) {
+    if (this.closed) return;
+    const ordered = [...bodies].sort((a, b) => a.id - b.id).slice(0, this.capacity);
+    const count = ordered.length;
+    const ids = new Int32Array(count), rest = new Float64Array(count * 3);
+    const sizes = new Float32Array(count), pins = new Uint8Array(count), axes = new Float32Array(count * 3);
+    const index = new Map();
+    for (let i = 0; i < count; i++) {
+      const body = ordered[i], base = i * 3;
+      ids[i] = body.id; index.set(body.id, i);
+      rest[base] = body.rest[0]; rest[base + 1] = body.rest[1]; rest[base + 2] = body.rest[2];
+      sizes[i] = body.size; pins[i] = body.pinned ? 1 : 0;
+      axes[base] = body.spinAxis[0]; axes[base + 1] = body.spinAxis[1]; axes[base + 2] = body.spinAxis[2];
+    }
+    const revision = ++this.revision;
+    this.syncedIds = new Set(index.keys());
+    this.revisionIndexes.set(revision, index);
+    while (this.revisionIndexes.size > 4) this.revisionIndexes.delete(this.revisionIndexes.keys().next().value);
+    this.worker.postMessage({ type: 'sync', revision, ids, rest, sizes, pins, axes },
+      [ids.buffer, rest.buffer, sizes.buffer, pins.buffer, axes.buffer]);
+  }
+  frame(frame) {
+    if (this.closed) return;
+    this.latestFrame = frame;
+    if (!this.busy && this.transfer) this._sendFrame();
+  }
+  _sendFrame() {
+    if (!this.latestFrame || !this.transfer || this.closed) return;
+    const frame = this.latestFrame; this.latestFrame = null; this.busy = true;
+    const buffer = this.transfer.buffer; this.transfer = null;
+    this.worker.postMessage({ type: 'frame', ...frame, buffer }, [buffer]);
+  }
+  _message(message) {
+    if (message.type === 'error') { console.warn('[cosmos gravity worker]', message.error); return; }
+    if (message.type !== 'frameDone') return;
+    this.busy = false;
+    const returned = new Float32Array(message.buffer);
+    const index = this.revisionIndexes.get(message.revision);
+    if (!message.error && index) {
+      const oldDisplay = this.display;
+      this.display = returned; this.displayIndex = index; this.transfer = oldDisplay;
+      this.activation = message.activation || 0;
+      this.strength = message.strength || 0;
+      this.clampEngagements = message.clampEngagements || 0;
+    } else {
+      this.transfer = returned;
+      if (message.error) console.warn('[cosmos gravity frame]', message.error);
+    }
+    this._sendFrame();
+  }
+  hasBody(grid) { return this.syncedIds.has(grid); }
+  hasDisplay(grid) { return this.displayIndex.has(grid); }
+  offsetMagnitude(grid) {
+    const index = this.displayIndex.get(grid); if (index == null) return Infinity;
+    const base = index * 3;
+    return Math.hypot(this.display[base], this.display[base + 1], this.display[base + 2]);
+  }
+  addOffset(grid, point) {
+    const index = this.displayIndex.get(grid); if (index == null) return point;
+    const base = index * 3;
+    return [point[0] + this.display[base], point[1] + this.display[base + 1], point[2] + this.display[base + 2]];
+  }
+  terminate() {
+    if (this.closed) return;
+    this.closed = true; this.busy = false; this.latestFrame = null; this.worker.terminate();
+  }
+}
+
+// ── vec helpers ──
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const norm = a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+function pointSegmentDistance2(px, py, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, denominator = dx * dx + dy * dy;
+  const t = denominator ? Math.max(0, Math.min(1, ((px - a.x) * dx + (py - a.y) * dy) / denominator)) : 0;
+  const x = a.x + dx * t, y = a.y + dy * t;
+  return { d2: (px - x) ** 2 + (py - y) ** 2, x, y };
+}
+// Local cube deformation: push a point radially OUT of each bloom's bubble (so neighbours make room for a
+// big cloud). A bloom never deforms its own star (b.g === grid skipped). Composed over all bubbles.
+function deform(p, grid, bubbles) {
+  let x = p[0], y = p[1], z = p[2];
+  for (const b of bubbles) {
+    if (b.g === grid) continue;
+    const dx = x - b.c[0], dy = y - b.c[1], dz = z - b.c[2], d = Math.hypot(dx, dy, dz);
+    if (d > 1e-6 && d < b.bubbleR) { const k = b.bubbleR / d; x = b.c[0] + dx * k; y = b.c[1] + dy * k; z = b.c[2] + dz * k; }
+  }
+  return [x, y, z];
+}
+
+// ── network web helpers ──────────────────────────────────────────────────────────────────────
+// World-relative position of ANY grid (loaded or not), same math a resting star uses. Web nodes
+// prefer their live zone position when loaded (rpOf), and fall back to this so an unloaded member
+// still sits where its star would.
+function gridRP(g) {
+  const c = macroCell(g), cc = macroCell(cam.anchor), s = macroScale(), h = backboneHash(g);
+  return [(c[0] - cc[0]) * s + h[0] - cam.off[0],
+          (c[1] - cc[1]) * s + h[1] - cam.off[1],
+          (c[2] - cc[2]) * s + h[2] - cam.off[2]];
+}
+// Resolve a bloom node's key to its mother-scale tag via the same codex index used for charted lookup.
+function mtagOfKey(key) {
+  if (!indexKeys || !indexMtag || !key) return null;
+  const i = binarySearch(indexKeys, key); if (i < 0) return null;
+  return mtagNames[indexMtag[i]] || null;
+}
+// Assign a slot (0..WEB_MAX-1) for a new web: lowest free, else reclaim the lowest HIDDEN web's slot
+// (toggling a web off frees it for the next trace). Returns -1 if all WEB_MAX slots are visible.
+function claimSlot() {
+  const used = new Map(); for (const w of activeWebs.values()) used.set(w.slot, w);
+  for (let s = 0; s < WEB_MAX; s++) if (!used.has(s)) return s;
+  let victim = null; for (const w of activeWebs.values()) if (w.visible === false && (!victim || w.slot < victim.slot)) victim = w;
+  if (victim) { removeWeb(victim.tag); return victim.slot; }
+  return -1;   // full (all visible) — hide one with its number key to free a slot
+}
+// number key 1-9,0 → toggle that slot's web visibility (hidden webs stop drawing but keep their state)
+function selectBloomWeb(id) {
+  bloomWebId = id && activeWebs.has(id) ? id : null;
+  webRenderer?.select((selected?.kind === 'web' && selected.webId) || bloomWebId);
+}
+
+function toggleSlot(s) {
+  for (const w of activeWebs.values()) if (w.slot === s) {
+    w.visible = !w.visible; webRenderer?.visibility(w.tag, w.visible);
+    if (w.visible) selectBloomWeb(w.tag);
+    else if (bloomWebId === w.tag) selectBloomWeb([...activeWebs.values()].find(other => other.visible)?.tag || null);
+    return;
+  }
+}
+
+function removeWeb(id) {
+  activeWebs.delete(id);
+  webRenderer?.remove(id);
+  if (returnRide && returnRide.webId === id) { releaseWebReturnLook(returnRide); returnRide = null; webRenderer?.clearRoute(); }
+  if (selected && selected.kind === 'web' && selected.webId === id) { selected = null; showDetail(null); }
+  if (bloomWebId === id) selectBloomWeb([...activeWebs.values()].find(web => web.visible)?.tag || null);
+}
+
+// Toggle a mother-scale network on/off. srcGrid (the clicked node's grid) is seeded revealed so the web
+// has an anchor even before you fly to it.
+function toggleWeb(tag, srcGrid) {
+  if (activeWebs.has(tag)) { removeWeb(tag); return; }
+  const members = mtagGrids && mtagGrids.get(tag);
+  if (!members || !members.length) return;
+  const slot = claimSlot(); if (slot < 0) return;
+  // Apex = largest member that still lands inside the Hilbert cube (members are sorted ascending, so
+  // scan from the top). Mirrors originGrid (members[0], the smallest) at the other end of the lineage.
+  let apex = members[0];
+  for (let i = members.length - 1; i >= 0; i--) if (members[i] < INDEX_COUNT) { apex = members[i]; break; }
+  const web = { tag, slot, visible: true, color: WEB_COLORS[webColorN++ % WEB_COLORS.length],
+    homeGrid: srcGrid, originGrid: members[0], apexGrid: apex, memberCount: members.length, localNodes: members.length, visibleNodes: 0 };
+  activeWebs.set(tag, web);
+  webRenderer?.upsert({ tag, visible: true, dynamic: false, color: web.color,
+    homeGrid: srcGrid, originGrid: web.originGrid, members });
+  selectBloomWeb(tag);
+}
+// Toggle a Master-Network family web. Members = grids divisible by the motif's base-LCM (host it at some
+// scalar) — but that set is infinite, so the worker rebuilds it from the current LOD
+// stars every frame-ish, so it flows endlessly with the camera (smart LOD, never a hard cap).
+function toggleMNWeb(id, base, srcGrid) {
+  if (activeWebs.has(id)) { removeWeb(id); return; }
+  if (!(base >= 2)) return;
+  const slot = claimSlot(); if (slot < 0) return;
+  const web = { tag: id, slot, visible: true, dynamic: true, base, motifKey: id.replace(/^mn:/, ''),
+    homeGrid: srcGrid, originGrid: base, apexGrid: Math.floor((INDEX_COUNT - 1) / base) * base,
+    color: WEB_COLORS[webColorN++ % WEB_COLORS.length], localNodes: 0, visibleNodes: 0 };
+  activeWebs.set(id, web);
+  webRenderer?.upsert({ tag: id, visible: true, dynamic: true, base, color: web.color,
+    homeGrid: srcGrid, originGrid: base });
+  selectBloomWeb(id);
+}
+// Draw all visible webs under the star field. Two kinds:
+//  • static (mother): finite member list, revealed progressively as the camera nears each strand.
+//  • dynamic (MN): infinite family, so members = the current LOD stars divisible by base, rebuilt on a
+//    cadence → the web flows endlessly with the camera (smart LOD).
+const cameraAbsolute = () => { const c = macroCell(cam.anchor), s = macroScale(); return [c[0] * s + cam.off[0], c[1] * s + cam.off[1], c[2] * s + cam.off[2]]; };
+
+function gravityRestPosition(grid) {
+  const cell = macroCell(grid), scale = macroScale(), hash = backboneHash(grid);
+  return [cell[0] * scale + hash[0], cell[1] * scale + hash[1], cell[2] * scale + hash[2]];
+}
+
+function collectGravityBodies(cameraWorld) {
+  if (!gravityRenderer || placement !== 'hilbert') return [];
+  const candidates = [];
+  for (const z of cosmos.zones.values()) {
+    const rest = gravityRestPosition(z.grid);
+    const distance = Math.hypot(rest[0] - cameraWorld[0], rest[1] - cameraWorld[1], rest[2] - cameraWorld[2]);
+    const inside = distance <= GRAVITY_SYNC_RADIUS;
+    const retained = gravityRenderer.hasBody(z.grid) &&
+      (!gravityRenderer.hasDisplay(z.grid) || gravityRenderer.offsetMagnitude(z.grid) > GRAVITY_RETURN_EPSILON);
+    if (!inside && !retained) continue;
+    if (z._gravitySizeEstimate == null) z._gravitySizeEstimate = approximateStarSize(z.divisors || factorInfo(z.grid).divisors);
+    candidates.push({
+      id: z.grid,
+      rest,
+      size: z.state === 'solved' ? z.size : z._gravitySizeEstimate,
+      pinned: bloomed.has(z.grid),
+      spinAxis: z.slotDir,
+      distance,
+      priority: inside ? 0 : 1,
+    });
+  }
+  candidates.sort((a, b) => a.priority - b.priority || a.distance - b.distance || a.id - b.id);
+  return candidates.slice(0, GRAVITY_CAPACITY);
+}
+
+function syncGravity(now, cameraWorld) {
+  if (!gravityRenderer || placement !== 'hilbert') return;
+  if (!gravitySyncDirty && now - gravitySyncAt < GRAVITY_SYNC_INTERVAL_MS) return;
+  gravitySyncAt = now; gravitySyncDirty = false;
+  gravityRenderer.sync(collectGravityBodies(cameraWorld));
+}
+
+function cancelWebReturn(status = 'ride cancelled') {
+  const webId = returnRide?.webId || (selected?.kind === 'web' ? selected.webId : null);
+  webRouteGeneration++;
+  const web = webId && activeWebs.get(webId); if (web) { web.rideStatus = status; web.routePlanning = false; }
+  if (returnRide) releaseWebReturnLook(returnRide);
+  returnRide = null; camSpeed = 0; webRenderer?.clearRoute();
+  if (selected && selected.kind === 'web') showDetail(selected);
+}
+
+// Route-local "up": world-up projected perpendicular to the strand. Near a vertical strand there
+// is no meaningful world-up component, so fall back to a stable horizontal perpendicular.
+function webReturnLift(tangent) {
+  let lift = [-tangent[0] * tangent[1], 1 - tangent[1] ** 2, -tangent[2] * tangent[1]];
+  if (Math.hypot(...lift) < 0.12) {
+    const fallback = Math.abs(tangent[0]) < 0.9 ? [1, 0, 0] : [0, 0, 1], along = dot(fallback, tangent);
+    lift = fallback.map((value, i) => value - tangent[i] * along);
+  }
+  return norm(lift);
+}
+
+// The sampler's immediate tangent changes at every subdivided spline point. A chord spanning a
+// fixed arc-length window is continuous and ignores those synthetic joints while still anticipating
+// real bends in the route. Near either endpoint the window naturally becomes one-sided.
+function webReturnRailTangent(path, progress, windowDistance) {
+  const halfWindow = Math.max(0.0001, Math.min(0.12, windowDistance / Math.max(1, path.total)));
+  const before = sampleArcPath(path, Math.max(0, progress - halfWindow)).position;
+  const after = sampleArcPath(path, Math.min(1, progress + halfWindow)).position;
+  return norm(after.map((value, i) => value - before[i]));
+}
+
+function webReturnLookDirection(ride) {
+  return routeCameraBasis(ride.tangent, ride.lift, ride.lookYaw, ride.lookPitch).d;
+}
+
+function applyWebReturnLook(ride) {
+  const direction = webReturnLookDirection(ride);
+  if (Math.hypot(direction[0], direction[2]) > 1e-6) cam.yaw = Math.atan2(direction[0], direction[2]);
+  cam.pitch = Math.asin(Math.max(-1, Math.min(1, direction[1])));
+}
+
+// Free flight deliberately retains its ±80° pitch law. When travel ends at a vertical view, preserve
+// the last meaningful yaw and project pitch back into that legal range before dropping the route frame.
+function releaseWebReturnLook(ride) {
+  applyWebReturnLook(ride);
+  cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch));
+}
+
+function beginWebReturn(webId, destination = 'anchor') {
+  const web = activeWebs.get(webId);
+  const targetGrid = destination === 'origin' ? web?.originGrid
+                   : destination === 'apex'   ? web?.apexGrid
+                   : web?.homeGrid;
+  if (!web || targetGrid == null || !webRenderer) return;
+  bloomWebId = webId;
+  const generation = ++webRouteGeneration;
+  web.visible = true; web.routePlanning = true; web.rideProgress = 0;
+  web.rideDestination = destination; web.rideTargetGrid = targetGrid;
+  web.rideStatus = `stitching ${destination} route off-thread`;
+  webRenderer.visibility(webId, true); selected = { kind: 'web', webId }; webRenderer.select(webId); showDetail(selected);
+  webRenderer.request('planReturn', { webId, cameraStart: cameraAbsolute(), targetGrid }).then(result => {
+    if (generation !== webRouteGeneration || !activeWebs.has(webId)) { webRenderer.clearRoute(); return; }
+    web.routePlanning = false;
+    const liftHeight = placement === 'hilbert' ? CELL * WEB_RETURN_LIFT_CELLS : WEB_RETURN_LIFT_SPINE;
+    const frameWindow = placement === 'hilbert' ? CELL * WEB_RETURN_FRAME_CELLS : WEB_RETURN_FRAME_SPINE;
+    // Aim once from the elevated rail toward a point ahead on the actual strand. Position remains
+    // route-owned afterward, while arrow-key steering stays fully available during travel.
+    const openingTangent = webReturnRailTangent(result.path, 0.0001, frameWindow), lift = webReturnLift(openingTangent);
+    returnRide = { ...result, destination, elapsed: 0, lastUi: 0, liftHeight, frameWindow, lift, pathProgress: 0 };
+    const lookProgress = Math.min(1, Math.max(0.0001, liftHeight * 4 / Math.max(1, result.path.total)));
+    const lookAt = sampleArcPath(result.path, lookProgress).position;
+    const elevated = result.path.points[0].map((value, i) => value + lift[i] * liftHeight);
+    const openingView = norm(lookAt.map((value, i) => value - elevated[i]));
+    const right = norm(cross(lift, openingTangent));
+    returnRide.tangent = openingTangent;
+    returnRide.lookYaw = Math.atan2(dot(openingView, right), dot(openingView, openingTangent));
+    returnRide.lookPitch = Math.asin(Math.max(-1, Math.min(1, dot(openingView, lift))));
+    applyWebReturnLook(returnRide);
+    web.rideStatus = result.sampled ? `riding an adaptive ${result.routeNodes}-node route` : `riding ${result.routeNodes} connected nodes`;
+    showDetail(selected);
+  }).catch(error => {
+    if (generation !== webRouteGeneration || !activeWebs.has(webId)) return;
+    web.routePlanning = false; web.rideStatus = error.message || 'route planning failed'; webRenderer.clearRoute(); showDetail(selected);
+  });
+}
+
+function stepWebReturn(now, dt) {
+  if (!returnRide) return false;
+  const ride = returnRide, web = activeWebs.get(ride.webId);
+  if (!web) { cancelWebReturn(); return false; }
+  // Space already means boost in free flight; during autopilot it accelerates the route clock by
+  // the same multiplier. Accumulated ride time keeps press/release transitions continuous.
+  ride.elapsed = Math.min(ride.duration, ride.elapsed + dt * (keys[' '] ? BOOST : 1));
+  const raw = ride.elapsed / ride.duration;
+  const eased = 0.5 - Math.cos(raw * Math.PI) * 0.5;
+  const sample = sampleArcPath(ride.path, eased), here = cameraAbsolute();
+  ride.pathProgress = eased;
+  const railTangent = webReturnRailTangent(ride.path, eased, ride.frameWindow);
+  const edgeRamp = Math.max(0, Math.min(1, raw / WEB_RETURN_LIFT_RAMP, (1 - raw) / WEB_RETURN_LIFT_RAMP));
+  const liftEase = 0.5 - Math.cos(edgeRamp * Math.PI) * 0.5;
+  let targetLift = webReturnLift(railTangent);
+  if (dot(targetLift, ride.lift) < 0) targetLift = targetLift.map(value => -value);
+  const liftBlend = 1 - Math.exp(-dt * 8);
+  const blendedLift = ride.lift.map((value, i) => value + (targetLift[i] - value) * liftBlend);
+  const liftAlong = dot(blendedLift, railTangent);
+  ride.lift = norm(blendedLift.map((value, i) => value - railTangent[i] * liftAlong));
+  ride.tangent = railTangent;
+  const ridePosition = sample.position.map((value, i) => value + ride.lift[i] * ride.liftHeight * liftEase);
+  const delta = ridePosition.map((v, i) => v - here[i]);
+  const actualMove = translateCam(delta);
+  camSpeed = dt > 0 ? Math.hypot(actualMove[0], actualMove[1], actualMove[2]) / dt : 0;
+
+  if (now - ride.lastUi > 250) { ride.lastUi = now; web.rideProgress = raw; showDetail(selected); }
+  if (raw < 1) return true;
+
+  const hc = macroCell(ride.targetGrid), scale = macroScale();
+  const arrival = placement === 'hilbert' ? clampHilbertWorld(ride.arrival, HIL_CAMERA_RADIUS) : ride.arrival;
+  cam.anchor = ride.targetGrid;
+  cam.off = [arrival[0] - hc[0] * scale, arrival[1] - hc[1] * scale, arrival[2] - hc[2] * scale];
+  cosmos.setCamera(cam.anchor); camSpeed = 0;
+  web.rideProgress = 1;
+  web.rideStatus = `${ride.destination === 'origin' ? 'origin' : ride.destination === 'apex' ? 'apex' : 'anchor'} reached · grid ${ride.targetGrid.toLocaleString()}`;
+  releaseWebReturnLook(ride);
+  returnRide = null; webRenderer?.clearRoute(); showDetail(selected);
+  return true;
+}
+
+// Draw the Collider-Battle ships: each agent's tunnel-trail (fading polyline) + a velocity-oriented cube
+// frame; a crashing agent flashes an expanding ring. Agents live in absolute cube world coords, so we
+// project them relative to the camera's absolute position (cellAbs), the same frame the trail is stored in.
+// `view` is the frame's render view (view-frame.js): fog reads a projection's `f`, perspective size its `z`.
+function drawAgents(view) {
+  if (!swarm || !swarm.agents.length) return;
+  const cc = macroCell(cam.anchor), s = macroScale();
+  const camAbs = [cc[0] * s + cam.off[0], cc[1] * s + cam.off[1], cc[2] * s + cam.off[2]];
+  const proj = wp => view.project([wp[0] - camAbs[0], wp[1] - camAbs[1], wp[2] - camAbs[2]]);
+  const cellW = g => { const c = macroCell(g); return [c[0] * s, c[1] * s, c[2] * s]; };
+  const sgn = b => b ? 1 : -1;
+  for (const a of swarm.agents) {
+    // dragon tail = the agent's OWN network web: strands between the family-member grid cells it has
+    // threaded (older = dimmer), plus a live edge from the last node to the ship, plus a bead per node.
+    ctx.lineWidth = AGENT_WEB_LINE_W; ctx.strokeStyle = a.color; ctx.lineCap = 'round';
+    const nodes = a.path, N = nodes.length;
+    let prev = N ? proj(cellW(nodes[0])) : null;
+    for (let i = 1; i < N; i++) {
+      const sp = proj(cellW(nodes[i]));
+      if (sp && prev) { const fog = fogAt(sp.f); if (fog > 0) { ctx.globalAlpha = AGENT_WEB_STRAND_A * fog * (i / N); ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(sp.x, sp.y); ctx.stroke(); } }
+      prev = sp;
+    }
+    const c0 = proj(a.p);
+    if (a.alive && prev && c0) { const fog = fogAt(c0.f); if (fog > 0) { ctx.globalAlpha = AGENT_WEB_STRAND_A * fog; ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(c0.x, c0.y); ctx.stroke(); } }   // growing edge
+    ctx.fillStyle = a.color;
+    for (let i = 0; i < N; i++) { const sp = proj(cellW(nodes[i])); if (!sp) continue; const fog = fogAt(sp.f); if (fog <= 0) continue; ctx.globalAlpha = 0.55 * fog * (0.3 + 0.7 * i / N); ctx.beginPath(); ctx.arc(sp.x, sp.y, AGENT_WEB_LINE_W * 1.1, 0, 7); ctx.fill(); }
+    if (!a.alive) {                                   // crash flash: expanding rings
+      if (c0) { const t = Math.max(0, Math.min(1, 1 - a.crashT / swarm.respawnMs)), fog = fogAt(c0.f);
+        const rr = swarm.cubeR * (1 + 4 * t) * focal / c0.z;
+        ctx.globalAlpha = (1 - t) * fog; ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.beginPath(); ctx.arc(c0.x, c0.y, Math.max(1, rr), 0, 7); ctx.stroke();
+        ctx.strokeStyle = a.color; ctx.beginPath(); ctx.arc(c0.x, c0.y, Math.max(1, rr * 0.6), 0, 7); ctx.stroke(); }
+      continue;
+    }
+    if (!c0) continue;
+    const fog = fogAt(c0.f); if (fog <= 0) continue;
+    // cube frame oriented to velocity
+    const R = swarm.cubeR, f = norm(a.v);
+    let right = cross([0, 1, 0], f); if (Math.hypot(right[0], right[1], right[2]) < 1e-4) right = [1, 0, 0]; right = norm(right);
+    const up = cross(f, right);
+    const corners = [];
+    for (let b = 0; b < 8; b++) { const sx = sgn(b & 1), sy = sgn(b & 2), sz = sgn(b & 4);
+      corners.push(proj([a.p[0] + R * (sx * right[0] + sy * up[0] + sz * f[0]),
+                          a.p[1] + R * (sx * right[1] + sy * up[1] + sz * f[1]),
+                          a.p[2] + R * (sx * right[2] + sy * up[2] + sz * f[2])])); }
+    ctx.strokeStyle = a.color; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.95 * fog;
+    for (let b = 0; b < 8; b++) for (const bit of [1, 2, 4]) { const d = b ^ bit; if (d > b && corners[b] && corners[d]) { ctx.beginPath(); ctx.moveTo(corners[b].x, corners[b].y); ctx.lineTo(corners[d].x, corners[d].y); ctx.stroke(); } }
+    // core dot + glow so a ship reads at distance
+    const cr = Math.max(1.5, R * 0.25 * focal / c0.z);
+    const g = ctx.createRadialGradient(c0.x, c0.y, 0, c0.x, c0.y, cr * 2.2);
+    g.addColorStop(0, a.color); g.addColorStop(1, 'transparent');
+    ctx.globalAlpha = 0.6 * fog; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c0.x, c0.y, cr * 2.2, 0, 7); ctx.fill();
+    ctx.globalAlpha = fog; ctx.fillStyle = a.color; ctx.beginPath(); ctx.arc(c0.x, c0.y, cr, 0, 7); ctx.fill();
+    // BLOOM state: a pulsing ring (the ship is solving/inspecting the grid before it picks a hyperlane)
+    if (a.state === 'bloom') { const ph = 0.5 + 0.5 * Math.sin(a.pulse * 9); const pr = (swarm.cubeR + 70 * ph) * focal / c0.z; ctx.globalAlpha = 0.5 * fog * (1 - ph * 0.6); ctx.strokeStyle = a.color; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(c0.x, c0.y, Math.max(2, pr), 0, 7); ctx.stroke(); }
+  }
+  ctx.globalAlpha = 1;
+}
+
+let cv, ctx, hud, cosmos, pool, cam, webCanvas = null, webRenderer = null, webRouteGeneration = 0;
+let gravityRenderer = null, gravitySyncAt = -Infinity, gravitySyncDirty = true, gravityLastTick = 0, gravityDebugHold = false;
+let webZoneAdded = [], webZoneRemoved = [], keys = {}, W = 0, H = 0, cx = 0, cy = 0, focal = 800, last = 0, started = false, bound = false;
+let hbLast = 0, hbPlans = 0, hbShards = 0, hbSolved = 0;   // per-second solve-progress heartbeat
+// Picking state. Cursor is tracked in CSS px (canvas-relative for hit-tests, client for the tooltip).
+// `hover` is resolved each frame from what's actually drawn under the cursor; `selected` is pinned on
+// click and drives the detail panel until the next click. Node identity = `${grid}:${systemIndex}`.
+let tipEl = null, indexKeys = null;
+// Codex index columns kept for the network web: grid[] and mtag[] parallel to keys[], mtags[] the tag table.
+// mtagGrids inverts them once on load: motherTag -> sorted unique member grids.
+let indexGrid = null, indexMtag = null, mtagNames = null, mtagGrids = null;
+let mouseX = -1, mouseY = -1, mClientX = 0, mClientY = 0;
+let hover = null, selected = null;
+// Cosmos-audio cockpit: the lead voice currently sounding (node's own tuning, from cosmos-audio.deriveVoice)
+// + the DOM refs for the collapsible #lrc-div inspector (Linear Plot + scale table). `leadVoice.node.grid`
+// is the star whose live screen projection drives spatialization each frame (see the `loop()` proj block).
+let leadVoice = null;   // mute state lives in railParams ('mute') — one owner for the rail, the lab and M
+// Previous frame's camera pose, for the audio telemetry's motion classification (rotation vs translation).
+let telemetryYaw = 0, telemetryPitch = 0, telemetryOff = [0, 0, 0], telemetryAnchor = 0;
+let lrcDivEl = null, lrcHeadEl = null, cockpitPlotEl = null, cockpitPlotCtx = null;
+let cockpitPlotKeyEl = null;
+let lrcPanelToggleEl = null, lrcEmptyEl = null, rhythmInspectorEl = null;
+// The fused card's non-rhythm modes: GRID (a clicked star) and CONNECTOR (a clicked Web). `lrcMarkEl` is the
+// header identity word ("Rhythm" / "Grid" / "Connector") the mode switch relabels. These replace the retired
+// bottom-right #flight-detail card — showDetail now routes every selection kind into #lrc-div.
+let gridViewEl = null, connectorViewEl = null, gridBodyEl = null, connectorBodyEl = null, lrcMarkEl = null;
+let rhythmTitleEl = null, rhythmSubtitleEl = null, rhythmStateEl = null;
+let metricFundamentalEl = null, metricOnsetsEl = null, metricDensityEl = null;
+let structureListEl = null, connectionsEl = null, listenBtnEl = null, loadBtnEl = null;
+let scaleCountEl = null, scaleFundamentalEl = null, scaleTableBodyEl = null, scaleLightEl = null;
+let inspectedNode = null, rhythmInspectorModel = null;
+const cockpitVisibleLayers = new Set(['A', 'B', 'C', 'D']);
+let cockpitLayerColors = { A: '#ff6b6b', B: '#4ecdc4', C: '#00a638ff', D: '#f9ca24' };
+let cockpitScaleHighlightsEnabled = true, cockpitScaleLastNodeIndex = -1;
+const cockpitScaleRows = new Map(), cockpitScaleHighlightTimestamps = new Map();
+const COCKPIT_SCALE_HIGHLIGHT_MS = 300;
+// One selected-rhythm derivation shared by the card, plot, scale table and audition. Pick objects are rebuilt
+// by the draw loop, so cache by canonical layer identity rather than object identity.
+let selectedRhythmModelKey = '', selectedRhythmModelCache = null;
+let cockpitPlotBaseCanvas = null, cockpitPlotBaseCtx = null, cockpitPlotBaseKey = '';
+let cockpitPlotEligibleNodes = new Set(), cockpitPlotLastNodeIndex = -1, cockpitPlotPulseAt = -Infinity;
+function modelForRhythmNode(node) {
+  if (!node?.layers) return null;
+  const key = node.layers.join('.');
+  if (key !== selectedRhythmModelKey) {
+    selectedRhythmModelKey = key;
+    // Cheap pre-gate: building the composite model (deriveSelectedRhythmModel) is O(onset load), and so is
+    // auditioning it (deriveVoice). A very dense clicked rhythm would freeze the page synchronously. Above
+    // ROW_MAX_PLAYBACK_ONSETS we refuse to build — the inspector shows a compact "too dense" card and the
+    // audition is disabled. Card-only; the flight scene keeps dense rhythms as representatives (uncapped).
+    // layerSum (sum of layer values) is the build-cost driver and needs no model, so the gate stays cheap.
+    const onsetLoad = node.layers.reduce((sum, layer) => sum + layer, 0);
+    selectedRhythmModelCache = onsetLoad > ROW_MAX_PLAYBACK_ONSETS ? null : buildRhythmInspectorModel(node.layers);
+  }
+  return selectedRhythmModelCache;
+}
+let audioLabEl = null, audioLabOn = false;
+let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, audioModeEl = null;
+let tuningSliderEl = null, tuningReadoutEl = null;
+let scaledSpeedEl = null, scaledReadoutEl = null, cycleSliderEl = null, cycleReadoutEl = null;
+// (the full-quality checkbox is gone — Phase 0.3 made full exposure an unconditional advance floor)
+let modulationEl = null, modulationReadoutEl = null;
+let midiOutEl = null, midiReadoutEl = null;
+// Cardinality band filter: only nodes with cardinality in [cardLo, cardHi] render + hit-test (isolate radial
+// shells; makes monster clouds parseable). Elements + a change-guard so the DOM is only touched when needed.
+// The band targets ONLY the currently-focused bloom (cosmos.focusGrid); other blooms render in full. filterGrid
+// tracks which bloom the sliders currently represent, so switching focus resets the band to that bloom's range.
+let loEl = null, hiEl = null, readoutEl = null, filterEl = null, fillEl = null, controlsEl = null, liveEl = null, helpPanelEl = null, filterShown = false, filterMax = 0, filterGrid = null;
+let cardLo = 1, cardHi = 999;
+const cardVisible = c => c >= cardLo && c <= cardHi;
+// The focused bloom is fetched SHARD-BY-SHARD (same sharding as the abundance solve), so it streams in and
+// never blocks a worker on a whole hyper-abundant grid. Cache entry: { systems (grows), cmin, plan, next }.
+const bloomCache = new Map();   // grid -> entry | null (no shards → no bloom)
+// Bloom LOD by RANGE (cosmos-quality.js): a polyrhythm's range = fastest layer ÷ slowest layer. A huge
+// range is a degenerate "rhythm" — one layer firing hundreds of thousands of times against another firing
+// twice (443549:2 → ≈221,774). Lower tiers cull them at the shard-receive path, so they never enter the
+// cloud, never project, never cost a per-frame node. HIGH/ULTRA keep everything (bloomMaxRange = ∞).
+function bloomRange(s) {
+  const L = s && s.layers;
+  if (!L || L.length < 2) return 1;                 // a single-layer system has no range
+  let lo = L[0], hi = L[0];
+  for (let i = 1; i < L.length; i++) { const v = L[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+  return lo > 0 ? hi / lo : Infinity;
+}
+const bloomPlanning = new Set();// focused grids whose shard-plan fetch is in flight (planned here if the
+                                //   runtime hasn't yet — so an unsolved star still blooms the moment it's clicked)
+let   bloomInFlight = 0;        // concurrent bloom-shard fetches across ALL bloomed grids (≤ FOCUS_FETCH_CONC)
+// EVERY star the player clicks blooms and PERSISTS (a trail of open stars); right-click a bloom collapses it.
+const bloomed = new Set();      // grids currently bloomed & rendered (cleared per-grid on right-click / evict)
+
+// Ensure a bloomed grid has a shard plan to stream. If the zone was already planned/solved reuse z.plan;
+// otherwise dispatch a plan op ourselves (once) so an unsolved star still blooms the moment it's clicked.
+// tooLarge / empty grids cache `null` → no bloom.
+function ensureFocusBloom(z) {
+  if (!z || bloomCache.has(z.grid)) return;
+  if (z.plan) { bloomCache.set(z.grid, z.plan.length ? { systems: [], cmin: Infinity, cmax: 0, plan: z.plan, next: 0 } : null); return; }
+  const g = z.grid;
+  if (bloomPlanning.has(g)) return;
+  bloomPlanning.add(g);
+  pool.dispatch({ op: 'plan', grid: g, force: true })   // bloom is user-initiated → bypass the monster cost gate
+    .then(r => { bloomPlanning.delete(g); bloomCache.set(g, (r && r.shards && r.shards.length) ? { systems: [], cmin: Infinity, cmax: 0, plan: r.shards, next: 0 } : null); })
+    .catch(() => { bloomPlanning.delete(g); bloomCache.set(g, null); });
+}
+// Pump the bloomed grids' clouds with a SHARED budget (≤ FOCUS_FETCH_CONC shards in flight total). Set
+// insertion order = oldest first; the already-streamed ones skip instantly so the budget flows to the newest
+// unfinished bloom. Never caps — plan length bounds each cloud, so the whole thing lands.
+function pumpBlooms() {
+  for (const g of bloomed) {
+    if (bloomInFlight >= FOCUS_FETCH_CONC) break;
+    const e = bloomCache.get(g); if (!e) continue;
+    while (bloomInFlight < FOCUS_FETCH_CONC && e.next < e.plan.length) {
+      const A = e.plan[e.next++]; bloomInFlight++;
+      pool.dispatch({ op: 'bloomShard', grid: g, A })
+        .then(r => { bloomInFlight--; if (r && r.systems) { const maxRange = currentQuality().bloomMaxRange; for (const s of r.systems) { if (bloomRange(s) > maxRange) continue; e.systems.push(s); if (s.c < e.cmin) e.cmin = s.c; if (s.c > e.cmax) e.cmax = s.c; } } })
+        .catch(() => { bloomInFlight--; });
+    }
+  }
+}
+
+// Agent bloom: the real "bloom a grid" a ship performs — plan it, then pull one shard's tuning systems from
+// the worker pool (so a ship selects a REAL rhythm). Concurrency-gated so ships don't starve the camera's
+// own solving; returns null when busy/empty and the ship retries.
+let agentBloomN = 0;
+const AGENT_BLOOM_CONC = 2;
+function agentBloom(grid) {
+  if (agentBloomN >= AGENT_BLOOM_CONC) return Promise.resolve(null);
+  agentBloomN++;
+  return pool.dispatch({ op: 'plan', grid, force: true })
+    .then(r => (r && r.shards && r.shards.length) ? pool.dispatch({ op: 'bloomShard', grid, A: r.shards[Math.floor(r.shards.length * 0.6)] }) : null)   // upper-mid shard: rich systems, bounded cost
+    .then(s => { agentBloomN--; return (s && s.systems && s.systems.length) ? s.systems : null; })
+    .catch(() => { agentBloomN--; return null; });
+}
+
+export function ensureFlight(canvas, hudEl) {
+  cv = canvas; ctx = cv.getContext('2d'); hud = hudEl;
+  if (started) return;   // already flying (entering while active is a no-op)
+  started = true;
+  // ── ONE-TIME wiring: DOM refs + panel/filter listeners + controls + the ~12MB codex index. Guarded by
+  //    `bound` so an exit→re-enter cycle (stopFlight then enterCosmos again) never double-binds. The overlay
+  //    DOM + these listeners persist across sessions; only the engine (pool/cosmos) is rebuilt per entry.
+  if (!bound) {
+    bound = true;
+    tipEl = document.getElementById('tooltip');
+    filterEl = document.getElementById('flight-filter'); loEl = document.getElementById('card-lo');
+    hiEl = document.getElementById('card-hi'); readoutEl = document.getElementById('card-readout');
+    fillEl = document.getElementById('card-fill');
+    controlsEl = document.getElementById('cosmos-help-controls'); liveEl = document.getElementById('cosmos-help-live');
+    helpPanelEl = document.getElementById('cosmos-help-panel');
+    const helpBtn = document.getElementById('cosmos-help-btn');
+    viewBtnEl = document.getElementById('cosmos-view-btn'); viewPanelEl = document.getElementById('cosmos-view-panel');
+    // The ? (reference: keys + solve queue) and the view button (settings) are two popups; opening one closes the other.
+    if (helpBtn && helpPanelEl) helpBtn.addEventListener('click', () => {
+      setViewPanelOpen(false);
+      helpPanelEl.classList.toggle('open');
+    });
+    // In CLEAN screen the view button is the one control left: it restores the HUD and opens the View popup.
+    if (viewBtnEl && viewPanelEl) viewBtnEl.addEventListener('click', () => {
+      helpPanelEl?.classList.remove('open');
+      if (viewOptions.get('screen') === 'clean') { viewOptions.set('screen', 'full'); setViewPanelOpen(true); }
+      else setViewPanelOpen(!viewPanelEl.classList.contains('open'));
+    });
+    const viewHost = document.getElementById('cosmos-view-options');
+    if (viewHost) buildViewSection(viewHost);
+    const qualityHost = document.getElementById('cosmos-quality-options');
+    if (qualityHost) buildQualitySection(qualityHost, document.getElementById('cosmos-quality-note'));
+    const qualityHelpBtn = document.getElementById('cosmos-quality-help');
+    if (qualityHelpBtn) {
+      qualityHelpBtn.addEventListener('mousedown', e => e.preventDefault());   // keep SPACE on the flight
+      qualityHelpBtn.addEventListener('click', () => setQualityAboutOpen(qualityHelpBtn.getAttribute('aria-expanded') !== 'true'));
+      // Any other click inside the popup (a pill, the bubble itself) dismisses the bubble.
+      viewPanelEl?.addEventListener('click', e => { if (!qualityHelpBtn.contains(e.target)) setQualityAboutOpen(false); });
+    }
+    chordEl = document.getElementById('cosmos-chord');
+    chordFaces = chordEl ? [...chordEl.querySelectorAll('.chord-face')] : null;
+    const homeBtn = document.getElementById('cosmos-home-btn');
+    if (homeBtn) homeBtn.addEventListener('click', () => window.exitCosmos());
+    // cardinality WINDOW: two thumbs on one thin rail — drag either end; the fill bar tracks the [lo,hi] window
+    const onFilter = () => { cardLo = Math.min(+loEl.value, +hiEl.value); cardHi = Math.max(+loEl.value, +hiEl.value); updateFillBar(); };
+    const blur = e => e.target.blur();   // hand focus back to the canvas so WASD/arrows fly again without a re-click
+    for (const el of [loEl, hiEl]) if (el) { el.addEventListener('input', onFilter); el.addEventListener('pointerup', blur); }
+    // charted lookup: the same codex key index the Oracle/Bloom tab uses. Fire-and-forget — nodes read
+    // as "uncharted" until it lands, then flip to charted on the next frame. Module-relative URL so it
+    // resolves against cosmos/ regardless of the host document (index.html at site root).
+    fetch(new URL('./data/oracle-index.json', import.meta.url)).then(r => r.json()).then(j => {
+      indexKeys = j.keys; indexGrid = j.grid; indexMtag = j.mtag; mtagNames = j.mtags;
+      // invert mtag -> member grids (skip the empty "" tag; dedupe + sort so the kNN build is stable)
+      const acc = new Map();
+      for (let i = 0; i < indexMtag.length; i++) {
+        const t = mtagNames[indexMtag[i]]; if (!t) continue;
+        let a = acc.get(t); if (!a) { a = []; acc.set(t, a); } a.push(indexGrid[i]);
+      }
+      mtagGrids = new Map();
+      for (const [t, a] of acc) mtagGrids.set(t, [...new Set(a)].sort((x, y) => x - y));
+      if (inspectedNode) renderRhythmConnections();
+    }).catch(() => {});
+    // ── Selected-rhythm inspector. Its explicit expand and exit controls replace the old hidden
+    //    double-click exit gesture; the rail owns the audio controls.
+    lrcDivEl = document.getElementById('lrc-div'); lrcHeadEl = document.getElementById('lrc-head');
+    cockpitPlotEl = document.getElementById('lrc-plot'); cockpitPlotCtx = cockpitPlotEl && cockpitPlotEl.getContext('2d');
+    cockpitPlotKeyEl = document.getElementById('lrc-plot-key');
+    const rootStyle = getComputedStyle(document.documentElement);
+    cockpitLayerColors = Object.fromEntries(['A', 'B', 'C', 'D'].map(layer => {
+      const cssColor = rootStyle.getPropertyValue(`--layer-${layer.toLowerCase()}`).trim();
+      return [layer, cssColor || cockpitLayerColors[layer]];
+    }));
+    lrcPanelToggleEl = document.getElementById('lrc-panel-toggle');
+    lrcEmptyEl = document.getElementById('lrc-empty-state'); rhythmInspectorEl = document.getElementById('lrc-rhythm-inspector');
+    gridViewEl = document.getElementById('lrc-grid-view'); connectorViewEl = document.getElementById('lrc-connector-view');
+    gridBodyEl = document.getElementById('lrc-grid-body'); connectorBodyEl = document.getElementById('lrc-connector-body');
+    lrcMarkEl = lrcHeadEl?.querySelector('.lrc-div-mark');
+    rhythmTitleEl = document.getElementById('lrc-rhythm-title'); rhythmSubtitleEl = document.getElementById('lrc-rhythm-subtitle');
+    rhythmStateEl = document.getElementById('lrc-rhythm-state');
+    metricFundamentalEl = document.getElementById('lrc-metric-fundamental'); metricOnsetsEl = document.getElementById('lrc-metric-onsets');
+    metricDensityEl = document.getElementById('lrc-metric-density'); structureListEl = document.getElementById('lrc-structure-list');
+    connectionsEl = document.getElementById('lrc-connections'); listenBtnEl = document.getElementById('lrc-listen-btn');
+    loadBtnEl = document.getElementById('lrc-load-btn');
+    scaleCountEl = document.getElementById('lrc-scale-count'); scaleFundamentalEl = document.getElementById('lrc-scale-fundamental');
+    scaleTableBodyEl = document.getElementById('lrc-scale-table-body'); scaleLightEl = document.getElementById('lrc-scale-light-toggle');
+    audioLabEl = document.getElementById('lrc-audio-lab');
+    muteBtnEl = document.getElementById('lrc-mute-btn');
+    tempoSliderEl = document.getElementById('lrc-tempo-slider'); tempoReadoutEl = document.getElementById('lrc-tempo-readout');
+    audioModeEl = document.getElementById('lrc-audio-mode');
+    tuningSliderEl = document.getElementById('lrc-tuning-slider');
+    tuningReadoutEl = document.getElementById('lrc-tuning-readout');
+    scaledSpeedEl = document.getElementById('lrc-scaled-speed'); scaledReadoutEl = document.getElementById('lrc-scaled-readout');
+    cycleSliderEl = document.getElementById('lrc-cycle-slider'); cycleReadoutEl = document.getElementById('lrc-cycle-readout');
+    modulationEl = document.getElementById('lrc-modulation'); modulationReadoutEl = document.getElementById('lrc-modulation-readout');
+    midiOutEl = document.getElementById('lrc-midi-out'); midiReadoutEl = document.getElementById('lrc-midi-readout');
+    if (lrcPanelToggleEl) lrcPanelToggleEl.addEventListener('click', () => {
+      const open = lrcDivEl.classList.toggle('open');
+      lrcPanelToggleEl.setAttribute('aria-expanded', String(open));
+    });
+    if (cockpitPlotKeyEl) cockpitPlotKeyEl.addEventListener('click', e => {
+      const button = e.target.closest?.('[data-plot-layer]');
+      if (!button || button.disabled) return;
+      const layer = button.dataset.plotLayer;
+      if (cockpitVisibleLayers.has(layer)) cockpitVisibleLayers.delete(layer);
+      else cockpitVisibleLayers.add(layer);
+      renderCockpitLayerControls();
+      drawCockpitPlot();
+    });
+    if (listenBtnEl) listenBtnEl.addEventListener('click', toggleRhythmAudition);
+    if (scaleLightEl) scaleLightEl.addEventListener('click', () => {
+      cockpitScaleHighlightsEnabled = !cockpitScaleHighlightsEnabled;
+      scaleLightEl.classList.toggle('active', cockpitScaleHighlightsEnabled);
+      scaleLightEl.setAttribute('aria-pressed', String(cockpitScaleHighlightsEnabled));
+      scaleLightEl.setAttribute('aria-label', `${cockpitScaleHighlightsEnabled ? 'Disable' : 'Enable'} playback highlights`);
+      scaleLightEl.title = `${cockpitScaleHighlightsEnabled ? 'Disable' : 'Enable'} playback highlights`;
+      resetCockpitScaleHighlights();
+    });
+    if (loadBtnEl) loadBtnEl.addEventListener('click', () => {
+      if (!inspectedNode) return;
+      applyToEngine(inspectedNode);
+      updateRhythmActionState();
+    });
+    if (lrcDivEl) lrcDivEl.addEventListener('click', event => {
+      const t = event.target;
+      // GRID / CONNECTOR mode buttons — moved here from the retired #flight-detail delegation.
+      const travel = t.closest?.('.web-travel-btn');
+      if (travel) { beginWebReturn(travel.dataset.id, travel.dataset.destination); return; }
+      const cancel = t.closest?.('.web-cancel-btn'); if (cancel) { cancelWebReturn(); return; }
+      const ap = t.closest?.('.apply-btn'); if (ap) { applyToEngine(selected); return; }
+      const ov = t.closest?.('.ov-btn'); if (ov) { overrideSolve(+ov.dataset.g); return; }
+      const wb = t.closest?.('.web-btn'); if (wb) { toggleWeb(wb.dataset.tag, +wb.dataset.g); showDetail(selected); return; }
+      const mnb = t.closest?.('.mn-btn'); if (mnb) { toggleMNWeb(mnb.dataset.id, +mnb.dataset.base, +mnb.dataset.g); showDetail(selected); return; }
+      // RHYTHM mode connection toggles (in-card scale-web pins).
+      const web = t.closest?.('[data-rhythm-web]');
+      if (web && inspectedNode) { toggleWeb(web.dataset.rhythmWeb, inspectedNode.grid); renderRhythmConnections(); return; }
+      const motif = t.closest?.('[data-rhythm-mn]');
+      if (motif && inspectedNode) { toggleMNWeb(motif.dataset.rhythmMn, +motif.dataset.base, inspectedNode.grid); renderRhythmConnections(); }
+    });
+    // ── AUDIO LAB — a DEV overlay (?audioLab=1, or Z), no longer the engine's owner ────────────────────
+    // The RAIL owns every user-facing engine parameter (rail-view.js; restored on entry by flight-boot).
+    // Two kinds of control remain here:
+    //   MIRRORS — mute · audio mode (= MIX) · modulation · MIDI out write THROUGH railParams, so these
+    //     controls and the rail's knobs/switches are one state that repaints both surfaces (see syncAudioLab).
+    //   PROBES  — ticks/s · scaled speed · cycle seconds · tuning λ have no rail control BY DESIGN (SPEED
+    //     absorbed the first three — decision 9; λ is frozen, see LAMBDA_FIELD_FROZEN in cosmos-audio.js).
+    //     They write the engine DIRECTLY and deliberately override the rail for the rest of the session; the
+    //     next entry's restoration wins again. A probe twist is therefore visible in the lab's own live
+    //     readouts, not in the rail's — that asymmetry is the point of a debug surface.
+    // Nothing here applies anything at entry any more (see the per-session block below).
+    if (muteBtnEl) muteBtnEl.addEventListener('click', toggleMute);
+    if (audioModeEl) audioModeEl.addEventListener('change', () => changeAudioMode(audioModeEl.value));
+    if (modulationEl) modulationEl.addEventListener('change', () => railParams.set('modulation', modulationEl.checked));
+    // Web MIDI's async enable (permission gesture + port name + failure rollback) is owned by rail-view's
+    // applyMidiOut; this checkbox only expresses the intent and syncAudioLab paints the outcome back.
+    if (midiOutEl) midiOutEl.addEventListener('change', () => railParams.set('midiOut', midiOutEl.checked));
+    if (tempoSliderEl) tempoSliderEl.addEventListener('input', () => {
+      const rate = +tempoSliderEl.value; setTickRate(rate, true);   // fromUser: scaled mode restores this on exit
+      if (tempoReadoutEl) tempoReadoutEl.textContent = rate + '/s';
+    });
+    if (scaledSpeedEl) scaledSpeedEl.addEventListener('change', applySpeedControls);
+    if (cycleSliderEl) cycleSliderEl.addEventListener('input', applySpeedControls);
+    if (tuningSliderEl) tuningSliderEl.addEventListener('input', () => {
+      const strength = setTuningStrength(tuningSliderEl.value);
+      if (tuningReadoutEl) tuningReadoutEl.textContent = strength.toFixed(2).replace(/0$/, '') + ' st';
+    });
+    if (audioLabEl) audioLabEl.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
+    // Any rail gesture repaints the lab's mirrors, so the two surfaces can never drift apart. syncAudioLab
+    // early-returns while the overlay is hidden, so a knob drag costs nothing in the normal (no-lab) case.
+    railParams.subscribe(() => syncAudioLab());
+    // Full Sky debug overlay: seeded once from ?skyDebug=1 (so a bookmarked link opens straight into
+    // it); the C key (bindControls, below) is the primary toggle from here on. Seeding this per-session
+    // instead would stomp a manual C-toggle every time you exit/re-enter cosmos.
+    skyDebugOn = new URLSearchParams(location.search).get('skyDebug') === '1';
+    bindControls();
+  }
+  resetRhythmInspector();
+  // ── PER-SESSION engine: fresh worker pool + cosmos on every entry; stopFlight() tears both down on exit ──
+  const poolSize = devicePoolMax();   // PHYSICAL workers = the device ceiling; a tier throttles concurrency, not this
+  poolPhysicalMax = poolSize;         // applyQuality ceils the live poolCap to this
+  FOCUS_FETCH_CONC = Math.max(2, poolSize - 1);   // divert most of the pool to the focused cloud, keep 1 ambient
+  // Module-relative Worker URL: `new Worker(relative)` resolves against the DOCUMENT (index.html at root),
+  // which breaks under the full-swallow — resolve against this module so it lands on Cosmos/workers/. The
+  // ?v= busts the hard Web-Worker cache — bump it AND the worker's ../grid-core.js?v= on worker edits.
+  pool = new SolverWorkerPool(new URL('./workers/abundance-worker.js?v=9', import.meta.url), poolSize);
+  rootCompiler = new ProgramWorkerPool(new URL('./workers/sky-root-worker.js', import.meta.url));
+  rootSolvePending = false;
+  rowCompiler = new ProgramWorkerPool(new URL('./workers/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
+  rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
+  fieldMembershipDirty = true; fieldMembershipAt = -Infinity;   // a fresh session always does a full pass first
+  bedMembershipAt = -Infinity; bedRootKey = -1;
+  settleSinceSecond = null; lastRootResolveSecond = -Infinity; rootGeographyEpoch = 0; rootPolicyWasSettled = false;
+  lastRootHarmonyPolicyKey = null; lastRootFundamentalPolicy = railParams.get('rowFundamental');
+  // OWNERSHIP: the entry sound is the RAIL's, not this overlay's. flight-boot calls applyRailToEngine()
+  // right after initAudio(), which pushes MIX · SPEED · DWELL · FUNDAMENTAL · RICHNESS · VOLUME · SPACE ·
+  // MUTE · MODULATION into the freshly built graph. What used to live here — a tuning-λ write, a ticks/s
+  // write, a scaled-speed apply, a modulation apply, a changeAudioMode(CULLED_GRID_ROWS) — was the
+  // split-brain that made dropout reports untrustworthy: you could not tell which surface the engine was
+  // actually obeying. The lab now only READS at entry.
+  syncAudioLab();
+  // Placement: the owner prefers the 3D CUBE, so hilbert is the default here; ?placement=spine flies the 1D spine.
+  placement = new URLSearchParams(location.search).get('placement') === 'spine' ? 'spine' : 'hilbert';
+  setPlacement(placement);
+  // A transferred canvas cannot be transferred a second time after exit/re-entry, so each flight session
+  // replaces the inert overlay element with a fresh identical canvas before starting its Web worker.
+  const previousWebCanvas = document.getElementById('cosmos-web-canvas');
+  webCanvas = previousWebCanvas.cloneNode(false); previousWebCanvas.replaceWith(webCanvas);
+  if (!webCanvas.transferControlToOffscreen) throw new Error('Cosmos Webs require OffscreenCanvas support.');
+  webZoneAdded = []; webZoneRemoved = []; webRouteGeneration++;
+  webRenderer = new WebRenderer(new URL('./workers/web-render-worker.js?v=4', import.meta.url), webCanvas, placement, message => {
+    hoverWeb = message.hover || null;
+    for (const [id, visibleNodes, localNodes] of message.counts || []) {
+      const web = activeWebs.get(id); if (web) { web.visibleNodes = visibleNodes; web.localNodes = localNodes; }
+    }
+    if (message.error) console.warn('[cosmos Web frame]', message.error);
+  });
+  gravityRenderer = placement === 'hilbert'
+    ? new GravityRenderer(new URL('./workers/gravity-worker.js?v=1', import.meta.url))
+    : null;
+  gravityDebugHold = new URLSearchParams(location.search).get('gravityHold') === '1';
+  gravitySyncAt = -Infinity; gravitySyncDirty = true; gravityLastTick = currentTicks();
+  if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none';
+  if (audioLabEl) audioLabEl.hidden = true;   // retired dev overlay — see the VIEW section note
+  renderControls();
+  BLOOM_MAX_R = placement === 'hilbert' ? BLOOM_MAX_R_FRAC * CELL : Infinity;   // keep clouds inside their cell
+  // markFieldDirty: a spawned zone can enter the audible set and an evicted one must leave it, so both are
+  // membership events even when the camera itself has not moved (the frontier streams in on its own).
+  const zoneHooks = {
+    onZoneAdded: grid => { webZoneAdded.push(grid); gravitySyncDirty = true; markFieldDirty(); },
+    onZoneRemoved: grid => { webZoneRemoved.push(grid); gravitySyncDirty = true; markFieldDirty(); },
+  };
+  if (placement === 'hilbert') {
+    // 3D-proximity frontier: spawn/evict by cell distance; grids rest at their own cells (no puffs).
+    FOG_NEAR = HIL_SPAWN * CELL * 0.4; FOG_FAR = HIL_EVICT * CELL;   // fade right up to the evict shell
+    cosmos = new Cosmos({ reachScale: 0.15, evictRadius: HIL_EVICT, poolSize: Math.min(currentQuality().poolCap, poolSize), isValid, puffs: false, compete: false, ...zoneHooks,
+      dispatch: g => pool.dispatch(g),
+      neighbors: cam => neighborGrids(hilbertDecode(cam), Math.max(2, Math.round(hilSpawn))),
+      cellDist: (g, cam) => { const a = hilbertDecode(g), b = hilbertDecode(cam); return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]); } });
+  } else {
+    // evict window ≈ what the fog lets you see (FOG_FAR/SPACING) plus margin. spawn ~80% (hysteresis).
+    FOG_NEAR = 3500; FOG_FAR = 13000;
+    cosmos = new Cosmos({ reachScale: 0.15, spawnRadius: 1100, evictRadius: 1400, poolSize: Math.min(currentQuality().poolCap, poolSize), isValid, dispatch: g => pool.dispatch(g), ...zoneHooks });
+  }
+  // agents deferred (POC): no ships — `swarm` stays null and all swarm paths guard on it.
+  // yaw = π/2 points forward (+X); anchor = frontier center + render origin, off = world offset from it
+  cam = { anchor: 2640, off: [0, 0, 0], yaw: Math.PI / 2, pitch: 0.05, speed: 180 };
+  cosmos.setCamera(cam.anchor);
+  resize();
+  // Quality dev handle — the same path as the QUALITY pills, so a console set() moves the pill and is saved like
+  // a tap. forget() drops the saved choice and returns to the detected tier.
+  if (typeof window !== 'undefined') window.__cosmosQuality = {
+    get: () => activeQualityId, set: id => qualityPrefs.set(id), forget: () => qualityPrefs.forget(),
+    tiers: QUALITY_ORDER, detected: qualityPrefs.detected,
+  };
+  // Note-constellation tuning handle, same precedent and same reason: no UI exists yet, and these want to
+  // be felt by eye on a live field. __cosmosConstellation.set({ lifecycle: 'lifespan', lifespan: 5 })
+  // re-points the ONE options object the core and the renderer both read. A fresh session starts with an
+  // empty figure and an unprimed cursor, so nothing survives a re-entry.
+  constellation.reset(); constellationCursor = null;
+  if (typeof window !== 'undefined') window.__cosmosConstellation = {
+    get: () => ({ ...constellation.options, ...constellation.stats() }),
+    set: patch => ({ ...constellation.configure(patch) }),
+  };
+  // Third-person view: every entry starts in first person (Decision 5), with no transition in flight. The dev
+  // handle follows the same precedent — no UI yet; the future visual-options panel binds to `chase`.
+  //   __cosmosView.mode('chase')                  → same as pressing V (cube only)
+  //   __cosmosView.set({ distance: 8 })           → chase distance in CELLS (also elevation°, lookAhead,
+  //                                                  transition s, shipScale cells; `mode` is accepted too)
+  //   __cosmosView.set({ transition: 0 })         → snap instead of easing (handy for the draw-cost table)
+  viewMode = 'first'; viewProgress = 0; shipBoost = 0;
+  if (typeof window !== 'undefined') window.__cosmosView = {
+    get: () => ({ mode: viewMode, t: smoothstep(viewProgress), ...chase, defaults: { ...CHASE_DEFAULTS }, placement }),
+    set: patch => { chase = chaseOptions(patch, chase); if (patch?.mode) setViewMode(patch.mode); return { mode: viewMode, ...chase }; },
+    mode: next => (next === undefined ? viewMode : setViewMode(next)),
+  };
+  // VIEW section: per-flight options (camera, screen) back to defaults, then push every option through its
+  // router so the fresh constellation + gravity pick up the persisted taste.
+  viewOptions.resetForEntry();
+  for (const name of Object.keys(VIEW_OPTIONS)) applyViewOption(name, viewOptions.get(name));
+  paintQualitySection();   // quality is never reset on entry — it is the listener's saved choice
+  resetChordOverlay();
+  last = performance.now();
+  requestAnimationFrame(loop);
+}
+
+// TEARDOWN: exit flight completely. Terminates every worker (zero background compute once the engine UI is
+// back), stops the rAF loop (the `if (!started) return` guard at the top of loop() breaks the chain), and
+// clears transient flight state so a later re-entry starts clean. The one-time listeners + codex index are
+// intentionally kept (see `bound`) so re-entering is cheap and never double-binds.
+export function stopFlight() {
+  if (!started && !pool) return;
+  started = false;
+  if (pool) { pool.terminate(); pool = null; }   // kill workers, timers, and queued jobs — no lingering solve
+  if (rowCompiler) { rowCompiler.terminate(); rowCompiler = null; }
+  if (rootCompiler) { rootCompiler.terminate(); rootCompiler = null; }
+  rootSolvePending = false;
+  if (webRenderer) { webRenderer.terminate(); webRenderer = null; }
+  if (gravityRenderer) { gravityRenderer.terminate(); gravityRenderer = null; }
+  gravitySyncAt = -Infinity; gravitySyncDirty = true; gravityLastTick = 0;
+  webRouteGeneration++; webZoneAdded = []; webZoneRemoved = [];
+  cosmos = null;
+  bloomed.clear(); bloomCache.clear(); bloomPlanning.clear(); bloomInFlight = 0;
+  activeWebs.clear(); webColorN = 0; bloomWebId = null;
+  returnRide = null; selected = null; hover = null; hoverWeb = null;
+  leadVoice = null; stopAudio(); audibleIds = new Set(); rowActiveIds = new Set(); rowPrewarmIds = new Set();   // kill the cosmos-audio transport, mirroring the worker teardown
+  constellation.reset(); constellationCursor = null;   // no figure, no cursor and no dev handle survive an exit
+  if (typeof window !== 'undefined') delete window.__cosmosConstellation;
+  viewMode = 'first'; viewProgress = 0; shipBoost = 0;   // the chase view never outlives the session
+  if (typeof window !== 'undefined') delete window.__cosmosView;
+  resetGridRowAuraSprites();   // glow textures (≤360 hue buckets) are rebuilt lazily — hand the memory back on exit
+  if (skyDebugEl) skyDebugEl.style.display = 'none';   // dev overlay — hide, don't destroy (cheap to reuse on re-entry)
+  if (audioLabEl) audioLabEl.hidden = true;
+  resetChordOverlay();
+  document.getElementById('cosmos-view')?.classList.remove('clean-screen');
+  if (ctx && cv) { ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0); ctx.clearRect(0, 0, W, H); }
+}
+
+export function warpTo(G) {
+  if (!cosmos) return;
+  G = Math.max(2, Math.floor(G) || 2);
+  if (placement === 'hilbert') G = Math.min(INDEX_COUNT - 1, G);
+  if (!isValid(G)) G = G < INDEX_COUNT - 1 ? G + 1 : G - 1;
+  cam.anchor = G;
+  cam.off = [0, 0, 0];
+  gravitySyncDirty = true;
+  cosmos.setCamera(cam.anchor);
+}
+
+function camBasis() {
+  // Guided travel keeps its full route-local basis. This avoids the world-up cross-product singularity
+  // at ±90° and lets a downward Web actually be viewed straight down without changing free-flight rules.
+  if (returnRide?.tangent && returnRide?.lift)
+    return routeCameraBasis(returnRide.tangent, returnRide.lift, returnRide.lookYaw, returnRide.lookPitch);
+  const d = norm([Math.cos(cam.pitch) * Math.sin(cam.yaw), Math.sin(cam.pitch), Math.cos(cam.pitch) * Math.cos(cam.yaw)]);
+  const r = norm(cross([0, 1, 0], d));
+  const u = cross(d, r);
+  return { d, r, u };
+}
+
+// Move the camera in world space, then RE-ANCHOR to the nearest lattice grid so `off` stays small
+// (keeps the floating-origin precise) and the frontier follows wherever we fly. Re-anchoring never
+// moves the camera: the offset is rebased by the exact integer cell delta.
+function translateCam(v) {
+  if (placement === 'hilbert') {
+    const before = cameraAbsolute();
+    const frame = rebaseHilbertCamera([before[0] + v[0], before[1] + v[1], before[2] + v[2]], HIL_CAMERA_RADIUS);
+    cam.anchor = frame.anchor;
+    cam.off = frame.off;
+    cosmos.setCamera(cam.anchor);
+    return frame.position.map((value, axis) => value - before[axis]);
+  } else {
+    cam.off[0] += v[0]; cam.off[1] += v[1]; cam.off[2] += v[2];
+    const k = Math.round(cam.off[0] / SPACING);   // only the along-axis re-anchors; Y/Z stay free
+    if (k) { const na = Math.max(2, cam.anchor + k); cam.off[0] -= (na - cam.anchor) * SPACING; cam.anchor = na; }
+  }
+  cosmos.setCamera(cam.anchor);
+  return v;
+}
+
+function stepControls(dt, allowTranslation = true) {
+  // During Web travel, arrow look is measured in the moving path frame. The pitch restriction
+  // therefore remains ±80° around the strand even when its tangent points vertically or loops past
+  // world-up; converting the resulting direction back to yaw/pitch does not impose a second clamp.
+  if (returnRide) {
+    if (keys['arrowleft'])  returnRide.lookYaw   -= TURN * dt;
+    if (keys['arrowright']) returnRide.lookYaw   += TURN * dt;
+    if (keys['arrowup'])    returnRide.lookPitch += TURN * dt;
+    if (keys['arrowdown'])  returnRide.lookPitch -= TURN * dt;
+    returnRide.lookPitch = Math.max(-1.4, Math.min(1.4, returnRide.lookPitch));
+    applyWebReturnLook(returnRide);
+  } else {
+    // Free-flight arrows retain their original world-relative yaw/pitch behavior.
+    if (keys['arrowleft'])  cam.yaw   -= TURN * dt;
+    if (keys['arrowright']) cam.yaw   += TURN * dt;
+    if (keys['arrowup'])    cam.pitch += TURN * dt;
+    if (keys['arrowdown'])  cam.pitch -= TURN * dt;
+    cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch));
+  }
+  if (!allowTranslation) return;
+
+  // WASD/QE translate along the camera basis; Space boosts speed
+  const { d, r, u } = camBasis();
+  let mv = [0, 0, 0];
+  const step = cam.speed * (keys[' '] ? BOOST : 1) * dt;
+  if (keys['w']) mv = [mv[0] + d[0] * step, mv[1] + d[1] * step, mv[2] + d[2] * step];
+  if (keys['s']) mv = [mv[0] - d[0] * step, mv[1] - d[1] * step, mv[2] - d[2] * step];
+  if (keys['d']) mv = [mv[0] + r[0] * step, mv[1] + r[1] * step, mv[2] + r[2] * step];
+  if (keys['a']) mv = [mv[0] - r[0] * step, mv[1] - r[1] * step, mv[2] - r[2] * step];
+  if (keys['e']) mv = [mv[0] + u[0] * step, mv[1] + u[1] * step, mv[2] + u[2] * step];
+  if (keys['q']) mv = [mv[0] - u[0] * step, mv[1] - u[1] * step, mv[2] - u[2] * step];
+  // Sky Root B3: actual world-space translation speed this frame (turning alone doesn't count — the
+  // root gather is position-only, "must not change when the player turns their head").
+  const actualMove = translateCam(mv);
+  camSpeed = dt > 0 ? Math.hypot(actualMove[0], actualMove[1], actualMove[2]) / dt : 0;
+}
+
+// Projection lives in view-frame.js (createViewFrame): the ONE perspective law flight-view, the constellation and
+// the Web worker all draw through. loop() builds this frame's `shipView` and `renderView` from it.
+
+// Third-person view state machine. V (and __cosmosView) set the TARGET; loop() eases toward it on the frame clock.
+// Cube only — spine placement stays first person, matching gravity (Decision 2).
+function setViewMode(mode) {
+  if (placement !== 'hilbert' || (mode !== 'first' && mode !== 'chase')) return viewMode;
+  viewMode = mode;
+  viewOptions.set('camera', viewMode);   // V and __cosmosView keep the CAMERA pill honest (a same-value set is a no-op)
+  return viewMode;
+}
+// Where the view is heading this frame: the chase target unless a Web ride is set to drop to first person.
+const chaseTarget = () => (viewMode === 'chase' && placement === 'hilbert' && (CHASE_DURING_WEB_RIDES || !returnRide)) ? 1 : 0;
+// The ship's HULL orientation. In free flight it is the ship basis itself (arrows turn the ship, so hull and
+// view turn together). During a Web ride camBasis() is the route LOOK basis — arrow-look swings the view — but
+// the hull always points along the route: the tangent, with the route's lift as up. It flies along the Web,
+// never sideways.
+function hullBasis(shipBasis) {
+  return returnRide?.tangent && returnRide?.lift ? routeCameraBasis(returnRide.tangent, returnRide.lift, 0, 0) : shipBasis;
+}
+// The Hilbert world as a ship-relative box, padded exactly like the ship's own collision: the chase eye is
+// shortened where the ship→eye segment would leave it, so the view never looks at the cube from outside.
+function hilbertEyeBox(shipWorld) {
+  const lo = HILBERT_WORLD_MIN + HIL_CAMERA_RADIUS, hi = HILBERT_WORLD_MAX - HIL_CAMERA_RADIUS;
+  return { min: shipWorld.map(value => lo - value), max: shipWorld.map(value => hi - value) };
+}
+
+// Render only the camera-local tiles of nearby faces. Collision and visuals share
+// hilbert-boundary.js, so the glow always resolves onto the plane that actually stops the camera.
+// REVEAL is keyed on the SHIP's position (walls warn where the ship will stop); projection and the incidence
+// term read `view`, the frame's render view, so in chase view the walls are drawn from the eye.
+function drawHilbertBoundaryWalls(view) {
+  if (placement !== 'hilbert') return;
+  const camera = cameraAbsolute(), reveal = HIL_WALL_REVEAL_CELLS * CELL;
+  const walls = nearbyHilbertWalls(camera, reveal);
+  if (!walls.length) return;
+  const colors = ['110,203,255', '197,139,255', '255,110,199'];
+  const parallelAxes = axis => axis === 0 ? [1, 2] : (axis === 1 ? [0, 2] : [0, 1]);
+  const projected = absolute => view.project(absolute.map((value, axis) => value - camera[axis]));
+  const smooth = value => value * value * (3 - 2 * value);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.lineJoin = 'round';
+  for (const wall of walls.sort((a, b) => b.distance - a.distance)) {
+    const [a, b] = parallelAxes(wall.axis);
+    const centreA = Math.max(0, Math.min(SIDE - 1, Math.round(camera[a] / CELL)));
+    const centreB = Math.max(0, Math.min(SIDE - 1, Math.round(camera[b] / CELL)));
+    const a0 = Math.max(0, centreA - HIL_WALL_PATCH_CELLS), a1 = Math.min(SIDE - 1, centreA + HIL_WALL_PATCH_CELLS);
+    const b0 = Math.max(0, centreB - HIL_WALL_PATCH_CELLS), b1 = Math.min(SIDE - 1, centreB + HIL_WALL_PATCH_CELLS);
+    const proximity = smooth(Math.max(0, 1 - wall.distance / reveal));
+    const incidence = Math.abs(view.basis.d[wall.axis]);
+    const color = colors[wall.axis];
+
+    for (let ia = a0; ia <= a1; ia++) for (let ib = b0; ib <= b1; ib++) {
+      const corners = [[ia - 0.5, ib - 0.5], [ia + 0.5, ib - 0.5], [ia + 0.5, ib + 0.5], [ia - 0.5, ib + 0.5]].map(([ca, cb]) => {
+        const point = [0, 0, 0]; point[wall.axis] = wall.plane; point[a] = ca * CELL; point[b] = cb * CELL;
+        return projected(point);
+      });
+      if (corners.some(point => !point)) continue;
+      const da = ia * CELL - camera[a], db = ib * CELL - camera[b];
+      const radial = Math.max(0, 1 - Math.hypot(da, db) / ((HIL_WALL_PATCH_CELLS + 0.75) * CELL));
+      const fade = smooth(radial);
+      if (fade <= 0) continue;
+      ctx.beginPath(); ctx.moveTo(corners[0].x, corners[0].y);
+      for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
+      ctx.closePath();
+      ctx.globalAlpha = (0.012 + proximity * 0.075) * fade * (0.45 + incidence * 0.55);
+      ctx.fillStyle = `rgb(${color})`; ctx.fill();
+      ctx.globalAlpha = (0.045 + proximity * 0.32) * fade * (0.35 + incidence * 0.65);
+      ctx.strokeStyle = `rgb(${color})`; ctx.lineWidth = 0.55 + proximity * 0.8; ctx.stroke();
+    }
+
+    // Close-range energy bloom at the point nearest the camera. It keeps a wall readable when its
+    // perspective grid has expanded beyond the viewport, while still disappearing when looking away.
+    const nearest = [...camera]; nearest[wall.axis] = wall.plane;
+    const impact = projected(nearest);
+    const contact = smooth(Math.max(0, 1 - wall.distance / (CELL * 1.5)));
+    if (impact && contact > 0) {
+      const radius = Math.max(W, H) * 0.85;
+      const glow = ctx.createRadialGradient(impact.x, impact.y, 0, impact.x, impact.y, radius);
+      glow.addColorStop(0, `rgba(${color},${0.16 * contact})`);
+      glow.addColorStop(0.35, `rgba(${color},${0.055 * contact})`);
+      glow.addColorStop(1, `rgba(${color},0)`);
+      ctx.globalAlpha = 1; ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+    }
+  }
+  ctx.restore();
+}
+function starColor(size) {
+  const t = Math.max(0, Math.min(1, size / 5));
+  if (t < 0.5) { const k = t / 0.5; return `rgb(${90 + k * 40},${110 + k * 80},${150 + k * 74})`; }   // dust: dim violet→blue
+  const k = (t - 0.5) / 0.5; return `rgb(${130 + k * 125},${190 + k * 65},${224 + k * 31})`;             // sun: cyan→white
+}
+
+// cardinality offset → radial extent, with a soft knee so a few very-high-cardinality outliers don't blow
+// out the bloom's footprint: linear (full BLOOM_R/step) up to BLOOM_KNEE, then BLOOM_TAIL/step beyond.
+const cardExtent = d => d <= BLOOM_KNEE ? d : BLOOM_KNEE + (d - BLOOM_KNEE) * BLOOM_TAIL;
+// prime factorization as a compact string, e.g. 2640 → "2^4·3·5·11" (detail panel)
+function factorString(n) {
+  let m = n; const parts = [];
+  for (let p = 2; p * p <= m; p++) if (m % p === 0) { let e = 0; while (m % p === 0) { m /= p; e++; } parts.push(e > 1 ? `${p}^${e}` : `${p}`); }
+  if (m > 1) parts.push(`${m}`);
+  return parts.join('·') || `${n}`;
+}
+// a picking ring around a target's live screen position (selection = solid, hover = soft)
+function ringAt(o, color, lw) {
+  if (!o) return;
+  ctx.globalAlpha = 1; ctx.strokeStyle = color; ctx.lineWidth = lw;
+  ctx.beginPath(); ctx.arc(o.x, o.y, Math.max(6, o.r + 5), 0, 7); ctx.stroke();
+}
+// position the accent fill between the two thumbs (the visible "window" of the dual-range slider)
+function updateFillBar() {
+  if (!fillEl || !loEl) return;
+  const lo = +loEl.min, hi = +loEl.max, span = Math.max(1, hi - lo);
+  const a = (Math.min(cardLo, cardHi) - lo) / span * 100, b = (Math.max(cardLo, cardHi) - lo) / span * 100;
+  fillEl.style.left = a + '%'; fillEl.style.width = Math.max(0, b - a) + '%';
+}
+// show/size the cardinality WINDOW to the FOCUSED bloom only; the slider lives inside the fused card's GRID
+// mode (#lrc-grid-view), so it only renders when a star is selected AND a bloom is focused. DOM touched on change.
+function updateFilterUI() {
+  if (!filterEl) return;
+  const fg = cosmos.focusGrid, data = (fg != null && bloomed.has(fg)) ? bloomCache.get(fg) : null;
+  const show = !!(data && data.systems.length);
+  if (show !== filterShown) { filterEl.style.display = show ? 'flex' : 'none'; filterShown = show; }
+  if (!show) { filterGrid = null; return; }
+  const cmin = data.cmin, cmax = data.cmax;
+  if (fg !== filterGrid) {                               // focus moved to a different bloom → reset window to its full range
+    filterGrid = fg; filterMax = cmax;
+    loEl.max = hiEl.max = cmax; loEl.value = 1; hiEl.value = cmax; cardLo = 1; cardHi = cmax;
+  } else if (cmax !== filterMax) {                       // same bloom still streaming → grow the range, keep a top-parked hi at top
+    const hiAtTop = +hiEl.value >= +hiEl.max;
+    filterMax = cmax; loEl.max = hiEl.max = cmax;
+    if (hiAtTop) { hiEl.value = cmax; cardHi = Math.max(cardLo, cmax); }
+  }
+  readoutEl.textContent = (cardLo <= cmin && cardHi >= cmax) ? 'all' : (cardLo === cardHi ? `${cardLo}` : `${cardLo}–${cardHi}`);
+  updateFillBar();
+}
+// APPLY-TO-ENGINE: load a bloom node's rhythm into the live LRC engine via the same path Collections uses.
+// The engine has exactly layer-a..d, so only ≤4-layer nodes are applyable; >4-layer nodes stay inspect-only
+// (guarded here AND disabled in the detail panel). Apply happens under the full-swallow — the engine UI is
+// hidden but its state updates, so on exit the rhythm is already loaded.
+function applyToEngine(node) {
+  if (!node || node.kind !== 'node' || !node.layers || node.layers.length > 4) return;
+  try {
+    if (window.lrcSearch && typeof window.lrcSearch.applyResult === 'function') window.lrcSearch.applyResult(node.layers);
+    else if (window.lrcModule && typeof window.lrcModule.setRhythms === 'function') window.lrcModule.setRhythms(node.layers[0], node.layers[1], node.layers[2], node.layers[3]);
+    else { console.warn('[cosmos] no engine apply hook (window.lrcSearch/lrcModule) found'); return; }
+    node._applied = true; if (selected === node || (selected && selected.id === node.id)) showDetail(selected);   // reflect "loaded" in the panel
+  } catch (err) { console.warn('[cosmos] applyResult failed', err); }
+}
+// override: solve a monster grid anyway (force past the cost gate) and bloom it — a few seconds of worker time
+function overrideSolve(g) {
+  if (!cosmos) return;
+  cosmos.forceSolve(g);                                  // runtime re-plans with force → real abundance
+  const z = cosmos.zones.get(g); if (z) { delete z._bloom; delete z._rowAudio; } // fresh solve/program generation
+  bloomed.add(g); cosmos.setFocus(g); ensureFocusBloom(z);
+  selected = { kind: 'star', grid: g }; showDetail(selected);
+}
+// cursor tooltip follows `hover` (a star or a bloom node), reusing the shared #tooltip element
+function updateTooltip() {
+  if (!tipEl) return;
+  if (!hover) { tipEl.style.display = 'none'; return; }
+  tipEl.style.display = 'block';
+  tipEl.style.left = (mClientX + 14) + 'px'; tipEl.style.top = (mClientY + 14) + 'px';
+  if (hover.kind === 'web') {
+    const web = activeWebs.get(hover.webId);
+    if (!web) { tipEl.style.display = 'none'; return; }
+    tipEl.innerHTML = `<div class="t-l" style="color:${web.color}">◈ ${webLabel(web)}</div>` +
+      `<div class="t-d">click to inspect · anchor ${web.homeGrid.toLocaleString()} · origin ${web.originGrid.toLocaleString()}</div>`;
+  } else if (hover.kind === 'node') {
+    tipEl.innerHTML = `<div class="t-l">${hover.layers ? hover.layers.join(' : ') : hover.c + '-tone'}</div>` +
+      `<div class="t-d">${hover.c}-tone · fund ${hover.fund}${hover.dense ? ' · +dense' : ''} · ${hover.charted ? 'charted' : 'uncharted'}</div>`;
+  } else {
+    const fi = factorInfo(hover.grid), ab = hover.z ? hover.z.abundance : 0;
+    tipEl.innerHTML = `<div class="t-l">grid ${hover.grid.toLocaleString()}</div>` +
+      `<div class="t-d">${ab ? ab.toLocaleString() + ' systems · ' : ''}${fi.primes} primes · ${fi.divisors} divisors</div>`;
+  }
+}
+// The fused card is the single flight detail surface: showDetail routes each selection kind into #lrc-div.
+// RHYTHM (bloom node) keeps the rich inspector; GRID (star) and CONNECTOR (Web) are lighter modes rendered
+// here into their own body, wearing the same card chrome. null returns the card to its empty state.
+// Stars re-read the live zone (abundance/state update as they solve); nodes are static snapshots.
+const CARD_MARKS = { empty: 'Rhythm', rhythm: 'Rhythm', grid: 'Grid', connector: 'Connector' };
+
+// Flip the card between modes: reveal the matching body section, relabel the header identity word, and hide
+// the rhythm-only Listen/Load actions outside rhythm mode. `accent` tints the mark (a Web's own colour).
+function setCardMode(mode, accent = '') {
+  if (lrcEmptyEl) lrcEmptyEl.hidden = mode !== 'empty';
+  if (rhythmInspectorEl) rhythmInspectorEl.hidden = mode !== 'rhythm';
+  if (gridViewEl) gridViewEl.hidden = mode !== 'grid';
+  if (connectorViewEl) connectorViewEl.hidden = mode !== 'connector';
+  if (lrcMarkEl) { lrcMarkEl.textContent = CARD_MARKS[mode] || 'Rhythm'; lrcMarkEl.style.color = accent; }
+  // Only rhythm mode earns the wide card (its Linear Plot + side-by-side scale table); GRID/CONNECTOR are a
+  // narrow metric list and keep the collapsed width. Width transitions, so the card grows/shrinks smoothly.
+  if (lrcDivEl) lrcDivEl.classList.toggle('lrc-wide', mode === 'rhythm');
+  const rhythmActions = mode === 'rhythm';
+  if (listenBtnEl) listenBtnEl.hidden = !rhythmActions;
+  if (loadBtnEl) loadBtnEl.hidden = !rhythmActions;
+}
+
+// A definition list styled like the inspector's Structure block — the shared metric primitive for GRID and
+// CONNECTOR modes, so they read as the rhythm card wearing a different face rather than a foreign panel.
+function metricList(pairs) {
+  return `<dl class="lrc-detail-list lrc-mode-metrics">` +
+    pairs.map(([label, value]) => `<div><dt>${inspectorEscape(label)}</dt><dd title="${inspectorEscape(value)}">${inspectorEscape(value)}</dd></div>`).join('') +
+    `</dl>`;
+}
+
+function setCardSub(text) { const sub = lrcHeadEl?.querySelector('.lrc-div-sub'); if (sub) sub.textContent = text; }
+
+function showDetail(sel) {
+  if (!lrcDivEl) return;
+  if (!sel) { resetRhythmInspector(); return; }
+  if (sel.kind === 'node') { renderRhythmInspector(sel); return; }
+  if (sel.kind === 'web') { renderConnectorView(sel); return; }
+  renderGridView(sel);
+}
+
+// GRID mode — a clicked star's grid. Ported from the old #flight-detail star branch (monster / unsolvable /
+// solved), re-expressed in the card's own typography. The cardinality window (#flight-filter) is a static
+// child of this section; updateFilterUI shows it when a bloom is focused.
+function renderGridView(sel) {
+  if (!gridBodyEl) return;
+  setCardMode('grid');
+  setCardSub(`grid ${sel.grid.toLocaleString()}`);
+  const z = cosmos.zones.get(sel.grid), fi = factorInfo(sel.grid);
+  if (z && z.monster) {                // combinatorial black hole — solve gated behind an override
+    gridBodyEl.innerHTML = metricList([
+      ['Factors', factorString(sel.grid)],
+      ['Divisors', z.divisors ?? fi.divisors],
+    ]) +
+      `<p class="lrc-mode-note warn">Highly composite grid — solving may take a few seconds.</p>` +
+      `<button class="ov-btn lrc-mode-btn warn" data-g="${sel.grid}">◉ solve anyway</button>`;
+    openCockpit(); return;
+  }
+  if (z && z.unsolvable) {             // the live solve failed (no size cap any more) — be honest, don't imply "1 kept"
+    gridBodyEl.innerHTML = metricList([
+      ['Factors', factorString(sel.grid)],
+      ['Primes · divisors', `${fi.primes} · ${fi.divisors}`],
+    ]) +
+      `<p class="lrc-mode-note">Couldn't solve this grid live.</p>`;
+    openCockpit(); return;
+  }
+  const ab = z ? z.abundance : (sel.z ? sel.z.abundance : 0), state = z ? z.state : 'evicted';
+  const sun = z && z.parentGrid !== z.grid ? z.parentGrid.toLocaleString() : '—';
+  gridBodyEl.innerHTML = metricList([
+    ['Abundance', `${(ab || 0).toLocaleString()} kept`],
+    ['Factors', factorString(sel.grid)],
+    ['Primes · divisors', `${fi.primes} · ${fi.divisors}`],
+    ...(placement !== 'hilbert' ? [['District sun', sun]] : []),
+    ['State', state],
+  ]);
+  openCockpit();
+}
+
+// A Web's display label: the motif ratios alone. Triples read like doubles (9:8:5, not CT:9:8:5) — the
+// CT/IT/RDCP class is internal bookkeeping that means nothing on screen without context.
+function webLabel(web) { return web.dynamic ? motifLabel(web.tag.replace(/^mn:/, '')) : web.tag; }
+function motifLabel(key) { return key.replace(/^(CT|IT|RDCP):/, ''); }
+
+// CONNECTOR mode — a clicked Web's lineage + travel controls. Ported from the old #flight-detail web branch;
+// the travel buttons keep their inline Web-colour styling (the accent is per-Web and dynamic).
+function renderConnectorView(sel) {
+  if (!connectorBodyEl) return;
+  const web = activeWebs.get(sel.webId);
+  if (!web) { resetRhythmInspector(); return; }
+  const title = web.dynamic ? webLabel(web) : `mother ${web.tag}`;
+  setCardMode('connector', web.color);
+  setCardSub(`◈ ${title}`);
+  const riding = !!(web.routePlanning || (returnRide && returnRide.webId === web.tag));
+  const status = web.routePlanning ? web.rideStatus : riding
+    ? `${Math.round((web.rideProgress || 0) * 100)}% · ${returnRide.duration.toFixed(0)}s bounded ride`
+    : web.rideStatus;
+  const travelButton = riding
+    ? `<button class="web-cancel-btn" style="width:100%;background:rgba(255,255,255,.05);border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-size:11px;padding:7px;border-radius:var(--border-radius);cursor:pointer">cancel Web travel</button>`
+    : `<button class="web-travel-btn" data-id="${web.tag}" data-destination="anchor" style="width:100%;background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Return to grid ${web.homeGrid.toLocaleString()}</button>` +
+      // Origin (smallest grid in this NR) and Apex (largest grid in the Hilbert cube for this NR) — the two lineage extremes.
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px">` +
+        `<button class="web-travel-btn" data-id="${web.tag}" data-destination="origin" style="background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Origin · grid ${web.originGrid.toLocaleString()}</button>` +
+        `<button class="web-travel-btn" data-id="${web.tag}" data-destination="apex" style="background:${web.color}22;border:1px solid ${web.color};color:${web.color};font-family:var(--sans);font-weight:600;font-size:11px;padding:8px 5px;border-radius:var(--border-radius);cursor:pointer">Apex · grid ${web.apexGrid.toLocaleString()}</button>` +
+      `</div>`;
+  connectorBodyEl.innerHTML = metricList([
+    ['Visible nodes', (web.visibleNodes || 0).toLocaleString()],
+    ['First-clicked grid', web.homeGrid.toLocaleString()],
+    ['Origin grid', web.originGrid.toLocaleString()],
+    ['Apex grid', web.apexGrid.toLocaleString()],
+  ]) +
+    // Travel status gets its own full-width line — as a metric cell it truncated mid-sentence.
+    (status ? `<p class="lrc-mode-note">Travel · ${inspectorEscape(status)}</p>` : '') +
+    `<div class="lrc-travel-actions">${travelButton}</div>`;
+  openCockpit();
+}
+
+// AUDIO LAB ← engine. The lab is a dev MIRROR now, so it paints itself from live engine state instead of
+// pushing its HTML control values into the engine. Called on every entry, whenever Z reveals it, and from
+// the railParams subscription (so a rail gesture repaints it). Early-returns while hidden — the rail's own
+// controls are the visible ones, and a knob drag must not pay for DOM the player cannot see.
+function syncAudioLab() {
+  if (!audioLabOn) return;
+  const mix = currentMix(), speed = currentSpeedMode(), midi = midiOutState();
+  const mute = railParams.get('mute');
+  if (muteBtnEl) {
+    muteBtnEl.classList.toggle('muted', mute);
+    muteBtnEl.setAttribute('aria-pressed', String(mute)); muteBtnEl.title = mute ? 'Unmute' : 'Mute';
+  }
+  // A coarse mirror by design: the select has only the two ENDS of a continuous crossfade, so it reads as
+  // whichever end the MIX knob is nearer. The knob's own readout is the exact value.
+  if (audioModeEl) audioModeEl.value = mix >= 0.5 ? AUDIO_MODES.CULLED_GRID_ROWS : AUDIO_MODES.AMBIENT_CHORDS;
+  if (modulationEl) modulationEl.checked = railParams.get('modulation');
+  drawModulationReadout();
+  if (midiOutEl) midiOutEl.checked = railParams.get('midiOut');
+  if (midiReadoutEl) midiReadoutEl.textContent = midi.enabled ? (midi.port ? `MPE → ${midi.port}` : 'on') : 'off';
+  // The λ probe's own position IS the engine's λ, so mirroring it is a no-op except after a rail-driven
+  // change — but never while it has focus, or the write-back would fight the drag.
+  if (tuningSliderEl && document.activeElement !== tuningSliderEl) tuningSliderEl.value = String(currentTuningStrength());
+  if (tuningReadoutEl) tuningReadoutEl.textContent = currentTuningStrength().toFixed(2).replace(/0$/, '') + ' st';
+  // SPEED lives on the rail, so the probes report the DERIVED transport in their READOUTS — a rail SPEED
+  // change and a probe twist are both visible. Their slider POSITIONS are inputs (a target the dev sets)
+  // and are deliberately never written back from engine state: ticks/s is derived in onset/scaled mode, and
+  // the cycle slider's target is not the derived cycle. `scaled` is checked for either derived mode.
+  if (tempoSliderEl) tempoSliderEl.disabled = speed.mode !== 'fixed';
+  if (tempoReadoutEl) tempoReadoutEl.textContent = Math.round(speed.ticksPerSec) + '/s';
+  if (scaledSpeedEl) scaledSpeedEl.checked = speed.mode !== 'fixed';
+  if (scaledReadoutEl) scaledReadoutEl.textContent = speed.mode === 'fixed' ? 'off'
+    : speed.medianGrid ? `${speed.mode} · ${Math.round(speed.ticksPerSec)}/s @ ${speed.medianGrid.toLocaleString()}`
+    : `${speed.mode} · waiting for rows`;
+  if (cycleReadoutEl) cycleReadoutEl.textContent = `${speed.cycleSeconds.toFixed(1)} s target · ${speed.derivedCycleSeconds.toFixed(1)} s now`;
+}
+
+// One handler for both speed PROBE controls (dev): the mode and the target cycle are a single decision, and
+// the tempo slider stays meaningful because leaving scaled mode restores exactly the rate it last set. This
+// deliberately overrides the rail's SPEED (ONSET) mode until the next entry — see the audio-lab note.
+function applySpeedControls() {
+  setSpeedMode(scaledSpeedEl?.checked ? 'scaled' : 'fixed', cycleSliderEl ? +cycleSliderEl.value : undefined);
+  syncAudioLab();   // one painter for the whole overlay — no second copy of the readout formats
+}
+
+// The modulation shift follows the solved root and the glide length follows the tick rate, so this
+// readout has to track live state rather than the checkbox that switched it on.
+function drawModulationReadout() {
+  if (!modulationReadoutEl) return;
+  const m = currentModulation();
+  modulationReadoutEl.textContent = m.on
+    ? `${m.cents >= 0 ? '+' : ''}${m.cents.toFixed(0)}¢ · ${m.glideSeconds.toFixed(2)}s glide` : 'off';
+}
+
+const inspectorEscape = value => String(value ?? '').replace(/[&<>"']/g, char => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[char]));
+
+const inspectorNumber = value => Number.isInteger(value) ? value.toLocaleString() : Number(value).toFixed(2).replace(/\.00$/, '');
+
+function openCockpit() {
+  if (!lrcDivEl) return;
+  lrcDivEl.classList.add('open');
+  lrcPanelToggleEl?.setAttribute('aria-expanded', 'true');
+}
+
+function resetRhythmInspector() {
+  inspectedNode = null; rhythmInspectorModel = null;
+  resetCockpitScaleHighlights(); cockpitScaleRows.clear();
+  if (scaleTableBodyEl) scaleTableBodyEl.replaceChildren();
+  if (scaleCountEl) scaleCountEl.textContent = '— Pitches';
+  if (scaleFundamentalEl) scaleFundamentalEl.textContent = 'Fundamental —';
+  renderCockpitLayerControls();
+  setCardMode('empty');
+  const sub = lrcHeadEl?.querySelector('.lrc-div-sub'); if (sub) sub.textContent = 'select a node to inspect';
+  if (lrcDivEl) lrcDivEl.classList.remove('open');
+  lrcPanelToggleEl?.setAttribute('aria-expanded', 'false');
+  updateRhythmActionState();
+}
+
+function updateRhythmActionState() {
+  // A node is inspected but its model refused to build (too dense to audition) → its audition is unavailable.
+  const tooDense = !!inspectedNode && !rhythmInspectorModel;
+  const listening = !!(inspectedNode && leadVoice?.node?.id === inspectedNode.id);
+  if (listenBtnEl) {
+    listenBtnEl.classList.toggle('active', listening);
+    listenBtnEl.disabled = !inspectedNode || tooDense;
+    listenBtnEl.setAttribute('aria-pressed', String(listening));
+    listenBtnEl.setAttribute('aria-label', tooDense ? 'Selected rhythm is too dense to audition' : `${listening ? 'Stop listening to' : 'Listen to'} selected rhythm`);
+    listenBtnEl.title = tooDense ? 'Too dense to audition' : (listening ? 'Stop listening' : 'Listen');
+  }
+  if (loadBtnEl) {
+    const loaded = !!inspectedNode?._applied;
+    loadBtnEl.textContent = loaded ? 'LOADED' : 'LOAD';
+    loadBtnEl.classList.toggle('loaded', loaded);
+    loadBtnEl.disabled = !inspectedNode?.layers || inspectedNode.layers.length > 4;
+    loadBtnEl.setAttribute('aria-label', loaded ? 'Selected rhythm loaded into LRC' : 'Load selected rhythm into LRC');
+    loadBtnEl.title = loaded ? 'Loaded into LRC' : 'Load into LRC';
+  }
+}
+
+function setRhythmAudition(node) {
+  if (!node?.layers) return;
+  const model = modelForRhythmNode(node);
+  if (!model) { setLead(null); leadVoice = null; updateRhythmActionState(); return; }   // too dense to build/audition
+  resetCockpitScaleHighlights();
+  leadVoice = { ...deriveVoice(model), node };
+  setLead(leadVoice);
+  updateRhythmActionState();
+}
+
+function toggleRhythmAudition() {
+  if (!inspectedNode) return;
+  if (leadVoice?.node?.id === inspectedNode.id) { setLead(null); leadVoice = null; resetCockpitScaleHighlights(); }
+  else setRhythmAudition(inspectedNode);
+  updateRhythmActionState();
+}
+
+function resetCockpitScaleHighlights() {
+  cockpitScaleLastNodeIndex = -1;
+  cockpitPlotLastNodeIndex = -1;
+  cockpitPlotPulseAt = -Infinity;
+  cockpitScaleHighlightTimestamps.clear();
+  for (const row of cockpitScaleRows.values()) {
+    row.classList.remove('pitch-playback-highlight');
+    row.style.removeProperty('--playback-alpha');
+  }
+}
+
+function renderCockpitScaleTable() {
+  if (!scaleTableBodyEl || !rhythmInspectorModel) return;
+  resetCockpitScaleHighlights(); cockpitScaleRows.clear();
+  if (scaleCountEl) scaleCountEl.textContent = `${rhythmInspectorModel.pitchCount.toLocaleString()} ${rhythmInspectorModel.pitchCount === 1 ? 'Pitch' : 'Pitches'}`;
+  if (scaleFundamentalEl) scaleFundamentalEl.textContent = `Fundamental ${inspectorNumber(rhythmInspectorModel.fundamental)}`;
+  scaleTableBodyEl.innerHTML = rhythmInspectorModel.ratios.map((ratio, index) =>
+    `<tr class="pitch-row" data-pitch-index="${index}" data-ratio-fraction="${inspectorEscape(ratio.fraction)}"><td class="ratio-cell">${inspectorEscape(ratio.fraction)}</td><td class="cents-cell">${ratio.cents.toFixed(1)}</td></tr>`
+  ).join('');
+  for (const row of scaleTableBodyEl.querySelectorAll('[data-ratio-fraction]')) cockpitScaleRows.set(row.dataset.ratioFraction, row);
+  const scroller = scaleTableBodyEl.closest('.lrc-scale-table-container'); if (scroller) scroller.scrollTop = 0;
+}
+
+function cockpitNodeIndexAtPhase(nodes, phase) {
+  let lo = 0, hi = nodes.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (nodes[mid].phase <= phase) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo > 0 ? lo - 1 : nodes.length - 1;
+}
+
+function updateCockpitScaleHighlights(now, nodeIndex = null) {
+  const listening = leadVoice?.node?.id === inspectedNode?.id;
+  if (!listening || !rhythmInspectorModel?.nodes.length || !cockpitScaleHighlightsEnabled) {
+    if (!listening && (cockpitScaleLastNodeIndex !== -1 || cockpitScaleHighlightTimestamps.size)) resetCockpitScaleHighlights();
+    return;
+  }
+  if (nodeIndex == null) nodeIndex = cockpitNodeIndexAtPhase(rhythmInspectorModel.nodes, transportPhase());
+  if (nodeIndex !== cockpitScaleLastNodeIndex) {
+    cockpitScaleLastNodeIndex = nodeIndex;
+    if (cockpitPlotEligibleNodes.has(nodeIndex)) {
+      cockpitScaleHighlightTimestamps.set(rhythmInspectorModel.nodes[nodeIndex].ratioFraction, now);
+    }
+  }
+  for (const [fraction, timestamp] of cockpitScaleHighlightTimestamps) {
+    const row = cockpitScaleRows.get(fraction), age = now - timestamp;
+    if (!row || age > COCKPIT_SCALE_HIGHLIGHT_MS) {
+      cockpitScaleHighlightTimestamps.delete(fraction);
+      if (row) { row.classList.remove('pitch-playback-highlight'); row.style.removeProperty('--playback-alpha'); }
+      continue;
+    }
+    row.classList.add('pitch-playback-highlight');
+    row.style.setProperty('--playback-alpha', (1 - age / COCKPIT_SCALE_HIGHLIGHT_MS).toFixed(3));
+  }
+}
+
+function renderCockpitLayerControls() {
+  if (!cockpitPlotKeyEl) return;
+  const layerCount = rhythmInspectorModel?.layers.length || 0;
+  for (const button of cockpitPlotKeyEl.querySelectorAll('[data-plot-layer]')) {
+    const layer = button.dataset.plotLayer;
+    const available = layer.charCodeAt(0) - 64 <= layerCount;
+    const visible = available && cockpitVisibleLayers.has(layer);
+    button.disabled = !available;
+    button.setAttribute('aria-pressed', String(visible));
+    button.setAttribute('aria-label', available
+      ? `${visible ? 'Hide' : 'Show'} layer ${layer}`
+      : `Layer ${layer} is not present`);
+  }
+}
+
+function renderRhythmConnections() {
+  if (!connectionsEl || !inspectedNode) return;
+  const tag = mtagOfKey(inspectedNode.key);
+  const members = tag && mtagGrids?.get(tag);
+  const motherWeb = tag && activeWebs.get(tag);
+  const motifs = inspectedNode.layers
+    ? [...rhythmTriples(inspectedNode.layers).sort((a, b) => b.base - a.base),
+       ...rhythmDoubles(inspectedNode.layers).sort((a, b) => b.base - a.base)].slice(0, MN_CHIP_MAX)
+    : [];
+  const rows = [];
+  if (tag) rows.push(`<div class="lrc-connection-row"><span>Mother scale</span><b>${inspectorEscape(tag)}</b></div>`);
+  const actions = [];
+  if (tag && members?.length) actions.push(`<button type="button" class="lrc-connection-btn${motherWeb ? ' active' : ''}" data-rhythm-web="${inspectorEscape(tag)}">${motherWeb ? 'Clear' : 'Trace'} mother · ${members.length.toLocaleString()}</button>`);
+  for (const motif of motifs) {
+    const id = `mn:${motif.key}`, active = activeWebs.has(id);
+    actions.push(`<button type="button" class="lrc-connection-btn${active ? ' active' : ''}" data-rhythm-mn="${inspectorEscape(id)}" data-base="${motif.base}">${inspectorEscape(motifLabel(motif.key))}</button>`);
+  }
+  connectionsEl.innerHTML = rows.join('') + (actions.length
+    ? `<div class="lrc-connection-actions">${actions.join('')}</div>`
+    : '<div class="lrc-connections-empty">No charted network connections.</div>');
+}
+
+function renderRhythmInspector(node) {
+  if (!node?.layers) return;
+  inspectedNode = node;
+  rhythmInspectorModel = modelForRhythmNode(node);
+  setCardMode('rhythm');
+  if (!rhythmInspectorModel) {
+    // Too dense to build the composite model / audition without a synchronous O(layerSum) freeze. We still
+    // show the CHEAP closed-form metrics (fundamental, density, groupings — all O(layers), computed without
+    // the composite tape) so the card is informative, not just a refusal; only the ratio table + plot (which
+    // need the walk we skipped) hold blank, and audition stays disabled via updateRhythmActionState. These
+    // fields read identically to a below-cap card — lightRhythmMetrics mirrors the full model's formulas.
+    const metrics = lightRhythmMetrics(node.layers);
+    if (rhythmTitleEl) rhythmTitleEl.textContent = metrics.identity;
+    if (rhythmSubtitleEl) rhythmSubtitleEl.textContent = `grid ${metrics.grid.toLocaleString()} · too dense to audition`;
+    if (rhythmStateEl) { rhythmStateEl.textContent = node.charted ? 'charted' : 'open space'; rhythmStateEl.classList.toggle('charted', !!node.charted); }
+    const sub = lrcHeadEl?.querySelector('.lrc-div-sub'); if (sub) sub.textContent = metrics.identity;
+    if (metricFundamentalEl) metricFundamentalEl.textContent = inspectorNumber(metrics.fundamental);
+    // Distinct onsets need the O(layerSum) walk; layerSum is their exact upper bound, so report "≤".
+    if (metricOnsetsEl) metricOnsetsEl.textContent = `≤ ${metrics.maxOnsets.toLocaleString()}`;
+    if (metricDensityEl) metricDensityEl.textContent = `${metrics.density.toFixed(2)}%`;
+    if (scaleCountEl) scaleCountEl.textContent = '—';   // tone count needs the folded-ratio walk we skipped
+    if (scaleTableBodyEl) scaleTableBodyEl.innerHTML = `<tr><td colspan="9" class="lrc-too-dense">${metrics.maxOnsets.toLocaleString()}-onset layer-sum exceeds the ${ROW_MAX_PLAYBACK_ONSETS.toLocaleString()} card cap — scale tones and plot need the full composite build, skipped to keep the click light.</td></tr>`;
+    if (structureListEl) {
+      const denseMetrics = [
+        ['Groupings', metrics.groupings.map(inspectorNumber).join(' · ')],
+        ['Layer sum', metrics.layerSum.toLocaleString()],
+        ['Range', metrics.range.toFixed(2)],
+        ['P/G ratio', metrics.pulseToGrouping.toFixed(2)],
+        ['Keep-two', node.dense ? 'paired' : 'solo'],
+      ];
+      structureListEl.innerHTML = denseMetrics.map(([label, value]) => `<div><dt>${label}</dt><dd title="${inspectorEscape(value)}">${inspectorEscape(value)}</dd></div>`).join('');
+    }
+    renderCockpitLayerControls();
+    renderRhythmConnections();
+    updateRhythmActionState();
+    openCockpit();
+    return;
+  }
+  if (rhythmTitleEl) rhythmTitleEl.textContent = rhythmInspectorModel.identity;
+  if (rhythmSubtitleEl) rhythmSubtitleEl.textContent = `grid ${rhythmInspectorModel.grid.toLocaleString()} · ${rhythmInspectorModel.pitchCount}-tone${node.dense ? ' · paired' : ''}`;
+  if (rhythmStateEl) {
+    rhythmStateEl.textContent = node.charted ? 'charted' : 'open space';
+    rhythmStateEl.classList.toggle('charted', !!node.charted);
+  }
+  const sub = lrcHeadEl?.querySelector('.lrc-div-sub'); if (sub) sub.textContent = rhythmInspectorModel.identity;
+  if (metricFundamentalEl) metricFundamentalEl.textContent = inspectorNumber(rhythmInspectorModel.fundamental);
+  if (metricOnsetsEl) metricOnsetsEl.textContent = rhythmInspectorModel.compositeLength.toLocaleString();
+  if (metricDensityEl) metricDensityEl.textContent = `${rhythmInspectorModel.density.toFixed(2)}%`;
+  renderCockpitScaleTable();
+  if (structureListEl) {
+    const metrics = [
+      ['Groupings', rhythmInspectorModel.groupings.map(inspectorNumber).join(' · ')],
+      ['Layer sum', rhythmInspectorModel.layerSum.toLocaleString()],
+      ['Range', rhythmInspectorModel.range.toFixed(2)],
+      ['P/G ratio', rhythmInspectorModel.pulseToGrouping.toFixed(2)],
+      ['Average deviation', rhythmInspectorModel.avgDeviation == null ? '—' : `${rhythmInspectorModel.avgDeviation.toFixed(2)}¢`],
+      ['Keep-two', node.dense ? 'paired' : 'solo'],
+    ];
+    structureListEl.innerHTML = metrics.map(([label, value]) => `<div><dt>${label}</dt><dd title="${inspectorEscape(value)}">${inspectorEscape(value)}</dd></div>`).join('');
+  }
+  renderCockpitLayerControls();
+  renderRhythmConnections();
+  updateRhythmActionState();
+  openCockpit();
+  drawCockpitPlot();
+}
+
+// The lab's audio-mode select is a dev shortcut to the two ENDS of the MIX crossfade. It writes through
+// railParams, so the rail's MIX knob (the owner) moves with it and the engine hears exactly one command.
+function changeAudioMode(mode) {
+  railParams.set('mix', mode === AUDIO_MODES.CULLED_GRID_ROWS ? 1 : 0);
+}
+
+const _compileErrSeen = new Set();   // TEMP DEBUG (2.4 worker-err flood) — dedup so a flood collapses to a few lines
+
+function requestRowProgram(candidate, root, policy, selectionKey, validRequestKeys) {
+  const { z, distance } = candidate;
+  if (!rowCompiler) return;
+  if (!z._rowAudio) z._rowAudio = { program: null, programSelectionKey: '', requestKey: '', state: 'ownership-ready', compileMs: 0 };
+  const state = z._rowAudio;
+  if (state.programSelectionKey === selectionKey) return;
+  const requestKey = `${rowGeneration}:${z.grid}:${selectionKey}`;
+  validRequestKeys.add(requestKey);
+  if (state.requestKey === requestKey && state.state === 'program-compiling') return;
+  state.requestKey = requestKey;
+  state.state = 'program-compiling';
+  const selectedFractions = selectedOwnerFractions(z.ratioOwners, root.cents, policy, ROW_CONSONANCE_CENTS);
+  const zoneIdentity = z;
+  rowCompiler.request({
+    grid: z.grid,
+    ratioOwners: z.ratioOwners,
+    abundance: z.abundance,
+    selectedFractions,
+    selectionKey,
+    generation: rowGeneration,
+    reflect: true,
+    repeatCull: true,
+  }, { key: requestKey, priority: distance }).then(reply => {
+    if (reply.cancelled) {
+      if (zoneIdentity._rowAudio?.requestKey === requestKey) {
+        zoneIdentity._rowAudio.requestKey = '';
+        zoneIdentity._rowAudio.state = zoneIdentity._rowAudio.program ? 'program-ready' : 'ownership-ready';
+      }
+      return;
+    }
+    // Every mutable boundary is checked: session, eviction/recreation identity, mode, harmonic
+    // generation, and superseding request. A late worker reply can never enter live playback.
+    if (!started || !cosmos || cosmos.zones.get(z.grid) !== zoneIdentity ||
+        rowGeneration !== reply.result.generation || rowSelectionKey !== reply.result.selectionKey || zoneIdentity._rowAudio?.requestKey !== requestKey) return;
+    zoneIdentity._rowAudio.program = reply.result;
+    zoneIdentity._rowAudio.programSelectionKey = selectionKey;
+    zoneIdentity._rowAudio.requestKey = '';
+    zoneIdentity._rowAudio.state = 'program-ready';
+    zoneIdentity._rowAudio.compileMs = reply.compileMs;
+    markSoftMembershipDirty();   // a prewarm star just became able to sound — re-select, but coalesced (old program holds)
+  }).catch(error => {
+    // TEMP DEBUG (2.4 worker-err flood) — surface the REAL compileGridAudioProgram throw, deduped so a
+    // flood collapses to one line per distinct message, with the owner/state context to test the
+    // "gate passed but owners cleared by the re-solve race" theory. Toggle: window.DEBUG_COMPILE_ERRORS.
+    if (typeof window !== 'undefined' && window.DEBUG_COMPILE_ERRORS !== false) {
+      const msg = error?.message || String(error);
+      if (!_compileErrSeen.has(msg)) {
+        _compileErrSeen.add(msg);
+        console.error('[compile-error] grid', z.grid, '·', msg,
+          '· ownersNow', Array.isArray(z.ratioOwners) ? z.ratioOwners.length : z.ratioOwners,
+          '· state', z.state, '· monster', z.monster, '· shards', `${z.shardsDone ?? '?'}/${z.shardsTotal ?? '?'}`);
+      }
+    }
+    if (zoneIdentity._rowAudio?.requestKey !== requestKey) return;
+    zoneIdentity._rowAudio.requestKey = '';
+    zoneIdentity._rowAudio.state = zoneIdentity._rowAudio.program ? 'program-ready' : 'compile-error';
+    zoneIdentity._rowAudio.error = error.message;
+  });
+}
+
+// ── POSE vs MEMBERSHIP ────────────────────────────────────────────────────────────────────────────────
+// Rebuilding the audio field every frame was the per-frame cost that starved the transport (arrow-key
+// rotation showed it best: it recomputed an IDENTICAL selection, because rotation changes no distance, no
+// zone membership and no programKey). Split in two:
+//   POSE       — every frame. Where each sounding star sits, how loud, how bright. AudioParams only.
+//   MEMBERSHIP — only when the selection can change: the harmonic selection key moved or a zone spawned/
+//                evicted (HARD — next frame), or the camera TRANSLATED or a compile LANDED (SOFT — coalesced,
+//                because the nearest-set drift and prewarm-ready swaps can wait one MIN interval). Marked by
+//                markFieldDirty() / markSoftMembershipDirty() from those sites.
+// A safety re-run bounds staleness regardless, so an un-enumerated cause can only ever delay the field by one
+// interval rather than strand it. Translation is coalesced too (Batch 3), so flight recomputes MEMBERSHIP
+// ~16×/s (every 60ms) instead of every frame — while POSE still re-aims the active stars every single frame.
+let fieldMembershipDirty = true, fieldSoftDirty = false, fieldMembershipAt = -Infinity;
+const FIELD_MEMBERSHIP_MAX_INTERVAL_MS = 250;
+// Soft-trigger coalescing. Two causes re-select membership but can wait a few frames: a compile LANDING (a
+// prewarm star becoming able to sound — its old-chord program keeps sounding meanwhile, so no hole) and
+// camera TRANSLATION during flight (the nearest-set drifts continuously; hysteresis + the 30-star prewarm +
+// ROW_SWITCH_TICKS swap-quantization absorb ~60ms of lag). Both otherwise force a FULL rebuild EVERY frame —
+// the landing storm behind the chord-change freeze, and the every-frame O(Z) membership scan during flight.
+// Coalesce them to at most one pass per MIN interval; hard triggers (chord/root/scale, spawn/evict) still
+// pass the next frame.
+const FIELD_MEMBERSHIP_MIN_INTERVAL_MS = 60;
+
+function markFieldDirty() { fieldMembershipDirty = true; }               // hard — next frame
+function markSoftMembershipDirty() { fieldSoftDirty = true; }            // landing or flight translation — coalesced
+
+// Perf (1c): audioCompileEligibility loops z.ratioOwners to fold maxLayerSum, and it was called for EVERY
+// placed zone on EVERY membership rebuild — O(Z·owners) — though the verdict only changes when a zone's
+// solve state does. Cache it on the zone, keyed on every field the check reads. z.ratioOwners is REPLACED
+// with a fresh array whenever ownership changes (cosmos-runtime.js:56 mergeStarRatioOwners / :213 clear —
+// never mutated in place), so its reference stands in for the per-owner content without walking it; the
+// rest are O(1) scalars. On a stable solved field this collapses to an O(1) signature compare per zone.
+// Fail-open (recompute) on any miss, so a new field the signature doesn't recognise is never wrongly gated.
+function cachedAudioCompileEligibility(z) {
+  if (!z) return audioCompileEligibility(z);
+  const owners = z.ratioOwners;
+  const c = z._eligCache;
+  if (c && c.owners === owners && c.state === z.state && c.shardsDone === z.shardsDone
+        && c.shardsTotal === z.shardsTotal && c.monster === z.monster && c.unsolvable === z.unsolvable) {
+    return c.verdict;
+  }
+  const verdict = audioCompileEligibility(z);
+  z._eligCache = { owners, state: z.state, shardsDone: z.shardsDone, shardsTotal: z.shardsTotal,
+    monster: z.monster, unsolvable: z.unsolvable, verdict };
+  return verdict;
+}
+
+function updateGridRowField(membershipPositions, posePositions, basis, translated, nowMs) {
+  const root = currentSkyRoot(), policy = currentHarmonyPolicy();
+  const selectionKey = harmonicSelectionKey(root, policy, ROW_CONSONANCE_CENTS);
+  if (selectionKey !== rowSelectionKey) {
+    rowSelectionKey = selectionKey;
+    rowGeneration++;
+    rowCompiler?.cancelQueuedExcept(new Set());
+    markFieldDirty();               // a new chord re-selects every star's tones
+  }
+  if (translated) markSoftMembershipDirty();   // flight drifts the nearest-set — SOFT/coalesced, not an every-frame full rebuild
+  // POSE-ONLY frame: re-aim the stars already in the field and return. rowActiveIds is the membership the
+  // last full pass installed, so this stays exactly in step with what the player actually holds.
+  const sinceMembership = nowMs - fieldMembershipAt;
+  const runMembership = fieldMembershipDirty                                       // hard: chord/root/scale, spawn/evict — next frame
+    || (fieldSoftDirty && sinceMembership >= FIELD_MEMBERSHIP_MIN_INTERVAL_MS)     // soft: landings + flight translation, coalesced to MIN
+    || sinceMembership >= FIELD_MEMBERSHIP_MAX_INTERVAL_MS;                        // safety net — bounds staleness regardless
+  if (!runMembership) {
+    const pose = [];
+    for (const id of rowActiveIds) {
+      const resting = membershipPositions.get(id), position = posePositions.get(id);
+      if (!resting || !position) continue;       // evicted between passes — its zone hook already marked us dirty
+      const distance = Math.hypot(resting[0], resting[1], resting[2]);
+      pose.push({ id, position: toAudioListenerPosition(position, basis), distance,
+        gain: rowDistanceGain(distance), cutoff: rowDistanceCutoff(distance) });
+    }
+    setGridSpatialPose(pose);
+    return;
+  }
+  fieldMembershipDirty = false;
+  fieldSoftDirty = false;
+  fieldMembershipAt = nowMs;
+  const candidates = [];
+  for (const [grid, resting] of membershipPositions) {
+    const z = cosmos.zones.get(grid);
+    if (!cachedAudioCompileEligibility(z).eligible) continue;
+    const position = posePositions.get(grid); if (!position) continue;
+    const distance = Math.hypot(resting[0], resting[1], resting[2]);
+    candidates.push({ id: grid, z, position, distance, ready: !!z._rowAudio?.program });
+  }
+  // ONE distance sort yields both prewarm and active. The active set used to be re-selected after
+  // requestRowProgram with a re-read `candidate.ready`, but requestRowProgram only writes
+  // `_rowAudio.program` asynchronously (in .then, ~line 1531) and inits it to null synchronously, and
+  // `rowActiveIds` is unchanged until below — so no `ready` flag flips and the second chooseSpatialRows
+  // was provably identical work. A completed older program still keeps a zone `ready` (its program is
+  // non-null) so it stays active while its current-chord replacement compiles — that hole-free behavior
+  // rides on the original `ready` stamp at candidate-build and is unchanged. (If a future path ever lands
+  // a program synchronously between here and the active read, restore the re-read + a second call.)
+  const selection = chooseSpatialRows(candidates, rowActiveIds);
+  rowPrewarmIds = new Set(selection.prewarm.map(candidate => candidate.id));
+  const validRequestKeys = new Set();
+  for (const candidate of selection.prewarm) requestRowProgram(candidate, root, policy, selectionKey, validRequestKeys);
+  rowCompiler?.cancelQueuedExcept(validRequestKeys);
+
+  rowActiveIds = new Set(selection.active.map(candidate => candidate.id));
+  setGridSpatialField(selection.active.map(candidate => ({
+    id: candidate.id,
+    program: candidate.z._rowAudio.program,
+    position: toAudioListenerPosition(candidate.position, basis),
+    distance: candidate.distance,
+    gain: rowDistanceGain(candidate.distance),
+    cutoff: rowDistanceCutoff(candidate.distance),
+  })));
+}
+
+// Master mute only — the transport keeps ticking (playhead keeps sweeping, notes keep scheduling) so
+// unmuting resumes in sync rather than restarting the cycle. The M key, the rail's MUTE button and the
+// lab's M button all flip the SAME railParams param, so the three can never disagree: rail-view's
+// subscriber calls setMuted and repaints its button, and syncAudioLab repaints the lab's.
+function toggleMute() {
+  railParams.set('mute', !railParams.get('mute'));
+}
+
+function toggleHarmonyHold() {
+  railParams.set('hold', !railParams.get('hold'));
+}
+
+// Selected rhythm's real spaces plot: horizontal position is the attack's true transport phase and
+// vertical position is the following gap. The full node field is cached into a static backing canvas and
+// rebuilt only when layout, layer visibility or harmony changes. The flight frame draws that bitmap plus a
+// tiny dynamic overlay (playhead + the one live onset), instead of walking thousands of nodes every rAF.
+function drawCockpitPlot() {
+  if (!cockpitPlotCtx || !lrcDivEl?.classList.contains('open')) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+  const w = Math.max(1, cockpitPlotEl.clientWidth || 576), h = Math.max(1, cockpitPlotEl.clientHeight || 192);
+  const pixelW = Math.round(w * dpr), pixelH = Math.round(h * dpr);
+  if (cockpitPlotEl.width !== pixelW || cockpitPlotEl.height !== pixelH) { cockpitPlotEl.width = pixelW; cockpitPlotEl.height = pixelH; }
+  if (!rhythmInspectorModel) {
+    // No model (too-dense card, or nothing inspected): clear any stale plot instead of leaving the last
+    // rhythm's bitmap on screen, and reset the base key so a real model rebuilds cleanly when one returns.
+    cockpitPlotCtx.setTransform(dpr, 0, 0, dpr, 0, 0); cockpitPlotCtx.clearRect(0, 0, w, h);
+    cockpitPlotBaseKey = '';
+    return;
+  }
+  if (!cockpitPlotBaseCanvas) {
+    cockpitPlotBaseCanvas = document.createElement('canvas');
+    cockpitPlotBaseCtx = cockpitPlotBaseCanvas.getContext('2d');
+  }
+  const top = 8, bottom = h - 9, height = bottom - top, maxGap = Math.max(1, rhythmInspectorModel.maxGap);
+  const xFor = node => 1 + node.phase * (w - 2);
+  const yFor = node => bottom - node.gap / maxGap * height;
+
+  const root = currentSkyRoot(), policy = currentHarmonyPolicy();
+  const rowFundamental = railParams.get('rowFundamental');
+  const harmonyKey = harmonicSelectionKey(root, policy);
+  const visibleKey = [...cockpitVisibleLayers].sort().join('');
+  const baseKey = `${rhythmInspectorModel.key}|${pixelW}x${pixelH}|${visibleKey}|${harmonyKey}|1/1:${rowFundamental ? 1 : 0}`;
+  if (baseKey !== cockpitPlotBaseKey) {
+    cockpitPlotBaseKey = baseKey;
+    cockpitPlotBaseCanvas.width = pixelW; cockpitPlotBaseCanvas.height = pixelH;
+    const bg = cockpitPlotBaseCtx;
+    bg.setTransform(dpr, 0, 0, dpr, 0, 0); bg.clearRect(0, 0, w, h);
+    // Harmony is evaluated once per distinct folded tone. The resulting tiny Map is then projected across
+    // the onset tape while building this cached bitmap; repeated 1/1 nodes never repeat harmonic math.
+    const selectedByTone = classifyLeadHarmony(rhythmInspectorModel.ratios, root.cents, policy).selectedByTone;
+    cockpitPlotEligibleNodes = new Set();
+    // Bound the rasterization cost. A dense rhythm is dominated by heavily-repeated tones (often 1/1 — a
+    // uniform pulse train folds every onset to the same fraction) that pile onto the same plot region, and
+    // this bitmap re-rasterizes on every chord/root change. Skip DRAWING a node whose tone repeats the
+    // previously drawn one, so the draw count tracks distinct-tone RUNS, not raw onset count. Eligibility is
+    // still recorded for EVERY node, so the playhead pulse and scale-table highlight are unaffected.
+    let prevDrawnFraction = null;
+    for (let i = 0; i < rhythmInspectorModel.nodes.length; i++) {
+      const node = rhythmInspectorModel.nodes[i];
+      const visibleOwners = node.owners.filter(owner => cockpitVisibleLayers.has(owner));
+      if (!visibleOwners.length) continue;
+      const eligible = selectedByTone.get(node.fraction) === true && shouldScheduleRowAction(node, rowFundamental);
+      if (eligible) cockpitPlotEligibleNodes.add(i);
+      if (node.fraction === prevDrawnFraction) continue;   // heavily-repeated tone — already drawn this run
+      prevDrawnFraction = node.fraction;
+      const x = xFor(node), y = yFor(node);
+      // Coincidence has no separate visual identity. Chord-live tones use a soft halo in their owning layer's
+      // colour; avoiding white strokes makes the old nested-ratio marker impossible to misread here.
+      const color = cockpitLayerColors[visibleOwners[0]] || '#aab2bd';
+      if (eligible) {
+        bg.globalAlpha = 0.18; bg.fillStyle = color;
+        bg.beginPath(); bg.arc(x, y, 4.2, 0, Math.PI * 2); bg.fill();
+      }
+      bg.globalAlpha = eligible ? 0.98 : 0.32; bg.fillStyle = color;
+      bg.beginPath(); bg.arc(x, y, eligible ? 2.05 : 1.45, 0, Math.PI * 2); bg.fill();
+    }
+    bg.globalAlpha = 1;
+  }
+
+  const g = cockpitPlotCtx;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  g.drawImage(cockpitPlotBaseCanvas, 0, 0, pixelW, pixelH, 0, 0, w, h);
+
+  const listening = leadVoice?.node?.id === inspectedNode?.id;
+  const now = performance.now();
+  let nodeIndex = null;
+  if (listening) {
+    const phase = transportPhase();
+    nodeIndex = cockpitNodeIndexAtPhase(rhythmInspectorModel.nodes, phase);
+    if (nodeIndex !== cockpitPlotLastNodeIndex) {
+      cockpitPlotLastNodeIndex = nodeIndex;
+      if (cockpitPlotEligibleNodes.has(nodeIndex)) cockpitPlotPulseAt = now;
+    }
+    const pulseAge = now - cockpitPlotPulseAt;
+    if (cockpitPlotEligibleNodes.has(nodeIndex) && pulseAge >= 0 && pulseAge <= COCKPIT_SCALE_HIGHLIGHT_MS) {
+      const node = rhythmInspectorModel.nodes[nodeIndex], alpha = 1 - pulseAge / COCKPIT_SCALE_HIGHLIGHT_MS;
+      const visibleOwner = node.owners.find(owner => cockpitVisibleLayers.has(owner));
+      g.globalAlpha = alpha * 0.55; g.fillStyle = cockpitLayerColors[visibleOwner] || '#aab2bd';
+      g.beginPath(); g.arc(xFor(node), yFor(node), 4.5 + (1 - alpha) * 4, 0, Math.PI * 2); g.fill();
+      g.globalAlpha = 1;
+    }
+    const x = 1 + phase * (w - 2);
+    g.strokeStyle = 'rgba(255,255,255,.72)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+  }
+  updateCockpitScaleHighlights(now, nodeIndex);
+}
+
+// ── VIEW section (help popup) + the on-screen CHORD name ──────────────────────────────────────────────────
+// The audio lab (Z) is retired: an early dev interface the rail replaced. Its DOM stays in index.html but
+// nothing opens it any more — audioLabOn stays false, so syncAudioLab is inert. The one thing it showed that a
+// listener wants, the chord, now lives on screen as #cosmos-chord.
+const viewOptions = createViewOptions();
+const viewButtons = new Map();   // option name → { row, buttons: Map(value → pill button) }
+let viewBtnEl = null, viewPanelEl = null;
+let chordEl = null, chordFaces = null, chordFace = 0, chordText = '', chordKey = '', chordRetryAt = 0;
+
+function setViewPanelOpen(open) {
+  viewPanelEl?.classList.toggle('open', open);
+  viewBtnEl?.setAttribute('aria-expanded', String(open));
+  if (!open) setQualityAboutOpen(false);   // the explainer bubble never outlives its popup
+}
+
+function setQualityAboutOpen(open) {
+  document.getElementById('cosmos-quality-about')?.classList.toggle('open', open);
+  document.getElementById('cosmos-quality-help')?.setAttribute('aria-expanded', String(open));
+}
+
+function buildViewSection(host) {
+  for (const [name, spec] of Object.entries(VIEW_OPTIONS)) {
+    const row = document.createElement('div'); row.className = 'view-row';
+    const label = document.createElement('span'); label.textContent = spec.label;
+    const group = document.createElement('div'); group.className = 'view-seg-group';
+    group.setAttribute('role', 'group'); group.setAttribute('aria-label', spec.label);
+    const buttons = new Map();
+    for (const [value, text] of spec.choices) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'view-seg'; button.textContent = text;
+      // Keep keyboard focus on the flight: a focused pill would take SPACE (boost) as a click.
+      button.addEventListener('mousedown', e => e.preventDefault());
+      button.addEventListener('click', () => viewOptions.set(name, value));
+      buttons.set(value, button); group.appendChild(button);
+    }
+    viewButtons.set(name, { row, buttons });
+    row.append(label, group); host.appendChild(row);
+  }
+  viewOptions.subscribe(applyViewOption);
+}
+
+function paintViewSection() {
+  for (const [name, { row, buttons }] of viewButtons) {
+    const value = viewOptions.get(name);
+    for (const [v, button] of buttons) { button.classList.toggle('active', v === value); button.setAttribute('aria-pressed', String(v === value)); }
+    // Gravity and the chase view are cube-only (Decision 2) — in spine placement they would be dead pills.
+    row.hidden = !!VIEW_OPTIONS[name].cubeOnly && placement !== 'hilbert';
+  }
+}
+
+// QUALITY section — under VIEW in the same popup, same pill look. One row of tier pills; a dot marks the tier
+// detected for this machine (the way back), and the note under them warns only when the choice is above it.
+const qualityButtons = new Map();   // tier id → pill button
+let qualityNoteEl = null;
+
+function buildQualitySection(host, noteEl) {
+  qualityNoteEl = noteEl;
+  const row = document.createElement('div'); row.className = 'view-row';
+  const label = document.createElement('span'); label.textContent = 'Tier';
+  const group = document.createElement('div'); group.className = 'view-seg-group';
+  group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Quality tier');
+  for (const id of QUALITY_ORDER) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'view-seg';
+    button.textContent = id === 'medium' ? 'MED' : QUALITY_TIERS[id].label.toUpperCase();
+    if (id === qualityPrefs.detected) { button.classList.add('recommended'); button.title = 'Recommended for this machine'; }
+    button.addEventListener('mousedown', e => e.preventDefault());   // a focused pill would take SPACE (boost)
+    button.addEventListener('click', () => qualityPrefs.set(id));
+    qualityButtons.set(id, button); group.appendChild(button);
+  }
+  row.append(label, group); host.appendChild(row);
+  qualityPrefs.subscribe(id => { applyQuality(id); paintQualitySection(); });
+  paintQualitySection();
+}
+
+function paintQualitySection() {
+  for (const [id, button] of qualityButtons) {
+    const on = id === activeQualityId;
+    button.classList.toggle('active', on); button.setAttribute('aria-pressed', String(on));
+  }
+  if (qualityNoteEl) qualityNoteEl.textContent = qualityWarning(activeQualityId, qualityPrefs.detected);
+}
+
+// ONE router from a pill to its visual. Runs on every change (pill, V key, entry reset) and once per option at
+// entry, so what flies always matches what the pills show.
+function applyViewOption(name, value) {
+  if (name === 'constellations') {
+    const wasOn = constellation.options.enabled;
+    constellation.configure(constellationPatch(value));
+    // OFF drops the figure outright, so turning it back on starts fresh instead of resurrecting stale lines.
+    if (wasOn && !constellation.options.enabled) { constellation.reset(); constellationCursor = null; }
+  } else if (name === 'gravity') {
+    renderControls();   // the G row follows the pill
+  } else if (name === 'camera') {
+    setViewMode(value);
+  } else if (name === 'screen') {
+    document.getElementById('cosmos-view')?.classList.toggle('clean-screen', value === 'clean');
+    if (value === 'clean') { helpPanelEl?.classList.remove('open'); setViewPanelOpen(false); }
+  }
+  paintViewSection();
+}
+
+// Local gravity this frame: the pill's mode (OFF / HOLD G / ALWAYS), plus the ?gravityHold=1 dev pin.
+const gravityOn = () => gravityDebugHold || gravityHeld(viewOptions.get('gravity'), keys.g);
+
+function renderControls() {
+  if (!controlsEl) return;
+  const gravity = viewOptions.get('gravity');
+  const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['arrows', 'steer'], ['scroll', 'dolly'],
+    ['click', 'inspect / bloom'], ['right-click', 'collapse'], ['Esc', 'cancel travel / exit'],
+    ...(placement === 'hilbert' ? [['G', gravityControlLabel(gravity), gravity === 'off'], ['V', 'chase view']] : []),
+    ['M', 'mute'], ['H', 'hold harmony'], ['C', 'full sky debug'], ['1–0', 'toggle webs']];
+  controlsEl.innerHTML = rows.map(([k, v, dim]) => `<div class="help-kv${dim ? ' dim' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
+}
+
+// The sounding chord, top-right beside the ? button (naming rules: chord-label.js). A change cross-fades between two stacked faces;
+// CSS owns the timing. It is relabelled only when something that NAMES it changes — chord, source, root,
+// modulation, fundamental — so the steady-state cost is one string compare per frame. A ratio-mode label that
+// had to fall back to cents (no nearby star covers the chord root yet, e.g. right at entry) retries each second.
+function drawChordOverlay() {
+  if (!chordEl || chordFaces?.length !== 2) return;
+  if (!(currentTicks() > 0)) { chordEl.classList.remove('live'); return; }   // nothing sounding yet
+  chordEl.classList.add('live');
+  const chord = currentSkyChord(), root = currentSkyRoot(), modulationOn = currentModulation().on;
+  const fundamentalCents = currentFundamental().cents, now = performance.now();
+  const key = `${chord.source}|${chord.id}|${root.rootKey}|${modulationOn ? 1 : 0}|${Math.round(fundamentalCents)}`;
+  if (key === chordKey && !(chordRetryAt && now >= chordRetryAt)) return;
+  chordKey = key;
+  const pools = [];
+  if (!modulationOn) for (const id of audibleIds) {
+    const at = cosmos?.zones.get(id)?.skyPoolAt;
+    if (at && at.rootKey === root.rootKey) pools.push(at.pool);
+  }
+  const label = chordLabel({ chord, modulationOn, fundamentalCents, rootCents: root.cents, rootFraction: root.fraction, pools });
+  chordRetryAt = !modulationOn && label.root.endsWith('¢') ? now + 1000 : 0;
+  if (label.text === chordText) return;
+  chordText = label.text;
+  chordFace ^= 1;
+  const face = chordFaces[chordFace], rootEl = document.createElement('b');
+  appendKerned(rootEl, label.root);
+  face.replaceChildren(rootEl);
+  if (label.quality) { const quality = document.createElement('span'); quality.className = 'quality'; appendKerned(quality, label.quality); face.appendChild(quality); }
+  if (label.detail) { const detail = document.createElement('small'); detail.textContent = label.detail; face.appendChild(detail); }
+  face.classList.add('on'); chordFaces[chordFace ^ 1].classList.remove('on');
+  chordEl.setAttribute('aria-label', `chord ${label.text}`);
+}
+
+// Text with each ♭/♯ in its own span, so CSS (.acc) can tuck the accidental against its letter or digit.
+function appendKerned(el, text) {
+  for (const part of text.split(/([♭♯])/)) {
+    if (!part) continue;
+    if (part === '♭' || part === '♯') { const acc = document.createElement('span'); acc.className = 'acc'; acc.textContent = part; el.appendChild(acc); }
+    else el.appendChild(document.createTextNode(part));
+  }
+}
+
+function resetChordOverlay() {
+  chordKey = ''; chordText = ''; chordRetryAt = 0;
+  if (chordEl) chordEl.classList.remove('live');
+  for (const face of chordFaces || []) { face.classList.remove('on'); face.replaceChildren(); }
+}
+
+// ── Full Sky DEBUG OVERLAY (dev-only, ?skyDebug=1) ──────────────────────────────────────────────
+// Live readout for iterating on the progression/root-selection work (Avery, 2026-07-22 listening
+// session): nearby tones (each audible star's FULL degree pool, not just what's voiced), what actually
+// got selected for the bed + its live envelope gain, cents/dev tuning info, and coverage() per
+// candidate triad (to see directly whether the field term is differentiating by location, rather than
+// guessing from the ear). Built once and updated on a throttle so it doesn't thrash the DOM every rAF
+// frame. The dense ratio readout uses a real table; the surrounding diagnostics remain preformatted.
+// product UI; see Cosmos/docs/FULL_SKY_HANDOFF.md and the state doc for where this might go next (Avery:
+// "maybe it can evolve into a semi-gamified thing users can play with").
+let skyDebugOn = false, skyDebugEl = null, skyDebugLast = 0;
+const SKY_DEBUG_MS = 200;   // DOM update cadence
+
+function ensureSkyDebugPanel() {
+  if (skyDebugEl) return;
+  skyDebugEl = document.createElement('div');
+  skyDebugEl.id = 'sky-debug-panel';
+  skyDebugEl.style.cssText = 'position:fixed;top:12px;right:12px;width:min(760px,calc(100vw - 48px));max-height:82vh;overflow:auto;' +
+    'background:rgba(8,10,16,.9);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:10px 12px;' +
+    'font:10.5px/1.55 var(--mono,ui-monospace,monospace);color:#cfe3ff;z-index:700;pointer-events:auto;' +
+    'overscroll-behavior:contain;scrollbar-gutter:stable;';
+  // Native wheel scrolling belongs to the panel while the pointer is over it. Do not preventDefault:
+  // stopping propagation keeps this diagnostic surface independent from present/future dolly handlers,
+  // while overflow:auto performs the actual scroll. Outside the panel the canvas still owns the wheel.
+  skyDebugEl.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
+  // MUST land inside #cosmos-view, not document.body: `body.cosmos-active > *:not(#cosmos-view)` hides
+  // every other top-level child with !important during the full-swallow (style.css) — a body-level
+  // panel silently never shows while flying. #cosmos-view has no transform/filter, so position:fixed
+  // descendants still anchor to the viewport exactly as if they were body-level.
+  const host = document.getElementById('cosmos-view') || document.body;
+  host.appendChild(skyDebugEl);
+}
+
+const fmtDev = d => (d > 0 ? '+' : '') + d.toFixed(1) + '¢';
+const fmtPolicy = (value, digits = 3) => Number.isFinite(value) ? value.toFixed(digits) : '—';
+
+function rootPolicyBlock(policy) {
+  const section = document.createElement('section');
+  section.className = 'sky-root-policy';
+  const heading = document.createElement('div');
+  heading.className = 'sky-root-policy-heading';
+  heading.textContent = 'ROOT SELECTION · LIVE POLICY';
+  section.appendChild(heading);
+  if (!policy?.available) {
+    const waiting = document.createElement('div');
+    waiting.className = 'sky-root-policy-summary';
+    waiting.textContent = 'provisional 1/1 · waiting for the first settled root solve';
+    section.appendChild(waiting);
+    return section;
+  }
+
+  const p = policy, inc = p.incumbent, trigger = p.trigger;
+  const confidence = p.ladder.normalizedRange < 0.25 ? 'vague' : p.ladder.normalizedRange < 0.75 ? 'mixed' : 'distinct';
+  const triggerState = !p.solve.valid
+    ? (p.solve.settled ? 'blocked: stale epoch' : 'blocked: moving')
+    : !p.established && trigger.due
+      ? `due: bootstrap → ${trigger.bootstrapChoice}`
+    : !trigger.dwellReady
+      ? 'blocked: dwell'
+      : trigger.due
+        ? `due: ${trigger.reason}`
+        : p.phrase.exhaustionDue
+          ? 'blocked: no eligible destination'
+          : 'waiting: geography / phrase cycle';
+  const destination = p.destination || p.previewDestination;
+  const bootstrapRetain = !p.established && trigger.reason === 'bootstrap' && trigger.bootstrapChoice === 'incumbent';
+  const destinationLabel = p.destination ? 'DESTINATION' : bootstrapRetain ? 'DESTINATION' : 'RANK PREVIEW';
+  const destinationText = bootstrapRetain
+    ? `${inc.fraction} · retain provisional anchor`
+    : destination
+      ? `${destination.fraction} · ${fmtPolicy(destination.motionCents, 0)}¢ · cost ${fmtPolicy(destination.cost, 2)}`
+      : '—';
+  const recent = p.recentRoots.length ? p.recentRoots.map(root => root.fraction || `${fmtPolicy(root.cents, 1)}¢`).join(' → ') : '—';
+  const lastDecision = p.lastDecision
+    ? `${p.lastDecision.reason}: ${p.lastDecision.from.fraction} → ${p.lastDecision.to.fraction}${p.lastDecision.changed ? '' : ' (retained)'}`
+    : '—';
+  const lines = [
+    `ROOT  ${inc.fraction}${p.established ? '' : ' [provisional]'} · rank ${inc.rank || '—'}/${inc.candidateCount} · raw ${fmtPolicy(inc.score, 4)} · fitness ${fmtPolicy(inc.fitness, 3)}`,
+    `FIELD spread ${fmtPolicy(p.ladder.spread, 4)} / ε ${fmtPolicy(p.ladder.epsilon, 4)} · range ${fmtPolicy(p.ladder.normalizedRange, 3)} · ${confidence}`,
+    `PHRASE dwell ${p.phrase.chordsSinceRootChange}/${trigger.minDwellChords} · states ${p.phrase.seenStateKeys.length} · repeated ${p.phrase.exhaustionDue ? p.phrase.repeatedStateKey : 'no'}`,
+    `SOLVE epoch ${p.solve.proposalEpoch ?? '—'}/${p.solve.currentEpoch} · ${p.solve.settled ? 'settled' : 'moving'} · ${p.solve.valid ? 'proposal valid' : 'proposal invalid'}`,
+    `TRIGGER ${triggerState}`,
+    `${destinationLabel} ${destinationText}`,
+    `RECENT ${recent}`,
+    `LAST ${lastDecision}`,
+  ];
+  const summary = document.createElement('div');
+  summary.className = 'sky-root-policy-summary';
+  summary.textContent = lines.join('\n');
+  section.appendChild(summary);
+
+  if (p.rows.length) {
+    const table = document.createElement('table');
+    table.className = 'sky-root-policy-table';
+    const labels = ['Root', 'Rank', 'Raw', 'Fit', 'Arrival', 'Motion', 'Tune', 'Total', 'Status'];
+    const thead = table.createTHead(), header = thead.insertRow();
+    for (const label of labels) { const th = document.createElement('th'); th.scope = 'col'; th.textContent = label; header.appendChild(th); }
+    const tbody = table.createTBody();
+    for (const row of p.rows) {
+      const tr = tbody.insertRow();
+      tr.className = `sky-root-status-${row.statusCode}`;
+      const values = [
+        row.fraction,
+        row.rank,
+        fmtPolicy(row.score, 4),
+        fmtPolicy(row.fitness, 3),
+        fmtPolicy(row.arrivalCoverage, 3),
+        Number.isFinite(row.motionCents) ? `${fmtPolicy(row.motionCents, 0)}¢/${fmtPolicy(row.motionCost, 2)}` : '—',
+        fmtPolicy(row.tuningCost, 2),
+        fmtPolicy(row.cost, 2),
+        row.status,
+      ];
+      for (const value of values) { const td = tr.insertCell(); td.textContent = value; }
+    }
+    section.appendChild(table);
+  }
+  return section;
+}
+
+function appendRatioTokens(cell, ratios) {
+  if (!ratios.length) { cell.textContent = '—'; return; }
+  const wrap = document.createElement('span');
+  wrap.className = 'sky-ratio-tokens';
+  for (const ratio of ratios) {
+    const token = document.createElement('span');
+    token.className = 'sky-ratio-token';
+    token.textContent = `${ratio.fraction}${ratio.count > 1 ? `×${ratio.count}` : ''}`;
+    wrap.appendChild(token);
+  }
+  cell.appendChild(wrap);
+}
+
+function makeRatioToneTable(rows, context) {
+  const section = document.createElement('section');
+  section.className = 'sky-ratio-section';
+  const heading = document.createElement('div');
+  heading.className = 'sky-ratio-heading';
+  heading.textContent = `SELECTED RATIO TONES  (${context})`;
+  section.appendChild(heading);
+  const table = document.createElement('table');
+  table.className = 'sky-ratio-table';
+  const header = table.createTHead().insertRow();
+  for (const label of ['deg', 'chord', 'selected', 'ON']) {
+    const th = document.createElement('th'); th.scope = 'col'; th.textContent = label; header.appendChild(th);
+  }
+  const tbody = table.createTBody();
+  for (const row of rows) {
+    const tr = tbody.insertRow();
+    const degree = tr.insertCell(); degree.textContent = row.degree;
+    const chord = tr.insertCell(); chord.textContent = row.inChord ? '●' : '·';
+    appendRatioTokens(tr.insertCell(), row.selected);
+    appendRatioTokens(tr.insertCell(), row.sounding);
+  }
+  section.appendChild(table);
+  return section;
+}
+
+function renderSkyDebug(now) {
+  if (!skyDebugOn) return;
+  ensureSkyDebugPanel();
+  if (now - skyDebugLast < SKY_DEBUG_MS) return;
+  skyDebugLast = now;
+  const s = debugSkyState();
+  const lines = [];
+  lines.push(`FULL SKY DEBUG   mix ${s.mix.toFixed(2)} (${s.mix < 0.01 ? 'bed' : s.mix > 0.99 ? 'rows' : 'crossfade'})   tuning ${s.tuningStrength.toFixed(2)}st   sounding root ${s.root.fraction} (${s.root.cents}¢, ${s.root.hz}Hz)${s.rootPolicy.pending ? '  [policy decision pending]' : ''}`);
+  const settleState = settleSinceSecond === null ? 'moving' : `settled ${(Math.max(0, (currentSkySeconds() - settleSinceSecond))).toFixed(1)}/${SETTLE_SECONDS}s`;
+  lines.push(`  ${settleState}, camSpeed ${camSpeed.toFixed(1)}u/s (settle<${SETTLE_SPEED})`);
+  // Three clocks: density-derived row-grid ticks, card onsets, and rate-independent sky seconds.
+  lines.push(`clock  ${s.speed.mode === 'onset'
+    ? `SPEED ${s.speed.leadOnsetsPerSec.toFixed(1)} card onsets/s · ${Math.round(s.speed.ticksPerSec)} row ticks/s`
+    : s.speed.mode === 'scaled'
+      ? `SCALED ${Math.round(s.speed.ticksPerSec)} ticks/s from median grid ${s.speed.medianGrid.toLocaleString()} → ${s.speed.cycleSeconds}s/cycle`
+      : `fixed ${Math.round(s.speed.ticksPerSec)} ticks/s`}   ·   sky ${s.speed.skySeconds.toFixed(1)}s`);
+  if (s.midi?.enabled) lines.push(`midi   MPE → ${s.midi.port} · ${s.midi.notes} notes · ${s.midi.live} live ch · ${s.midi.steals} steals · ${s.midi.dropped} dropped`);
+  lines.push(`modul  ${s.modulation.on
+    ? `ON  root → fundamental, shift ${s.modulation.cents >= 0 ? '+' : ''}${s.modulation.cents.toFixed(0)}¢, glide ${s.modulation.glideSeconds.toFixed(2)}s (${s.modulation.onsetTicks.toFixed(0)} ticks/onset)`
+    : 'off  (absolute JI against a fixed 1/1 — a root change re-reads, it does not transpose)'}`);
+  if (s.fundamental) lines.push(`fund   ${s.fundamental.cents >= 0 ? '+' : ''}${s.fundamental.cents.toFixed(0)}¢ transpose (summed with modul on one detune bus; ±${s.fundamental.maxCents}¢)`);
+  lines.push(`chord  ${s.chord.symbol}  degrees [${s.chord.semitones.join(',')}]`);
+  // Exposure: which of the chord's degrees the ROWS have actually SOUNDED this window (the bed does not
+  // expose — see chordExposure). The chord will not move until this is complete (or the cap fires); with
+  // no row source in the field the floor reads `no rows` and goes vacuous, leaving DWELL to pace the walk.
+  const exposure = s.chordExposure;
+  if (exposure) {
+    const missing = exposure.missing || [];
+    const floor = !exposure.rowsPresent ? '  ⊘ no rows — floor vacuous'
+      : missing.length ? `  waiting on [${missing.join(',')}]`
+      : '  ✓ full quality exposed';
+    lines.push(`quality  rows-only floor + dwell ${((exposure.dwell ?? 0) * 100).toFixed(0)}%cyc  sounded¢ [${exposure.sounded.join(',')}]${floor}` +
+      `  held ${exposure.heldSeconds.toFixed(1)}s / target ${(exposure.targetSeconds ?? 0).toFixed(1)}s` +
+      `  (cyc ${(exposure.cycleSeconds ?? 0).toFixed(1)}s · quant ${(exposure.quantumSeconds ?? 0).toFixed(1)}s · esc ${(exposure.escapeSeconds ?? 0).toFixed(0)}s) · last ${exposure.lastChordSeconds.toFixed(1)}s`);
+  }
+  lines.push(`trail  ${s.tabu.map(c => c.symbol).join(' → ')}`);
+  if (s.gridRows) {
+    const compiler = rowCompiler?.snapshot() || { queued: 0, compiling: 0, completed: 0, cancelled: 0, errors: 0 };
+    lines.push(`rows   ${s.gridRows.activeStars}/${ROW_ACTIVE_STARS} active · ${rowPrewarmIds.size}/${ROW_PREWARM_STARS} warm · ${s.gridRows.voices}/${s.gridRows.budget} voices · ${s.gridRows.budgetMisses} budget misses`);
+    lines.push(`tone cap  ${CULLED_ROW_MAX_VOICES_PER_TONE} each · ${s.gridRows.toneCapMisses} rejected · ${s.gridRows.toneCapEvictions} farther voices swapped`);
+    lines.push(`worker q${compiler.queued} c${compiler.compiling} done${compiler.completed} cancel${compiler.cancelled} err${compiler.errors} last${compiler.lastCompileMs?.toFixed?.(1) || 0}ms`);
+    for (const star of s.gridRows.stars) lines.push(`  #${star.id} ${star.events} ticks · ${star.selectedRatios} ratios · ${star.voices} voices${star.pendingKey ? ' [swap pending]' : ''}`);
+  }
+  const ratioTableAt = lines.length;
+  const ratioContext = s.mix > 0.5
+    ? `active grid-star programs; ON = live A–D voices, max ${CULLED_ROW_MAX_VOICES_PER_TONE} per tone`
+    : 'audible-star pools; ON = live bed voices';
+  const covSorted = [...s.coverageByTriad].sort((a, b) => b.coverage - a.coverage);
+  lines.push(`coverage (best→worst)  ${covSorted.map(c => `${c.symbol}:${c.coverage.toFixed(2)}`).join('  ')}`);
+  if (s.candidateCosts.length) {   // Sky Root Feature A: why the walk picked what it's about to pick
+    // fieldCost is normalized within the candidate's own cardinality class; richness is the earned
+    // extension incentive (weakest supported degree × EXTENSION_INCENTIVE), so it reads as a subtraction.
+    // The RICHNESS knob is upstream of all of it — larger qualities are not scored and lost, they are
+    // never candidates — so the line states the ceiling and how much of the vocabulary it leaves.
+    const r = s.richness;
+    lines.push(`RICHNESS  stop ${r.level}/${r.max} "${r.label}" — chords up to ${r.maxCardinality} notes · ${s.candidateCosts.length} candidates`);
+    lines.push(`  ${r.detail}`);
+    lines.push(`candidates (cost = parsimony + field − richness, best→worst, top 6)`);
+    lines.push('  ' + s.candidateCosts.slice(0, 6).map(c =>
+      `${c.symbol}[${c.cardinality}]:${c.cost.toFixed(2)}(${c.parsimony}+${c.fieldCost.toFixed(2)}${c.richness ? `−${c.richness.toFixed(2)}` : ''})`).join('  '));
+  }
+  lines.push(`\naudible ${s.audibleCount} star(s), ${s.stars.reduce((n, st) => n + st.voiced.length, 0)} voice(s) sounding`);
+  for (const st of s.stars.sort((a, b) => b.gain - a.gain)) {
+    lines.push(`\n#${st.id}  pan${st.pan.toFixed(2)} gain${st.gain.toFixed(2)} oct+${st.octave} lpf${st.cutoff}Hz`);
+    const poolLine = st.pool.map((slot, d) => slot ? `${d}:${slot.fraction}${fmtDev(slot.dev)}` : `${d}:-`).join(' ');
+    lines.push(`  pool  ${poolLine}`);
+    if (st.voiced.length) {
+      for (const v of st.voiced) lines.push(`  ▶ deg${v.degree} dev${fmtDev(v.dev)} gainLaw${v.gainLaw} env${v.envGain} ${v.freqHz}Hz`);
+    } else lines.push(`  ▶ (silent — no chord degree covered)`);
+  }
+  const fragment = document.createDocumentFragment();
+  fragment.appendChild(rootPolicyBlock(s.rootPolicy));
+  const before = document.createElement('div');
+  before.className = 'sky-debug-text';
+  before.textContent = lines.slice(0, ratioTableAt).join('\n');
+  fragment.appendChild(before);
+  fragment.appendChild(makeRatioToneTable(s.selectedRatioTones, ratioContext));
+  const after = document.createElement('div');
+  after.className = 'sky-debug-text';
+  after.textContent = lines.slice(ratioTableAt).join('\n');
+  fragment.appendChild(after);
+  const priorScrollTop = skyDebugEl.scrollTop;
+  skyDebugEl.replaceChildren(fragment);
+  skyDebugEl.scrollTop = priorScrollTop;
+}
+
+function loop() {
+  if (!started) return;                     // torn down by stopFlight() → break the rAF chain (no background frames)
+  requestAnimationFrame(loop);
+  if (M.mode !== 'flight' || !cosmos) return;
+  const now = performance.now(); let dt = (now - last) / 1000; last = now; dt = Math.min(dt, 0.05);
+  const ridingWeb = stepWebReturn(now, dt);
+  stepControls(dt, !ridingWeb);
+  // Motion mode for the audio telemetry, measured AFTER the camera has been stepped. Rotation and
+  // translation are separated deliberately: the arrow keys only rotate (stepControls touches cam.yaw /
+  // cam.pitch alone), which changes no zone membership, distance or programKey — so a symptom that shows
+  // up under `steer` cannot be caused by solving or compiling. That is the whole experiment.
+  const rotationRate = dt > 0 ? (Math.abs(cam.yaw - telemetryYaw) + Math.abs(cam.pitch - telemetryPitch)) / dt : 0;
+  const translationRate = dt > 0 ? Math.hypot(cam.off[0] - telemetryOff[0], cam.off[1] - telemetryOff[1], cam.off[2] - telemetryOff[2]) / dt
+    + (cam.anchor !== telemetryAnchor ? Infinity : 0) : 0;   // an anchor hop IS translation, however small the offset moved
+  telemetryYaw = cam.yaw; telemetryPitch = cam.pitch; telemetryOff = [...cam.off]; telemetryAnchor = cam.anchor;
+  audioTelemetry.frame({ rotationRate, translationRate, dtSeconds: dt });
+  const phaseAt = performance.now();
+  let phaseMark = phaseAt;
+  const phase = name => { const t = performance.now(); audioTelemetry.phase(name, t - phaseMark); phaseMark = t; };
+  cosmos.tick(dt);
+  phase('zones');
+  if (webZoneAdded.length || webZoneRemoved.length) {
+    const added = webZoneAdded; const removed = webZoneRemoved; webZoneAdded = []; webZoneRemoved = [];
+    webRenderer?.zones(added, removed);
+  }
+  if (swarm && swarm.agents.length) swarm.update(dt, cam.anchor);
+
+  const gravityCameraWorld = placement === 'hilbert' ? cameraAbsolute() : null;
+  if (gravityRenderer && gravityCameraWorld) {
+    syncGravity(now, gravityCameraWorld);
+    const gravityTick = currentTicks();
+    const gravityTickRate = dt > 0 ? Math.max(0, (gravityTick - gravityLastTick) / dt) : 0;
+    gravityLastTick = gravityTick;
+    gravityRenderer.frame({ dt, held: gravityOn(), center: gravityCameraWorld, tick: gravityTick, ticksPerSecond: gravityTickRate });
+  }
+
+  ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  // `basis` is the SHIP's: controls, hearing, the bed and row poses. It is never the eye.
+  const basis = camBasis();
+  // ── the two view frames (third-person work order §1) ──
+  // shipView is today's first-person projection exactly; renderView is the chase pose blended by t, and IS
+  // shipView at t = 0 (same object), so first person is untouched by construction. Drawing reads renderView;
+  // the one audio path that ever read the screen (the lead voice, below) reads shipView.
+  viewProgress = stepChaseProgress(viewProgress, chaseTarget(), dt, chase.transition);
+  const viewT = smoothstep(viewProgress);
+  const pose = viewT > 0
+    ? chasePose(basis, chase, viewT, { unit: CELL, box: placement === 'hilbert' ? hilbertEyeBox(cameraAbsolute()) : null })
+    : null;
+  const { shipView, renderView } = composeViewFrames({ shipBasis: basis, pose, fog: viewT, focal, cx, cy, near: NEAR });
+  shipBoost += ((keys[' '] ? 1 : 0) - shipBoost) * (1 - Math.exp(-dt * 6));
+  drawHilbertBoundaryWalls(renderView);
+  webRenderer?.frame({
+    now, anchor: cam.anchor, off: [...cam.off], d: renderView.basis.d, r: renderView.basis.r, u: renderView.basis.u,
+    eye: renderView.eye, near: NEAR, fogBlend: renderView.fog,
+    mouseX, mouseY, cx, cy, focal, fogNear: FOG_NEAR, fogFar: FOG_FAR, tailFrac: webTailFrac,
+    gravity: gravityRenderer ? { activation: gravityRenderer.activation,
+      inner: DEFAULT_GRAVITY_OPTIONS.windowInner, outer: DEFAULT_GRAVITY_OPTIONS.windowOuter } : null,
+  });
+  phase('web');
+
+  // bloom bookkeeping: drop any bloomed star that flew out of the world; keep the rest streaming their FULL
+  // clouds (runtime priority-solves the most-recent click via setFocus; we stream all of them here).
+  for (const g of bloomed) if (!cosmos.zones.has(g)) { bloomed.delete(g); gravitySyncDirty = true; if (cosmos.focusGrid === g) cosmos.setFocus(null); }
+  for (const g of bloomed) ensureFocusBloom(cosmos.zones.get(g));
+  pumpBlooms();
+  updateFilterUI();
+
+  // undeformed world positions (bloom centres come from these — a bloom shouldn't move itself)
+  const rpOf = new Map();
+  for (const z of cosmos.zones.values()) rpOf.set(z.grid, renderPosCam(z, cam.anchor, cam.off));
+
+  // Gravity composes immediately after immutable/resting placement and before bloom deformation. The
+  // worker returns offsets only; convert them into this camera-relative frame and clamp the displaced
+  // point to the Hilbert cube walls. `rpOf` remains untouched for audio membership and root geography.
+  const gravityOf = new Map();
+  for (const z of cosmos.zones.values()) {
+    const resting = rpOf.get(z.grid);
+    let moved = gravityRenderer ? gravityRenderer.addOffset(z.grid, resting) : resting;
+    if (gravityCameraWorld && moved !== resting) {
+      const absolute = moved.map((value, axis) => value + gravityCameraWorld[axis]);
+      const clamped = clampHilbertWorld(absolute);
+      moved = clamped.map((value, axis) => value - gravityCameraWorld[axis]);
+    }
+    gravityOf.set(z.grid, moved);
+  }
+
+  // Web-travel star lookahead. Sample only a short curved rail around the current ride position,
+  // expressed camera-relative so it compares directly with rpOf without forming huge grid floats.
+  // The sampled route drives visuals only; it never inserts zones or changes planner/solver state.
+  let travelStarSamples = [], travelStarRadius = 0, travelStarColor = null;
+  if (returnRide) {
+    const hilbert = placement === 'hilbert';
+    const cameraWorld = cameraAbsolute();
+    travelStarRadius = hilbert ? CELL * WEB_RETURN_STAR_RADIUS_CELLS : WEB_RETURN_STAR_RADIUS_SPINE;
+    travelStarColor = activeWebs.get(returnRide.webId)?.color || '#9edcff';
+    travelStarSamples = buildTravelBloomSamples(returnRide.path, returnRide.pathProgress || 0, {
+      behind: hilbert ? CELL * WEB_RETURN_STAR_BEHIND_CELLS : WEB_RETURN_STAR_BEHIND_SPINE,
+      ahead: hilbert ? CELL * WEB_RETURN_STAR_AHEAD_CELLS : WEB_RETURN_STAR_AHEAD_SPINE,
+      samples: WEB_RETURN_STAR_SAMPLES,
+      samplePath: sampleArcPath,
+    }).map(sample => ({ ...sample, position: sample.position.map((value, i) => value - cameraWorld[i]) }));
+  }
+
+  // Each bloom's geometry: outer radius (spiky-ball extent), the deformation bubble, and — after
+  // projection — the "black hole" screen disk. Near a cube wall, translate the whole deformation
+  // envelope inward; contained blooms retain their exact natural centre and deform space normally.
+  const bubbles = [];
+  const frameCameraWorld = gravityCameraWorld;
+  for (const g of bloomed) {
+    const rp = gravityOf.get(g), data = bloomCache.get(g);
+    if (!rp || !data || !data.systems.length) continue;
+    // rscale uses the FULL range (stable node positions); the footprint (deform bubble + blot) tracks the
+    // outermost VISIBLE shell so filtering to low cardinalities shrinks the bubble/blot to match the cloud.
+    const rscale = Math.min(BLOOM_R, BLOOM_MAX_R / (1 + cardExtent(Math.max(1, data.cmax - data.cmin))));
+    const cmaxVis = g === cosmos.focusGrid ? Math.min(data.cmax, cardHi) : data.cmax;   // filter only shrinks the focused bloom
+    const outerR = rscale * (1 + cardExtent(Math.max(0, cmaxVis - data.cmin)));
+    const bubbleR = outerR + BUBBLE_MARGIN;
+    let c = rp;
+    if (frameCameraWorld) {
+      const absolute = rp.map((value, axis) => value + frameCameraWorld[axis]);
+      const contained = containHilbertSphere(absolute, bubbleR);
+      c = contained.map((value, axis) => value - frameCameraWorld[axis]);
+    }
+    bubbles.push({ g, c, outerR, bubbleR });
+  }
+  const deforming = placement === 'hilbert' && bubbles.length > 0;   // cube-only local deformation
+  const bubbleOf = new Map(bubbles.map(bubble => [bubble.g, bubble]));
+
+  // Project all zones once. A bloomed grid starts at its contained centre; every other point starts at
+  // its natural position. Both then compose through the other local bubbles exactly as before.
+  const proj = new Map(), placed = new Map();
+  for (const z of cosmos.zones.values()) {
+    const ownBubble = bubbleOf.get(z.grid);
+    const base = ownBubble ? ownBubble.c : gravityOf.get(z.grid);
+    let rp = deforming ? deform(base, z.grid, bubbles) : base;
+    // A second bloom may deform this centre after its initial wall fit. Recontain the visible sphere
+    // without changing ordinary interior deformation.
+    if (frameCameraWorld && ownBubble) {
+      const absolute = rp.map((value, axis) => value + frameCameraWorld[axis]);
+      rp = containHilbertSphere(absolute, ownBubble.outerR)
+        .map((value, axis) => value - frameCameraWorld[axis]);
+    }
+    placed.set(z.grid, rp);
+    const s = renderView.project(rp);   // { x, y, z: eye depth, f: fog depth }
+    if (s) proj.set(z.grid, { z, s, rp });
+  }
+  phase('proj');
+
+  // cosmos-audio: drive the lead voice's spatialization from its star's live projection this frame. It is the
+  // one audio path derived from the SCREEN, so it projects through shipView — the ship's own first-person
+  // frame — never renderView: bit-identical to before in first person, still ship-relative in chase view.
+  if (leadVoice) {
+    if (!cosmos.zones.has(leadVoice.node.grid)) { setLead(null); leadVoice = null; updateRhythmActionState(); }   // evicted → clear the lead
+    else {
+      const leadRp = placed.get(leadVoice.node.grid), lp = leadRp ? shipView.project(leadRp) : null;
+      if (lp) setSpatial(clampN((cx - lp.x) / cx, -1, 1), distGain(lp.z), distOctave(lp.z));   // screen-right → pan right (Avery: was backwards)
+      else setSpatial(0, 0, 0);   // flew out of view (still loaded) → silence via gain 0, don't crash
+    }
+  }
+  // Sky Root handoff B3: settle trigger — solve when camera speed has stayed below SETTLE_SPEED for
+  // SETTLE_SECONDS (the SKY clock, read via cosmos-audio's currentSkySeconds so "settled" means the same
+  // duration at any tempo or scaled speed), rate-limited to one solve per ROOT_RESOLVE_MIN_SECONDS.
+  // The gather set is a world-space RADIUS around the camera (rpOf is already camera-relative, so its
+  // length IS true 3D distance) — NOT the view-depth-sorted proj/audible set above, so the root never
+  // changes just because you turned to look somewhere else. Dense fields can take seconds to score;
+  // gather here, then score in a dedicated worker with at most one outstanding request.
+  const skyNow = currentSkySeconds();
+  if (camSpeed < SETTLE_SPEED) { if (settleSinceSecond === null) settleSinceSecond = skyNow; }
+  else {
+    if (rootPolicyWasSettled) rootGeographyEpoch++;
+    rootPolicyWasSettled = false;
+    settleSinceSecond = null;
+  }
+  const settled = settleSinceSecond !== null && (skyNow - settleSinceSecond) >= SETTLE_SECONDS;
+  if (settled) rootPolicyWasSettled = true;
+  const rootHarmonyPolicy = currentHarmonyPolicy();
+  // Invalidate the root solve on a harmony FRAME change (source/scale), NOT on a chord-walk advance — the
+  // starfield's implied key center doesn't change just because the walk stepped to the next chord. Keying
+  // on the per-chord definition key used to bump the epoch (and force a solveRoots) every chord AND stamp a
+  // proposal the boundary guard then rejected, so the root never left 1/1. See rootPolicyStableKey.
+  const rootHarmonyPolicyKey = rootPolicyStableKey(rootHarmonyPolicy);
+  const rootFundamentalPolicy = railParams.get('rowFundamental');
+  if (lastRootHarmonyPolicyKey === null) lastRootHarmonyPolicyKey = rootHarmonyPolicyKey;
+  if (rootHarmonyPolicyKey !== lastRootHarmonyPolicyKey || rootFundamentalPolicy !== lastRootFundamentalPolicy) {
+    rootGeographyEpoch++;
+    lastRootResolveSecond = -Infinity;
+    lastRootHarmonyPolicyKey = rootHarmonyPolicyKey;
+    lastRootFundamentalPolicy = rootFundamentalPolicy;
+  }
+  setRootPolicyContext({ settled, geographyEpoch: rootGeographyEpoch });
+  // TEMP DEBUG (Phase 2.4 recovery timing) — remove with Cosmos/audio/recovery-timing.js. Records the row-voice
+  // trajectory across a window after a stop to expose the recovery shape. Movement is derived from the
+  // camera position (works for WASD + scroll/dolly). Toggle: window.RECOVERY_PROBE.
+  sampleRecovery({ skyNow, camPos: cameraAbsolute(), settled });
+  if (settled && !rootSolvePending && rootCompiler && (skyNow - lastRootResolveSecond) >= ROOT_RESOLVE_MIN_SECONDS) {
+    lastRootResolveSecond = skyNow;
+    const rootField = [];
+    for (const z of cosmos.zones.values()) {
+      if (!z.skyTones || !z.skyTones.length) continue;
+      const rp = rpOf.get(z.grid); if (!rp) continue;
+      const d = Math.hypot(rp[0], rp[1], rp[2]);
+      if (d > ROOT_RADIUS) continue;
+      const tones = rootCompetitionTones(z.skyTones, rootFundamentalPolicy);
+      if (tones.length) rootField.push({ tones, weight: distGain(d) });
+    }
+    const rootScoreOptions = { targetsCents: rootHarmonyPolicy.targets, toleranceCents: rootHarmonyPolicy.toleranceCents };
+    const currentRoot = currentSkyRoot();
+    const compiler = rootCompiler, proposalEpoch = rootGeographyEpoch;
+    rootSolvePending = true;
+    compiler.request({
+      field: rootField.map(star => ({ weight: star.weight, tones: star.tones.map(({ f, c }) => ({ f, c })) })),
+      options: rootScoreOptions,
+      currentRoot: { fraction: currentRoot.fraction, cents: currentRoot.cents },
+    }).then(({ result, cancelled }) => {
+      if (cancelled || !started || rootCompiler !== compiler) return;
+      // A solve may outlive movement, a policy edit, or an intervening modulation. Never apply a
+      // ladder (or incumbent score) gathered under a different context, including exit/re-entry.
+      if (proposalEpoch !== rootGeographyEpoch || !rootPolicyWasSettled ||
+          rootHarmonyPolicyKey !== rootPolicyStableKey(currentHarmonyPolicy()) ||
+          rootFundamentalPolicy !== railParams.get('rowFundamental') ||
+          currentRoot.rootKey !== currentSkyRoot().rootKey) {
+        lastRootResolveSecond = -Infinity;
+        return;
+      }
+      proposeRoot({ ...result, proposalEpoch, policyKey: rootHarmonyPolicyKey });
+    }).catch(error => {
+      if (rootCompiler === compiler) console.warn('[cosmos root solve]', error);
+    }).finally(() => { if (rootCompiler === compiler) rootSolvePending = false; });
+  }
+
+  const root = currentSkyRoot();
+  // Gravity must never change WHICH stars sound or their distance-derived gain/key. In the cube the
+  // membership pass therefore reads immutable resting positions, while the per-frame pose reads the
+  // fully displaced/deformed positions so only spatial direction follows the orbit.
+  const audioMembershipPositions = gravityRenderer ? rpOf : placed;
+  // Full Sky: the ambient bed's audible set — EVERY solved zone with a degree pool is eligible (not
+// just bloomed/clicked stars, see Cosmos/docs/FULL_SKY_HANDOFF.md), nearest AUDIBLE_N wins.
+  // No lead required — this is the un-gated bed, live from cosmos entry (flight-boot.js's unlock).
+  // Hysteresis (AUDIBLE_MARGIN): pick from the wider N+margin window, but a star already in the field
+  // keeps its seat over that same window — only genuinely falling further behind drops it. Plain
+  // nearest-N-every-frame flickered stars near the boundary in/out constantly while flying, which
+  // cosmos-audio.js heard as the bed cutting out (each flicker = a full voice release/re-attack cycle).
+  //
+  // ⚠ TRUE 3D DISTANCE, NOT VIEW DEPTH (2026-07-29). This set used to be built from `proj` — the zones that
+  // PROJECT ONTO THE SCREEN — sorted by view depth. That made the bed's membership view-dependent, so simply
+  // turning the camera swung stars out of the frustum entirely (where the hysteresis window cannot even see
+  // them to protect them) and swung new ones in. Every such churn is a full release/create cycle: new
+  // oscillators, and a discrete MIDI note-on per voice, which is why the same bed chord re-struck on every
+  // frame of rotation in a DAW and why sustained rotation buried the audio thread in overlapping release
+  // tails. The row field and the root solver already select by true 3D distance for exactly this reason
+  // ("the root must not change on turning your head", ROOT_RADIUS above). The bed now agrees.
+  //
+  // Pan / gain / cutoff stay VIEW-derived, per frame (setSkyPose below) — turning your head must still sweep
+  // a star across the stereo image. Pose is view-relative; membership is not.
+  if (bedRootKey !== root.rootKey) { bedRootKey = root.rootKey; markFieldDirty(); }   // a root swap re-folds every pool
+  if (fieldMembershipDirty || now - bedMembershipAt >= FIELD_MEMBERSHIP_MAX_INTERVAL_MS) {
+    bedMembershipAt = now;
+    const skyCandidates = [];
+    for (const z of cosmos.zones.values()) {
+      if (!z.skyPool) continue;
+      const resting = audioMembershipPositions.get(z.grid), position = placed.get(z.grid);
+      if (!resting || !position) continue;
+      skyCandidates.push({ z, position, distance: Math.hypot(resting[0], resting[1], resting[2]) });
+    }
+    skyCandidates.sort((a, b) => a.distance - b.distance);
+    const skyWindow = skyCandidates.slice(0, AUDIBLE_N + AUDIBLE_MARGIN);
+    const skyKept = skyWindow.filter(c => audibleIds.has(c.z.grid));
+    const skyFresh = skyWindow.filter(c => !audibleIds.has(c.z.grid));
+    const skyChosen = [...skyKept, ...skyFresh].slice(0, AUDIBLE_N);
+    audibleIds = new Set(skyChosen.map(c => c.z.grid));
+    // Re-anchored playback: each zone lazily caches its re-folded pool at the CURRENT solved root,
+    // invalidated by rootKey (a swap is rare — most passes every chosen zone's cache just hits).
+    setField(skyChosen.map(({ z, position, distance }) => {
+      if (!z.skyPoolAt || z.skyPoolAt.rootKey !== root.rootKey) z.skyPoolAt = { rootKey: root.rootKey, pool: poolFromTones(z.skyTones || [], root.cents) };
+      return { id: z.grid, pool: z.skyPoolAt.pool, ...skyPoseFor(position, distance, basis) };
+    }));
+  } else {
+    // POSE-ONLY frame: re-aim what is already sounding. No star can enter or leave here, so no voice can be
+    // created or released — which is the entire point.
+    const pose = [];
+    for (const id of audibleIds) {
+      const resting = audioMembershipPositions.get(id), position = placed.get(id);
+      if (!resting || !position) continue;
+      pose.push({ id, ...skyPoseFor(position, Math.hypot(resting[0], resting[1], resting[2]), basis) });
+    }
+    setSkyPose(pose);
+  }
+
+  // translationRate is Infinity on an anchor hop; either way, only translation can change the selection.
+  updateGridRowField(audioMembershipPositions, placed, basis, translationRate > 0, now);
+  phase('field');
+  drawCockpitPlot();
+  drawChordOverlay();
+  renderSkyDebug(now);
+
+  // black-hole blots: each bloom is an opaque orb of radius outerR × BLOT_FRAC. Seen from OUTSIDE it is a screen
+  // disk (from its projected centre) that occludes farther stars behind it. Seen from INSIDE it is a shell: every
+  // ray from an interior eye exits the sphere exactly once, so anything outside the shell is behind it — a
+  // full-screen veil covers what's already painted and those stars are culled. The EYE decides inside/outside
+  // (chase view included): a ship parked in a bloom, seen from outside, still sits in front of its disk.
+  const blots = [], shells = [];
+  const eye = renderView.eye;   // ship-relative, like `placed` ([0,0,0] in first person)
+  for (const b of bubbles) {
+    const c = placed.get(b.g); if (!c) continue;
+    const shellR = b.outerR * BLOT_FRAC;
+    const d = Math.hypot(c[0] - eye[0], c[1] - eye[1], c[2] - eye[2]);
+    const inside = smoothstep((shellR * (1 + BLOT_SHELL_BAND) - d) / (2 * BLOT_SHELL_BAND * shellR));
+    if (inside > 0) shells.push({ g: b.g, c, r2: shellR * shellR, inside });
+    const p = proj.get(b.g), fade = 1 - inside; if (!p || fade <= 0) continue;
+    blots.push({ x: p.s.x, y: p.s.y, vz: p.s.z, f: p.s.f, r: shellR * focal / p.s.z, fade, g: b.g });
+  }
+  const veil = shells.reduce((a, sh) => Math.max(a, sh.inside), 0);
+  // outside the shell of a bloom the eye is FULLY inside (the crossfade band leaves it to the veil alone)
+  const shelled = (rp, g) => { for (const sh of shells) { if (sh.g === g || sh.inside < 1) continue; const dx = rp[0] - sh.c[0], dy = rp[1] - sh.c[1], dz = rp[2] - sh.c[2]; if (dx * dx + dy * dy + dz * dz > sh.r2) return true; } return false; };
+  // a plain star is occluded if it sits behind (farther than) a nearer bloom's disk, or outside a shell we're
+  // in — culled from draw AND pick
+  // bloom clouds draw OVER the veil, so a node outside another bloom's shell fades with that shell's crossfade
+  const shellVisibility = (rp, g) => {
+    let v = 1;
+    for (const sh of shells) { if (sh.g === g) continue; const dx = rp[0] - sh.c[0], dy = rp[1] - sh.c[1], dz = rp[2] - sh.c[2]; if (dx * dx + dy * dy + dz * dz > sh.r2) v = Math.min(v, 1 - sh.inside); }
+    return v;
+  };
+  const occluded = (sx, sy, vz, rp, g) => { for (const bl of blots) { if (bl.g === g || bl.vz >= vz) continue; const dx = sx - bl.x, dy = sy - bl.y; if (dx * dx + dy * dy < bl.r * bl.r) return true; } return shelled(rp, g); };
+
+  // connectors (behind stars), faded by depth — spine only. In the cube there's no district reorg,
+  // so a connector would just be a random thread across space; the Hilbert layout carries structure.
+  if (placement !== 'hilbert') {
+    ctx.lineWidth = 1;
+    for (const { z, s } of proj.values()) {
+      if (z.parentGrid === z.grid) continue;
+      const p = proj.get(z.parentGrid); if (!p) continue;
+      const f = fogAt(s.f); if (f <= 0) continue;
+      ctx.strokeStyle = `rgba(120,150,200,${0.10 * f})`;
+      ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(p.s.x, p.s.y); ctx.stroke();
+    }
+  }
+  // ── note constellations (Order B): the connector slot — behind stars and glows, after `blots` are
+  // computed, so a bloom painted later correctly hides the lines passing behind it. Endpoints come from
+  // `placed`, NOT `proj`: `placed` is camera-relative world position including bloom-bubble deformation,
+  // so a line stays welded to its star through flight and through a bloom (a bloomed grid is simply a
+  // vertex at its bloom centre), and the renderer can clip at the near plane for notes sounding behind us.
+  if (constellation.options.enabled) {
+    const feed = gridRowReachedAttacks(constellationCursor);
+    const gap = constellationCursor === null ? Infinity : feed.now - constellationCursor;
+    const positionOf = grid => placed.get(grid) || null;   // camera-relative world, bloom deformation included
+    if (gap >= 0 && gap < CONSTELLATION_RESYNC_SECONDS && feed.attacks.length) {
+      const isInFigure = grid => constellation.inFigure(grid);
+      // Rule 5: coincident attacks across grids are routine here (all rows share one transport), so a
+      // simultaneous group is chained greedily by 3D world distance — nearest to the tip first, then
+      // nearest to THAT grid. Each group is ordered against the tip the previous group left behind, then
+      // ingested, so a multi-group frame is identical to feeding the attacks one at a time. admit() runs
+      // first: under the 'chord' lifecycle it flushes the figure on the first note of a new harmony (the
+      // row selection key — chord, root or scale) and drops old-harmony stragglers before chaining.
+      for (let i = 0; i < feed.attacks.length;) {
+        let j = i + 1;
+        while (j < feed.attacks.length && feed.attacks[j].when === feed.attacks[i].when) j++;
+        const group = constellation.admit(feed.attacks.slice(i, j), rowSelectionKey);
+        constellation.ingest(group.length < 2 ? group : chainCoincidentAttacks(group, constellation.tip, positionOf, isInFigure), feed.now);
+        i = j;
+      }
+    }
+    constellationCursor = feed.now;
+    // Rule 6 membership is the LOADED field — every zone placed this frame — not the ~20-star row field:
+    // flying churns the row field constantly, and a line should outlast the notes that drew it for as
+    // long as its stars are on the map. Visibility then needs nothing extra: the renderer fades each line
+    // by its endpoints' fogAt, the same fog law the star loop uses, and a line leaves when a star's zone
+    // is evicted. Keyed on the camera's position, never its rotation, so turning your head tears nothing.
+    constellation.retain(placed, feed.now);
+    drawGridRowConstellation(ctx, constellation.edges(feed.now), {
+      positionOf, frame: renderView, fogAt,
+      // Read here rather than reusing the star loop's auraDetuneCents: this slot runs before it, and the
+      // lines must fold in the same live detune so their hues drift with the orbs on a modulation.
+      detuneCents: gridRowDetuneCents(), now: feed.now, drawIn: constellation.options.drawIn,
+    });
+  }
+  drawAgents(renderView);   // Collider-Battle ships (over the web, under the picking rings)
+  // ── picking: as we draw, note the star/node nearest the cursor and the pinned selection's live pos ──
+  const havePtr = mouseX >= 0;
+  let pickNode = null, pickNodeD2 = NODE_HIT * NODE_HIT;
+  let pickBloomWeb = null, pickBloomWebD2 = BLOOM_WEB_HIT * BLOOM_WEB_HIT;
+  let pickStar = null, pickStarD2 = Infinity, selPos = null;
+
+  // stars, painter's order (far first). A blooming star dissolves into its point cloud (dot alpha ↓).
+  const rowActivity = new Map(gridRowVisualState().map(activity => [activity.id, activity]));
+  const auraDetuneCents = gridRowDetuneCents();   // one global read/frame: shifts every orb's hue together on a modulation
+  const order = [...proj.values()].sort((a, b) => b.s.z - a.s.z);
+  // Core-dot batching. The frontier is mostly a few FIXED colours (unlit dust, unsolvable grey, monster red);
+  // only solved stars carry the continuous starColor. Bucket each core by exact colour + a fine fog-alpha band
+  // (1/48 ≈ sub-perceptual) so ~1500 per-dot fills collapse to a few dozen. Colour is never quantised — the
+  // dust→sun gradient is untouched. Only the tiny cores defer; they flush before the blots, so z-order holds.
+  const dotBuckets = new Map();
+  // Aura batching, same idea one layer up. Glows are no longer interleaved with the stars: they are
+  // collected here and flushed in ONE additive pass (below, and again per bloom) so overlapping notes ADD
+  // light instead of each greying the one behind it. Additive blending is order-independent, so the glows
+  // need no painter's order of their own. One batch serves both passes — flush() empties it.
+  const auras = createGridRowAuraBatch();
+  for (const { z, s, rp } of order) {
+    const fog = fogAt(s.f); if (fog <= 0) continue;
+    // Cache projected motion even while a star is occluded so uncovering it cannot produce a stale,
+    // full-screen streak. Space is the shared free-flight/Web-travel boost, so one law serves both.
+    const previousScreen = z._starScreen;
+    z._starScreen = { x: s.x, y: s.y, at: now };
+    if (!bloomed.has(z.grid) && occluded(s.x, s.y, s.z, rp, z.grid)) continue;   // behind a black-hole blot → no draw, no click
+    const dim = (bloomed.has(z.grid) && z._bloom && z._bloom.pts.length) ? 0.18 : 1;   // bloomed dot dissolves into its cloud
+    const travelTarget = returnRide && z.state !== 'solved'
+      ? travelBloomWeight(gravityOf.get(z.grid), travelStarSamples, travelStarRadius) : 0;
+    const glowRate = travelTarget > (z._travelGlow || 0) ? 10 : 4.5;
+    z._travelGlow = (z._travelGlow || 0) + (travelTarget - (z._travelGlow || 0)) * (1 - Math.exp(-dt * glowRate));
+    if (z._travelGlow < 0.002 && !returnRide) delete z._travelGlow;
+    const travelGlow = z._travelGlow || 0;
+    if (travelGlow > 0 && z._travelStarSize == null) z._travelStarSize = approximateStarSize(z.divisors || factorInfo(z.grid).divisors);
+    const previewSize = z._travelStarSize || 0.15;
+    const displaySize = z.state === 'solved' ? z.size : z.size + (Math.max(z.size, previewSize) - z.size) * travelGlow;
+    const lit = displaySize > 0;                               // real partial solve or visual route preview
+    const worldR = (lit ? displaySize : 0.2) * STAR_SCALE;
+    let r = worldR * focal / s.z; r = Math.max(0.5, Math.min(r, 400));
+    const col = z.monster ? 'rgba(255,120,105,0.92)'           // red giant = combinatorial monster (solve-on-override)
+              : z.unsolvable ? 'rgba(150,120,110,0.45)'         // warm-grey = the live solve failed
+              : (lit ? starColor(displaySize) : 'rgba(120,130,150,0.5)');
+    if (keys[' '] && previousScreen && now - previousScreen.at < 100) {
+      let dx = previousScreen.x - s.x, dy = previousScreen.y - s.y;
+      const motion = Math.hypot(dx, dy);
+      if (motion > 0.35) {
+        const length = Math.min(BOOST_STAR_STREAK_MAX, motion * BOOST_STAR_STREAK_SCALE), k = length / motion;
+        const tailX = s.x + dx * k, tailY = s.y + dy * k;
+        const streakColor = travelGlow > 0.01 && travelStarColor ? travelStarColor : col;
+        const streak = ctx.createLinearGradient(s.x, s.y, tailX, tailY);
+        streak.addColorStop(0, streakColor); streak.addColorStop(0.22, streakColor); streak.addColorStop(1, 'transparent');
+        ctx.globalAlpha = fog * dim * BOOST_STAR_STREAK_ALPHA;
+        ctx.strokeStyle = streak; ctx.lineWidth = Math.max(0.65, Math.min(3, r * 0.55)); ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(tailX, tailY); ctx.stroke();
+      }
+    }
+    const activity = rowActivity.get(z.grid);
+    if (activity && !bloomed.has(z.grid)) auras.add(s, r, fog, activity, auraDetuneCents);   // deferred → additive flush
+    if (travelGlow > 0.01 && travelStarColor) {                // route-energy halo around unfinished stars
+      const haloR = r * (2.4 + travelGlow * 2.2);
+      const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, haloR);
+      g.addColorStop(0, travelStarColor); g.addColorStop(0.18, travelStarColor); g.addColorStop(1, 'transparent');
+      ctx.globalAlpha = fog * dim * travelGlow * 0.32; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x, s.y, haloR, 0, 7); ctx.fill();
+    }
+    if (lit && displaySize > 2.2) {                            // solved or synthetic sun glow
+      const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 2.6);
+      g.addColorStop(0, col); g.addColorStop(1, 'transparent');
+      ctx.globalAlpha = 0.5 * fog * dim; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s.x, s.y, r * 2.6, 0, 7); ctx.fill();
+    }
+    const dotBand = Math.round(fog * dim * 48), dotKey = col + '|' + dotBand;   // deferred: batched fill after the loop
+    let dotBucket = dotBuckets.get(dotKey);
+    if (!dotBucket) { dotBucket = { a: dotBand / 48, col, path: new Path2D() }; dotBuckets.set(dotKey, dotBucket); }
+    dotBucket.path.moveTo(s.x + r, s.y); dotBucket.path.arc(s.x, s.y, r, 0, 7);
+    if (selected && selected.kind === 'star' && selected.grid === z.grid) selPos = { x: s.x, y: s.y, r };
+    // topmost wins: iteration is far→near (painter's order), so a later hit is drawn OVER any earlier
+    // one and should always take the pick — picking by "closest centre" instead let a farther star's
+    // circle win over a nearer star actually under the cursor. No z-comparison needed; draw order IS depth order.
+    if (havePtr) { const dx = s.x - mouseX, dy = s.y - mouseY, d2 = dx * dx + dy * dy, hit = r + STAR_HIT; if (d2 <= hit * hit) { pickStarD2 = d2; pickStar = { kind: 'star', grid: z.grid, z, x: s.x, y: s.y, r }; } }
+  }
+  auras.flush(ctx);   // additive glow pass — BEFORE the cores, so every star still shines through its own light
+  // one fill per (colour, alpha-band) instead of one per star — the steady-state main-thread win
+  for (const b of dotBuckets.values()) { ctx.globalAlpha = b.a; ctx.fillStyle = b.col; ctx.fill(b.path); }
+  ctx.globalAlpha = 1;
+
+  // inside a bloom's shell: veil everything painted so far (background stars, walls, constellation lines, the
+  // Web canvas beneath) — the inside face of the orb. Only the bloom clouds, drawn next, sit in front of it.
+  if (veil > 0) { ctx.globalAlpha = veil; ctx.fillStyle = 'rgb(5,7,11)'; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
+  // black-hole disks: a soft dark sphere behind each bloom (drawn over the culled background, under the
+  // cloud) so the bloom reads as a focal object floating in a clearing — no background noise bleeding through.
+  for (const bl of blots) {
+    const fog = fogAt(bl.f); if (fog <= 0) continue;
+    const g = ctx.createRadialGradient(bl.x, bl.y, 0, bl.x, bl.y, bl.r);
+    g.addColorStop(0, 'rgba(5,7,11,0.96)'); g.addColorStop(0.72, 'rgba(5,7,11,0.9)'); g.addColorStop(1, 'transparent');
+    ctx.globalAlpha = fog * bl.fade; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(bl.x, bl.y, bl.r, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // BLOOMS: every clicked star renders its FULL cloud (no point cap) as a SPIKY BALL — one global
+  // Fibonacci direction lattice over ALL the grid's systems, each point pushed out to a radius set by its
+  // cardinality (so cardinality reads as radial extent, not a separate concentric sphere). This kills the
+  // radial-ray artifact that per-cardinality spheres produced for sparse grids: sparse grids read as
+  // scattered spikes, abundant grids fill into a layered sun — same formula, no override. Nodes instantiate
+  // over FOCUS_FILL_MS and re-flow as the lattice grows (recreating the solve animation); each is clickable.
+  // Anim state rides on the zone (z._bloom) so it's freed on evict. BLOOM_OMEGA=0 keeps it hit-testable.
+  const spin = now / 1000 * BLOOM_OMEGA, cs = Math.cos(spin), sn = Math.sin(spin);
+  // Web travel owns its own immutable curve. While it is active, even an already-open bloom stays
+  // visually lightweight: no rhythm-level fan-out is constructed for a grid the camera merely passes.
+  const bloomWeb = !returnRide && bloomWebId ? activeWebs.get(bloomWebId) : null;
+  for (const g of bloomed) {
+    const data = bloomCache.get(g), z = cosmos.zones.get(g), rpC = rpOf.get(g);
+    if (!data || !data.systems.length || !z || !rpC) continue;
+    // Centre world-relative position (deformed like everything else). We render PER NODE and do NOT gate on the
+    // centre projecting in front of the camera — so flying INTO or THROUGH a cloud keeps the near-side nodes
+    // visible even when the centre is beside/behind you. Each node's own near-plane + fog cull still applies.
+    const crp = placed.get(g) || rpC;
+    let B = z._bloom; if (!B) B = z._bloom = { born: now, pts: [] };
+    const len = data.systems.length, reveal = Math.min(len, Math.ceil(len * (now - B.born) / FOCUS_FILL_MS));
+    while (B.pts.length < reveal) {                              // instantiate the next rhythm node(s)
+      const s = data.systems[B.pts.length];
+      const charted = indexKeys ? binarySearch(indexKeys, s.key) >= 0 : false;   // codex membership (cyan)
+      B.pts.push({ c: s.c, dense: s.dense, charted, layers: s.layers, fund: s.fund, rs: s.rs, key: s.key,
+                   col: charted ? CHARTED : cardColor(s.c), px: 0, py: 0, pz: 0, placed: false, bt: now });
+    }
+    const N = B.pts.length;                                     // global lattice size (re-flows as it grows)
+    // radial scale: plain BLOOM_R per cardinality step, soft-kneed so sparse high-cardinality outliers don't
+    // blow out the footprint, and clamped so the OUTER radius stays within BLOOM_MAX_R (loose safety ceiling).
+    const rscale = Math.min(BLOOM_R, BLOOM_MAX_R / (1 + cardExtent(Math.max(1, data.cmax - data.cmin))));
+    // A bloomed grid gets no single grid-centre orb (suppressed below); instead each node whose OWNER
+    // rhythm currently has a live/attacking row voice lights up, keyed by the shared canonical rhythm key.
+    const act = rowActivity.get(g);
+    const nodeSources = act && act.sources ? new Map(act.sources.map(src => [src.key, src])) : null;
+    const renderedNodes = [];
+    for (let pi = 0; pi < N; pi++) {
+      const p = B.pts[pi];
+      const R = rscale * (1 + cardExtent(p.c - data.cmin));    // radial extent = cardinality (soft-kneed spikes)
+      const y = 1 - (pi + 0.5) / N * 2, rr = Math.sqrt(Math.max(0, 1 - y * y)), ang = pi * GOLDEN;   // uniform dir
+      const tx = Math.cos(ang) * rr * R, ty = y * R, tz = Math.sin(ang) * rr * R;
+      if (!p.placed) { p.px = tx; p.py = ty; p.pz = tz; p.placed = true; }
+      else { p.px += (tx - p.px) * BLOOM_EASE; p.py += (ty - p.py) * BLOOM_EASE; p.pz += (tz - p.pz) * BLOOM_EASE; }
+      if (g === cosmos.focusGrid && !cardVisible(p.c)) continue;          // band filter applies to the FOCUSED bloom only
+      const wx = p.px * cs + p.pz * sn, wz = -p.px * sn + p.pz * cs;      // spin around Y
+      const nrp = [crp[0] + wx, crp[1] + p.py, crp[2] + wz];
+      const sp = renderView.project(nrp); if (!sp) continue;             // per-node near cull
+      let fog = fogAt(sp.f); if (fog <= 0) continue;                      // per-node fog (far side of a big bloom fades)
+      if (shells.length) { fog *= shellVisibility(nrp, g); if (fog <= 0) continue; }   // another bloom's shell hides it
+      const rv = Math.min(1, (now - p.bt) / BLOOM_RV_MS), a0 = fog * rv;   // per-node birth ease
+      const r = Math.max(0.4, Math.min(2.6 * focal / sp.z, 6)) * (0.5 + 0.5 * rv);
+      renderedNodes.push({ p, pi, sp, fog, rv, a0, r });
+    }
+
+    // Expand the chosen grid-level Web through the exact rhythm nodes that contain its NR. The centre
+    // hub is the same endpoint used by the off-thread grid Web, so its spokes visually continue the
+    // strand into the bloom and back out again. Membership grows with the bloom as shards arrive.
+    if (bloomWeb?.visible && renderedNodes.length) {
+      const matches = renderedNodes.filter(({ p }) => {
+        if (bloomWeb.dynamic) {
+          if (!p._motifKeys) p._motifKeys = rhythmMotifKeys(p.layers);
+          return p._motifKeys.has(bloomWeb.motifKey);
+        }
+        if (p._motherTag === undefined && indexKeys) p._motherTag = mtagOfKey(p.key) || null;
+        return p._motherTag === bloomWeb.tag;
+      });
+      const webGravityFade = gravityWebVisibility(crp);
+      if (matches.length && webGravityFade > 0.01) {
+        let hub = renderView.project(crp);
+        if (!hub) {
+          const sum = matches.reduce((acc, node) => [acc[0] + node.sp.x, acc[1] + node.sp.y], [0, 0]);
+          hub = { x: sum[0] / matches.length, y: sum[1] / matches.length, z: matches[0].sp.z };
+        }
+        const meanFog = matches.reduce((sum, node) => sum + node.fog, 0) / matches.length;
+        ctx.save();
+        ctx.strokeStyle = bloomWeb.color; ctx.fillStyle = bloomWeb.color; ctx.lineCap = 'round';
+        ctx.lineWidth = 1.65;
+        ctx.globalAlpha = Math.max(0.12, 0.44 / Math.max(1, Math.log10(matches.length + 1))) * meanFog * webGravityFade;
+        ctx.beginPath();
+        for (const node of matches) {
+          ctx.moveTo(hub.x, hub.y); ctx.lineTo(node.sp.x, node.sp.y);
+          if (havePtr) {
+            const hit = pointSegmentDistance2(mouseX, mouseY, hub, node.sp);
+            if (hit.d2 < pickBloomWebD2) {
+              pickBloomWebD2 = hit.d2;
+              pickBloomWeb = { kind: 'web', webId: bloomWeb.tag, x: hit.x, y: hit.y, r: 2 };
+            }
+          }
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 0.82 * meanFog * webGravityFade;
+        ctx.beginPath();
+        for (const node of matches) {
+          const beadR = Math.max(1.1, Math.min(2.2, node.r + 0.55));
+          ctx.moveTo(node.sp.x + beadR, node.sp.y); ctx.arc(node.sp.x, node.sp.y, beadR, 0, 7);
+        }
+        ctx.fill();
+        ctx.beginPath(); ctx.arc(hub.x, hub.y, 2.4, 0, 7); ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // Node auras batch per bloom at node scale, flushed here so they still sit BENEATH the node dots —
+    // one additive pass instead of one veiling orb per node, which matters most exactly where nodes are
+    // dense and their glows overlap hardest.
+    if (nodeSources) {
+      for (const { p, sp, fog, r } of renderedNodes) { const src = nodeSources.get(p.key); if (src) auras.add(sp, r, fog, src, auraDetuneCents); }
+      auras.flush(ctx);
+    }
+    // Rhythm nodes remain above the Web detail so every connected rhythm stays legible and clickable.
+    for (const { p, pi, sp, fog, a0, r } of renderedNodes) {
+      ctx.globalAlpha = a0; ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(sp.x, sp.y, r, 0, 7); ctx.fill();
+      if (p.dense) { ctx.globalAlpha = a0 * 0.5; ctx.strokeStyle = p.col; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sp.x, sp.y, r + 1.6, 0, 7); ctx.stroke(); }
+      const nid = g + ':' + pi;
+      if (selected && selected.kind === 'node' && selected.id === nid) selPos = { x: sp.x, y: sp.y, r };
+      if (havePtr) { const dx = sp.x - mouseX, dy = sp.y - mouseY, d2 = dx * dx + dy * dy; if (d2 < pickNodeD2) { pickNodeD2 = d2; pickNode = { kind: 'node', id: nid, grid: g, c: p.c, dense: p.dense, layers: p.layers, fund: p.fund, rs: p.rs, key: p.key, charted: p.charted, x: sp.x, y: sp.y, r }; } }
+    }
+  }
+  // ── the player's ship (chase view only): after the stars, auras, cores and bloom clouds, before the picking
+  // rings and the HUD. It sits exactly where the first-person camera is and fades in with the V blend, so it
+  // never appears in first person. Not pickable. Known limitation (accepted in the work order): a star lying
+  // between the eye and the ship draws beneath the ship — rare at the chase distance.
+  if (pose) {
+    const shipLength = chase.shipScale * CELL;
+    // When a wall squeezes the eye onto the hull, fade the ship out rather than let it fill the screen.
+    const eyeGap = Math.hypot(pose.eye[0], pose.eye[1], pose.eye[2]);
+    const clearance = smoothstep((eyeGap - 1.5 * shipLength) / (1.5 * shipLength));
+    drawPlayerShip(ctx, { view: renderView, hull: hullBasis(basis), length: shipLength, alpha: viewT * clearance, boost: shipBoost, time: now / 1000 });
+  }
+  // resolve hover (a node under the cursor wins — it's the specific target), draw the selection + hover
+  // rings on their live screen positions, and drive the tooltip. The detail panel is pinned on click.
+  hover = pickNode || pickBloomWeb || pickStar || hoverWeb;
+  ringAt(selPos, '#ffffff', 1.6);
+  if (hover && hover.kind !== 'web' && !(selected && ((hover.kind === 'star' && selected.kind === 'star' && hover.grid === selected.grid) || (hover.kind === 'node' && selected.kind === 'node' && hover.id === selected.id))))
+    ringAt(hover, 'rgba(255,255,255,0.7)', 1.2);
+  if (cv) cv.style.cursor = hover ? 'pointer' : 'crosshair';
+  updateTooltip();
+  ctx.globalAlpha = 1;
+  const st = cosmos.stats(), ev = cosmos.events;
+  // backpressure: ease the frontier reach down when the solve backlog is deep, back up when it clears (cube only)
+  if (placement === 'hilbert') { const tgt = (st.pending + st.solving) > SOLVE_BACKLOG ? HIL_SPAWN_MIN : HIL_SPAWN; hilSpawn += (tgt - hilSpawn) * 0.04; }
+  // heartbeat: log solve throughput once/sec so stalls are visible (which op is flowing, worker errors)
+  if (now - hbLast > 1000) {
+    console.log(`[cosmos] zones ${st.total} · solved ${st.solved} (+${st.solved - hbSolved}/s) · solving ${st.solving} · pending ${st.pending} · tasks/s: plan ${ev.plans - hbPlans} shard ${ev.shards - hbShards} · inflight ${st.inFlight}/${pool.size} · worker-err ${pool.errors} · task-err ${ev.errors} · blooms ${bloomCache.size}`);
+    console.log(formatLive(audioTelemetry.report()));   // audio clock, current motion mode (T dumps the table)
+    hbLast = now; hbPlans = ev.plans; hbShards = ev.shards; hbSolved = st.solved;
+    for (const g of bloomCache.keys()) if (!cosmos.zones.has(g)) bloomCache.delete(g);   // drop evicted blooms
+    if (selected && (selected.kind === 'star' || selected.kind === 'web')) showDetail(selected);   // refresh live abundance/state / visible Web count
+  }
+  // top HUD is deliberately minimal: grid, active blooms, active webs — nothing else. Solve stats + flight
+  // controls live in the top-right help popup (#cosmos-help-panel); full solve detail is in the console heartbeat.
+  const focusHud = bloomed.size ? ` · <span style="color:var(--known)">◉ ${bloomed.size} bloom${bloomed.size > 1 ? 's' : ''}</span>` : '';
+  // web slot legend: numbered chips (1-9,0) tinted by web colour, dim when that slot is toggled off
+  let webHud = '';
+  if (activeWebs.size) {
+    const bySlot = new Map(); for (const w of activeWebs.values()) bySlot.set(w.slot, w);
+    let chips = '';
+    for (let s = 0; s < WEB_MAX; s++) { const w = bySlot.get(s); if (!w) continue; chips += `<span style="color:${w.color};opacity:${w.visible === false ? 0.35 : 1};font-weight:bold">${s === 9 ? '0' : s + 1}</span>`; }
+    webHud = ` · ◈ ${chips}`;
+  }
+  const rideHud = returnRide ? ` · <span style="color:${activeWebs.get(returnRide.webId)?.color || 'var(--known)'}">↢ ${returnRide.destination === 'anchor' ? `grid ${returnRide.targetGrid.toLocaleString()}` : returnRide.destination} ${Math.round((activeWebs.get(returnRide.webId)?.rideProgress || 0) * 100)}%</span>` : '';
+  const gravityHud = gravityRenderer && (gravityOn() || gravityRenderer.activation > 0.001)
+    ? ` · <span style="color:var(--known)">◎ gravity ${Math.round(gravityRenderer.activation * 100)}%</span>` : '';
+  hud.innerHTML = `grid <b>${cam.anchor.toLocaleString()}</b>${focusHud}${webHud}${rideHud}${gravityHud}`;
+  // live solve queue → the help popup (only while open, so it's free when closed)
+  if (helpPanelEl && liveEl && helpPanelEl.classList.contains('open')) {
+    const errRow = (pool.errors || ev.errors) ? `<div class="help-kv"><span>errors</span><b style="color:#e88">${pool.errors + ev.errors}</b></div>` : '';
+    liveEl.innerHTML =
+      `<div class="help-kv"><span>solved</span><b>${st.solved}</b></div>` +
+      `<div class="help-kv"><span>solving</span><b>${st.solving}</b></div>` +
+      `<div class="help-kv"><span>pending</span><b>${st.pending}</b></div>` +
+      `<div class="help-kv"><span>tasks</span><b>${st.inFlight}/${pool.size}</b></div>` + errRow;
+  }
+  // ── audio-clock telemetry: fold this frame's external counters in, then close the frame ──────────────
+  // Per frame, not per second, so each count lands in the motion bucket it actually happened in.
+  const rowStats = rowPlayerStats(), midi = midiOutState(), compile = rowCompiler?.snapshot(), bed = bedStats();
+  audioTelemetry.counters({
+    installs: rowStats?.installs, entries: rowStats?.entries, exits: rowStats?.exits,
+    midiNotes: midi?.notes, midiSteals: midi?.steals, midiDropped: midi?.dropped,
+    compiles: compile?.completed,
+    bedCreated: bed?.created, bedReleased: bed?.released, bedRefused: bed?.refused,
+  });
+  // A LEVEL, not a rate: live oscillators are what actually buries the audio thread, and the logical voice
+  // budget cannot see them (it is freed eagerly, ~2.55s before the node stops).
+  if (bed) audioTelemetry.gauge('bedLiveOscs', bed.liveOscs);
+  phase('draw');
+  audioTelemetry.frameEnd(performance.now() - phaseAt);
+}
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+  renderScale = dpr;
+  W = cv.clientWidth; H = cv.clientHeight; cv.width = W * dpr; cv.height = H * dpr;
+  cx = W / 2; cy = H / 2; focal = Math.min(W, H) * 0.9;
+  webRenderer?.resize(W, H, dpr);
+}
+
+function bindControls() {
+  let down = false, lx = 0, ly = 0, downX = 0, downY = 0, dragged = false;
+  const rel = e => { const b = cv.getBoundingClientRect(); mouseX = e.clientX - b.left; mouseY = e.clientY - b.top; mClientX = e.clientX; mClientY = e.clientY; };
+  cv.addEventListener('pointerdown', e => { down = true; dragged = false; lx = downX = e.clientX; ly = downY = e.clientY; rel(e); cv.setPointerCapture(e.pointerId); });
+  cv.addEventListener('pointermove', e => {
+    rel(e);
+    if (!down) return;
+    if (Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) > DRAG_SLOP) dragged = true;   // look-drag, not a click
+    if (returnRide) { lx = e.clientX; ly = e.clientY; return; }
+    cam.yaw += (e.clientX - lx) * 0.004; cam.pitch = Math.max(-1.4, Math.min(1.4, cam.pitch - (e.clientY - ly) * 0.004)); lx = e.clientX; ly = e.clientY;
+  });
+  // left-click (no drag): star → BLOOM it (persists as part of the trail) + pin its panel, priority-solving
+  // via the runtime; node → pin its panel; empty space → just clear the panel (blooms stay — right-click
+  // collapses them, so you can leave a trail of open stars).
+  cv.addEventListener('pointerup', e => {
+    down = false;
+    if (e.button !== 0 || dragged) return;   // left-click only — right-click is handled by contextmenu (collapse)
+    if (hover && hover.kind === 'star') {
+      const g = hover.grid, gz = cosmos.zones.get(g);
+      if (gz && (gz.unsolvable || gz.monster)) { selected = hover; }   // frontier dust / monster → inspect only (monster has a SOLVE ANYWAY button)
+      else {
+        if (!bloomed.has(g)) { if (gz) delete gz._bloom; bloomed.add(g); gravitySyncDirty = true; }   // fresh grow; open blooms pin under gravity
+        cosmos.setFocus(g); ensureFocusBloom(gz); selected = hover;
+      }
+    } else if (hover && hover.kind === 'node') {
+      cosmos.setFocus(hover.grid); selected = hover;   // focus the bloom you're interacting with (the filter targets it)
+      setRhythmAudition(hover);   // preserve the existing click-to-hear behavior; the inspector can stop/restart it explicitly
+      openCockpit();              // M4: no per-star song solve — the global sky chord tints it (cosmos-audio.js)
+    } else if (hover && hover.kind === 'web') {
+      selected = { kind: 'web', webId: hover.webId };
+      bloomWebId = hover.webId;
+    } else {
+      selected = null;
+    }
+    webRenderer?.select((selected?.kind === 'web' && selected.webId) || bloomWebId);
+    showDetail(selected);
+  });
+  // right-click a bloom (its star OR any of its nodes) → COLLAPSE it back to a plain dot
+  cv.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    const g = hover && hover.grid;
+    if (g != null && bloomed.has(g)) {
+      bloomed.delete(g);
+      gravitySyncDirty = true;
+      const z = cosmos.zones.get(g); if (z) delete z._bloom;
+      if (cosmos.focusGrid === g) cosmos.setFocus(null);
+      if (selected && selected.grid === g) { selected = null; showDetail(null); }
+    }
+  });
+  cv.addEventListener('pointerleave', () => { mouseX = -1; mouseY = -1; if (tipEl) tipEl.style.display = 'none'; if (cv) cv.style.cursor = 'crosshair'; });
+  // scroll = quick "flight": dolly forward/back along the view direction (Helix's primary travel)
+  cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    if (returnRide) return;
+    const { d } = camBasis();
+    const dist = placement === 'hilbert' ? CELL * HIL_DOLLY_CELLS : DOLLY;   // gentle in the cube
+    const step = dist * (e.deltaY < 0 ? 1 : -1);
+    translateCam([d[0] * step, d[1] * step, d[2] * step]);
+  }, { passive: false });
+  const typing = t => t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+  window.addEventListener('keydown', e => {
+    if (M.mode !== 'flight' || typing(e.target)) return;
+    const k = e.key.toLowerCase(); const firstPress = !keys[k]; keys[k] = true;
+    if (firstPress && k === 'escape') { if (returnRide) cancelWebReturn(); else window.exitCosmos(); e.preventDefault(); }
+    if (firstPress && /^[0-9]$/.test(k)) { toggleSlot(k === '0' ? 9 : +k - 1); if (selected) showDetail(selected); }   // 1-9,0 → hide/show web slots
+    if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)
+    // V → chase view: pull back behind and above the ship, and back to the cockpit. Cube only (setViewMode
+    // refuses spine placement). Only what is SEEN moves — the ship keeps the controls, the hearing and the key.
+    if (firstPress && k === 'v' && !e.metaKey && !e.ctrlKey && !e.altKey) setViewMode(viewMode === 'chase' ? 'first' : 'chase');
+    if (firstPress && k === 'h') toggleHarmonyHold();   // H → freeze/release chord + solved root; transport keeps running
+    if (firstPress && k === 'c') { skyDebugOn = !skyDebugOn; if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none'; }   // C → toggle the Full Sky debug overlay (dev)
+    // T → dump the audio-clock table (one row per motion mode) and start a fresh window. The protocol:
+    // sit still ~10s, steer ~10s, fly ~10s, press T — the three rows are then directly comparable.
+    if (firstPress && k === 't') { console.log(formatTable(audioTelemetry.report())); audioTelemetry.reset(); }
+    if (k.startsWith('arrow') || k === ' ') e.preventDefault();   // don't scroll the page
+  });
+  window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+  window.addEventListener('blur', () => { keys.g = false; });   // never strand gravity held when the tab loses focus
+  window.addEventListener('resize', () => { if (cv) resize(); });
+}
