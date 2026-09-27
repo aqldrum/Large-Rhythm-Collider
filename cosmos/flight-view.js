@@ -46,7 +46,7 @@ import { SolverWorkerPool } from './cosmos/solver-worker-pool.js';
 import { composeViewFrames } from './view-frame.js';
 import { CHASE_DEFAULTS, chaseOptions, chasePose, smoothstep, stepChaseProgress } from './chase-camera.js';
 import { drawPlayerShip } from './player-ship.js';
-import { QUALITY_ORDER, detectDefaultTier, devicePoolMax, resolveTier } from './cosmos-quality.js';
+import { QUALITY_ORDER, QUALITY_TIERS, createQualityPrefs, qualityWarning, devicePoolMax, resolveTier } from './cosmos-quality.js';
 // The help popup's VIEW section (constellations · gravity · camera · screen) and the on-screen chord name.
 import { VIEW_OPTIONS, createViewOptions, constellationPatch, gravityHeld, gravityControlLabel } from './view-options.js';
 import { chordLabel } from './chord-label.js';
@@ -84,11 +84,13 @@ const HIL_WALL_PATCH_CELLS = 9;  // local half-width — never construct/render 
 const HIL_CAMERA_RADIUS = CELL * 0.12; // keeps the viewpoint in front of the near plane at contact
 // ── PERFORMANCE QUALITY (cosmos-quality.js) ──────────────────────────────────────────────────────────
 // The resource knobs below are no longer fixed consts: the quality authority owns them. The tier
-// auto-detected from THIS machine seeds their initial values, and applyQuality() (just below) re-points
-// them live when the user moves the Stage-2 slider. Physically the solver pool is still spawned at the
+// the listener's saved choice (or, with none saved, the tier detected for THIS machine) seeds their initial
+// values, and applyQuality() (just below) re-points them live when a QUALITY pill in the View popup is tapped
+// (qualityPrefs → subscribe, wired in buildQualitySection). Physically the solver pool is still spawned at the
 // device maximum (see startFlight); a tier only throttles cosmos.poolSize — concurrency — so dialing down
 // idles workers rather than tearing them down. Harmony is deliberately NOT a quality knob (module enforces).
-let   activeQualityId = detectDefaultTier();      // conservative default for an unknown public visitor
+const qualityPrefs = createQualityPrefs();        // saved choice, else the detected tier (re-detected every load)
+let   activeQualityId = qualityPrefs.get();
 const currentQuality = () => resolveTier(activeQualityId);
 let   poolPhysicalMax = 8;                         // set in startFlight() to the device pool size; ceils poolCap
 const _q0 = currentQuality();
@@ -116,8 +118,9 @@ let   SOLVE_BACKLOG = _q0.solveBacklog; // tier-owned backlog above which the fr
 let   hilSpawn = HIL_SPAWN;// live (eased) frontier reach in the cube
 // applyQuality — re-point every live knob to a tier and push the cheap-live parts into the running engine
 // at once: the concurrency gate (cosmos.poolSize, physical workers stay warm), the DPR clamp (via resize),
-// and — hilbert only — the fog/evict shell. Called by the Stage-2 slider on override; on the tier that
-// matches today's shipped constants it is exactly behavior-preserving. Harmony is never touched here.
+// and — hilbert only — the fog/evict shell. Called whenever qualityPrefs changes (pill tap or the dev
+// handle); on the tier that matches today's shipped constants it is exactly behavior-preserving. Harmony is
+// never touched here.
 function applyQuality(id) {
   const q = resolveTier(id);
   const prevRange = currentQuality().bloomMaxRange;   // capture before the id flips
@@ -966,6 +969,15 @@ export function ensureFlight(canvas, hudEl) {
     });
     const viewHost = document.getElementById('cosmos-view-options');
     if (viewHost) buildViewSection(viewHost);
+    const qualityHost = document.getElementById('cosmos-quality-options');
+    if (qualityHost) buildQualitySection(qualityHost, document.getElementById('cosmos-quality-note'));
+    const qualityHelpBtn = document.getElementById('cosmos-quality-help');
+    if (qualityHelpBtn) {
+      qualityHelpBtn.addEventListener('mousedown', e => e.preventDefault());   // keep SPACE on the flight
+      qualityHelpBtn.addEventListener('click', () => setQualityAboutOpen(qualityHelpBtn.getAttribute('aria-expanded') !== 'true'));
+      // Any other click inside the popup (a pill, the bubble itself) dismisses the bubble.
+      viewPanelEl?.addEventListener('click', e => { if (!qualityHelpBtn.contains(e.target)) setQualityAboutOpen(false); });
+    }
     chordEl = document.getElementById('cosmos-chord');
     chordFaces = chordEl ? [...chordEl.querySelectorAll('.chord-face')] : null;
     const homeBtn = document.getElementById('cosmos-home-btn');
@@ -1174,9 +1186,12 @@ export function ensureFlight(canvas, hudEl) {
   cam = { anchor: 2640, off: [0, 0, 0], yaw: Math.PI / 2, pitch: 0.05, speed: 180 };
   cosmos.setCamera(cam.anchor);
   resize();
-  // Live quality handle for tuning before the Stage-2 slider exists: __cosmosQuality.set('low'|'medium'
-  // |'high'|'ultra') re-points every knob on the running engine so a tier can be felt instantly.
-  if (typeof window !== 'undefined') window.__cosmosQuality = { get: () => activeQualityId, set: applyQuality, tiers: QUALITY_ORDER, detected: activeQualityId };
+  // Quality dev handle — the same path as the QUALITY pills, so a console set() moves the pill and is saved like
+  // a tap. forget() drops the saved choice and returns to the detected tier.
+  if (typeof window !== 'undefined') window.__cosmosQuality = {
+    get: () => activeQualityId, set: id => qualityPrefs.set(id), forget: () => qualityPrefs.forget(),
+    tiers: QUALITY_ORDER, detected: qualityPrefs.detected,
+  };
   // Note-constellation tuning handle, same precedent and same reason: no UI exists yet, and these want to
   // be felt by eye on a live field. __cosmosConstellation.set({ lifecycle: 'lifespan', lifespan: 5 })
   // re-points the ONE options object the core and the renderer both read. A fresh session starts with an
@@ -1202,6 +1217,7 @@ export function ensureFlight(canvas, hudEl) {
   // router so the fresh constellation + gravity pick up the persisted taste.
   viewOptions.resetForEntry();
   for (const name of Object.keys(VIEW_OPTIONS)) applyViewOption(name, viewOptions.get(name));
+  paintQualitySection();   // quality is never reset on entry — it is the listener's saved choice
   resetChordOverlay();
   last = performance.now();
   requestAnimationFrame(loop);
@@ -2190,6 +2206,12 @@ let chordEl = null, chordFaces = null, chordFace = 0, chordText = '', chordKey =
 function setViewPanelOpen(open) {
   viewPanelEl?.classList.toggle('open', open);
   viewBtnEl?.setAttribute('aria-expanded', String(open));
+  if (!open) setQualityAboutOpen(false);   // the explainer bubble never outlives its popup
+}
+
+function setQualityAboutOpen(open) {
+  document.getElementById('cosmos-quality-about')?.classList.toggle('open', open);
+  document.getElementById('cosmos-quality-help')?.setAttribute('aria-expanded', String(open));
 }
 
 function buildViewSection(host) {
@@ -2220,6 +2242,39 @@ function paintViewSection() {
     // Gravity and the chase view are cube-only (Decision 2) — in spine placement they would be dead pills.
     row.hidden = !!VIEW_OPTIONS[name].cubeOnly && placement !== 'hilbert';
   }
+}
+
+// QUALITY section — under VIEW in the same popup, same pill look. One row of tier pills; a dot marks the tier
+// detected for this machine (the way back), and the note under them warns only when the choice is above it.
+const qualityButtons = new Map();   // tier id → pill button
+let qualityNoteEl = null;
+
+function buildQualitySection(host, noteEl) {
+  qualityNoteEl = noteEl;
+  const row = document.createElement('div'); row.className = 'view-row';
+  const label = document.createElement('span'); label.textContent = 'Tier';
+  const group = document.createElement('div'); group.className = 'view-seg-group';
+  group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Quality tier');
+  for (const id of QUALITY_ORDER) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'view-seg';
+    button.textContent = id === 'medium' ? 'MED' : QUALITY_TIERS[id].label.toUpperCase();
+    if (id === qualityPrefs.detected) { button.classList.add('recommended'); button.title = 'Recommended for this machine'; }
+    button.addEventListener('mousedown', e => e.preventDefault());   // a focused pill would take SPACE (boost)
+    button.addEventListener('click', () => qualityPrefs.set(id));
+    qualityButtons.set(id, button); group.appendChild(button);
+  }
+  row.append(label, group); host.appendChild(row);
+  qualityPrefs.subscribe(id => { applyQuality(id); paintQualitySection(); });
+  paintQualitySection();
+}
+
+function paintQualitySection() {
+  for (const [id, button] of qualityButtons) {
+    const on = id === activeQualityId;
+    button.classList.toggle('active', on); button.setAttribute('aria-pressed', String(on));
+  }
+  if (qualityNoteEl) qualityNoteEl.textContent = qualityWarning(activeQualityId, qualityPrefs.detected);
 }
 
 // ONE router from a pill to its visual. Runs on every change (pill, V key, entry reset) and once per option at

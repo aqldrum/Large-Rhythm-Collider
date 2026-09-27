@@ -53,7 +53,7 @@ export const QUALITY_ORDER = ['low', 'medium', 'high', 'ultra'];
 // The physical solver pool is always spawned at the device maximum (this many workers
 // exist); a tier's poolCap only throttles how many run CONCURRENTLY via cosmos.poolSize.
 // So dialing quality down idles workers instead of tearing them down — the live slider
-// (Stage 2) costs nothing. Mirrors flight-view's historical poolSize expression.
+// costs nothing. Mirrors flight-view's historical poolSize expression.
 export function devicePoolMax(nav = defaultNav()) {
   return Math.max(2, Math.min(8, (nav.hardwareConcurrency || 4) - 2));
 }
@@ -87,4 +87,60 @@ export function detectDefaultTier(nav = defaultNav()) {
 
 function defaultNav() {
   return (typeof navigator !== 'undefined') ? navigator : {};
+}
+
+// ── The listener's choice ────────────────────────────────────────────────────────────────────────────
+// The View popup's QUALITY pills. Only an explicit tap is saved: with nothing saved, every load re-detects,
+// so a visitor who never touches the slider always gets this machine's recommendation. Once they tap a tier
+// it sticks across visits. There is deliberately no automatic step-down — the listener has the final say,
+// and the only nudge is qualityWarning() under the pills.
+export const QUALITY_STORAGE_KEY = 'lrc.cosmos.quality.v1';
+
+function defaultStorage() {
+  try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; }
+}
+
+export function createQualityPrefs({ storage, nav, key = QUALITY_STORAGE_KEY } = {}) {
+  const store = storage !== undefined ? storage : defaultStorage();
+  const detected = detectDefaultTier(nav);
+  let tier = detected, override = false;
+  try {
+    const blob = JSON.parse(store?.getItem(key) || 'null');
+    // An unreadable or stale choice is NO choice → detection. Not resolveTier's medium fallback: that
+    // would pin a 14-core machine to medium because a tier was once renamed.
+    if (blob && Object.hasOwn(QUALITY_TIERS, blob.tier)) { tier = blob.tier; override = true; }
+  } catch {}
+  const listeners = new Set();
+  const persist = () => { try { store?.setItem(key, JSON.stringify({ tier })); } catch {} };
+  const notify = () => { for (const fn of listeners) { try { fn(tier); } catch {} } };
+  return {
+    get: () => tier,
+    detected,
+    isOverride: () => override,
+    set(id) {
+      if (!Object.hasOwn(QUALITY_TIERS, id)) return tier;
+      if (id === tier) {
+        // Tapping the recommended tier still counts as a choice: it must survive a later change in detection.
+        if (!override) { override = true; persist(); }
+        return tier;
+      }
+      tier = id; override = true; persist(); notify();
+      return tier;
+    },
+    // Dev-handle only: drop the saved choice and go back to this machine's recommendation.
+    forget() {
+      try { store?.removeItem(key); } catch {}
+      override = false;
+      if (tier !== detected) { tier = detected; notify(); }
+      return tier;
+    },
+    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+  };
+}
+
+// The one line under the pills: only when the listener has chosen more than this machine was recommended.
+export function qualityWarning(chosenId, detectedId) {
+  return QUALITY_ORDER.indexOf(chosenId) > QUALITY_ORDER.indexOf(detectedId)
+    ? "Above this machine's recommended setting — may stutter or run hot."
+    : '';
 }

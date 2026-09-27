@@ -1,7 +1,7 @@
 // Assertions for the Cosmos performance-quality authority: tier coverage, the
 // monotonicity contract (raising quality only ever adds work), the device-class
 // default detector, and — structurally — Avery's "never dumber harmony" rule.
-import { QUALITY_TIERS, QUALITY_ORDER, detectDefaultTier, devicePoolMax, resolveTier } from '../cosmos-quality.js';
+import { QUALITY_TIERS, QUALITY_ORDER, detectDefaultTier, devicePoolMax, resolveTier, createQualityPrefs, qualityWarning, QUALITY_STORAGE_KEY } from '../cosmos-quality.js';
 
 let PASS = true;
 const check = (name, ok, detail = '') => {
@@ -59,6 +59,61 @@ console.log('\n[6] resolveTier is brick-proof');
 check('a known id resolves to its tier', resolveTier('high').id === 'high');
 check('an unknown/stale id falls back to medium (never throws, never bricks)', resolveTier('garbage-from-localStorage').id === 'medium');
 check('undefined resolves to the safe default', resolveTier(undefined).id === 'medium');
+
+console.log('\n[7] The listener\'s choice — saved only when tapped, detection otherwise');
+{
+  const memoryStorage = () => { const m = new Map(); let writes = 0;
+    return { getItem: k => m.get(k) ?? null, setItem: (k, v) => { writes++; m.set(k, String(v)); }, removeItem: k => m.delete(k), m, writes: () => writes }; };
+  const big = { hardwareConcurrency: 14 }, small = { hardwareConcurrency: 4 };
+
+  const st = memoryStorage();
+  const p = createQualityPrefs({ storage: st, nav: big });
+  check('nothing saved → the detected tier, not an override', p.get() === 'high' && p.detected === 'high' && !p.isOverride());
+  check('nothing saved → a later load re-detects on a different machine', createQualityPrefs({ storage: st, nav: small }).get() === 'low');
+  check('creating the store writes nothing', st.writes() === 0);
+
+  const seen = []; p.subscribe(id => seen.push(id));
+  p.set('low');
+  check('a tap changes the tier, saves it, and notifies once', p.get() === 'low' && p.isOverride() && seen.join() === 'low'
+    && JSON.parse(st.m.get(QUALITY_STORAGE_KEY)).tier === 'low');
+  check('a saved choice survives a reload regardless of the machine', createQualityPrefs({ storage: st, nav: big }).get() === 'low');
+  const w = st.writes(); p.set('low');
+  check('re-tapping the active override neither writes nor notifies', st.writes() === w && seen.length === 1);
+  p.set('ludicrous');
+  check('an unknown tier is ignored', p.get() === 'low' && seen.length === 1);
+
+  const st2 = memoryStorage(), p2 = createQualityPrefs({ storage: st2, nav: big }), seen2 = [];
+  p2.subscribe(id => seen2.push(id)); p2.set('high');
+  check('tapping the recommended tier saves it (survives a later detection change) without notifying',
+    p2.isOverride() && seen2.length === 0 && createQualityPrefs({ storage: st2, nav: small }).get() === 'high');
+
+  p.forget();
+  check('forget() clears the saved choice and returns to detection, notifying the change',
+    p.get() === 'high' && !p.isOverride() && !st.m.has(QUALITY_STORAGE_KEY) && seen.at(-1) === 'high');
+
+  const junk = ['{"tier":"garbage"}', '{"tier":"toString"}', '{"nope":1}', 'not json', '"high"', 'null'];
+  check('an unreadable or stale saved value falls back to DETECTION, not medium',
+    junk.every(v => { const s = memoryStorage(); s.m.set(QUALITY_STORAGE_KEY, v);
+      const q = createQualityPrefs({ storage: s, nav: big }); return q.get() === 'high' && !q.isOverride(); }));
+
+  const throwing = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() { throw new Error('denied'); } };
+  let ok = true;
+  try { const q = createQualityPrefs({ storage: throwing, nav: small }); ok = q.get() === 'low' && q.set('medium') === 'medium' && q.get() === 'medium' && q.forget() === 'low'; }
+  catch { ok = false; }
+  check('storage that throws never throws out — the tier still changes live', ok);
+  const none = createQualityPrefs({ storage: null, nav: {} });
+  check('no storage at all → detection only', none.get() === 'medium' && none.set('low') === 'low');
+}
+
+console.log('\n[8] The warning under the pills');
+{
+  let ok = true;
+  for (const d of QUALITY_ORDER) for (const c of QUALITY_ORDER) {
+    const above = QUALITY_ORDER.indexOf(c) > QUALITY_ORDER.indexOf(d);
+    if (!!qualityWarning(c, d) !== above) ok = false;
+  }
+  check('warns only when the choice is strictly above the detected tier (all 16 pairs)', ok);
+}
 
 console.log(`\n${PASS ? '✓✓✓ QUALITY GOVERNOR PASSES — monotonic, harmony-safe, conservative default' : '✗ QUALITY GOVERNOR FAILED'}`);
 process.exit(PASS ? 0 : 1);
