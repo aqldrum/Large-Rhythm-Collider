@@ -20,8 +20,9 @@ check('the default instrument is a known id (the safe fallback == today\'s sound
 check('an unknown id normalizes to the default, a known id passes through',
   normalizeInstrumentId('bogus') === DEFAULT_INSTRUMENT && normalizeInstrumentId('classic') === 'classic' &&
   normalizeInstrumentId(undefined) === DEFAULT_INSTRUMENT && normalizeInstrumentId(42) === DEFAULT_INSTRUMENT);
-check('the dev-only classic palette is NOT offered as a production choice',
-  INSTRUMENT_IDS.includes('classic') && !PRODUCTION_INSTRUMENT_IDS.includes('classic'));
+check('the dev-only classic and warm-v1 palettes exist but are NOT production palettes',
+  INSTRUMENT_IDS.includes('classic') && !PRODUCTION_INSTRUMENT_IDS.includes('classic') &&
+  INSTRUMENT_IDS.includes('warm-v1') && !PRODUCTION_INSTRUMENT_IDS.includes('warm-v1') && normalizeInstrumentId('warm-v1') === 'warm-v1');
 check('every catalog instrument defines all three roles',
   INSTRUMENT_IDS.every(id => INSTRUMENT_ROLES.every(role => INSTRUMENTS[id].roles[role])));
 check('a label is available for a known and an unknown id (never throws)',
@@ -124,13 +125,38 @@ check('Glass BED has no bell/noise transient (a swell can never re-trigger a key
 const bellLow = planVoice(getRecipe('glass', 'row'), { role: 'row', baseFreq: 220, timing: { duration: 0.2 }, sampleRate: sr }).components[1].level;
 const bellHigh = planVoice(getRecipe('glass', 'row'), { role: 'row', baseFreq: 880, timing: { duration: 0.2 }, sampleRate: sr }).components[1].level;
 check('the Glass bell is register-scaled: quieter high, louder low, never zero', bellHigh < bellLow && bellHigh > 0);
+const warmV1Bed = planVoice(getRecipe('warm-v1', 'bed'), { role: 'bed', baseFreq: 220, timing: { attack: 1.5, release: 2.5, sustainFrac: 0.4 }, sampleRate: sr });
+check('Warm v1 (dev A/B) bed = minimally-detuned saws (center + flankers) through HP→LP with a slow cutoff drift (cost 3)',
+  warmV1Bed.cost === 3 && warmV1Bed.components.every(c => c.wave === 'sawtooth') &&
+  warmV1Bed.components.every(c => Math.abs(c.detuneCents) <= 10) && warmV1Bed.filters[0].type === 'highpass' &&
+  warmV1Bed.filters[1].type === 'lowpass' && warmV1Bed.filters[1].drift.depthCents > 0);
+const warmRow = planVoice(getRecipe('warm', 'row'), { role: 'row', baseFreq: 220, timing: {}, sampleRate: sr });
+check('Warm = ONE harmonic-table osc, zero static detune (nothing beats), every role cost 1',
+  INSTRUMENT_ROLES.every(role => {
+    const p = planVoice(getRecipe('warm', role), { role, baseFreq: 220, timing: {}, sampleRate: sr });
+    return p.cost === 1 && p.components[0].wave === 'custom' && p.components[0].harmonics.length >= 6 && p.components[0].detuneCents === 0;
+  }));
+check('Warm\'s harmonic table leans low: h2–h3 strong, falling steeply past h6',
+  (h => h[1] >= 0.5 && h[2] >= 0.35 && h[7] < 0.1 && h.every((v, i) => i === 0 || v <= h[i - 1]))(warmRow.components[0].harmonics));
+const warmLp = f => planVoice(getRecipe('warm', 'row'), { role: 'row', baseFreq: f, timing: {}, sampleRate: sr }).filters[1].freq;
+check('Warm low-pass is key-tracked: cutoff rises with pitch, clamped at both ends',
+  near(warmLp(220), 1320) && near(warmLp(330), 1980) && warmLp(55) === 800 && warmLp(1760) === 5000);
+check('Warm high-pass sits under the fundamental (≤ 60 Hz) as a Butterworth (Q in dB)',
+  warmRow.filters[0].type === 'highpass' && warmRow.filters[0].freq <= 60 && near(warmRow.filters[0].Q, -3.0103, 1e-3));
+check('Warm rows/audition carry a brass cutoff sweep (dark start → past rest → settle), no drift',
+  ['row', 'audition'].every(role => {
+    const f = planVoice(getRecipe('warm', role), { role, baseFreq: 220, timing: {}, sampleRate: sr }).filters[1];
+    return f.env && f.env.startCents < -600 && f.env.peakCents > 0 && f.env.attack < 0.1 && !f.drift && !f.swellCents;
+  }));
 const warmBed = planVoice(getRecipe('warm', 'bed'), { role: 'bed', baseFreq: 220, timing: { attack: 1.5, release: 2.5, sustainFrac: 0.4 }, sampleRate: sr });
-check('Warm bed = minimally-detuned saws (center + flankers) through HP→LP with a slow cutoff drift (cost 3)',
-  warmBed.cost === 3 && warmBed.components.every(c => c.wave === 'sawtooth') &&
-  warmBed.components.every(c => Math.abs(c.detuneCents) <= 10) && warmBed.filters[0].type === 'highpass' &&
-  warmBed.filters[1].type === 'lowpass' && warmBed.filters[1].drift.depthCents > 0);
-check('Warm rows/audition are static (no drift) — only the bed develops',
-  planVoice(getRecipe('warm', 'row'), { role: 'row', baseFreq: 220, timing: {}, sampleRate: sr }).filters.every(f => !f.drift));
+check('Warm bed has NO birth sweep (no attack coloration) but brightens with each swell, over the slow drift',
+  !warmBed.filters[1].env && warmBed.filters[1].swellCents > 0 && warmBed.filters[1].drift.depthCents > 0);
+check('a custom wave with no usable table degrades to a sine (never throws on the audio path)',
+  ['custom-empty', 'custom-zeros'].every((k, i) => {
+    const c = i ? { wave: 'custom', harmonics: [0, 0], ratio: 1, level: 1 } : { wave: 'custom', ratio: 1, level: 1 };
+    const p = planVoice({ components: [c] }, { role: 'row', baseFreq: 220, timing: {}, sampleRate: sr });
+    return p.components[0].wave === 'sine' && p.components[0].harmonics === null;
+  }));
 // Every production role carries a finite, positive output trim — the per-recipe matched-loudness control
 // (its VALUE is tuned by ear against a live level measurement, not asserted here; filters and trim interact,
 // so a bare trim ordering is not a meaningful invariant).

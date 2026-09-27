@@ -51,7 +51,9 @@ export const RAIL_PARAMS = Object.freeze({
   // safe default: a returning listener (or an old v4 blob that predates this key) comes up with the entry
   // sound unchanged. glass/warm are the production palettes. Persisted like the other musical choices; adding
   // it needs NO schema bump because a stored blob simply lacks the key and falls back to this default.
-  instrument:  { default: 'classic', curve: 'choice', choices: ['classic', 'glass', 'warm'], persist: true,  group: 'harmony',   label: 'VOICE' },
+  // warm-v1 is a TEMPORARY dev pill for the Warm rework A/B — drop it once the new Warm is signed off (a
+  // stored 'warm-v1' then folds back to the default, like any unknown choice).
+  instrument:  { default: 'classic', curve: 'choice', choices: ['classic', 'glass', 'warm', 'warm-v1'], persist: true,  group: 'harmony',   label: 'VOICE' },
   // ── transient (entry always resets these; they never enter localStorage) ──
   mute:        { default: false,                       curve: 'bool',   persist: false,                   group: 'transport', label: 'MUTE' },
   hold:        { default: false,                       curve: 'bool',   persist: false,                   group: 'transport', label: 'HOLD' },

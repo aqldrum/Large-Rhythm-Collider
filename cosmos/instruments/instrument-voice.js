@@ -8,7 +8,7 @@
 // their own MIDI/visual/exposure side-channels. A consumer holds only the handle; it must never reach
 // for an `osc` field or assume one oscillator equals one musical voice.
 //
-// Graph per voice:   component oscs ─┐
+// Graph per voice:   component oscs ─┐   ('custom' oscs play a cached PeriodicWave harmonic table)
 //                    (noise) ────────┼─▶ [per-voice filter?] ─▶ ampEnv ─▶ [output trim?] ─▶ destination
 //                    detuneBus ─▶ osc.detune (pitched components only; sums with any static detune)
 //
@@ -29,6 +29,32 @@ function noiseBuffer(ctx) {
   for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
   noiseBufferCache.set(ctx, buf);
   return buf;
+}
+
+// A harmonic-table waveform (Warm's 'custom' wave), cached per AudioContext and per table so every voice
+// playing that table shares one PeriodicWave. Sine terms only (imag); the browser normalizes it to peak 1.
+const periodicCache = new WeakMap();   // ctx -> Map<tableKey, PeriodicWave>
+function periodicWave(ctx, harmonics) {
+  let byTable = periodicCache.get(ctx);
+  if (!byTable) periodicCache.set(ctx, byTable = new Map());
+  const key = harmonics.join(',');
+  let wave = byTable.get(key);
+  if (!wave) {
+    const real = new Float32Array(harmonics.length + 1);
+    const imag = new Float32Array(harmonics.length + 1);
+    harmonics.forEach((h, i) => { imag[i + 1] = h; });
+    wave = ctx.createPeriodicWave(real, imag);
+    byTable.set(key, wave);
+  }
+  return wave;
+}
+
+// A filter's birth cutoff sweep, in cents on its detune: start → peak over `attack` → 0 (the resting cutoff)
+// over `settle`. Linear in cents is exponential in Hz, which is how a brass attack brightens.
+function applyFilterEnv(param, env, when) {
+  param.setValueAtTime(env.startCents, when);
+  param.linearRampToValueAtTime(env.peakCents, when + env.attack);
+  param.linearRampToValueAtTime(0, when + env.attack + env.settle);
 }
 
 // A slow filter-cutoff LFO for the bed's gentle spectral drift, cached per AudioContext and per rate. ONE
@@ -142,6 +168,7 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
   // components/noise feed into `head` — the first of a per-voice filter CHAIN if the recipe has one, else
   // the amp env directly. filters[0] sits closest to the sources; filters[n-1] feeds the amp env.
   const driftPairs = [];   // [lfo, depthGain] to detach on completion (the lfo is shared per context)
+  const envFilters = [];   // [biquad, spec] carrying a birth sweep or swell brightness (both on detune)
   let head = ampEnv;
   if (plan.filters.length) {
     const chain = plan.filters.map(spec => {
@@ -159,6 +186,8 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
         graphNodes.push(depth);
         driftPairs.push([lfo, depth]);
       }
+      if (spec.env) applyFilterEnv(bq.detune, spec.env, when);
+      if (spec.env || spec.swellCents) envFilters.push([bq, spec]);
       return bq;
     });
     for (let i = 0; i < chain.length; i++) chain[i].connect(chain[i + 1] || ampEnv);
@@ -168,7 +197,8 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
   const sources = [];
   for (const component of plan.components) {
     const osc = ctx.createOscillator();
-    osc.type = component.wave;
+    if (component.wave === 'custom' && component.harmonics) osc.setPeriodicWave(periodicWave(ctx, component.harmonics));
+    else osc.type = component.wave;
     osc.frequency.setValueAtTime(component.freq, when);
     if (component.detuneCents) osc.detune.setValueAtTime(component.detuneCents, when);   // static spread; the bus sums on top
     if (detuneBus) { detuneBus.connect(osc.detune); osc._instrDetuneBus = detuneBus; }
@@ -306,6 +336,16 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
       param.setValueAtTime(cur, at);
       param.linearRampToValueAtTime(Math.max(0.0002, peak), at + amp.attack);
       param.exponentialRampToValueAtTime(Math.max(0.0001, peak * amp.sustainFrac), at + amp.attack + amp.release);
+      // Louder = brighter: the cutoff rides the same rise-and-ease as the amp (never an attack transient).
+      for (const [bq, spec] of envFilters) {
+        if (!spec.swellCents) continue;
+        const detune = bq.detune;
+        const curCents = detune.value;
+        detune.cancelScheduledValues(at);
+        detune.setValueAtTime(curCents, at);
+        detune.linearRampToValueAtTime(spec.swellCents, at + amp.attack);
+        detune.linearRampToValueAtTime(spec.swellCents * amp.sustainFrac, at + amp.attack + amp.release);
+      }
     },
 
     // Crossfade fade-IN for a no-onset instrument hot-swap. Cancels whatever attack this voice scheduled at
@@ -318,6 +358,12 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
       param.cancelScheduledValues(at);
       param.setValueAtTime(ENV_FLOOR, at);
       param.linearRampToValueAtTime(Math.max(0.0002, level), at + Math.max(0.005, seconds));
+      // Nor re-articulate the timbre: drop any birth filter sweep and sit at the settled cutoff (for a bed,
+      // the post-swell brightness).
+      for (const [bq, spec] of envFilters) {
+        bq.detune.cancelScheduledValues(at);
+        bq.detune.setValueAtTime(spec.swellCents ? spec.swellCents * (amp.sustainFrac || 0) : 0, at);
+      }
     },
   };
 }

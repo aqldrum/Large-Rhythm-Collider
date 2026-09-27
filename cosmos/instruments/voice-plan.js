@@ -63,8 +63,18 @@ function planComponent(component, baseFreq, sampleRate) {
   const sub = component.sub
     ? Object.freeze({ attack: num(component.sub.attack), decay: num(component.sub.decay), sustain: num(component.sub.sustain) })
     : null;
+  // 'custom' needs a usable harmonic table (finite, non-negative, not all zero); otherwise it degrades to a
+  // sine so a malformed recipe still sounds rather than throwing on the audio path.
+  let wave = component.wave || 'sine';
+  let harmonics = null;
+  if (wave === 'custom') {
+    const table = Array.isArray(component.harmonics) ? component.harmonics.map(h => Math.max(0, num(h))) : [];
+    if (table.some(h => h > 0)) harmonics = Object.freeze(table);
+    else wave = 'sine';
+  }
   return Object.freeze({
-    wave: component.wave || 'sine',
+    wave,
+    harmonics,
     freq: Math.min(ceiling, raw),
     level,
     detuneCents: num(component.detuneCents),
@@ -86,16 +96,31 @@ export function planVoice(recipe, { role = 'row', baseFreq, timing = {}, sampleR
     ? Object.freeze({ level: num(recipe.noise.level), attack: num(recipe.noise.attack), decay: num(recipe.noise.decay) })
     : null;
   // A PER-VOICE filter chain (0..n biquads, applied in order before the amp envelope). Warm uses two — a
-  // high-pass to kill low-mid mud and a low-pass for warmth; classic uses none. A filter may declare a slow
+  // high-pass under the fundamental and a key-tracked low-pass; classic uses none. A filter may declare a slow
   // `drift` (a shared per-context LFO on its cutoff) for the bed's gentle spectral development. Filters are
   // processing nodes, not sources, so they never add to the source cost.
+  // A `keyTrack` cutoff follows the played pitch (harmonics × base, clamped) so the harmonic balance holds
+  // across the keyboard. An `env` is a birth sweep of the cutoff in cents (start → peak → settle at 0); a
+  // `swellCents` lifts the bed's cutoff with each swell. Both ride the filter's detune, so they cost no nodes.
   const filterSpecs = recipe?.filters || (recipe?.filter ? [recipe.filter] : []);
-  const filters = Object.freeze((filterSpecs || []).map(f => Object.freeze({
-    type: f.type === 'highpass' ? 'highpass' : 'lowpass',
-    freq: Math.min(ceilingHz(sampleRate), num(f.freq, 1000)),
-    Q: num(f.Q, 0.7071),
-    drift: f.drift ? Object.freeze({ rateHz: Math.max(0, num(f.drift.rateHz, 0.06)), depthCents: num(f.drift.depthCents) }) : null,
-  })));
+  const filters = Object.freeze((filterSpecs || []).map(f => {
+    let freq = num(f.freq, 1000);
+    if (f.keyTrack && base > 0) {
+      const kt = f.keyTrack;
+      freq = Math.min(num(kt.maxHz, Infinity), Math.max(num(kt.minHz, 20), base * num(kt.harmonics, 6)));
+    }
+    return Object.freeze({
+      type: f.type === 'highpass' ? 'highpass' : 'lowpass',
+      freq: Math.min(ceilingHz(sampleRate), freq),
+      Q: num(f.Q, 0.7071),
+      drift: f.drift ? Object.freeze({ rateHz: Math.max(0, num(f.drift.rateHz, 0.06)), depthCents: num(f.drift.depthCents) }) : null,
+      env: f.env ? Object.freeze({
+        startCents: num(f.env.startCents), peakCents: num(f.env.peakCents),
+        attack: Math.max(0.001, num(f.env.attack, 0.03)), settle: Math.max(0.001, num(f.env.settle, 0.15)),
+      }) : null,
+      swellCents: num(f.swellCents),
+    });
+  }));
   // COST is the count of REAL source nodes (oscillators + one noise source). A culled partial does not
   // count. This is what a caller admits against its live-oscillator ceiling before creating any node.
   const cost = components.length + (noise ? 1 : 0);

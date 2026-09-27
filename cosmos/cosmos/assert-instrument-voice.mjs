@@ -24,14 +24,15 @@ function makeParam(initial = 0) {
   };
 }
 function makeCtx() {
-  const nodes = { osc: [], gain: [], filter: [], buffer: [] };
+  const nodes = { osc: [], gain: [], filter: [], buffer: [], periodic: [] };
   const base = (type, extra) => ({ type, connections: [], disconnected: false, connect(t) { this.connections.push(t); return t; }, disconnect() { this.disconnected = true; }, ...extra });
   const ctx = {
     currentTime: 10, sampleRate: 48000,
     destination: base('destination'),
     createGain() { const g = base('gain', { gain: makeParam(1) }); nodes.gain.push(g); return g; },
-    createBiquadFilter() { const f = base('filter', { frequency: makeParam(350), Q: makeParam(1) }); nodes.filter.push(f); return f; },
-    createOscillator() { const o = base('osc', { frequency: makeParam(440), detune: makeParam(0), started: null, stopped: [], onended: null, start(t) { this.started = t; }, stop(t) { this.stopped.push(t); }, _end() { this.onended && this.onended(); } }); nodes.osc.push(o); return o; },
+    createBiquadFilter() { const f = base('filter', { frequency: makeParam(350), Q: makeParam(1), detune: makeParam(0) }); nodes.filter.push(f); return f; },
+    createPeriodicWave(real, imag) { const w = { real, imag }; nodes.periodic.push(w); return w; },
+    createOscillator() { const o = base('osc', { frequency: makeParam(440), detune: makeParam(0), periodicWave: null, setPeriodicWave(w) { this.periodicWave = w; this.type = 'custom'; }, started: null, stopped: [], onended: null, start(t) { this.started = t; }, stop(t) { this.stopped.push(t); }, _end() { this.onended && this.onended(); } }); nodes.osc.push(o); return o; },
     createBufferSource() { const s = base('buffersrc', { buffer: null, detune: makeParam(0), started: null, stopped: [], onended: null, start(t) { this.started = t; }, stop(t) { this.stopped.push(t); }, _end() { this.onended && this.onended(); } }); nodes.buffer.push(s); return s; },
     createBuffer(ch, len) { return { getChannelData() { return new Float32Array(len); } }; },
   };
@@ -177,7 +178,7 @@ console.log('\n  Multi-source voice — cost, detune per pitched source, complet
 console.log('\n  Bed drift — one shared LFO per context, torn off cleanly per voice');
 {
   const { ctx, nodes } = makeCtx();
-  const plan = planVoice(getRecipe('warm', 'bed'), { role: 'bed', baseFreq: 110, timing: { attack: 1.5, release: 2.5, sustainFrac: 0.4 }, sampleRate: 48000 });
+  const plan = planVoice(getRecipe('warm-v1', 'bed'), { role: 'bed', baseFreq: 110, timing: { attack: 1.5, release: 2.5, sustainFrac: 0.4 }, sampleRate: 48000 });
   const d1 = ctx.createGain();
   const v1 = createInstrumentVoice({ ctx, destination: d1, plan, when: 1, detuneBus: makeBus() });
   const oscCountAfterFirst = nodes.osc.length;   // 3 saws + 1 shared drift LFO = 4
@@ -193,6 +194,53 @@ console.log('\n  Bed drift — one shared LFO per context, torn off cleanly per 
   // end v1's saws (the oscs created right after the LFO: indices 1..3).
   nodes.osc[1]._end(); nodes.osc[2]._end(); nodes.osc[3]._end();
   check('a completed Warm bed voice detaches its depth gain from the shared LFO and completes once', done1 === 1);
+}
+
+console.log('\n  Warm — harmonic-table osc, brass cutoff sweep, swell brightness');
+{
+  const { ctx, nodes } = makeCtx();
+  const rowTiming = { peak: 0.16, attack: 0.004, decay: 0.46, hold: 0, release: 0.09, sustain: 0.05, duration: 0.23, micro: false };
+  const plan = planVoice(getRecipe('warm', 'row'), { role: 'row', baseFreq: 220, timing: rowTiming, sampleRate: 48000 });
+  const bus = makeBus();
+  createInstrumentVoice({ ctx, destination: ctx.createGain(), plan, when: 2, detuneBus: bus });
+  createInstrumentVoice({ ctx, destination: ctx.createGain(), plan, when: 2.5, detuneBus: makeBus() });
+  const osc = nodes.osc[0];
+  check('the custom osc plays a PeriodicWave (sine terms = the table, h0 empty), shared across voices',
+    nodes.periodic.length === 1 && osc.periodicWave === nodes.periodic[0] && nodes.osc[1].periodicWave === nodes.periodic[0] &&
+    osc.periodicWave.imag[0] === 0 && near(osc.periodicWave.imag[1], plan.components[0].harmonics[0]) &&
+    osc.periodicWave.real.every(v => v === 0));
+  check('the custom osc still takes the shared detune bus (tuning stays live)', bus.targets.length === 1 && bus.targets[0] === osc.detune);
+  const lp = nodes.filter[1];
+  const env = plan.filters[1].env;
+  check('the low-pass is born at its key-tracked cutoff and sweeps its detune dark → past rest → settled 0',
+    lp.frequency.value === 1320 && opsOf(lp.detune) === 'set,lin,lin' &&
+    lp.detune._calls[0][1] === env.startCents && near(lp.detune._calls[0][2], 2) &&
+    lp.detune._calls[1][1] === env.peakCents && near(lp.detune._calls[1][2], 2 + env.attack) &&
+    lp.detune._calls[2][1] === 0 && near(lp.detune._calls[2][2], 2 + env.attack + env.settle));
+  check('the high-pass carries no sweep', opsOf(nodes.filter[0].detune) === '');
+}
+{
+  const { ctx, nodes } = makeCtx();
+  const plan = planVoice(getRecipe('warm', 'audition'), { role: 'audition', baseFreq: 330, timing: { peak: 0.3, attack: 0.01, decay: 0.1, sustain: 0.2 }, sampleRate: 48000 });
+  const h = createInstrumentVoice({ ctx, destination: ctx.createGain(), plan, when: 1, detuneBus: makeBus() });
+  h.crossIn(0.2, 1, 0.08);
+  const lp = nodes.filter[1];
+  const last = lp.detune._calls.slice(-2);
+  check('a crossIn swap cancels the birth sweep and sits at the settled cutoff (the timbre never re-articulates)',
+    last[0][0] === 'cancel' && last[1][0] === 'set' && last[1][1] === 0 && lp.detune.value === 0);
+}
+{
+  const { ctx, nodes } = makeCtx();
+  const plan = planVoice(getRecipe('warm', 'bed'), { role: 'bed', baseFreq: 220, timing: { attack: 1.5, release: 2.5, sustainFrac: 0.4 }, sampleRate: 48000 });
+  const h = createInstrumentVoice({ ctx, destination: ctx.createGain(), plan, when: 1, detuneBus: makeBus() });
+  const lp = nodes.filter.find(f => f.type === 'lowpass');
+  check('the Warm bed is born with NO cutoff sweep (no attack coloration)', opsOf(lp.detune) === '');
+  h.swell(0.1, 3);
+  const cents = plan.filters[1].swellCents;
+  check('a swell lifts the cutoff with the amp (rise over attack, ease to sustainFrac over release)',
+    opsOf(lp.detune) === 'cancel,set,lin,lin' && lp.detune._calls[2][1] === cents && near(lp.detune._calls[2][2], 3 + 1.5) &&
+    near(lp.detune._calls[3][1], cents * 0.4) && near(lp.detune._calls[3][2], 3 + 1.5 + 2.5));
+  check('the swell still shapes the amp envelope as before', opsOf(nodes.gain.find(g => g.connections.some(c => c.type === 'gain' || c.type === 'destination')).gain).includes('lin,exp'));
 }
 
 console.log(PASS ? '\n✓✓✓ COSMOS INSTRUMENT VOICE PASSES' : '\n✗ COSMOS INSTRUMENT VOICE FAILED');

@@ -34,7 +34,7 @@ check('harmony source, scale, RICHNESS, and VOICE choices are explicit back-face
   RAIL_SEGMENTS.join(',') === 'harmonySource,richness,instrument' && RAIL_SELECTS.join(',') === 'scale');
 check('VOICE is a choice segment wired to setInstrument, defaulting to classic so the entry sound is unchanged',
   RAIL_SEGMENTS.includes('instrument') && RAIL_PARAMS.instrument?.curve === 'choice' &&
-  RAIL_PARAMS.instrument.choices.join(',') === 'classic,glass,warm' && RAIL_PARAMS.instrument.default === 'classic' &&
+  RAIL_PARAMS.instrument.choices.join(',') === 'classic,glass,warm,warm-v1' && RAIL_PARAMS.instrument.default === 'classic' &&
   RAIL_PARAMS.instrument.persist === true && typeof ENGINE_SETTERS.instrument === 'function');
 check('every rendered knob/button is a real param with a live engine setter',
   [...RAIL_KNOBS, ...RAIL_BUTTONS].every(n => RAIL_PARAMS[n] && typeof ENGINE_SETTERS[n] === 'function'));

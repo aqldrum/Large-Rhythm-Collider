@@ -57,7 +57,7 @@ export const ENGINE_SETTERS = Object.freeze({
   scale: setHarmonyScale,              // normalized cent-target preset ID
   rowFundamental: setRowFundamental,   // bool — schedule-time literal 1/1 attacks only
   modulation: setModulation,           // bool — retune each newly solved root to the fundamental
-  instrument: setInstrument,           // choice — synthesis palette (classic | glass | warm)
+  instrument: setInstrument,           // choice — synthesis palette (classic | glass | warm | warm-v1 dev A/B)
 });
 
 // Front-face ROTARY knobs, ordered within their groups. RICHNESS is a named back-face segment;
