@@ -134,11 +134,11 @@ check('the shared params are written THROUGH railParams, so there is exactly one
 check('the lab applies NOTHING at entry — it syncs from the engine instead',
   flight.includes('syncAudioLab()') && !flight.includes('if (tuningSliderEl) setTuningStrength(') &&
   !flight.includes('changeAudioMode(AUDIO_MODES.CULLED_GRID_ROWS)') && !flight.includes('setHoldForFullQuality('));
-check('a rail gesture repaints the lab, and revealing the lab re-reads the engine first',
-  flight.includes('railParams.subscribe(() => syncAudioLab())') && /audioLabOn\) syncAudioLab\(\)/.test(flight));
-check('the lab stays dev-gated exactly like the Full Sky overlay (?audioLab=1 seeds it, Z toggles)',
-  flight.includes("get('audioLab') === '1'") && flight.includes("get('skyDebug') === '1'") &&
-  /k === 'z'/.test(flight) && flight.includes('audioLabEl.hidden = !audioLabOn'));
+// 2026-09-27: the lab is RETIRED (the rail replaced it; the chord moved on screen as #cosmos-chord). Its
+// wiring stays dormant, so the guard is now that nothing can open it — no Z key, no ?audioLab seed.
+check('the retired lab cannot be opened: no Z key, no ?audioLab seed, hidden at entry',
+  !/k === 'z'/.test(flight) && !flight.includes("get('audioLab')") && flight.includes('audioLabEl.hidden = true') &&
+  flight.includes("get('skyDebug') === '1'"));
 check('the retired full-quality checkbox is gone from the markup as well as the wiring',
   !readFileSync(new URL('../../index.html', import.meta.url), 'utf8').includes('lrc-full-quality'));
 

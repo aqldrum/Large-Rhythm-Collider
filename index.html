@@ -605,8 +605,18 @@
         <canvas id="cosmos-canvas"></canvas>
         <div id="cosmos-hud"></div>
         <div id="tooltip"></div>
+        <!-- The sounding chord, top-right beside the ? button. Two stacked faces so a change cross-fades (flight-view.js drawChordOverlay). -->
+        <div id="cosmos-chord" aria-label="chord"><span class="chord-face"></span><span class="chord-face"></span></div>
         <!-- help button (top-right) → toggles an info popup: flight controls + live solve queue (more to come) -->
         <button id="cosmos-help-btn" title="Controls &amp; status" aria-label="Controls and status">?</button>
+        <!-- view button (between help and home) → toggles the VIEW options popup (pills built from cosmos/view-options.js) -->
+        <button id="cosmos-view-btn" title="View options" aria-label="View options" aria-expanded="false" aria-controls="cosmos-view-panel">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 7h9M17 7h3M4 17h3M11 17h9"></path>
+                <circle cx="15" cy="7" r="2"></circle>
+                <circle cx="9" cy="17" r="2"></circle>
+            </svg>
+        </button>
         <!-- home button (top-right, right of help) → exits Cosmos back to the main interface (same as Esc) -->
         <button id="cosmos-home-btn" title="Return to main interface" aria-label="Return to main interface">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -623,6 +633,12 @@
             <div class="help-sec">
                 <div class="help-h">Solve queue</div>
                 <div id="cosmos-help-live" class="help-body"></div>
+            </div>
+        </div>
+        <div id="cosmos-view-panel">
+            <div class="help-sec">
+                <div class="help-h">View</div>
+                <div id="cosmos-view-options" class="help-body"></div>
             </div>
         </div>
         <!-- Selected-rhythm inspector. The node identity + real spaces plot are the primary product surface. -->
@@ -719,7 +735,9 @@
             </div>
         </div>
 
-        <!-- DEV-ONLY Cosmos audio lab (?audioLab=1 seeds it open; Z toggles — same shape as ?skyDebug=1 / C).
+        <!-- RETIRED (2026-09-27): nothing opens this any more — the rail replaced it and the chord moved on screen
+             (#cosmos-chord). Kept dormant rather than deleted; flight-view.js still holds its wiring.
+             Was: DEV-ONLY Cosmos audio lab (?audioLab=1 seeds it open; Z toggles — same shape as ?skyDebug=1 / C).
              The performance RAIL owns the engine (cosmos/rail-view.js); this overlay MIRRORS engine state and
              only writes on a gesture. Mute / audio mode / modulation / MIDI out route through railParams so
              both surfaces stay one state; ticks-per-second, scaled speed, grid cycle and tuning λ are debug

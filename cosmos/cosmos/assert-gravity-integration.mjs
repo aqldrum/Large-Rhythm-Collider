@@ -17,7 +17,8 @@ console.log('═══ COSMOS GRAVITY — production integration assertions ═�
 console.log('\n  Worker and player bubble');
 check('production creates the gravity module worker', flight.includes("new URL('./cosmos/gravity-worker.js?v=1'") && gravityWorker.includes("import { GravitySimulation } from '../gravity-core.js'"));
 check('player world location is the simulation centre', flight.includes('center: gravityCameraWorld'));
-check('G hold and transport tick feed the worker', flight.includes('held: !!keys.g || gravityDebugHold') && flight.includes('const gravityTick = currentTicks()'));
+check('G hold (through the VIEW gravity mode) and transport tick feed the worker',
+  flight.includes('held: gravityOn()') && flight.includes("gravityHeld(viewOptions.get('gravity'), keys.g)") && flight.includes('const gravityTick = currentTicks()'));
 check('worker offsets use transferable ping-pong buffers', flight.includes('this.transfer = new Float32Array(capacity * 3)') && gravityWorker.includes("[output.buffer]"));
 
 console.log('\n  Composition and safety');

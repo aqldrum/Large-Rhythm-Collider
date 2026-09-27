@@ -3600,8 +3600,9 @@ body.cosmos-active #cosmos-view {
 
 /* flight controls hint — bottom-left, where the filter panel used to sit; muted, unobtrusive */
 /* help button (top-right) + info popup — flight controls + live solve queue (iterate: add more sections here) */
+/* Top-right row, right to left: home · view · help · chord name. */
 #cosmos-help-btn {
-    position: absolute; right: 52px; top: 14px; z-index: 521;
+    position: absolute; right: 88px; top: 14px; z-index: 521;
     width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
     background: var(--hud-bg); border: 1px solid var(--hud-border); border-radius: 50%;
     -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 2px 10px rgba(0,0,0,.3);
@@ -3609,7 +3610,17 @@ body.cosmos-active #cosmos-view {
     cursor: pointer; transition: all var(--transition-speed);
 }
 #cosmos-help-btn:hover { color: var(--hud-accent); border-color: var(--hud-accent); }
-/* home button (top-right, right of the help button) — always the house-green accent, exits Cosmos on click */
+/* view button (between help and home) — opens the VIEW options popup; muted like help, not accented like home */
+#cosmos-view-btn {
+    position: absolute; right: 52px; top: 14px; z-index: 521;
+    width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; padding: 0;
+    background: var(--hud-bg); border: 1px solid var(--hud-border); border-radius: 50%;
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 2px 10px rgba(0,0,0,.3);
+    color: var(--hud-text-muted); cursor: pointer; transition: all var(--transition-speed);
+}
+#cosmos-view-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#cosmos-view-btn:hover, #cosmos-view-btn[aria-expanded="true"] { color: var(--hud-accent); border-color: var(--hud-accent); }
+/* home button (top-right corner) — always the house-green accent, exits Cosmos on click */
 #cosmos-home-btn {
     position: absolute; right: 16px; top: 14px; z-index: 521;
     width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
@@ -3619,19 +3630,61 @@ body.cosmos-active #cosmos-view {
 }
 #cosmos-home-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 #cosmos-home-btn:hover { background: rgba(0,255,136,.14); border-color: var(--hud-accent); }
-#cosmos-help-panel {
-    position: absolute; right: 52px; top: 48px; z-index: 521; display: none; width: 230px;
+#cosmos-help-panel, #cosmos-view-panel {
+    position: absolute; right: 88px; top: 48px; z-index: 521; display: none; width: 230px;
     background: var(--hud-bg); border: 1px solid var(--hud-border); border-radius: var(--border-radius);
     -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 2px 10px rgba(0,0,0,.3);
     padding: 12px 14px; font-family: var(--sans); font-size: 11px; color: var(--dim);
 }
-#cosmos-help-panel.open { display: block; }
+#cosmos-view-panel { right: 52px; width: auto; }
+#cosmos-help-panel.open, #cosmos-view-panel.open { display: block; }
 #cosmos-help-panel .help-sec + .help-sec { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--hud-border); }
-#cosmos-help-panel .help-h { font-size: 10px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; color: var(--hud-accent); margin-bottom: 6px; }
+#cosmos-help-panel .help-h, #cosmos-view-panel .help-h { font-size: 10px; font-weight: 500; letter-spacing: 1px; text-transform: uppercase; color: var(--hud-accent); margin-bottom: 6px; }
 #cosmos-help-panel .help-kv { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
 #cosmos-help-panel .help-kv span { color: var(--dim); }
 #cosmos-help-panel .help-kv b { color: var(--ink); font-family: var(--mono); font-weight: 600; white-space: nowrap; }
 #cosmos-help-panel .help-note { margin-top: 6px; font-size: 10px; color: var(--hud-text-muted); opacity: .7; }
+#cosmos-help-panel .help-kv.dim span, #cosmos-help-panel .help-kv.dim b { opacity: .4; }
+/* VIEW section — label left, pills right; the pills wear the rail's segmented look (#cosmos-rail .rail-segment) */
+/* Two-column grid (rows are display:contents) so every pill group starts on the same left edge. Labels wear the
+   rail's legend voice — small caps, tracked — so they sit in the same register as the pills and the VIEW header. */
+#cosmos-view-panel #cosmos-view-options { display: grid; grid-template-columns: auto auto; column-gap: 14px; row-gap: 6px; align-items: center; }
+#cosmos-view-panel .view-row { display: contents; }
+#cosmos-view-panel .view-row[hidden] { display: none; }
+#cosmos-view-panel .view-row > span { font: 500 9px var(--sans); letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
+#cosmos-view-panel .view-seg-group { justify-self: start; }
+#cosmos-view-panel .view-seg-group { display: flex; }
+#cosmos-view-panel .view-seg {
+    min-height: 22px; padding: 4px 7px; border: 1px solid var(--hud-border); border-right-width: 0;
+    background: rgba(255,255,255,.025); color: var(--hud-text-muted); cursor: pointer;
+    font: 600 8px var(--sans); letter-spacing: .65px; white-space: nowrap;
+}
+#cosmos-view-panel .view-seg:first-child { border-radius: 4px 0 0 4px; }
+#cosmos-view-panel .view-seg:last-child { border-right-width: 1px; border-radius: 0 4px 4px 0; }
+#cosmos-view-panel .view-seg:hover { color: var(--hud-text); }
+#cosmos-view-panel .view-seg.active { color: #0b0d10; background: var(--hud-accent); border-color: var(--hud-accent); }
+
+/* The sounding chord — top-right, just left of the ? button, on the buttons' 26px line. Two stacked faces: the
+   new name fades in as the old one fades out. Right-aligned so a longer name grows leftward, away from the ?. */
+#cosmos-chord {
+    position: absolute; right: 124px; top: 14px; height: 26px; z-index: 510;
+    display: grid; justify-items: end; align-items: center; pointer-events: none; opacity: 0; transition: opacity 1.2s ease;
+    font: 400 14px var(--sans); line-height: 26px; color: var(--ink); text-shadow: 0 1px 6px rgba(0,0,0,.7);
+}
+#cosmos-chord.live { opacity: .9; }
+#cosmos-chord .chord-face { grid-area: 1 / 1; white-space: nowrap; opacity: 0; transition: opacity 1.4s ease; }
+#cosmos-chord .chord-face.on { opacity: 1; }
+#cosmos-chord .chord-face b { font-weight: 600; }
+/* ♭ / ♯ carry wide side-bearings in most sans faces — tuck them in against their letter / digit. */
+#cosmos-chord .chord-face .acc { margin: 0 -.07em 0 -.09em; }
+#cosmos-chord .chord-face small { margin-left: 5px; font: 400 10px var(--mono); color: var(--dim); }
+
+/* CLEAN screen (VIEW → Screen): the bare sky. The chord stays; the view button stays faint as the way back. */
+#cosmos-view.clean-screen #cosmos-hud, #cosmos-view.clean-screen #tooltip, #cosmos-view.clean-screen #cosmos-home-btn,
+#cosmos-view.clean-screen #cosmos-help-btn, #cosmos-view.clean-screen #cosmos-help-panel, #cosmos-view.clean-screen #cosmos-view-panel,
+#cosmos-view.clean-screen #lrc-div, #cosmos-view.clean-screen #cosmos-rail { display: none !important; }
+#cosmos-view.clean-screen #cosmos-view-btn { opacity: .18; }
+#cosmos-view.clean-screen #cosmos-view-btn:hover { opacity: 1; }
 
 /* Performance RAIL — a persistent control panel, horizontally centred low in the flight view
    (rail-view.js owns the DOM). Always visible: no collapse, no disappearing tab. It wears the SAME house

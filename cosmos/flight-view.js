@@ -16,7 +16,7 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, classifyLeadHarmony, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, gridRowReachedAttacks, gridRowDetuneCents, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext } from './cosmos-audio.js';
+import { deriveVoice, classifyLeadHarmony, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, gridRowReachedAttacks, gridRowDetuneCents, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext, currentFundamental } from './cosmos-audio.js';
 // The RAIL owns the engine's user-facing state (rail-view.js mounts it; flight-boot restores it on entry).
 // Every parameter BOTH surfaces express — mute, mix, modulation, MIDI out — is written through railParams so
 // there is exactly one owner and the two surfaces cannot disagree. See the audio-lab section below.
@@ -47,6 +47,9 @@ import { composeViewFrames } from './view-frame.js';
 import { CHASE_DEFAULTS, chaseOptions, chasePose, smoothstep, stepChaseProgress } from './chase-camera.js';
 import { drawPlayerShip } from './player-ship.js';
 import { QUALITY_ORDER, detectDefaultTier, devicePoolMax, resolveTier } from './cosmos-quality.js';
+// The help popup's VIEW section (constellations · gravity · camera · screen) and the on-screen chord name.
+import { VIEW_OPTIONS, createViewOptions, constellationPatch, gravityHeld, gravityControlLabel } from './view-options.js';
+import { chordLabel } from './chord-label.js';
 // Full Sky (cosmos/docs/FULL_SKY_HANDOFF.md): chord-walk.js (per-star Chord Walk) is retired from the flight
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
 // Sky Root handoff (cosmos/docs/SKY_ROOT_HANDOFF_2026-07-22.md): anchor-independent root solve, Feature B.
@@ -857,7 +860,7 @@ function modelForRhythmNode(node) {
   return selectedRhythmModelCache;
 }
 let audioLabEl = null, audioLabOn = false;
-let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, chordReadoutEl = null, audioModeEl = null;
+let muteBtnEl = null, tempoSliderEl = null, tempoReadoutEl = null, audioModeEl = null;
 let tuningSliderEl = null, tuningReadoutEl = null;
 let scaledSpeedEl = null, scaledReadoutEl = null, cycleSliderEl = null, cycleReadoutEl = null;
 // (the full-quality checkbox is gone — Phase 0.3 made full exposure an unconditional advance floor)
@@ -949,7 +952,22 @@ export function ensureFlight(canvas, hudEl) {
     controlsEl = document.getElementById('cosmos-help-controls'); liveEl = document.getElementById('cosmos-help-live');
     helpPanelEl = document.getElementById('cosmos-help-panel');
     const helpBtn = document.getElementById('cosmos-help-btn');
-    if (helpBtn && helpPanelEl) helpBtn.addEventListener('click', () => helpPanelEl.classList.toggle('open'));
+    viewBtnEl = document.getElementById('cosmos-view-btn'); viewPanelEl = document.getElementById('cosmos-view-panel');
+    // The ? (reference: keys + solve queue) and the view button (settings) are two popups; opening one closes the other.
+    if (helpBtn && helpPanelEl) helpBtn.addEventListener('click', () => {
+      setViewPanelOpen(false);
+      helpPanelEl.classList.toggle('open');
+    });
+    // In CLEAN screen the view button is the one control left: it restores the HUD and opens the View popup.
+    if (viewBtnEl && viewPanelEl) viewBtnEl.addEventListener('click', () => {
+      helpPanelEl?.classList.remove('open');
+      if (viewOptions.get('screen') === 'clean') { viewOptions.set('screen', 'full'); setViewPanelOpen(true); }
+      else setViewPanelOpen(!viewPanelEl.classList.contains('open'));
+    });
+    const viewHost = document.getElementById('cosmos-view-options');
+    if (viewHost) buildViewSection(viewHost);
+    chordEl = document.getElementById('cosmos-chord');
+    chordFaces = chordEl ? [...chordEl.querySelectorAll('.chord-face')] : null;
     const homeBtn = document.getElementById('cosmos-home-btn');
     if (homeBtn) homeBtn.addEventListener('click', () => window.exitCosmos());
     // cardinality WINDOW: two thumbs on one thin rail — drag either end; the fill bar tracks the [lo,hi] window
@@ -972,7 +990,7 @@ export function ensureFlight(canvas, hudEl) {
       if (inspectedNode) renderRhythmConnections();
     }).catch(() => {});
     // ── Selected-rhythm inspector. Its explicit expand and exit controls replace the old hidden
-    //    double-click exit gesture; development audio controls now live in the independent Z overlay.
+    //    double-click exit gesture; the rail owns the audio controls.
     lrcDivEl = document.getElementById('lrc-div'); lrcHeadEl = document.getElementById('lrc-head');
     cockpitPlotEl = document.getElementById('lrc-plot'); cockpitPlotCtx = cockpitPlotEl && cockpitPlotEl.getContext('2d');
     cockpitPlotKeyEl = document.getElementById('lrc-plot-key');
@@ -997,7 +1015,6 @@ export function ensureFlight(canvas, hudEl) {
     audioLabEl = document.getElementById('lrc-audio-lab');
     muteBtnEl = document.getElementById('lrc-mute-btn');
     tempoSliderEl = document.getElementById('lrc-tempo-slider'); tempoReadoutEl = document.getElementById('lrc-tempo-readout');
-    chordReadoutEl = document.getElementById('lrc-chord-readout');
     audioModeEl = document.getElementById('lrc-audio-mode');
     tuningSliderEl = document.getElementById('lrc-tuning-slider');
     tuningReadoutEl = document.getElementById('lrc-tuning-readout');
@@ -1083,7 +1100,6 @@ export function ensureFlight(canvas, hudEl) {
     // it); the C key (bindControls, below) is the primary toggle from here on. Seeding this per-session
     // instead would stomp a manual C-toggle every time you exit/re-enter cosmos.
     skyDebugOn = new URLSearchParams(location.search).get('skyDebug') === '1';
-    audioLabOn = new URLSearchParams(location.search).get('audioLab') === '1';
     bindControls();
   }
   resetRhythmInspector();
@@ -1132,16 +1148,8 @@ export function ensureFlight(canvas, hudEl) {
   gravityDebugHold = new URLSearchParams(location.search).get('gravityHold') === '1';
   gravitySyncAt = -Infinity; gravitySyncDirty = true; gravityLastTick = currentTicks();
   if (skyDebugEl) skyDebugEl.style.display = skyDebugOn ? 'block' : 'none';
-  if (audioLabEl) audioLabEl.hidden = !audioLabOn;
-  if (controlsEl) {
-    const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['G', 'hold local gravity'], ...(placement === 'hilbert' ? [['V', 'chase view']] : []),
-                  ['arrows', 'steer'], ['scroll', 'dolly'],
-                  ['click star', 'bloom'], ['click node', 'inspect / apply'], ['click Web', 'inspect / return'],
-                  ['Esc', 'cancel Web travel'], ['right-click', 'collapse'], ['1–0', 'toggle webs'],
-                  ['Z', 'audio lab'], ['C', 'full sky debug'], ['T', 'audio clock table']];
-    controlsEl.innerHTML = rows.map(([k, v]) => `<div class="help-kv"><span>${k}</span><b>${v}</b></div>`).join('') +
-      `<div class="help-note">${placement === 'hilbert' ? 'cube' : 'spine'} placement</div>`;
-  }
+  if (audioLabEl) audioLabEl.hidden = true;   // retired dev overlay — see the VIEW section note
+  renderControls();
   BLOOM_MAX_R = placement === 'hilbert' ? BLOOM_MAX_R_FRAC * CELL : Infinity;   // keep clouds inside their cell
   // markFieldDirty: a spawned zone can enter the audible set and an evicted one must leave it, so both are
   // membership events even when the camera itself has not moved (the frontier streams in on its own).
@@ -1190,6 +1198,11 @@ export function ensureFlight(canvas, hudEl) {
     set: patch => { chase = chaseOptions(patch, chase); if (patch?.mode) setViewMode(patch.mode); return { mode: viewMode, ...chase }; },
     mode: next => (next === undefined ? viewMode : setViewMode(next)),
   };
+  // VIEW section: per-flight options (camera, screen) back to defaults, then push every option through its
+  // router so the fresh constellation + gravity pick up the persisted taste.
+  viewOptions.resetForEntry();
+  for (const name of Object.keys(VIEW_OPTIONS)) applyViewOption(name, viewOptions.get(name));
+  resetChordOverlay();
   last = performance.now();
   requestAnimationFrame(loop);
 }
@@ -1221,6 +1234,8 @@ export function stopFlight() {
   resetGridRowAuraSprites();   // glow textures (≤360 hue buckets) are rebuilt lazily — hand the memory back on exit
   if (skyDebugEl) skyDebugEl.style.display = 'none';   // dev overlay — hide, don't destroy (cheap to reuse on re-entry)
   if (audioLabEl) audioLabEl.hidden = true;
+  resetChordOverlay();
+  document.getElementById('cosmos-view')?.classList.remove('clean-screen');
   if (ctx && cv) { ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0); ctx.clearRect(0, 0, W, H); }
 }
 
@@ -1311,6 +1326,7 @@ function stepControls(dt, allowTranslation = true) {
 function setViewMode(mode) {
   if (placement !== 'hilbert' || (mode !== 'first' && mode !== 'chase')) return viewMode;
   viewMode = mode;
+  viewOptions.set('camera', viewMode);   // V and __cosmosView keep the CAMERA pill honest (a same-value set is a no-op)
   return viewMode;
 }
 // Where the view is heading this frame: the chase target unless a Web ride is set to drop to first person.
@@ -2164,21 +2180,127 @@ function drawCockpitPlot() {
   updateCockpitScaleHighlights(now, nodeIndex);
 }
 
-// Full Sky readout (M4): the GLOBAL walk's current chord — one sky-wide progression, not a per-star
-// song strip. Shows regardless of whether a star is clicked (the bed plays from cosmos entry). Sky
-// Root B3: Roman numerals are relative to the solved root, so the root fraction sits beside them —
-// "I" beside "1/1" reads as the v1 default; once a swap lands, the root fraction itself changes.
-let labSyncLast = 0;
-const LAB_SYNC_MS = 200;   // mirror-refresh cadence, matching the sky-debug overlay's throttle
+// ── VIEW section (help popup) + the on-screen CHORD name ──────────────────────────────────────────────────
+// The audio lab (Z) is retired: an early dev interface the rail replaced. Its DOM stays in index.html but
+// nothing opens it any more — audioLabOn stays false, so syncAudioLab is inert. The one thing it showed that a
+// listener wants, the chord, now lives on screen as #cosmos-chord.
+const viewOptions = createViewOptions();
+const viewButtons = new Map();   // option name → { row, buttons: Map(value → pill button) }
+let viewBtnEl = null, viewPanelEl = null;
+let chordEl = null, chordFaces = null, chordFace = 0, chordText = '', chordKey = '', chordRetryAt = 0;
 
-function drawChordReadout() {
-  if (!chordReadoutEl || !audioLabOn) return;
-  chordReadoutEl.innerHTML = `♪ <b>${currentSkyRoot().fraction}</b> <b class="cur">${currentSkyChord().symbol}</b>`;
-  // The derived rate, the modulation shift and the MIDI port all follow the live FIELD rather than the
-  // control that set them, so the whole mirror has to re-read the engine — throttled like the sky-debug
-  // overlay so an open lab doesn't rewrite a dozen readouts every frame.
-  const now = performance.now();
-  if (now - labSyncLast >= LAB_SYNC_MS) { labSyncLast = now; syncAudioLab(); }
+function setViewPanelOpen(open) {
+  viewPanelEl?.classList.toggle('open', open);
+  viewBtnEl?.setAttribute('aria-expanded', String(open));
+}
+
+function buildViewSection(host) {
+  for (const [name, spec] of Object.entries(VIEW_OPTIONS)) {
+    const row = document.createElement('div'); row.className = 'view-row';
+    const label = document.createElement('span'); label.textContent = spec.label;
+    const group = document.createElement('div'); group.className = 'view-seg-group';
+    group.setAttribute('role', 'group'); group.setAttribute('aria-label', spec.label);
+    const buttons = new Map();
+    for (const [value, text] of spec.choices) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'view-seg'; button.textContent = text;
+      // Keep keyboard focus on the flight: a focused pill would take SPACE (boost) as a click.
+      button.addEventListener('mousedown', e => e.preventDefault());
+      button.addEventListener('click', () => viewOptions.set(name, value));
+      buttons.set(value, button); group.appendChild(button);
+    }
+    viewButtons.set(name, { row, buttons });
+    row.append(label, group); host.appendChild(row);
+  }
+  viewOptions.subscribe(applyViewOption);
+}
+
+function paintViewSection() {
+  for (const [name, { row, buttons }] of viewButtons) {
+    const value = viewOptions.get(name);
+    for (const [v, button] of buttons) { button.classList.toggle('active', v === value); button.setAttribute('aria-pressed', String(v === value)); }
+    // Gravity and the chase view are cube-only (Decision 2) — in spine placement they would be dead pills.
+    row.hidden = !!VIEW_OPTIONS[name].cubeOnly && placement !== 'hilbert';
+  }
+}
+
+// ONE router from a pill to its visual. Runs on every change (pill, V key, entry reset) and once per option at
+// entry, so what flies always matches what the pills show.
+function applyViewOption(name, value) {
+  if (name === 'constellations') {
+    const wasOn = constellation.options.enabled;
+    constellation.configure(constellationPatch(value));
+    // OFF drops the figure outright, so turning it back on starts fresh instead of resurrecting stale lines.
+    if (wasOn && !constellation.options.enabled) { constellation.reset(); constellationCursor = null; }
+  } else if (name === 'gravity') {
+    renderControls();   // the G row follows the pill
+  } else if (name === 'camera') {
+    setViewMode(value);
+  } else if (name === 'screen') {
+    document.getElementById('cosmos-view')?.classList.toggle('clean-screen', value === 'clean');
+    if (value === 'clean') { helpPanelEl?.classList.remove('open'); setViewPanelOpen(false); }
+  }
+  paintViewSection();
+}
+
+// Local gravity this frame: the pill's mode (OFF / HOLD G / ALWAYS), plus the ?gravityHold=1 dev pin.
+const gravityOn = () => gravityDebugHold || gravityHeld(viewOptions.get('gravity'), keys.g);
+
+function renderControls() {
+  if (!controlsEl) return;
+  const gravity = viewOptions.get('gravity');
+  const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['arrows', 'steer'], ['scroll', 'dolly'],
+    ['click', 'inspect / bloom'], ['right-click', 'collapse'], ['Esc', 'cancel travel / exit'],
+    ...(placement === 'hilbert' ? [['G', gravityControlLabel(gravity), gravity === 'off'], ['V', 'chase view']] : []),
+    ['M', 'mute'], ['H', 'hold harmony'], ['C', 'full sky debug'], ['1–0', 'toggle webs']];
+  controlsEl.innerHTML = rows.map(([k, v, dim]) => `<div class="help-kv${dim ? ' dim' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
+}
+
+// The sounding chord, top-right beside the ? button (naming rules: chord-label.js). A change cross-fades between two stacked faces;
+// CSS owns the timing. It is relabelled only when something that NAMES it changes — chord, source, root,
+// modulation, fundamental — so the steady-state cost is one string compare per frame. A ratio-mode label that
+// had to fall back to cents (no nearby star covers the chord root yet, e.g. right at entry) retries each second.
+function drawChordOverlay() {
+  if (!chordEl || chordFaces?.length !== 2) return;
+  if (!(currentTicks() > 0)) { chordEl.classList.remove('live'); return; }   // nothing sounding yet
+  chordEl.classList.add('live');
+  const chord = currentSkyChord(), root = currentSkyRoot(), modulationOn = currentModulation().on;
+  const fundamentalCents = currentFundamental().cents, now = performance.now();
+  const key = `${chord.source}|${chord.id}|${root.rootKey}|${modulationOn ? 1 : 0}|${Math.round(fundamentalCents)}`;
+  if (key === chordKey && !(chordRetryAt && now >= chordRetryAt)) return;
+  chordKey = key;
+  const pools = [];
+  if (!modulationOn) for (const id of audibleIds) {
+    const at = cosmos?.zones.get(id)?.skyPoolAt;
+    if (at && at.rootKey === root.rootKey) pools.push(at.pool);
+  }
+  const label = chordLabel({ chord, modulationOn, fundamentalCents, rootCents: root.cents, rootFraction: root.fraction, pools });
+  chordRetryAt = !modulationOn && label.root.endsWith('¢') ? now + 1000 : 0;
+  if (label.text === chordText) return;
+  chordText = label.text;
+  chordFace ^= 1;
+  const face = chordFaces[chordFace], rootEl = document.createElement('b');
+  appendKerned(rootEl, label.root);
+  face.replaceChildren(rootEl);
+  appendKerned(face, label.quality);
+  if (label.detail) { const detail = document.createElement('small'); detail.textContent = label.detail; face.appendChild(detail); }
+  face.classList.add('on'); chordFaces[chordFace ^ 1].classList.remove('on');
+  chordEl.setAttribute('aria-label', `chord ${label.text}`);
+}
+
+// Text with each ♭/♯ in its own span, so CSS (.acc) can tuck the accidental against its letter or digit.
+function appendKerned(el, text) {
+  for (const part of text.split(/([♭♯])/)) {
+    if (!part) continue;
+    if (part === '♭' || part === '♯') { const acc = document.createElement('span'); acc.className = 'acc'; acc.textContent = part; el.appendChild(acc); }
+    else el.appendChild(document.createTextNode(part));
+  }
+}
+
+function resetChordOverlay() {
+  chordKey = ''; chordText = ''; chordRetryAt = 0;
+  if (chordEl) chordEl.classList.remove('live');
+  for (const face of chordFaces || []) { face.classList.remove('on'); face.replaceChildren(); }
 }
 
 // ── Full Sky DEBUG OVERLAY (dev-only, ?skyDebug=1) ──────────────────────────────────────────────
@@ -2456,7 +2578,7 @@ function loop() {
     const gravityTick = currentTicks();
     const gravityTickRate = dt > 0 ? Math.max(0, (gravityTick - gravityLastTick) / dt) : 0;
     gravityLastTick = gravityTick;
-    gravityRenderer.frame({ dt, held: !!keys.g || gravityDebugHold, center: gravityCameraWorld, tick: gravityTick, ticksPerSecond: gravityTickRate });
+    gravityRenderer.frame({ dt, held: gravityOn(), center: gravityCameraWorld, tick: gravityTick, ticksPerSecond: gravityTickRate });
   }
 
   ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
@@ -2716,7 +2838,7 @@ function loop() {
   updateGridRowField(audioMembershipPositions, placed, basis, translationRate > 0, now);
   phase('field');
   drawCockpitPlot();
-  drawChordReadout();
+  drawChordOverlay();
   renderSkyDebug(now);
 
   // black-hole blots: each bloom is an opaque orb of radius outerR × BLOT_FRAC. Seen from OUTSIDE it is a screen
@@ -3058,7 +3180,7 @@ function loop() {
     webHud = ` · ◈ ${chips}`;
   }
   const rideHud = returnRide ? ` · <span style="color:${activeWebs.get(returnRide.webId)?.color || 'var(--known)'}">↢ ${returnRide.destination === 'anchor' ? `grid ${returnRide.targetGrid.toLocaleString()}` : returnRide.destination} ${Math.round((activeWebs.get(returnRide.webId)?.rideProgress || 0) * 100)}%</span>` : '';
-  const gravityHud = gravityRenderer && (keys.g || gravityDebugHold || gravityRenderer.activation > 0.001)
+  const gravityHud = gravityRenderer && (gravityOn() || gravityRenderer.activation > 0.001)
     ? ` · <span style="color:var(--known)">◎ gravity ${Math.round(gravityRenderer.activation * 100)}%</span>` : '';
   hud.innerHTML = `grid <b>${cam.anchor.toLocaleString()}</b>${focusHud}${webHud}${rideHud}${gravityHud}`;
   // live solve queue → the help popup (only while open, so it's free when closed)
@@ -3159,7 +3281,6 @@ function bindControls() {
     const k = e.key.toLowerCase(); const firstPress = !keys[k]; keys[k] = true;
     if (firstPress && k === 'escape') { if (returnRide) cancelWebReturn(); else window.exitCosmos(); e.preventDefault(); }
     if (firstPress && /^[0-9]$/.test(k)) { toggleSlot(k === '0' ? 9 : +k - 1); if (selected) showDetail(selected); }   // 1-9,0 → hide/show web slots
-    if (firstPress && k === 'b' && swarm) { if (swarm.agents.length) swarm.clear(); else swarm.spawn(AGENT_COUNT, cam.anchor); }   // B → toggle Collider-Battle ships
     if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)
     // V → chase view: pull back behind and above the ship, and back to the cockpit. Cube only (setViewMode
     // refuses spine placement). Only what is SEEN moves — the ship keeps the controls, the hearing and the key.
@@ -3169,14 +3290,6 @@ function bindControls() {
     // T → dump the audio-clock table (one row per motion mode) and start a fresh window. The protocol:
     // sit still ~10s, steer ~10s, fly ~10s, press T — the three rows are then directly comparable.
     if (firstPress && k === 't') { console.log(formatTable(audioTelemetry.report())); audioTelemetry.reset(); }
-    // Z → toggle the audio LAB (dev overlay; ?audioLab=1 seeds it open, exactly like ?skyDebug=1 / C).
-    // Revealing it syncs it FROM the engine first, so a dev surface never shows a stale picture of state
-    // the rail has since moved.
-    if (firstPress && k === 'z' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      audioLabOn = !audioLabOn;
-      if (audioLabEl) audioLabEl.hidden = !audioLabOn;
-      if (audioLabOn) syncAudioLab();
-    }
     if (k.startsWith('arrow') || k === ' ') e.preventDefault();   // don't scroll the page
   });
   window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
