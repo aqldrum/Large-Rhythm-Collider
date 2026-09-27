@@ -62,7 +62,7 @@ function mergeStarRatioOwners(z, ratioOwners) {
   if (!z._ratioOwnerMap) z._ratioOwnerMap = new Map();
   mergeRatioOwners(z._ratioOwnerMap, ratioOwners);
   // The sorted z.ratioOwners array is rebuilt ONCE per frame in _flushRatioOwners (the zone is marked dirty
-  // by the _onShard caller), not on every shard reply — a large grid lands up to MAX_GRID_SHARDS replies and
+  // by the _onShard caller), not on every shard reply — a large grid lands hundreds of shard replies and
   // the old per-reply full re-sort was O(shards·owners·log owners) of main-thread work while flying past it.
 }
 
@@ -170,7 +170,8 @@ export class Cosmos {
     if (this.zones.get(z.grid) !== z) return;                 // evicted while planning
     if (z.solveGeneration !== generation) return;             // superseded force solve / generation
     if (r && r.monster) { z.monster = true; z.divisors = r.divisors; z.cost = r.cost; z.maxLayer = r.maxLayer; this._finishMonster(z); return; }   // combinatorial black hole — identified, not auto-solved (override forces it)
-    if (r && r.tooLarge) { z.unsolvable = true; z.divisors = r.divisors; z.maxLayer = r.maxLayer; this._finishZone(z, 1); return; }   // beyond MAX_GRID_SHARDS/MAX_GRID_LAYER → faint frontier dust, not truly solved (abundance 1 is a fallback, not a real count)
+    // No size cap any more (grid-core.js gridPlan): `unsolvable` now means only that the PLAN failed — faint dust,
+    // not truly solved (abundance 1 is a fallback, not a real count).
     if (!r || r.error || !r.shards) { if (r && r.error) this.events.errors++; z.unsolvable = true; if (r) z.divisors = r.divisors; this._finishZone(z, 1); return; }
     z.plan = r.shards; z.divisors = r.divisors; z.shardsTotal = r.shards.length; z.dispatchIdx = 0; z.shardsDone = 0; z.partial = 0;
     z.cost = r.cost; z.maxLayer = r.maxLayer;

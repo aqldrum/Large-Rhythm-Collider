@@ -1110,7 +1110,7 @@ export function ensureFlight(canvas, hudEl) {
   // Module-relative Worker URL: `new Worker(relative)` resolves against the DOCUMENT (index.html at root),
   // which breaks under the full-swallow — resolve against this module so it lands on cosmos/cosmos/. The
   // ?v= busts the hard Web-Worker cache — bump it AND the worker's ../grid-core.js?v= on worker edits.
-  pool = new SolverWorkerPool(new URL('./cosmos/abundance-worker.js?v=8', import.meta.url), poolSize);
+  pool = new SolverWorkerPool(new URL('./cosmos/abundance-worker.js?v=9', import.meta.url), poolSize);
   rootCompiler = new ProgramWorkerPool(new URL('./cosmos/sky-root-worker.js', import.meta.url));
   rootSolvePending = false;
   rowCompiler = new ProgramWorkerPool(new URL('./cosmos/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
@@ -1554,13 +1554,12 @@ function renderGridView(sel) {
       `<button class="ov-btn lrc-mode-btn warn" data-g="${sel.grid}">◉ solve anyway</button>`;
     openCockpit(); return;
   }
-  if (z && z.unsolvable) {             // beyond the live solve cap — be honest, don't imply "1 kept"
+  if (z && z.unsolvable) {             // the live solve failed (no size cap any more) — be honest, don't imply "1 kept"
     gridBodyEl.innerHTML = metricList([
       ['Factors', factorString(sel.grid)],
       ['Primes · divisors', `${fi.primes} · ${fi.divisors}`],
-      ['Abundance', 'beyond solve cap'],
     ]) +
-      `<p class="lrc-mode-note">Uncharted frontier — too large to solve live (grid &gt; cap).</p>`;
+      `<p class="lrc-mode-note">Couldn't solve this grid live.</p>`;
     openCockpit(); return;
   }
   const ab = z ? z.abundance : (sel.z ? sel.z.abundance : 0), state = z ? z.state : 'evicted';
@@ -2962,7 +2961,7 @@ function loop() {
     const worldR = (lit ? displaySize : 0.2) * STAR_SCALE;
     let r = worldR * focal / s.z; r = Math.max(0.5, Math.min(r, 400));
     const col = z.monster ? 'rgba(255,120,105,0.92)'           // red giant = combinatorial monster (solve-on-override)
-              : z.unsolvable ? 'rgba(150,120,110,0.45)'         // warm-grey = uncharted frontier (beyond cap)
+              : z.unsolvable ? 'rgba(150,120,110,0.45)'         // warm-grey = the live solve failed
               : (lit ? starColor(displaySize) : 'rgba(120,130,150,0.5)');
     if (keys[' '] && previousScreen && now - previousScreen.at < 100) {
       let dx = previousScreen.x - s.x, dy = previousScreen.y - s.y;

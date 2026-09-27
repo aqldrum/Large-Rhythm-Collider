@@ -22,9 +22,16 @@ check('a genuinely combinatorial grid remains gated',
   `cost ${combinatorial.cost.toLocaleString()}`);
 check('force bypasses the combinatorial estimate', !!gridPlan(27_720, true).shards);
 
-const beyondMemoryCap = gridPlan(6_000_002, true);
-check('force does not bypass the absolute max-layer memory cap', beyondMemoryCap.tooLarge === true,
-  `max layer ${beyondMemoryCap.maxLayer.toLocaleString()}`);
+// 2026-09-27: no absolute caps. A deep grid past the old 3M max-layer cap plans real shards like any other, and
+// the most divisor-rich grids in the cube (past the old 260-shard cap) are monster-gated, never refused.
+const deepPastOldCap = gridPlan(6_000_002);
+check('a grid past the old 3M max-layer cap plans real shards (no tooLarge any more)',
+  !!deepPastOldCap.shards && !deepPastOldCap.tooLarge && deepPastOldCap.maxLayer > 3_000_000,
+  `max layer ${deepPastOldCap.maxLayer.toLocaleString()}`);
+const divisorRich = gridPlan(14_414_400);   // 504 divisors — past the old 260-shard cap
+check('a grid past the old 260-shard cap is monster-gated, and force still solves it',
+  divisorRich.monster === true && !divisorRich.tooLarge && gridPlan(14_414_400, true).shards?.length > 260,
+  `${divisorRich.divisors} divisors`);
 
 console.log('\n[2] One-at-a-time heavy lane');
 let workerNumber = 0, activeHeavy = 0, maxHeavy = 0;

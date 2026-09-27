@@ -7,7 +7,7 @@
 //                streams in shard-by-shard instead of one 20-second whole-grid solve blocking a worker.
 // NOTE: the ?v= on this import is a cache-bust — browsers cache Web Workers (and their imports) hard, so bump
 // it (and the Worker URL in flight-view.js) whenever this file or grid-core.js changes, or stale code lingers.
-import { gridPlan, gridShardSystems, gridShardSolve, divisorsFast, REAL_RHYTHM_MAX_RANGE } from '../grid-core.js?v=8';
+import { gridPlan, gridShardSystems, gridShardSolve, divisorsFast, REAL_RHYTHM_MAX_RANGE } from '../grid-core.js?v=9';
 
 self.onmessage = (e) => {
   const d = e.data;

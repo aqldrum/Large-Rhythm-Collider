@@ -37,36 +37,62 @@ export function decimalToFraction(decimal) {
 
 export function ratioToCents(ratio) { return 1200 * Math.log2(ratio); }
 
+// Scale-only composite, STREAMED. The composite is the union of k arithmetic progressions (layer L steps by
+// grid/L), so a k-way merge walks it in ascending order in O(ΣL) time and O(k) memory. Only the DISTINCT gaps
+// are kept — in first-seen order — plus the largest. That is all a scale needs: a gap that repeats adds nothing
+// to deriveRhythm's ratioMap (same raw and folded fraction), so the distinct list derives the identical model,
+// sourceFractions order included. The old path materialized every attack (a Set, a sort, a gaps array, and two
+// fraction conversions PER ATTACK): a deep shard's 8.4M-attack layer cost 19.7 s and 1.2 GB in one worker,
+// which is what the flight solve's old MAX_GRID_LAYER cap was really protecting against.
+function compositeSpaces(layers, grid) {
+  const k = layers.length, step = new Float64Array(k), next = new Float64Array(k);
+  for (let i = 0; i < k; i++) { step[i] = grid / layers[i]; next[i] = step[i]; }   // tick 0 is every layer's
+  const distinct = new Set();
+  let spaceFund = 0, prev = 0;
+  for (;;) {
+    let t = Infinity;
+    for (let i = 0; i < k; i++) if (next[i] < t) t = next[i];
+    if (t >= grid) break;
+    for (let i = 0; i < k; i++) if (next[i] === t) next[i] += step[i];
+    const gap = t - prev; distinct.add(gap); if (gap > spaceFund) spaceFund = gap;
+    prev = t;
+  }
+  const wrap = grid - prev;   // wraparound space (the composite always starts at tick 0)
+  distinct.add(wrap); if (wrap > spaceFund) spaceFund = wrap;
+  return { spaces: [...distinct], spaceFund };
+}
+
 // One composite derivation shared by the scale-only solver path and the richer selected-rhythm UI/audio
-// path. `withNodes` stays opt-in: deriveScale is called across enormous solve corpora and must retain its
-// lean Set-based path, while a selected rhythm needs attack ownership plus raw/folded ratio identity.
+// path. `withNodes` stays opt-in: deriveScale is called across enormous solve corpora and takes the lean
+// streamed path (compositeSpaces), while a selected rhythm needs every attack's ownership plus raw/folded
+// ratio identity, so it still materializes the composite.
 function deriveRhythm(rawLayers, withNodes = false) {
   const layers = normalizeLayers(rawLayers);
   const grid = lcmAll(layers);
   const fundamental = grid / layers[0]; // grid / fastest layer (matches codex `fundamental`)
 
-  // composite attack points: i*groupingSize for i in [0, L) — endpoint is the wraparound
-  const positions = withNodes ? new Map() : new Set();
-  for (let layerIndex = 0; layerIndex < layers.length; layerIndex++) {
-    const L = layers[layerIndex];
-    const gs = grid / L;
-    for (let i = 0; i < L; i++) {
-      const tick = i * gs;
-      if (!withNodes) positions.add(tick);
-      else {
+  let comp = null, positions = null, spaces, spaceFund = 0;
+  if (!withNodes) ({ spaces, spaceFund } = compositeSpaces(layers, grid));
+  else {
+    // composite attack points: i*groupingSize for i in [0, L) — endpoint is the wraparound
+    positions = new Map();
+    for (let layerIndex = 0; layerIndex < layers.length; layerIndex++) {
+      const L = layers[layerIndex];
+      const gs = grid / L;
+      for (let i = 0; i < L; i++) {
+        const tick = i * gs;
         let owners = positions.get(tick);
         if (!owners) positions.set(tick, owners = []);
         owners.push(layerIndex);
       }
     }
+    comp = Array.from(positions.keys()).sort((a, b) => a - b);
+    spaces = [];
+    for (let i = 0; i < comp.length - 1; i++) spaces.push(comp[i + 1] - comp[i]);
+    spaces.push(grid - comp[comp.length - 1] + comp[0]); // wraparound space
+    for (const s of spaces) if (s > spaceFund) spaceFund = s; // largest space (loop, not spread: at huge
+    // grids `spaces` has millions of entries and Math.max(...spaces) overflows the call stack)
   }
-  const comp = Array.from(withNodes ? positions.keys() : positions).sort((a, b) => a - b);
-  const spaces = [];
-  for (let i = 0; i < comp.length - 1; i++) spaces.push(comp[i + 1] - comp[i]);
-  spaces.push(grid - comp[comp.length - 1] + comp[0]); // wraparound space
-
-  let spaceFund = 0; for (const s of spaces) if (s > spaceFund) spaceFund = s; // largest space (loop, not
-  // spread: at huge grids `spaces` has millions of entries and Math.max(...spaces) overflows the call stack)
   const ratioMap = new Map();
   const fractionCache = withNodes ? new Map([[1, '1/1']]) : null;
   const fractionFor = value => {

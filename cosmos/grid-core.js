@@ -6,7 +6,7 @@
 //   layers are divisors of G · LCM==G · gcd==1 · no direct-factor redundancy
 //   → derive cardinality + ratioSet
 //   → keep-two per (fundamental | ratioSet): min & max layer-sum instances.
-import { deriveScale, lcmAll, gcdAll } from './oracle-core.js';
+import { deriveScale, lcmAll, gcdAll } from './oracle-core.js?v=3';   // ?v= — the solve worker must pick up the streamed deriveScale
 
 export function divisorsOf(G) { const d = []; for (let i = 1; i <= G; i++) if (G % i === 0) d.push(i); return d; }
 
@@ -38,11 +38,16 @@ export function shardKeysOf(G) { return divisorsFast(G).filter(a => a >= 2 && a 
 
 // Live-solve policy. A large layer is no longer a reason to paint the whole grid as a monster: deep
 // shards run through a one-at-a-time lane in Cosmos, while the browser worker pool gives them a
-// bounded recovery timeout. The absolute caps remain memory/complexity backstops even for a forced
-// solve. MONSTER_COST was raised after sharding measurements showed that the former 1.2e9 threshold
-// gated ordinary ~2s work; 3e9 still catches genuinely combinatorial grids such as 27,720 (~8.6e9).
-export const MAX_GRID_SHARDS = 260;
-export const MAX_GRID_LAYER = 3_000_000;
+// bounded recovery timeout. MONSTER_COST was raised after sharding measurements showed that the former
+// 1.2e9 threshold gated ordinary ~2s work; 3e9 still catches genuinely combinatorial grids such as 27,720
+// (~8.6e9). That estimate is the ONLY gate, and the listener can always override it.
+//
+// There is no absolute cap any more (2026-09-27). MAX_GRID_LAYER (3M) and MAX_GRID_SHARDS (260) used to
+// refuse a grid outright, even when forced. The layer cap hid ~40% of the Hilbert cube (every grid above
+// ~3M × its smallest prime), and what it actually guarded was deriveScale materializing every attack of a
+// deep layer (one 8.4M-layer shard: 19.7 s, 1.2 GB). Streaming the composite (oracle-core.js
+// compositeSpaces) made that shard ~3 s and O(1) memory, and the cube is bounded (< 2^24) anyway. The shard
+// cap only ever caught grids the cost gate already flags (every one sampled was above MONSTER_GRID_COST).
 export const HEAVY_SHARD_LAYER = 500_000;
 export const HEAVY_SHARD_TIMEOUT_MS = 10_000;
 export const MONSTER_GRID_COST = 3e9;
@@ -67,15 +72,12 @@ export function gridCost(keysGe2) {
   return sum;
 }
 
-// Cheap plan/classification shared by the real worker and Node assertions. `force` bypasses only the
-// estimated combinatorial gate; it deliberately cannot bypass either absolute safety backstop.
+// Cheap plan/classification shared by the real worker and Node assertions. `force` bypasses the estimated
+// combinatorial gate — the only gate there is.
 export function gridPlan(G, force = false) {
   const keys = shardKeysOf(G);
   const divisors = keys.length + 2;                              // restore divisors 1 and G
   const maxLayer = keys.length ? keys[keys.length - 1] : 0;
-  if (keys.length > MAX_GRID_SHARDS || maxLayer > MAX_GRID_LAYER) {
-    return { tooLarge: true, divisors, maxLayer };
-  }
   const cost = gridCost(keys);
   if (!force && cost > MONSTER_GRID_COST) return { monster: true, divisors, cost, maxLayer };
   return { shards: keys, divisors, cost, maxLayer };
