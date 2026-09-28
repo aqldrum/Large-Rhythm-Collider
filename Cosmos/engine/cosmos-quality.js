@@ -79,20 +79,56 @@ const DEFAULT_TIER_FALLBACK = 'medium';
 // public deploy lands on before they've touched the slider, so it must be safe on a
 // mid laptop, not tuned for the author's 14-core.
 //   • cores ≤ 4, or a machine that admits ≤ 4 GiB RAM        → low
+//   • a software renderer (no real GPU)                      → low
+//   • built-in Intel graphics: ≤ 8 cores → low, else medium (never high)
 //   • cores ≥ 12 (a real desktop)                            → high
 //   • everything else / unknown                              → medium
 // Ultra is NEVER auto-selected — it is an explicit opt-in for beasts.
 // deviceMemory is coarse and unreliable (Chrome caps it at 8, Safari/Firefox omit it),
 // so it can only DROP a machine to low, never lift one — cores is the primary signal.
-export function detectDefaultTier(nav = defaultNav()) {
+// The GPU likewise only ever lowers a tier. Built-in Intel graphics marks a pre-Apple-Silicon
+// Mac or a thin Windows laptop — the machines that throttle hot (2026-09-28 field report: a
+// 2020 13" MacBook Pro, quad i5 = 8 threads, read as Medium by cores alone and crackled).
+// Safari reports every Mac as "Apple GPU", so there this signal is simply absent.
+export function detectDefaultTier(nav = defaultNav(), gpu = '') {
   const cores = nav.hardwareConcurrency;   // logical cores, or undefined on old/odd hosts
   const mem = nav.deviceMemory;            // GiB, or undefined (Safari/Firefox always omit)
+  const g = gpuClass(gpu);
   // An EXPLICIT low reading drops the machine; a machine that reports NOTHING gets the
   // benefit of the doubt at medium (safe middle), never assumed to be a 4-core.
   if (cores !== undefined && cores <= 4) return 'low';
   if (mem !== undefined && mem <= 4) return 'low';
+  if (g === 'software') return 'low';
+  if (g === 'intel-integrated') return cores !== undefined && cores > 8 ? 'medium' : 'low';
   if (cores !== undefined && cores >= 12) return 'high';
   return 'medium';
+}
+
+// Classify a WebGL renderer string. Intel Arc is a discrete card, not built-in graphics.
+export function gpuClass(renderer) {
+  const r = String(renderer || '').toLowerCase();
+  if (!r) return 'unknown';
+  if (/swiftshader|llvmpipe|softpipe|software|basic render/.test(r)) return 'software';
+  if (/\bintel\b/.test(r) && !/\barc\b/.test(r)) return 'intel-integrated';
+  return 'other';
+}
+
+// The GPU name the browser admits to, or '' (no DOM, no WebGL, or anything throws). Firefox gives the
+// real name through RENDERER; Chrome and Safari answer 'WebKit WebGL' there and need the debug extension
+// (Safari then says 'Apple GPU' for every Mac). The throwaway context is released at once.
+export function readGpuRenderer() {
+  try {
+    if (typeof document === 'undefined') return '';
+    const gl = document.createElement('canvas').getContext('webgl');
+    if (!gl) return '';
+    let name = String(gl.getParameter(gl.RENDERER) || '');
+    if (!name || /^webkit webgl$/i.test(name)) {
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      if (ext) name = String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || name);
+    }
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return name;
+  } catch { return ''; }
 }
 
 function defaultNav() {
@@ -110,9 +146,11 @@ function defaultStorage() {
   try { return typeof localStorage !== 'undefined' ? localStorage : null; } catch { return null; }
 }
 
-export function createQualityPrefs({ storage, nav, key = QUALITY_STORAGE_KEY } = {}) {
+export function createQualityPrefs({ storage, nav, gpu, key = QUALITY_STORAGE_KEY } = {}) {
   const store = storage !== undefined ? storage : defaultStorage();
-  const detected = detectDefaultTier(nav);
+  // Probe the real GPU only for the real navigator; a caller passing a fake nav (the guard) stays pure.
+  if (gpu === undefined) gpu = nav === undefined ? readGpuRenderer() : '';
+  const detected = detectDefaultTier(nav, gpu);
   let tier = detected, override = false;
   try {
     const blob = JSON.parse(store?.getItem(key) || 'null');
@@ -126,6 +164,7 @@ export function createQualityPrefs({ storage, nav, key = QUALITY_STORAGE_KEY } =
   return {
     get: () => tier,
     detected,
+    gpu,
     isOverride: () => override,
     set(id) {
       if (!Object.hasOwn(QUALITY_TIERS, id)) return tier;

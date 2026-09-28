@@ -1192,7 +1192,7 @@ export function ensureFlight(canvas, hudEl) {
   // a tap. forget() drops the saved choice and returns to the detected tier.
   if (typeof window !== 'undefined') window.__cosmosQuality = {
     get: () => activeQualityId, set: id => qualityPrefs.set(id), forget: () => qualityPrefs.forget(),
-    tiers: QUALITY_ORDER, detected: qualityPrefs.detected,
+    tiers: QUALITY_ORDER, detected: qualityPrefs.detected, gpu: qualityPrefs.gpu,   // gpu: what detection saw (field testing)
   };
   // Note-constellation tuning handle, same precedent and same reason: no UI exists yet, and these want to
   // be felt by eye on a live field. __cosmosConstellation.set({ lifecycle: 'lifespan', lifespan: 5 })

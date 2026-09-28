@@ -1,7 +1,7 @@
 // Assertions for the Cosmos performance-quality authority: tier coverage, the
 // monotonicity contract (raising quality only ever adds work), the device-class
 // default detector, and — structurally — Avery's "never dumber harmony" rule.
-import { QUALITY_TIERS, QUALITY_ORDER, ROW_PANNING_ORDER, detectDefaultTier, devicePoolMax, resolveTier, createQualityPrefs, qualityWarning, QUALITY_STORAGE_KEY } from '../engine/cosmos-quality.js';
+import { QUALITY_TIERS, QUALITY_ORDER, ROW_PANNING_ORDER, gpuClass, detectDefaultTier, devicePoolMax, resolveTier, createQualityPrefs, qualityWarning, QUALITY_STORAGE_KEY } from '../engine/cosmos-quality.js';
 
 let PASS = true;
 const check = (name, ok, detail = '') => {
@@ -55,6 +55,24 @@ check('a 16-core desktop → high', detectDefaultTier({ hardwareConcurrency: 16,
 check('a 16-core machine with no deviceMemory report → high (cores lead)', detectDefaultTier({ hardwareConcurrency: 16 }) === 'high');
 check('an empty/unknown navigator → medium (safe middle)', detectDefaultTier({}) === 'medium');
 check('ultra is never auto-selected', QUALITY_ORDER.every(id => detectDefaultTier({ hardwareConcurrency: 64, deviceMemory: 64 }) !== 'ultra'));
+
+console.log('\n[4b] The GPU only ever lowers a tier');
+{
+  const irisMac = 'ANGLE (Intel Inc., Intel(R) Iris(TM) Plus Graphics, OpenGL 4.1)';
+  check('the field-report MacBook (8 threads, Intel Iris Plus) → low', detectDefaultTier({ hardwareConcurrency: 8 }, irisMac) === 'low');
+  check('built-in Intel graphics with > 8 cores → medium, never high', detectDefaultTier({ hardwareConcurrency: 16 }, 'Intel(R) UHD Graphics 630') === 'medium');
+  check('a software renderer → low even on a big machine', detectDefaultTier({ hardwareConcurrency: 16 }, 'Google SwiftShader') === 'low');
+  check('Intel Arc is a discrete card, not built-in graphics', gpuClass('ANGLE (Intel, Intel(R) Arc(TM) A770 Graphics Direct3D11)') === 'other');
+  check('Apple Silicon and Safari\'s masked "Apple GPU" change nothing',
+    detectDefaultTier({ hardwareConcurrency: 14 }, 'ANGLE (Apple, ANGLE Metal Renderer: Apple M3 Max, Unspecified Version)') === 'high' &&
+    detectDefaultTier({ hardwareConcurrency: 8 }, 'Apple GPU') === 'medium');
+  check('no GPU string → the core-count rules alone', detectDefaultTier({ hardwareConcurrency: 8 }, '') === 'medium');
+  const tierRank = id => QUALITY_ORDER.indexOf(id);
+  let never = true;
+  for (const cores of [2, 4, 6, 8, 10, 12, 16, 24]) for (const gpu of ['', irisMac, 'Google SwiftShader', 'NVIDIA GeForce RTX 4090', 'Apple GPU'])
+    if (tierRank(detectDefaultTier({ hardwareConcurrency: cores }, gpu)) > tierRank(detectDefaultTier({ hardwareConcurrency: cores }, ''))) never = false;
+  check('across cores × GPUs, a GPU reading never RAISES the tier above the cores-only answer', never);
+}
 
 console.log('\n[5] Physical pool max vs live throttle');
 check('devicePoolMax mirrors max(2, min(8, cores-2)) on a 14-core host', devicePoolMax({ hardwareConcurrency: 14 }) === 8);
