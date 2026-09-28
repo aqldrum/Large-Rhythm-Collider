@@ -16,7 +16,7 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './engine/oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, classifyLeadHarmony, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, gridRowReachedAttacks, gridRowDetuneCents, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext, currentFundamental, setRowPanning } from './audio/cosmos-audio.js';
+import { deriveVoice, classifyLeadHarmony, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, gridRowReachedAttacks, gridRowDetuneCents, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext, currentFundamental, setRowPanning, setLeadLayersAudible, lastSoundedLeadOnset } from './audio/cosmos-audio.js';
 // The RAIL owns the engine's user-facing state (rail-view.js mounts it; flight-boot restores it on entry).
 // Every parameter BOTH surfaces express — mute, mix, modulation, MIDI out — is written through railParams so
 // there is exactly one owner and the two surfaces cannot disagree. See the audio-lab section below.
@@ -31,7 +31,7 @@ import { rootPolicyStableKey } from './audio/harmony-policy.js';
 import { ProgramWorkerPool } from './engine/program-worker-pool.js';
 import { toAudioListenerPosition } from './audio/spatial-audio-frame.js';
 import { createGridRowAuraBatch, resetGridRowAuraSprites } from './ui/grid-row-aura.js';
-import { buildRhythmInspectorModel, lightRhythmMetrics } from './ui/rhythm-inspector-model.js';
+import { buildRhythmInspectorModel, lightRhythmMetrics, plotSlotAtPhase } from './ui/rhythm-inspector-model.js';
 import { shouldScheduleRowAction } from './audio/spatial-grid-row-player.js';
 // Note constellations (Order B of Cosmos/docs/COSMOS_NOTE_VISUALS_WORK_ORDER_2026-09-20.md): a pure state
 // machine for which lines exist, and a canvas-only renderer for drawing them. Both are fed from here —
@@ -841,14 +841,13 @@ let scaleCountEl = null, scaleFundamentalEl = null, scaleTableBodyEl = null, sca
 let inspectedNode = null, rhythmInspectorModel = null;
 const cockpitVisibleLayers = new Set(['A', 'B', 'C', 'D']);
 let cockpitLayerColors = { A: '#ff6b6b', B: '#4ecdc4', C: '#00a638ff', D: '#f9ca24' };
-let cockpitScaleHighlightsEnabled = true, cockpitScaleLastNodeIndex = -1;
+let cockpitScaleHighlightsEnabled = true, cockpitScaleLastOnsetSeq = -1;
 const cockpitScaleRows = new Map(), cockpitScaleHighlightTimestamps = new Map();
 const COCKPIT_SCALE_HIGHLIGHT_MS = 300;
 // One selected-rhythm derivation shared by the card, plot, scale table and audition. Pick objects are rebuilt
 // by the draw loop, so cache by canonical layer identity rather than object identity.
 let selectedRhythmModelKey = '', selectedRhythmModelCache = null;
 let cockpitPlotBaseCanvas = null, cockpitPlotBaseCtx = null, cockpitPlotBaseKey = '';
-let cockpitPlotEligibleNodes = new Set(), cockpitPlotLastNodeIndex = -1, cockpitPlotPulseAt = -Infinity;
 function modelForRhythmNode(node) {
   if (!node?.layers) return null;
   const key = node.layers.join('.');
@@ -1039,6 +1038,7 @@ export function ensureFlight(canvas, hudEl) {
     if (lrcPanelToggleEl) lrcPanelToggleEl.addEventListener('click', () => {
       const open = lrcDivEl.classList.toggle('open');
       lrcPanelToggleEl.setAttribute('aria-expanded', String(open));
+      if (!open) stopRhythmAudition();   // a folded card is silent; unfolding waits for Listen
     });
     if (cockpitPlotKeyEl) cockpitPlotKeyEl.addEventListener('click', e => {
       const button = e.target.closest?.('[data-plot-layer]');
@@ -1046,6 +1046,7 @@ export function ensureFlight(canvas, hudEl) {
       const layer = button.dataset.plotLayer;
       if (cockpitVisibleLayers.has(layer)) cockpitVisibleLayers.delete(layer);
       else cockpitVisibleLayers.add(layer);
+      setLeadLayersAudible(cockpitLayerFlags());   // the key is a mute too: a hidden layer is not voiced
       renderCockpitLayerControls();
       drawCockpitPlot();
     });
@@ -1552,6 +1553,7 @@ function showDetail(sel) {
   if (!lrcDivEl) return;
   if (!sel) { resetRhythmInspector(); return; }
   if (sel.kind === 'node') { renderRhythmInspector(sel); return; }
+  leaveRhythmCard();   // GRID / CONNECTOR replace the rhythm face, and its audition goes with it
   if (sel.kind === 'web') { renderConnectorView(sel); return; }
   renderGridView(sel);
 }
@@ -1696,8 +1698,33 @@ function openCockpit() {
   lrcPanelToggleEl?.setAttribute('aria-expanded', 'true');
 }
 
+// THE AUDITION LIVES EXACTLY AS LONG AS A RHYTHM IS SHOWN IN THE CARD. Every way out of the rhythm face —
+// clicking empty space, a star or a Web, collapsing the node's bloom, folding the card, Esc — ends in
+// stopRhythmAudition (directly, or via leaveRhythmCard / resetRhythmInspector), so no exit path can leave the
+// lead voice sounding behind a card that is no longer there.
+function stopRhythmAudition() {
+  if (leadVoice) { setLead(null); leadVoice = null; }
+  resetCockpitScaleHighlights();
+  updateRhythmActionState();
+}
+
+function leaveRhythmCard() {
+  if (!inspectedNode && !leadVoice) return;
+  inspectedNode = null; rhythmInspectorModel = null;
+  stopRhythmAudition();
+}
+
+// Is the audition sounding THIS rhythm? Matched on the bloom and the rhythm's own layer key, not a node's
+// draw-order index, and false when either side is absent.
+function listeningTo(node) {
+  return !!(node && leadVoice) && leadVoice.node.grid === node.grid && leadVoice.node.key === node.key;
+}
+
+const cockpitLayerFlags = () => ['A', 'B', 'C', 'D'].map(layer => cockpitVisibleLayers.has(layer));
+
 function resetRhythmInspector() {
   inspectedNode = null; rhythmInspectorModel = null;
+  stopRhythmAudition();
   resetCockpitScaleHighlights(); cockpitScaleRows.clear();
   if (scaleTableBodyEl) scaleTableBodyEl.replaceChildren();
   if (scaleCountEl) scaleCountEl.textContent = '— Pitches';
@@ -1713,7 +1740,7 @@ function resetRhythmInspector() {
 function updateRhythmActionState() {
   // A node is inspected but its model refused to build (too dense to audition) → its audition is unavailable.
   const tooDense = !!inspectedNode && !rhythmInspectorModel;
-  const listening = !!(inspectedNode && leadVoice?.node?.id === inspectedNode.id);
+  const listening = listeningTo(inspectedNode);
   if (listenBtnEl) {
     listenBtnEl.classList.toggle('active', listening);
     listenBtnEl.disabled = !inspectedNode || tooDense;
@@ -1737,21 +1764,19 @@ function setRhythmAudition(node) {
   if (!model) { setLead(null); leadVoice = null; updateRhythmActionState(); return; }   // too dense to build/audition
   resetCockpitScaleHighlights();
   leadVoice = { ...deriveVoice(model), node };
+  setLeadLayersAudible(cockpitLayerFlags());
   setLead(leadVoice);
   updateRhythmActionState();
 }
 
 function toggleRhythmAudition() {
   if (!inspectedNode) return;
-  if (leadVoice?.node?.id === inspectedNode.id) { setLead(null); leadVoice = null; resetCockpitScaleHighlights(); }
+  if (listeningTo(inspectedNode)) stopRhythmAudition();
   else setRhythmAudition(inspectedNode);
-  updateRhythmActionState();
 }
 
 function resetCockpitScaleHighlights() {
-  cockpitScaleLastNodeIndex = -1;
-  cockpitPlotLastNodeIndex = -1;
-  cockpitPlotPulseAt = -Infinity;
+  cockpitScaleLastOnsetSeq = -1;
   cockpitScaleHighlightTimestamps.clear();
   for (const row of cockpitScaleRows.values()) {
     row.classList.remove('pitch-playback-highlight');
@@ -1771,28 +1796,17 @@ function renderCockpitScaleTable() {
   const scroller = scaleTableBodyEl.closest('.lrc-scale-table-container'); if (scroller) scroller.scrollTop = 0;
 }
 
-function cockpitNodeIndexAtPhase(nodes, phase) {
-  let lo = 0, hi = nodes.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (nodes[mid].phase <= phase) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo > 0 ? lo - 1 : nodes.length - 1;
-}
-
-function updateCockpitScaleHighlights(now, nodeIndex = null) {
-  const listening = leadVoice?.node?.id === inspectedNode?.id;
+// `onset` is the audio's newest VOICED lead onset (lastSoundedLeadOnset) — the table lights what sounded.
+function updateCockpitScaleHighlights(now, onset) {
+  const listening = listeningTo(inspectedNode);
   if (!listening || !rhythmInspectorModel?.nodes.length || !cockpitScaleHighlightsEnabled) {
-    if (!listening && (cockpitScaleLastNodeIndex !== -1 || cockpitScaleHighlightTimestamps.size)) resetCockpitScaleHighlights();
+    if (!listening && (cockpitScaleLastOnsetSeq !== -1 || cockpitScaleHighlightTimestamps.size)) resetCockpitScaleHighlights();
     return;
   }
-  if (nodeIndex == null) nodeIndex = cockpitNodeIndexAtPhase(rhythmInspectorModel.nodes, transportPhase());
-  if (nodeIndex !== cockpitScaleLastNodeIndex) {
-    cockpitScaleLastNodeIndex = nodeIndex;
-    if (cockpitPlotEligibleNodes.has(nodeIndex)) {
-      cockpitScaleHighlightTimestamps.set(rhythmInspectorModel.nodes[nodeIndex].ratioFraction, now);
-    }
+  if (onset && onset.seq !== cockpitScaleLastOnsetSeq) {
+    cockpitScaleLastOnsetSeq = onset.seq;
+    const node = rhythmInspectorModel.nodes[onset.noteIdx];
+    if (node) cockpitScaleHighlightTimestamps.set(node.ratioFraction, now - onset.age * 1000);
   }
   for (const [fraction, timestamp] of cockpitScaleHighlightTimestamps) {
     const row = cockpitScaleRows.get(fraction), age = now - timestamp;
@@ -1816,7 +1830,7 @@ function renderCockpitLayerControls() {
     button.disabled = !available;
     button.setAttribute('aria-pressed', String(visible));
     button.setAttribute('aria-label', available
-      ? `${visible ? 'Hide' : 'Show'} layer ${layer}`
+      ? `${visible ? 'Hide and mute' : 'Show and play'} layer ${layer}`
       : `Layer ${layer} is not present`);
   }
 }
@@ -2123,7 +2137,11 @@ function drawCockpitPlot() {
     cockpitPlotBaseCtx = cockpitPlotBaseCanvas.getContext('2d');
   }
   const top = 8, bottom = h - 9, height = bottom - top, maxGap = Math.max(1, rhythmInspectorModel.maxGap);
-  const xFor = node => 1 + node.phase * (w - 2);
+  // Evenly spaced, centred slots by onset index (the main page's Linear Plot), not true time — see
+  // plotSlotAtPhase for the matching playhead warp. The half-slot margins keep edge dots off the border, and the
+  // wrap gap (last onset → next cycle) runs off the right edge and back in from the left.
+  const slots = rhythmInspectorModel.nodes.length;
+  const xForSlot = slot => 1 + ((((slot + 0.5) / slots) % 1) + 1) % 1 * (w - 2);
   const yFor = node => bottom - node.gap / maxGap * height;
 
   const root = currentSkyRoot(), policy = currentHarmonyPolicy();
@@ -2139,22 +2157,22 @@ function drawCockpitPlot() {
     // Harmony is evaluated once per distinct folded tone. The resulting tiny Map is then projected across
     // the onset tape while building this cached bitmap; repeated 1/1 nodes never repeat harmonic math.
     const selectedByTone = classifyLeadHarmony(rhythmInspectorModel.ratios, root.cents, policy).selectedByTone;
-    cockpitPlotEligibleNodes = new Set();
-    // Bound the rasterization cost. A dense rhythm is dominated by heavily-repeated tones (often 1/1 — a
-    // uniform pulse train folds every onset to the same fraction) that pile onto the same plot region, and
-    // this bitmap re-rasterizes on every chord/root change. Skip DRAWING a node whose tone repeats the
-    // previously drawn one, so the draw count tracks distinct-tone RUNS, not raw onset count. Eligibility is
-    // still recorded for EVERY node, so the playhead pulse and scale-table highlight are unaffected.
-    let prevDrawnFraction = null;
+    // Bound the rasterization cost WITHOUT dropping onsets: this bitmap re-rasterizes on every chord/root
+    // change, and a dense rhythm stacks many onsets onto the same device pixel. Skip a dot only when an
+    // identical one (same pixel, colour and eligibility) is already there, so the draw count is capped by the
+    // plot's pixel area. (Skipping repeated TONES instead left real onsets undrawn — a repeated tone sits at
+    // a different phase, and an octave-apart gap at a different height — so their playback pulses lit empty
+    // spots: the "phantom" lights.)
+    const drawnDots = new Set();
     for (let i = 0; i < rhythmInspectorModel.nodes.length; i++) {
       const node = rhythmInspectorModel.nodes[i];
       const visibleOwners = node.owners.filter(owner => cockpitVisibleLayers.has(owner));
       if (!visibleOwners.length) continue;
       const eligible = selectedByTone.get(node.fraction) === true && shouldScheduleRowAction(node, rowFundamental);
-      if (eligible) cockpitPlotEligibleNodes.add(i);
-      if (node.fraction === prevDrawnFraction) continue;   // heavily-repeated tone — already drawn this run
-      prevDrawnFraction = node.fraction;
-      const x = xFor(node), y = yFor(node);
+      const x = xForSlot(i), y = yFor(node);
+      const dot = ((Math.round(y * dpr) * pixelW + Math.round(x * dpr)) * 2 + (eligible ? 1 : 0)) * 4 + (visibleOwners[0].charCodeAt(0) - 65);
+      if (drawnDots.has(dot)) continue;
+      drawnDots.add(dot);
       // Coincidence has no separate visual identity. Chord-live tones use a soft halo in their owning layer's
       // colour; avoiding white strokes makes the old nested-ratio marker impossible to misread here.
       const color = cockpitLayerColors[visibleOwners[0]] || '#aab2bd';
@@ -2172,29 +2190,27 @@ function drawCockpitPlot() {
   g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
   g.drawImage(cockpitPlotBaseCanvas, 0, 0, pixelW, pixelH, 0, 0, w, h);
 
-  const listening = leadVoice?.node?.id === inspectedNode?.id;
+  const listening = listeningTo(inspectedNode);
   const now = performance.now();
-  let nodeIndex = null;
+  // The pulse follows the audio's log of VOICED onsets, not a re-derivation from the playhead's phase: a
+  // light is drawn only for a tone the scheduler actually started, on the audio clock, so a lookahead
+  // straddling a chord change or a layer mute can never light a silent dot (or sound an unlit one).
+  const onset = listening ? lastSoundedLeadOnset() : null;
   if (listening) {
-    const phase = transportPhase();
-    nodeIndex = cockpitNodeIndexAtPhase(rhythmInspectorModel.nodes, phase);
-    if (nodeIndex !== cockpitPlotLastNodeIndex) {
-      cockpitPlotLastNodeIndex = nodeIndex;
-      if (cockpitPlotEligibleNodes.has(nodeIndex)) cockpitPlotPulseAt = now;
-    }
-    const pulseAge = now - cockpitPlotPulseAt;
-    if (cockpitPlotEligibleNodes.has(nodeIndex) && pulseAge >= 0 && pulseAge <= COCKPIT_SCALE_HIGHLIGHT_MS) {
-      const node = rhythmInspectorModel.nodes[nodeIndex], alpha = 1 - pulseAge / COCKPIT_SCALE_HIGHLIGHT_MS;
-      const visibleOwner = node.owners.find(owner => cockpitVisibleLayers.has(owner));
+    const node = onset && rhythmInspectorModel.nodes[onset.noteIdx];
+    const pulseAge = onset ? onset.age * 1000 : Infinity;
+    const visibleOwner = node?.owners.find(owner => cockpitVisibleLayers.has(owner));
+    if (visibleOwner && pulseAge <= COCKPIT_SCALE_HIGHLIGHT_MS) {
+      const alpha = 1 - pulseAge / COCKPIT_SCALE_HIGHLIGHT_MS;
       g.globalAlpha = alpha * 0.55; g.fillStyle = cockpitLayerColors[visibleOwner] || '#aab2bd';
-      g.beginPath(); g.arc(xFor(node), yFor(node), 4.5 + (1 - alpha) * 4, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(xForSlot(onset.noteIdx), yFor(node), 4.5 + (1 - alpha) * 4, 0, Math.PI * 2); g.fill();
       g.globalAlpha = 1;
     }
-    const x = 1 + phase * (w - 2);
+    const x = xForSlot(plotSlotAtPhase(rhythmInspectorModel.nodes, transportPhase()));
     g.strokeStyle = 'rgba(255,255,255,.72)'; g.lineWidth = 1;
     g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
   }
-  updateCockpitScaleHighlights(now, nodeIndex);
+  updateCockpitScaleHighlights(now, onset);
 }
 
 // ── VIEW section (help popup) + the on-screen CHORD name ──────────────────────────────────────────────────
@@ -2306,7 +2322,7 @@ function renderControls() {
   if (!controlsEl) return;
   const gravity = viewOptions.get('gravity');
   const rows = [['WASD / QE', 'move'], ['space', 'boost'], ['arrows', 'steer'], ['scroll', 'dolly'],
-    ['click', 'inspect / bloom'], ['right-click', 'collapse'], ['Esc', 'cancel travel / exit'],
+    ['click', 'inspect / bloom'], ['right-click', 'collapse'], ['Esc', 'cancel travel / close card / exit'],
     ...(placement === 'hilbert' ? [['G', gravityControlLabel(gravity), gravity === 'off'], ['V', 'chase view']] : []),
     ['M', 'mute'], ['H', 'hold harmony'], ['C', 'full sky debug'], ['1–0', 'toggle webs']];
   controlsEl.innerHTML = rows.map(([k, v, dim]) => `<div class="help-kv${dim ? ' dim' : ''}"><span>${k}</span><b>${v}</b></div>`).join('');
@@ -3276,6 +3292,7 @@ function resize() {
   webRenderer?.resize(W, H, dpr);
 }
 
+let closeCardOnEscape = () => false;   // bound in bindControls, where the selection gestures live
 function bindControls() {
   let down = false, lx = 0, ly = 0, downX = 0, downY = 0, dragged = false;
   const rel = e => { const b = cv.getBoundingClientRect(); mouseX = e.clientX - b.left; mouseY = e.clientY - b.top; mClientX = e.clientX; mClientY = e.clientY; };
@@ -3313,6 +3330,14 @@ function bindControls() {
     webRenderer?.select((selected?.kind === 'web' && selected.webId) || bloomWebId);
     showDetail(selected);
   });
+  // Esc peels back one layer at a time: cancel a Web ride, else close an open card, else leave Cosmos.
+  closeCardOnEscape = () => {
+    if (!selected && !leadVoice && !lrcDivEl?.classList.contains('open')) return false;
+    selected = null;
+    webRenderer?.select(bloomWebId);
+    showDetail(null);
+    return true;
+  };
   // right-click a bloom (its star OR any of its nodes) → COLLAPSE it back to a plain dot
   cv.addEventListener('contextmenu', e => {
     e.preventDefault();
@@ -3322,6 +3347,7 @@ function bindControls() {
       gravitySyncDirty = true;
       const z = cosmos.zones.get(g); if (z) delete z._bloom;
       if (cosmos.focusGrid === g) cosmos.setFocus(null);
+      if (leadVoice?.node.grid === g) stopRhythmAudition();   // its node's audition collapses with it
       if (selected && selected.grid === g) { selected = null; showDetail(null); }
     }
   });
@@ -3369,7 +3395,7 @@ function bindControls() {
     const own = heldControl();
     if (own && keyboardFocused(own) && (k === ' ' || k === 'enter' || k.startsWith('arrow') || own.tagName === 'SELECT')) return;
     const firstPress = !keys[k]; keys[k] = true;
-    if (firstPress && k === 'escape') { if (returnRide) cancelWebReturn(); else window.exitCosmos(); e.preventDefault(); }
+    if (firstPress && k === 'escape') { if (returnRide) cancelWebReturn(); else if (!closeCardOnEscape()) window.exitCosmos(); e.preventDefault(); }
     if (firstPress && /^[0-9]$/.test(k)) { toggleSlot(k === '0' ? 9 : +k - 1); if (selected) showDetail(selected); }   // 1-9,0 → hide/show web slots
     if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)
     // V → chase view: pull back behind and above the ship, and back to the cockpit. Cube only (setViewMode

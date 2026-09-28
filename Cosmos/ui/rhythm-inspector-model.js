@@ -73,3 +73,25 @@ export function buildRhythmInspectorModel(rawLayers) {
     maxGap: scale.maxGap,
   };
 }
+
+// The card's Linear Plot places onsets in evenly spaced SLOTS by index (as the main page's Linear Plot does),
+// not at their true time, so small rhythms sit centred instead of lopsided. The playhead is warped to match:
+// between onset i and i+1 it travels slot i → slot i+1 over that onset's real duration, so it reaches each dot
+// exactly when its tone sounds. Returns a fractional slot index in [0, nodes.length); the last segment is the
+// wraparound gap back to onset 0. `nodes` are phase-ascending with nodes[0].phase === 0 (every layer attacks
+// on tick 0).
+export function plotSlotAtPhase(nodes, phase) {
+  const count = nodes?.length || 0;
+  if (!count) return 0;
+  let lo = 0, hi = count;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (nodes[mid].phase <= phase) lo = mid + 1;
+    else hi = mid;
+  }
+  const index = Math.max(0, lo - 1);
+  const from = nodes[index].phase;
+  const to = index + 1 < count ? nodes[index + 1].phase : nodes[0].phase + 1;
+  const progress = to > from ? Math.min(1, Math.max(0, (phase - from) / (to - from))) : 0;
+  return index + progress;
+}

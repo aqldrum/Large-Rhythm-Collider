@@ -260,6 +260,12 @@ const skySeconds = now => (audioEpoch == null ? 0 : now - audioEpoch);   // mono
 let leadMask = null;              // leadMask[noteIdx] = true if this onset may sound under the CURRENT sky chord
 let leadMaskChordId = -1;         // which skyChordId leadMask was computed against (cache invalidation)
 let leadMaskRootKey = -1;         // root swaps independently invalidate the same mask
+// The card's plot key doubles as a layer mute: a hidden A-D layer is neither drawn nor voiced.
+let leadLayerAudible = [true, true, true, true];
+// Onsets the scheduler actually VOICED, oldest first ({ noteIdx, time, layers, seq }). The card's plot and scale
+// table pulse from this log instead of re-deriving eligibility themselves, so a light always means a tone.
+let leadOnsetLog = [], leadOnsetSeq = 0;
+const LEAD_ONSET_LOG_MAX = 64;
 
 // ── Full Sky: the global chord walk (online, stateful — not precomputed) + the ambient bed ──
 let skyChordId = START_CHORD_ID, skyTabu = null, skyStep = -1;   // walk state; skyStep=-1 = not yet observed
@@ -910,9 +916,44 @@ export function resumeAudio() {
 export function setLead(voice) {
   if (audioCtx) releaseAllLeadVoices(audioCtx.currentTime);
   lead = voice || null;
+  leadOnsetLog = [];
   if (lead) resyncSchedulePointer();
   else if (audioCtx) distGainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.05);
   ensureLeadMask(true);   // a new lead's note fractions are different — force a recompute
+}
+
+// Which A-D layers the audition may voice (the card's plot key). Muting a layer releases its held voice and
+// withdraws its already-scheduled onsets, so a hidden layer falls silent now rather than a lookahead later.
+export function setLeadLayersAudible(flags) {
+  leadLayerAudible = [0, 1, 2, 3].map(i => flags?.[i] !== false);
+  if (audioCtx && leadVoices) {
+    const now = audioCtx.currentTime;
+    for (const voice of [...leadVoices]) if (!leadLayerAudible[voice.layerIndex]) releaseLeadVoice(voice, now);
+  }
+  pruneFutureLeadOnsets();
+}
+
+// The newest voiced onset whose time has arrived, as { noteIdx, seq, age } (age in audio seconds), or null.
+// Older entries are dropped as it advances; `seq` tells a caller whether this is an onset it already showed.
+export function lastSoundedLeadOnset() {
+  if (!audioCtx || !lead) return null;
+  const now = audioCtx.currentTime;
+  let at = -1;
+  for (let i = 0; i < leadOnsetLog.length && leadOnsetLog[i].time <= now; i++) at = i;
+  if (at < 0) return null;
+  if (at > 0) leadOnsetLog.splice(0, at);
+  const onset = leadOnsetLog[0];
+  return { noteIdx: onset.noteIdx, seq: onset.seq, age: now - onset.time };
+}
+
+// Drop logged onsets that have not sounded yet but no longer would (a chord change or layer mute released
+// their voices before they started), so the plot never pulses a tone the listener will not hear.
+function pruneFutureLeadOnsets() {
+  if (!audioCtx || !leadOnsetLog.length) return;
+  const now = audioCtx.currentTime;
+  leadOnsetLog = leadOnsetLog.filter(onset => onset.time <= now ||
+    (shouldScheduleLeadNote(lead?.notes[onset.noteIdx], onset.noteIdx, leadMask, rowFundamental) &&
+      onset.layers.some(layer => leadLayerAudible[layer])));
 }
 
 // Is a lead onset's true JI ratio "in" a given global chord (within LEAD_MASK_WINDOW of one of its 3
@@ -948,10 +989,12 @@ export function shouldScheduleLeadNote(note, noteIdx, mask, includeFundamental) 
 // Project one eligible composite onset back onto the A-D arpeggiator layers that own it. This is the
 // essential difference between the old one-pluck lead and ToneRowPlayback Legato: coincident attacks can
 // replace several independent held voices, while an out-of-harmony onset replaces none of them.
-export function scheduledLeadLayers(note, noteIdx, mask, includeFundamental) {
+// `audibleLayers` (optional, [A..D] booleans) drops owners the card's plot key has hidden.
+export function scheduledLeadLayers(note, noteIdx, mask, includeFundamental, audibleLayers = null) {
   if (!shouldScheduleLeadNote(note, noteIdx, mask, includeFundamental)) return [];
   const owners = Array.isArray(note?.ownerIndexes) ? note.ownerIndexes : [0];
-  return [...new Set(owners.filter(layer => Number.isInteger(layer) && layer >= 0 && layer < 4))];
+  return [...new Set(owners.filter(layer => Number.isInteger(layer) && layer >= 0 && layer < 4 &&
+    (!audibleLayers || audibleLayers[layer] !== false)))];
 }
 
 // Harmony is octave-relative, but playback is not: literal 2/1 and 4/1 sources must sound one and two
@@ -984,6 +1027,7 @@ function ensureLeadMask(force) {
       }
     }
   }
+  pruneFutureLeadOnsets();
 }
 
 // Called each frame from the flight loop for the lead star. pan in [-1,1], gain in [0,1].
@@ -1805,6 +1849,7 @@ export function stopAudio() {
   rootEstablished = false; rootPhraseTracker = null; recentSkyRoots = []; lastRootPolicyProposal = null;
   rootPolicyContext = { settled: false, currentEpoch: 0 }; lastRootDecision = null;
   lead = null; schedIdx = 0; schedCycle = 0; transportStart = null; leadTransportStart = null; audioEpoch = null;
+  leadOnsetLog = []; leadLayerAudible = [true, true, true, true];
   chordStartedAt = 0; lastChordSeconds = 0; scaledMedianGrid = 0; fieldOnsetTicks = 0;
   fundamentalOffset = null; modulationOffset = null; detuneBus = null;
   lastModulationCents = 0; lastFundamentalCents = 0;
@@ -1925,15 +1970,18 @@ function schedulerTick() {
 function scheduleNote(note, time, noteIdx) {
   // Only chord-live tones sound. The independent literal-1/1 gate preserves raw identity so octave sources
   // folded onto 1/1 (2/1, 4/1, …) remain playable when ROW 1/1 is disabled.
-  const layers = scheduledLeadLayers(note, noteIdx, leadMask, rowFundamental);
+  const layers = scheduledLeadLayers(note, noteIdx, leadMask, rowFundamental, leadLayerAudible);
   if (!layers.length) return;
   const freq = leadFrequencyHz(note, currentOctaveLift);
   if (freq === null) return;
-  for (const layerIndex of layers) startLeadLegatoVoice(note, noteIdx, layerIndex, freq, time);
+  const voiced = layers.filter(layerIndex => startLeadLegatoVoice(note, noteIdx, layerIndex, freq, time));
+  if (!voiced.length) return;
+  leadOnsetLog.push({ noteIdx, time, layers: voiced, seq: ++leadOnsetSeq });
+  if (leadOnsetLog.length > LEAD_ONSET_LOG_MAX) leadOnsetLog.shift();
 }
 
 function startLeadLegatoVoice(note, noteIdx, layerIndex, freq, time) {
-  if (!audioCtx || !leadVoices || !leadLayerVoices) return;
+  if (!audioCtx || !leadVoices || !leadLayerVoices) return false;
   const when = Math.max(audioCtx.currentTime, time);
   const peak = NOTE_PEAK;
   const sustain = peak * LEAD_SUSTAIN;
@@ -1943,7 +1991,7 @@ function startLeadLegatoVoice(note, noteIdx, layerIndex, freq, time) {
   // previous pitch continues just as it does when Scale Selection skips a note on the main page. Admission
   // is by ACTUAL source cost against the live-source ceiling (release tails included), so a richer palette
   // lowers max audition polyphony rather than inflating the live node count.
-  if (leadLiveSources + plan.cost > MAX_LIVE_OSC) return;
+  if (leadLiveSources + plan.cost > MAX_LIVE_OSC) return false;
   releaseLeadVoice(leadLayerVoices[layerIndex], when);
 
   // The renderer owns the oscillator graph, the detune-bus connection, and the held ADSR; this owns note
@@ -1962,6 +2010,7 @@ function startLeadLegatoVoice(note, noteIdx, layerIndex, freq, time) {
     leadVoices?.delete(voice);
     if (leadLayerVoices?.[layerIndex] === voice) leadLayerVoices[layerIndex] = null;
   });
+  return true;
 }
 
 function releaseLeadVoice(voice, when, release = LEAD_RELEASE) {
