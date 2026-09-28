@@ -2,7 +2,7 @@
 //
 // ONE source of truth for every resource knob the flight engine spends CPU/GPU on:
 // worker concurrency, frontier reach, eviction depth, backing-store DPR, solve
-// backlog, and the bloom-cloud range cull.
+// backlog, the bloom-cloud range cull, the frame-rate cap, and the row voices' panning model.
 // flight-view.js reads the ACTIVE tier from here and pushes it into its module knobs
 // (see applyQuality there); this file stays pure data + detection so it is testable
 // headless (assert-cosmos-quality.mjs) with no DOM/engine coupling.
@@ -15,12 +15,15 @@
 
 // Each tier is a flat bag of budgets. Values are non-decreasing across QUALITY_ORDER
 // (the guard proves it) so "raise quality" only ever adds work, never removes it.
+export const ROW_PANNING_ORDER = ['equalpower', 'HRTF'];   // cheaper → dearer; tiers climb it, never descend
 export const QUALITY_TIERS = {
+  // 2026-09-28: Low and Medium made stricter after a field report — an older MacBook on a lap overheated and
+  // its audio crackled. Low now solves one shard at a time, reaches a cell less, and draws at 30 fps.
   low: {
     id: 'low', label: 'Low',
-    poolCap: 2,        // live cap on cosmos.poolSize (concurrent solver shards); physical pool stays at device max
-    spawn: 6,          // HIL_SPAWN — frontier reach in cube cells (the master working-set lever)
-    evict: 12,         // HIL_EVICT — retention depth of the trailing wake (≈ spawn + a few)
+    poolCap: 1,        // live cap on cosmos.poolSize (concurrent solver shards); physical pool stays at device max
+    spawn: 5,          // HIL_SPAWN — frontier reach in cube cells (the master working-set lever)
+    evict: 10,         // HIL_EVICT — retention depth of the trailing wake (≈ spawn + a few)
     spawnMin: 3,       // HIL_SPAWN_MIN — floor the adaptive backpressure eases down to under load
     dprCap: 1,         // clamp on backing-store devicePixelRatio (fill cost ∝ dpr²)
     solveBacklog: 40,  // pending+solving above which the frontier starts shrinking
@@ -29,21 +32,28 @@ export const QUALITY_TIERS = {
     // range ≈ 221,774) — no musical content, and the priciest node to carry. Culling it is not culling
     // information; it also thins the per-frame bloom loop (hotspot C). High/Ultra keep everything.
     bloomMaxRange: 100,   // cull polyrhythms whose range exceeds this
+    // Frame-rate cap. The Canvas 2D draw on the main thread is the biggest single per-frame cost, and heat is
+    // sustained total CPU, so halving the frames halves it. Infinity = follow the display (60 / 120 Hz).
+    maxFps: 30,
+    // Row-voice panning. 'HRTF' is true 3D (above/below, front/back) but runs a convolution per sounding star
+    // on the audio thread — ~8× equal-power in a measured offline render. 'equalpower' keeps left/right.
+    rowPanning: 'equalpower',
   },
   medium: {
     id: 'medium', label: 'Medium',
-    poolCap: 4, spawn: 8, evict: 16, spawnMin: 4, dprCap: 1.5,
-    solveBacklog: 60, bloomMaxRange: 1000,
+    poolCap: 2, spawn: 8, evict: 16, spawnMin: 4, dprCap: 1.5,
+    solveBacklog: 60, bloomMaxRange: 1000, maxFps: Infinity, rowPanning: 'equalpower',
   },
   high: {
     id: 'high', label: 'High',
     poolCap: 6, spawn: 10, evict: 20, spawnMin: 4, dprCap: 2,
     solveBacklog: 80, bloomMaxRange: Infinity,   // keep every rhythm
+    maxFps: Infinity, rowPanning: 'HRTF',
   },
   ultra: {
     id: 'ultra', label: 'Ultra',
     poolCap: 8, spawn: 12, evict: 24, spawnMin: 5, dprCap: 2,
-    solveBacklog: 120, bloomMaxRange: Infinity,
+    solveBacklog: 120, bloomMaxRange: Infinity, maxFps: Infinity, rowPanning: 'HRTF',
   },
 };
 

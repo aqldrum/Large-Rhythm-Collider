@@ -227,6 +227,7 @@ let mix = 0;                      // 0 = bed, 1 = rows; constant-power crossfade
 let auditionListening = true;     // audition bus on/off (independent of mix)
 let auditionPinned = false;       // pin keeps audition audible after deselection
 let gridRowPlayer = null;
+let rowPanningModel = 'HRTF';   // quality-tier owned (setRowPanning); applied at player birth and live
 
 // ── THREE CLOCKS ────────────────────────────────────────────────────────────────────────────────
 // GRID CLOCK (ticks). Spatial row programs run on actual grid steps, so SPEED converts its target
@@ -402,7 +403,10 @@ function swapLeadVoiceInstrument(v, now) {
 
 export function initAudio() {
   if (audioCtx && audioCtx.state !== 'closed') return;   // idempotent; also tolerates re-init after stopAudio()
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  // latencyHint 'playback': the browser hands the audio thread bigger blocks, so a slow or throttling machine
+  // doesn't miss render deadlines (a miss is an audible crackle). Everything is scheduled SCHEDULE_AHEAD
+  // (250 ms) ahead anyway; the cost is only a few tens of ms more latency on live knob/mute changes.
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'playback' });
   pannerNode = audioCtx.createStereoPanner();
   // Lead round-off: the audition voice was the only path with no filter and no reverb — a raw triangle
   // stack straight into the limiter. One shared lowpass rolls the fizzy upper partials off the whole lead
@@ -466,6 +470,7 @@ export function initAudio() {
   gridRowPlayer = new SpatialGridRowPlayer(audioCtx, rowsGain, detuneBus, midiBridge, audioTelemetry, currentInstrumentRecipe);
   gridRowPlayer.setEnabled(true);   // always on — rowsGain handles the crossfade
   gridRowPlayer.setRowFundamental(rowFundamental);
+  gridRowPlayer.setPanningModel(rowPanningModel);
   mix = 0; auditionListening = true; auditionPinned = false;
   skyChordId = START_CHORD_ID; skyTabu = pushTabu([], skyChordId, TABU_K); skyStep = -1; lastSyncedChordId = null;
   harmonySource = DEFAULT_HARMONY_SOURCE; harmonyScale = DEFAULT_SCALE_POLICY; harmonyHold = false; rowFundamental = true;
@@ -533,6 +538,13 @@ export function currentAuditionListen() { return auditionListening; }
 
 export function setAuditionPin(on) { auditionPinned = !!on; return auditionPinned; }
 export function currentAuditionPin() { return auditionPinned; }
+
+// Quality tier's row panning model. Remembered before audio exists so the player is born with it.
+export function setRowPanning(model) {
+  rowPanningModel = model === 'equalpower' ? 'equalpower' : 'HRTF';
+  gridRowPlayer?.setPanningModel(rowPanningModel);
+  return rowPanningModel;
+}
 
 export function setGridSpatialField(items) {
   if (!audioCtx || !gridRowPlayer) return;

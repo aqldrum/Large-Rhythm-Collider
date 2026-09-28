@@ -224,6 +224,7 @@ export class SpatialGridRowPlayer {
     // is still counted at the moment it actually sounds.
     this.soundedTones = new Map();   // fraction -> { cents, when } (latest attack)
     this.logicalVoiceCount = 0;
+    this.panningModel = 'HRTF';
     this.stats = { budgetMisses: 0, toneCapMisses: 0, toneCapEvictions: 0, installs: 0, entries: 0, exits: 0 };
     this.setListenerPose(AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP);
   }
@@ -270,6 +271,15 @@ export class SpatialGridRowPlayer {
     this.reverb.wet.gain.setTargetAtTime(Math.max(0, Number(level) || 0), this.ctx.currentTime, 0.1);
   }
 
+  // Quality tier: 'HRTF' (true 3D, a convolution per star on the audio thread) or 'equalpower' (left/right,
+  // ~8× cheaper). Applies to stars already sounding as well as new ones; switching is click-free enough for a
+  // settings change.
+  setPanningModel(model) {
+    this.panningModel = model === 'equalpower' ? 'equalpower' : 'HRTF';
+    for (const star of this.stars.values()) star.panner.panningModel = this.panningModel;
+    return this.panningModel;
+  }
+
   setListenerPose(forward, up) {
     const listener = this.ctx.listener;
     const now = this.ctx.currentTime;
@@ -288,7 +298,7 @@ export class SpatialGridRowPlayer {
     filter.type = 'lowpass';
     filter.frequency.value = 5000;
     const panner = this.ctx.createPanner();
-    panner.panningModel = 'HRTF';
+    panner.panningModel = this.panningModel;
     panner.distanceModel = 'inverse';
     panner.refDistance = 300;
     panner.maxDistance = 4000;

@@ -16,7 +16,7 @@ import { approximateStarSize, buildTravelBloomSamples, travelBloomWeight } from 
 import { binarySearch } from './engine/oracle-core.js';
 // Phase 0 generative-music instrument: a dedicated audio layer, fully separate from the site's playback
 // engine (see cosmos-audio.js header). Cosmos owns wiring the lead voice + its live spatialization.
-import { deriveVoice, classifyLeadHarmony, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, gridRowReachedAttacks, gridRowDetuneCents, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext, currentFundamental } from './audio/cosmos-audio.js';
+import { deriveVoice, classifyLeadHarmony, setLead, setSpatial, setTickRate, transportPhase, currentSkyChord, currentHarmonyPolicy, setField, debugSkyState, stopAudio, currentSkyRoot, proposeRoot, currentTicks, currentSkySeconds, setSpeedMode, currentSpeedMode, currentModulation, currentMix, setAuditionListen, setGridSpatialField, setGridSpatialPose, setSkyPose, bedStats, gridRowVisualState, gridRowReachedAttacks, gridRowDetuneCents, setTuningStrength, currentTuningStrength, midiOutState, rowPlayerStats, setRootPolicyContext, currentFundamental, setRowPanning } from './audio/cosmos-audio.js';
 // The RAIL owns the engine's user-facing state (rail-view.js mounts it; flight-boot restores it on entry).
 // Every parameter BOTH surfaces express — mute, mix, modulation, MIDI out — is written through railParams so
 // there is exactly one owner and the two surfaces cannot disagree. See the audio-lab section below.
@@ -115,6 +115,7 @@ let   renderScale = 1;     // live capped DPR — set once in resize(), reused b
 // natural home for a future LOD slider (raise HIL_SPAWN / SOLVE_BACKLOG for a denser, hungrier field).
 let   HIL_SPAWN_MIN = _q0.spawnMin;   // tier-owned floor for the adaptive reach under load
 let   SOLVE_BACKLOG = _q0.solveBacklog; // tier-owned backlog above which the frontier starts shrinking
+let   MAX_FPS = _q0.maxFps;             // tier-owned frame-rate cap (Infinity = follow the display)
 let   hilSpawn = HIL_SPAWN;// live (eased) frontier reach in the cube
 // applyQuality — re-point every live knob to a tier and push the cheap-live parts into the running engine
 // at once: the concurrency gate (cosmos.poolSize, physical workers stay warm), the DPR clamp (via resize),
@@ -126,7 +127,8 @@ function applyQuality(id) {
   const prevRange = currentQuality().bloomMaxRange;   // capture before the id flips
   activeQualityId = q.id;
   HIL_SPAWN = q.spawn; HIL_EVICT = q.evict; HIL_SPAWN_MIN = q.spawnMin;
-  SOLVE_BACKLOG = q.solveBacklog; DPR_CAP = q.dprCap;
+  SOLVE_BACKLOG = q.solveBacklog; DPR_CAP = q.dprCap; MAX_FPS = q.maxFps;
+  setRowPanning(q.rowPanning);   // live: re-models stars already sounding
   hilSpawn = Math.min(hilSpawn, HIL_SPAWN);   // a downshift bites immediately; recovery re-eases upward
   if (cosmos) {
     cosmos.poolSize = Math.min(q.poolCap, poolPhysicalMax);   // throttle concurrency; workers stay alive
@@ -1218,6 +1220,7 @@ export function ensureFlight(canvas, hudEl) {
   viewOptions.resetForEntry();
   for (const name of Object.keys(VIEW_OPTIONS)) applyViewOption(name, viewOptions.get(name));
   paintQualitySection();   // quality is never reset on entry — it is the listener's saved choice
+  setRowPanning(currentQuality().rowPanning);
   resetChordOverlay();
   last = performance.now();
   requestAnimationFrame(loop);
@@ -2602,7 +2605,11 @@ function loop() {
   if (!started) return;                     // torn down by stopFlight() → break the rAF chain (no background frames)
   requestAnimationFrame(loop);
   if (M.mode !== 'flight' || !cosmos) return;
-  const now = performance.now(); let dt = (now - last) / 1000; last = now; dt = Math.min(dt, 0.05);
+  const now = performance.now();
+  // Tier frame cap: skip this display frame until a full interval has passed. The 2 ms slack keeps a 60 Hz
+  // display on an even every-other-frame cadence at 30 fps instead of drifting between 1 and 3 frames.
+  if (now - last < 1000 / MAX_FPS - 2) return;
+  let dt = (now - last) / 1000; last = now; dt = Math.min(dt, 0.05);
   const ridingWeb = stepWebReturn(now, dt);
   stepControls(dt, !ridingWeb);
   // Motion mode for the audio telemetry, measured AFTER the camera has been stepped. Rotation and

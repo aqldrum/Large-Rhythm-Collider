@@ -1,7 +1,7 @@
 // Assertions for the Cosmos performance-quality authority: tier coverage, the
 // monotonicity contract (raising quality only ever adds work), the device-class
 // default detector, and — structurally — Avery's "never dumber harmony" rule.
-import { QUALITY_TIERS, QUALITY_ORDER, detectDefaultTier, devicePoolMax, resolveTier, createQualityPrefs, qualityWarning, QUALITY_STORAGE_KEY } from '../engine/cosmos-quality.js';
+import { QUALITY_TIERS, QUALITY_ORDER, ROW_PANNING_ORDER, detectDefaultTier, devicePoolMax, resolveTier, createQualityPrefs, qualityWarning, QUALITY_STORAGE_KEY } from '../engine/cosmos-quality.js';
 
 let PASS = true;
 const check = (name, ok, detail = '') => {
@@ -21,11 +21,18 @@ check('order runs low → ultra', QUALITY_ORDER.join(',') === 'low,medium,high,u
 
 console.log('\n[2] Monotonicity — raising quality only adds work, never removes it');
 // bloomMaxRange non-decreasing means a higher tier keeps MORE rhythms (bigger allowed range) — Low is strictest.
-const NUMERIC_BUDGETS = ['poolCap', 'spawn', 'evict', 'spawnMin', 'dprCap', 'solveBacklog', 'bloomMaxRange'];
+const NUMERIC_BUDGETS = ['poolCap', 'spawn', 'evict', 'spawnMin', 'dprCap', 'solveBacklog', 'bloomMaxRange', 'maxFps'];
 for (const key of NUMERIC_BUDGETS) {
   let ok = true, prev = -Infinity, trail = [];
   for (const id of QUALITY_ORDER) { const v = QUALITY_TIERS[id][key]; trail.push(v); ok = ok && v >= prev; prev = v; }
   check(`${key} is non-decreasing`, ok, trail.join(' ≤ '));
+}
+{
+  const rank = QUALITY_ORDER.map(id => ROW_PANNING_ORDER.indexOf(QUALITY_TIERS[id].rowPanning));
+  check('every tier names a known row panning model, and it never gets cheaper as quality rises',
+    rank.every(r => r >= 0) && rank.every((r, i) => i === 0 || r >= rank[i - 1]), QUALITY_ORDER.map(id => QUALITY_TIERS[id].rowPanning).join(' ≤ '));
+  check('low caps the frame rate; high and ultra follow the display',
+    QUALITY_TIERS.low.maxFps < 60 && QUALITY_TIERS.high.maxFps === Infinity && QUALITY_TIERS.ultra.maxFps === Infinity);
 }
 console.log('\n[3] "Never dumber harmony" — enforced structurally');
 // If anyone ever tries to make harmony a quality knob, this fails. Horizon/pixels/CPU
