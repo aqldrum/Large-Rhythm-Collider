@@ -14,6 +14,7 @@ function enterCosmos() {
   const canvas = document.getElementById('cosmos-canvas');
   const hud = document.getElementById('cosmos-hud');
   if (!canvas) { console.warn('[cosmos] #cosmos-canvas missing — overlay not in the page'); return; }
+  quietMainPage();
   document.body.classList.add('cosmos-active');   // CSS: hide title bar + panels, show #cosmos-view full-viewport
   M.mode = 'flight';
   ensureFlight(canvas, hud);
@@ -31,6 +32,19 @@ function exitCosmos() {
   M.mode = 'engine';
   stopFlight();                                   // terminate the worker pool + stop the rAF loop
   document.body.classList.remove('cosmos-active');
+  window.dispatchEvent(new CustomEvent('cosmosExited'));
+}
+
+// Entering Cosmos stops everything on the main page. Stopping the tone row fires `playbackStopped`,
+// which already cascades to Partitions, MIDI out, the HUD/scale highlights and the Linear/Wheel/
+// Centrifuge lights. The Hinges chain runs on its own button, so it's toggled off through that
+// button (keeps its label honest). `cosmosEntered` lets idle loops (ProgressionBar) park themselves.
+// Nothing restarts on exit — playback resumes only when Play is pressed.
+function quietMainPage() {
+  const trp = window.toneRowPlayback;
+  if (trp?.isPlaying) trp.stopPlayback();
+  if (window.lrcVisuals?.plotTypes?.hinges?.isAnimating) document.getElementById('hinges-animate-btn')?.click();
+  window.dispatchEvent(new CustomEvent('cosmosEntered'));
 }
 
 window.enterCosmos = enterCosmos;   // exposed for console / future callers

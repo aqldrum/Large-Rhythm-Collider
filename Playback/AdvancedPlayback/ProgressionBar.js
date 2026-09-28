@@ -139,6 +139,19 @@
             this._reflectedMode = null;
             this._modeTimer = setInterval(() => this._watchMode(), 250);
             this._watchMode();
+
+            // Cosmos swallows the page → the main page goes quiet: park the mode poll and the
+            // frame loop while flying, restart them on return (the loop only if it was running).
+            window.addEventListener('cosmosEntered', () => {
+                clearInterval(this._modeTimer); this._modeTimer = null;
+                this._loopWasRunning = !!this._raf;
+                if (this._raf) { cancelAnimationFrame(this._raf); this._raf = null; }
+            });
+            window.addEventListener('cosmosExited', () => {
+                if (!this._modeTimer) this._modeTimer = setInterval(() => this._watchMode(), 250);
+                if (this._loopWasRunning && !this._raf) this._loop();
+                this._watchMode();
+            });
         },
 
         // Idempotent reconcile (runs on a 250ms poll + on open/close). The feature is gated to
