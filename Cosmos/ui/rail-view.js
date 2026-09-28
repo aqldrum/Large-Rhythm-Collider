@@ -185,7 +185,8 @@ function buildKnob(name) {
   // reset gesture (decision 10): double-click restores the default; reset() notifies → the sync repaints.
   dial.addEventListener('dblclick', e => { e.preventDefault(); railParams.reset(name); });
   // keyboard fine-adjust (decision 10). stopPropagation so the arrows don't ALSO reach flight's window
-  // keydown and fly the ship — flight-view.js:2237 only exempts INPUT/SELECT/TEXTAREA, not this <div>.
+  // keydown and fly the ship. Only reached when the knob was focused by KEYBOARD: a mouse-focused knob hands
+  // its focus back to the flight on the next key (flight-view.js bindControls, FOCUS HAND-BACK).
   dial.addEventListener('keydown', e => {
     const step = e.shiftKey ? 0.002 : 0.02;
     const d = (e.key === 'ArrowUp' || e.key === 'ArrowRight') ? step : (e.key === 'ArrowDown' || e.key === 'ArrowLeft') ? -step : 0;

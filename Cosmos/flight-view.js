@@ -3328,10 +3328,40 @@ function bindControls() {
     const step = dist * (e.deltaY < 0 ? 1 : -1);
     translateCam([d[0] * step, d[1] * step, d[2] * step]);
   }, { passive: false });
-  const typing = t => t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+  // FOCUS HAND-BACK. A control clicked with the MOUSE keeps browser focus, so the next SPACE would re-press it
+  // (the rail's buttons even stop Space from propagating, for keyboard users) and a focused slider, checkbox or
+  // select would swallow WASD. So we note HOW each focus arrived — during/just after a pointer press, or not
+  // (Tab) — and in the CAPTURE phase, before any control's own handler, a key aimed at a mouse-focused control
+  // drops that focus and goes to the flight instead. Keyboard users keep standard behaviour (Space presses,
+  // arrows turn knobs); text fields are never touched. (Not :focus-visible: Chrome flips it to true on the very
+  // keypress we are classifying, so a clicked button already reads as keyboard-focused by keydown.)
+  const textEntry = t => !!t && (t.tagName === 'TEXTAREA' || t.isContentEditable ||
+    (t.tagName === 'INPUT' && !/^(range|checkbox|radio|button|submit|reset|color|file)$/.test(t.type)));
+  let pointerHeld = false, pointerUpAt = -Infinity, mouseFocused = null;
+  window.addEventListener('pointerdown', () => { pointerHeld = true; }, true);
+  for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, () => { pointerHeld = false; pointerUpAt = performance.now(); }, true);
+  // a label click focuses its control during the click, just after pointerup — hence the short grace window
+  window.addEventListener('focusin', e => { mouseFocused = (pointerHeld || performance.now() - pointerUpAt < 100) ? e.target : null; }, true);
+  const keyboardFocused = el => el !== mouseFocused;
+  const heldControl = () => { const el = document.activeElement; return el && el !== document.body && el !== cv && !textEntry(el) ? el : null; };
   window.addEventListener('keydown', e => {
-    if (M.mode !== 'flight' || typing(e.target)) return;
-    const k = e.key.toLowerCase(); const firstPress = !keys[k]; keys[k] = true;
+    if (M.mode !== 'flight' || e.key === 'Tab' || e.metaKey || e.ctrlKey || e.altKey) return;
+    const el = heldControl();
+    if (!el || keyboardFocused(el)) return;
+    el.blur();
+    // The event is already addressed TO the control, whose own handler would still act on it (a rail button
+    // presses on Space, a knob turns on arrows, a select jumps on letters) — stop it here and fly instead.
+    e.stopPropagation(); e.preventDefault();
+    onFlightKey(e);
+  }, true);
+  window.addEventListener('keydown', onFlightKey);
+  function onFlightKey(e) {
+    if (M.mode !== 'flight' || textEntry(e.target)) return;
+    const k = e.key.toLowerCase();
+    // A control reached by KEYBOARD keeps the keys it uses itself: Space/arrows, and every key for a select.
+    const own = heldControl();
+    if (own && keyboardFocused(own) && (k === ' ' || k === 'enter' || k.startsWith('arrow') || own.tagName === 'SELECT')) return;
+    const firstPress = !keys[k]; keys[k] = true;
     if (firstPress && k === 'escape') { if (returnRide) cancelWebReturn(); else window.exitCosmos(); e.preventDefault(); }
     if (firstPress && /^[0-9]$/.test(k)) { toggleSlot(k === '0' ? 9 : +k - 1); if (selected) showDetail(selected); }   // 1-9,0 → hide/show web slots
     if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)
@@ -3344,7 +3374,7 @@ function bindControls() {
     // sit still ~10s, steer ~10s, fly ~10s, press T — the three rows are then directly comparable.
     if (firstPress && k === 't') { console.log(formatTable(audioTelemetry.report())); audioTelemetry.reset(); }
     if (k.startsWith('arrow') || k === ' ') e.preventDefault();   // don't scroll the page
-  });
+  }
   window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
   window.addEventListener('blur', () => { keys.g = false; });   // never strand gravity held when the tab loses focus
   window.addEventListener('resize', () => { if (cv) resize(); });
