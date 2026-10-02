@@ -1475,18 +1475,10 @@ class ExpandedInfoView {
                     select.value = currentType;
                 }
             }
-            
-            const layerToggles = contentContainer.querySelectorAll('.layer-toggle');
-            layerToggles.forEach(toggle => {
-                toggle.addEventListener('click', (e) => {
-                    const layer = toggle.dataset.layer;
-                    toggle.classList.toggle('active');
-                    if (window.lrcVisuals) {
-                        const isVisible = toggle.classList.contains('active');
-                        window.lrcVisuals.toggleLayerVisibility(layer, isVisible);
-                    }
-                });
-            });
+
+            // Cloned .layer-toggle buttons are handled by the HUD's document-level delegate;
+            // a second listener here would toggle every click twice. Just paint current state.
+            window.lrcVisuals?.updateLayerButtons();
         } else if (panelId === 'expanded-playback') {
             // Playback controls are handled by ToneRowPlayback module
             // Just need to ensure the controls work in the cloned content

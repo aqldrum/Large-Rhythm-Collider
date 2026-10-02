@@ -1383,17 +1383,14 @@ class LRCHUDController {
         
         // Initialize layer toggle accessibility states
         document.querySelectorAll('.layer-toggle').forEach((btn) => {
-            const layer = btn.dataset.layer || '';
-            const isActive = btn.classList.contains('active');
-            btn.setAttribute('aria-label', `${isActive ? 'Hide' : 'Show'} layer ${layer}`);
-            btn.setAttribute('aria-pressed', String(isActive));
+            btn.setAttribute('aria-label', `Isolate layer ${btn.dataset.layer || ''}`);
+            btn.setAttribute('aria-pressed', 'false');
         });
-        
-        // Layer toggles - individual layer visibility
+
+        // Layer toggles - isolate layers (one delegate also covers Expanded View clones)
         document.addEventListener('click', (e) => {
             if (e.target.classList.contains('layer-toggle')) {
-                const layer = e.target.dataset.layer;
-                this.toggleLayer(layer, e.target);
+                this.toggleLayer(e.target.dataset.layer);
             }
         });
         
@@ -1792,17 +1789,10 @@ class LRCHUDController {
         console.log(`Lightswitch ${this.lightsEnabled ? 'ON' : 'OFF'} - Layer overlay lights ${this.lightsEnabled ? 'enabled' : 'disabled'}`);
     }
 
-    toggleLayer(layer, button) {
-        button.classList.toggle('active');
-        const isVisible = button.classList.contains('active');
-        button.setAttribute('aria-pressed', String(isVisible));
-        if (layer) {
-            button.setAttribute('aria-label', `${isVisible ? 'Hide' : 'Show'} layer ${layer}`);
-        }
-        
-        // Communicate to visualization system
-        if (window.lrcVisuals) {
-            window.lrcVisuals.toggleLayerVisibility(layer, isVisible);
+    toggleLayer(layer) {
+        // LRCVisuals owns isolation state and repaints every layer button from it
+        if (window.lrcVisuals && layer) {
+            window.lrcVisuals.toggleLayerVisibility(layer);
         }
     }
 

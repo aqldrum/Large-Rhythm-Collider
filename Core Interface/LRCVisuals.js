@@ -622,18 +622,17 @@ class LRCVisuals {
     }
 
     updateLayerButtons() {
-        ['a', 'b', 'c', 'd'].forEach(layer => {
-            const btn = document.getElementById(`solo-layer-${layer}`);
-            if (btn) {
-                const upperLayer = layer.toUpperCase();
-                const isVisible = this.showAllLayers || this.visibleLayers.has(upperLayer);
-                
-                btn.classList.toggle('active', isVisible && !this.showAllLayers);
-                btn.style.backgroundColor = isVisible && !this.showAllLayers ? 
-                    this.layerColors[upperLayer] : '';
-            }
+        // Every isolation button (Linear + Wheel sections, and Expanded View clones) mirrors
+        // this state — buttons never flip their own class, or the copies drift apart and a
+        // button that looks off ends up removing its layer instead of isolating it.
+        document.querySelectorAll('.layer-toggle[data-layer]').forEach(btn => {
+            const layer = btn.dataset.layer;
+            const isIsolated = !this.showAllLayers && this.visibleLayers.has(layer);
+            btn.classList.toggle('active', isIsolated);
+            btn.setAttribute('aria-pressed', String(isIsolated));
+            btn.setAttribute('aria-label', `${isIsolated ? 'Release' : 'Isolate'} layer ${layer}`);
         });
-        
+
         const showAllBtn = document.getElementById('show-all-layers');
         if (showAllBtn) {
             showAllBtn.classList.toggle('active', this.showAllLayers);
