@@ -7,13 +7,14 @@
 //                streams in shard-by-shard instead of one 20-second whole-grid solve blocking a worker.
 // NOTE: the ?v= on this import is a cache-bust — browsers cache Web Workers (and their imports) hard, so bump
 // it (and the Worker URL in flight-view.js) whenever this file or grid-core.js changes, or stale code lingers.
-import { gridPlan, gridShardSystems, gridShardSolve, divisorsFast, REAL_RHYTHM_MAX_RANGE } from '../engine/grid-core.js?v=9';
+import { gridPlan, gridShardSystems, gridShardSolve, divisorsFast, REAL_RHYTHM_MAX_RANGE } from '../engine/grid-core.js?v=10';
 
 self.onmessage = (e) => {
   const d = e.data;
   try {
     if (d.op === 'plan') {
-      self.postMessage({ id: d.id, ...gridPlan(d.grid, d.force) });
+      // The gate judges the range-capped work the shard op below will really do, not the uncapped enumeration.
+      self.postMessage({ id: d.id, ...gridPlan(d.grid, d.force, REAL_RHYTHM_MAX_RANGE) });
     } else if (d.op === 'bloomShard') {
       // near-star LOD, one shard's tuning systems ({c,dense}). Bounded like the abundance shard → the
       // bloom accumulates shard-by-shard on the client, never blocking a worker on the whole grid.

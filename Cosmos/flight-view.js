@@ -1125,7 +1125,7 @@ export function ensureFlight(canvas, hudEl) {
   // Module-relative Worker URL: `new Worker(relative)` resolves against the DOCUMENT (index.html at root),
   // which breaks under the full-swallow — resolve against this module so it lands on Cosmos/workers/. The
   // ?v= busts the hard Web-Worker cache — bump it AND the worker's ../grid-core.js?v= on worker edits.
-  pool = new SolverWorkerPool(new URL('./workers/abundance-worker.js?v=9', import.meta.url), poolSize);
+  pool = new SolverWorkerPool(new URL('./workers/abundance-worker.js?v=10', import.meta.url), poolSize);
   rootCompiler = new ProgramWorkerPool(new URL('./workers/sky-root-worker.js', import.meta.url));
   rootSolvePending = false;
   rowCompiler = new ProgramWorkerPool(new URL('./workers/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });

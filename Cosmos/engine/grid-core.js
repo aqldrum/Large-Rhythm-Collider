@@ -61,24 +61,36 @@ export const MONSTER_GRID_COST = 3e9;
 // Independent of the quality slider (a definitional constant, not a per-tier LOD knob). Tune freely.
 export const REAL_RHYTHM_MAX_RANGE = 1000;
 
-// Cheap live-solve COST proxy from the (ascending) shard keys: Σ over shards A of C(#divisorsBelowA, ≤3)·A —
+// Cheap live-solve COST proxy from the (ascending) shard keys: Σ over shards A of C(#layersBelowA, ≤3)·A —
 // combos-per-shard × per-combo deriveScale cost (~A). Predicts BOTH cost drivers without solving: combinatorial
 // (many divisors → big C(...)) and deep (large max-layer → big A). Current values: grid 2,640 ≈ 37M,
 // 8,081,605 ≈ 1.02e9 (deep despite sparse), and 27,720 ≈ 8.59e9. Used to pre-identify grids whose
 // combinatorial work should remain gated; deep work below that gate is isolated by the heavy-shard lane.
-export function gridCost(keysGe2) {
+//
+// `maxRange` makes the estimate count what the solve will actually enumerate: shardGroups prunes each shard's
+// layers to [A/maxRange, A), so only those divisors can combine. Without it the proxy charged a deep sparse
+// grid for combinations the range cap never visits (range-blind, it flagged a third of the upper cube as
+// monsters though they solve in well under a second). Omitted → Infinity → the uncapped estimate, matching
+// the uncapped enumeration the lab/math callers run.
+export function gridCost(keysGe2, maxRange = Infinity) {
   let sum = 0;
-  for (let i = 0; i < keysGe2.length; i++) { const k = i, combos = 1 + k + (k * (k - 1)) / 2 + (k * (k - 1) * (k - 2)) / 6; sum += combos * keysGe2[i]; }
+  for (let i = 0, lo = 0; i < keysGe2.length; i++) {
+    const A = keysGe2[i];
+    while (keysGe2[lo] < A / maxRange) lo++;                       // same floor as shardGroups' `d >= A / maxRange`
+    const k = i - lo, combos = 1 + k + (k * (k - 1)) / 2 + (k * (k - 1) * (k - 2)) / 6;
+    sum += combos * A;
+  }
   return sum;
 }
 
 // Cheap plan/classification shared by the real worker and Node assertions. `force` bypasses the estimated
-// combinatorial gate — the only gate there is.
-export function gridPlan(G, force = false) {
+// combinatorial gate — the only gate there is. `maxRange` must be the range cap the caller will solve under
+// (flight: REAL_RHYTHM_MAX_RANGE), so the gate judges the work that will really be done.
+export function gridPlan(G, force = false, maxRange = Infinity) {
   const keys = shardKeysOf(G);
   const divisors = keys.length + 2;                              // restore divisors 1 and G
   const maxLayer = keys.length ? keys[keys.length - 1] : 0;
-  const cost = gridCost(keys);
+  const cost = gridCost(keys, maxRange);
   if (!force && cost > MONSTER_GRID_COST) return { monster: true, divisors, cost, maxLayer };
   return { shards: keys, divisors, cost, maxLayer };
 }

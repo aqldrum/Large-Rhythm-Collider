@@ -1,5 +1,5 @@
 // Assertions for high-grid relaxation: classification, the global heavy lane, and timed-out worker recovery.
-import { gridPlan, MONSTER_GRID_COST, HEAVY_SHARD_LAYER } from '../engine/grid-core.js';
+import { gridPlan, gridCost, shardKeysOf, MONSTER_GRID_COST, HEAVY_SHARD_LAYER, REAL_RHYTHM_MAX_RANGE } from '../engine/grid-core.js';
 import { SolverWorkerPool } from '../engine/solver-worker-pool.js';
 
 let PASS = true;
@@ -32,6 +32,28 @@ const divisorRich = gridPlan(14_414_400);   // 504 divisors — past the old 260
 check('a grid past the old 260-shard cap is monster-gated, and force still solves it',
   divisorRich.monster === true && !divisorRich.tooLarge && gridPlan(14_414_400, true).shards?.length > 260,
   `${divisorRich.divisors} divisors`);
+
+// Range-aware gate: flight plans under REAL_RHYTHM_MAX_RANGE, so the estimate counts only the layers the capped
+// solve enumerates ([A/maxRange, A) per shard). The range-blind estimate flagged a third of the upper cube.
+const flightPlan = g => gridPlan(g, false, REAL_RHYTHM_MAX_RANGE);
+const deepFreed = [8_000_020, 16_700_013, 16_700_002];
+check('deep sparse grids the range-blind estimate gated plan real shards under the flight range cap',
+  deepFreed.every(g => gridPlan(g).monster === true && !!flightPlan(g).shards && !flightPlan(g).monster),
+  deepFreed.map(g => `${g.toLocaleString()} ${gridPlan(g).cost.toExponential(1)}→${flightPlan(g).cost.toExponential(1)}`).join(' · '));
+check('genuinely combinatorial grids stay gated under the flight range cap',
+  [27_720, 55_440, 14_414_400].every(g => flightPlan(g).monster === true),
+  `27,720 cost ${flightPlan(27_720).cost.toLocaleString()}`);
+check('a grid whose layers all sit inside the range cap costs the same either way',
+  flightPlan(2_640).cost === gridPlan(2_640).cost);
+let monotone = true, neverNewlyGated = true;
+for (const base of [2, 1_000_000, 16_700_000]) for (let g = base; g < base + 2_000; g++) {
+  const keys = shardKeysOf(g), blind = gridCost(keys), ranged = gridCost(keys, REAL_RHYTHM_MAX_RANGE);
+  if (ranged > blind) monotone = false;
+  if (flightPlan(g).monster && !gridPlan(g).monster) neverNewlyGated = false;
+}
+check('the range-aware estimate never exceeds the range-blind one, so it never gates a grid the old gate passed',
+  monotone && neverNewlyGated);
+check('force still bypasses the gate under the flight range cap', !!gridPlan(27_720, true, REAL_RHYTHM_MAX_RANGE).shards);
 
 console.log('\n[2] One-at-a-time heavy lane');
 let workerNumber = 0, activeHeavy = 0, maxHeavy = 0;
