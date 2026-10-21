@@ -124,6 +124,19 @@ export function articulate(notes, { legato, struck, cycleSeconds }) {
 }
 
 /**
+ * A part of a spec played with another sound or legato (the lab's toggles): its notes' durations and retriggers
+ * re-derived by `articulate`, voice by voice in the chords part, nothing re-mined. → a new part
+ */
+export function rearticulate(part, { sound = part.sound, legato = part.legato, enabled = part.enabled, cycleSeconds }) {
+  if (!(cycleSeconds > 0)) fail('rearticulate needs the cycle\'s seconds');
+  const struck = isStruck(sound), notes = part.notes.map((n) => ({ ...n }));
+  const groups = part.id === 'chords' ? [...new Set(notes.map((n) => n.voice))].map((v) => notes.filter((n) => n.voice === v)) : [notes];
+  for (const g of groups) articulate(g, { legato, struck, cycleSeconds });
+  notes.sort((a, b) => a.time - b.time || a.node - b.node);
+  return { ...part, sound, struck, legato, enabled, notes };
+}
+
+/**
  * Compose.
  *   layers         the rhythm, [a, b, c, d] as the LRC names them
  *   cycleSeconds   how long one cycle lasts
@@ -308,7 +321,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
         const accent = id === 'comp' ? 0.1 * Math.max(0, (n.strikes ?? 1) - 1) : id === 'lead' && n.strong ? 0.1 : 0;
         return {
           node: n.node, tick: row.tick[n.node], time: n.time, ratio: row.tones[n.tone], octave: n.octave, hz: baseHz * (num / den) * 2 ** n.octave * ratioOf(n.bar),
-          duration: n.duration, velocity: Math.min(1, VELOCITY[id] + accent), bar: n.bar, slot: n.slot, retrigger: n.retrigger, ...(voice ? { voice: n.voice } : {}),
+          duration: n.duration, velocity: Math.min(1, VELOCITY[id] + accent), bar: n.bar, slot: n.slot, slotSeconds: n.slotSeconds, retrigger: n.retrigger, ...(voice ? { voice: n.voice } : {}),
         };
       }),
     };
@@ -325,6 +338,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     chords: h.chords.map((c) => ({ bar: c.bar, name: c.name, quality: c.quality, intervals: [...c.intervals], pcs: [...c.pcs], rootPc: c.rootPc, rootTone: c.rootFraction, rootNode: c.rootNode,
       offsetCents: c.offsetCents, rawOffsetCents: c.rawOffsetCents, fundamentalRatio: ratioOf(c.bar), offGrid: !!c.offGrid, exceptions: c.exceptions.length, empty: !!c.empty })),
     modulations: h.modulations.map((m) => ({ ...m })),
+    timeline: { slotStarts: starts.map((x) => x * T), barStarts: starts.filter((_, j) => j % S === 0).map((x) => x * T) },
     parts: partList,
     decisions,
     stats: {

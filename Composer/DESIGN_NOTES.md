@@ -1,6 +1,6 @@
 # Composer: design notes (draft, 2026-10-21)
 
-Working notes from Avery's chat with Claude. Nothing here is built. Items marked **decided** are Avery's calls; everything else is a proposal or an open question.
+Working notes from Avery's chat with Claude. Items marked **decided** are Avery's calls; everything else is a proposal or an open question. The 2026-10-21 sprint built phases 1–5 on branch `composer-prototype` (the "Phase" sections below); nothing there is ruled.
 
 ## Direction
 
@@ -232,7 +232,8 @@ Timing (ms, one downbeat; lean / full):
 - `chords[bar]`: `{ bar, name, quality, intervals, pcs, rootPc, rootTone, rootNode, offsetCents (named), rawOffsetCents, fundamentalRatio, offGrid, exceptions, empty }`
 - `modulations`: `[{ bar, cents (named), rawCents, fundamentalRatio }]`
 - `parts`: lead, chords, comp, bass, inner, each `{ id, role, sound, struck, legato, enabled, notes }`
-- each note: `{ node, tick, time, ratio, octave, hz, duration, velocity, bar, slot, retrigger }`, plus `voice` on the chords part
+- each note: `{ node, tick, time, ratio, octave, hz, duration, velocity, bar, slot, slotSeconds, retrigger }`, plus `voice` on the chords part
+- `timeline`: `{ slotStarts, barStarts }` in seconds from the downbeat (added in phase 5 for the lab's lanes and playhead)
 - `hz` = baseHz × ratio × 2^octave × the bar's `fundamentalRatio`
 - `time` counts seconds from the phase (bar 1's downbeat). The cycle loops, so a note in bar 1's first window that falls just before the downbeat sounds at the end of the cycle.
 - `decisions`: `[{ what, value, why }]`, one per choice: frame, root, bars, slots, tempo, anchors, phase, modulation, table, leader, comping layer, and sound, legato and enabled for each part, plus baseHz.
@@ -285,6 +286,42 @@ How it works. Each choice here is **proposed, not ruled** unless marked decided:
 
 Lean stays under the 1 s main-thread target on all three rows.
 
+## Phase 5: the lab page (built 2026-10-21, sprint)
+
+`Composer/lab/composer-lab.html`, not linked from `index.html`. Serve the repo root as a static site and open `/Composer/lab/composer-lab.html`; a module worker can't start from `file://`.
+
+The code is split in three:
+- `lab-controller.js`: the state and actions, no DOM.
+- `lab-player.js`: the scheduler and audio graph, no DOM.
+- `composer-lab.js`: a thin view over both.
+
+`Composer/tests/assert-lab.mjs` drives the controller and player against a recording mock AudioContext.
+
+How it works. Each choice here is **proposed, not ruled**:
+
+- **Inputs.** Four layers (blank or 0 means absent), the cycle in seconds (8 by default) and a seed.
+  - The page opens on 41:42:43 and composes it at once.
+  - Six presets: 41:42:43, 8:7:6:5, 19:17:16:15, 119:42:15:8, 768:769, and 4099:4093:4091:4079.
+- **The table decides where Compose runs.** Full runs in the module worker; lean runs on the main thread. Each is Compose's default in that place, so the table is never logged as an override.
+  - A knob change re-composes by itself only on the lean table, and only while a lean compose takes under 300 ms.
+- **The main button.** Compose → Composing… → Perform ⇄ Stop. Any change to an input, knob or table stops playback and returns it to Compose.
+- **Knobs.** Bars, slots per bar, frame ±¢, modulation and anchors. Blank or "auto" leaves the choice to Compose. Each knob shows what Compose chose, or "asked:" in amber when it was overridden.
+- **Lanes.** One row per part and one column per bar, each column as wide as its bar lasts.
+  - Each row has a sound select (every note-role sound in Audio/voices), a legato toggle, an on/off toggle and a level slider.
+  - Notes show as ticks at their times. A glided note shows as a fainter tick.
+  - The chords row names each bar's chord. A modulation shows as "↻ ±cents", with the raw offset in its tooltip.
+  - A sound or legato change re-articulates the part with compose.js' `rearticulate` (the decided legato rule). Nothing is re-mined.
+- **Readouts.** Tempo, meter, root, baseHz, onsets, tones, table, compose time and the chords. A refusal is said in plain words. The decisions list (what, value, why) sits in a collapsible panel.
+- **Export.** JSON downloads the spec with the parts as they play now.
+- **Playback.**
+  - The page makes its own AudioContext on the first Perform.
+  - A scheduler ticks every 25 ms and books 150 ms ahead, looping the cycle from the moment Perform was pressed.
+  - Each part has its own gain bus with a level, feeding a master gain (0.8), then a DynamicsCompressor limiter (−10 dB, 6:1), then the destination.
+  - A note with `retrigger` starts a `note`-role voice: `planVoice` and `createInstrumentVoice`, with the note's velocity as the peak. The notes after it without `retrigger` glide that held voice with `setFrequency` (12 ms) at their times; in the chords part, per voice. The voice is released when its chain ends.
+  - A note alone is planned with its own duration, so a struck sound damps where its note ends.
+  - Stop fades every live voice over 30 ms and books nothing more.
+  - A white playhead moves across the lanes.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
@@ -295,7 +332,7 @@ Lean stays under the 1 s main-thread target on all three rows.
 - **Sections first (decided).** Zooming into a section's bars comes later, with the Linear Plot gesture: cmd+scroll horizontal, alt+scroll vertical (`LRCVisuals.handleCanvasWheel` / `zoomLinearAxis`).
 - **Drums come later (decided).** The mining core comes first. Leaning: Partitions keeps its own tab as the drum editor, the Perc lane is Partitions, and Partitions needs a pattern per section.
 
-## Proposed code home (not started)
+## Proposed code home (built in the sprint, except `Composer/workers/`: the worker is `Composer/core/compose-worker.js`)
 
 - **`Composer/core/`:** pure ES modules: row, cells and partitioned anchors, frame and classes, lines, harmony from melody, roots and modulation. Ported from chunk-tunes where useful, owned by the LRC from day one.
 - **`Composer/workers/`:** mining off the main thread, if the probe says it's needed.
@@ -304,9 +341,24 @@ Lean stays under the 1 s main-thread target on all three rows.
 
 ## Still open (for Avery)
 
-1. Compose's timing goal: a tempo range, or an onset density per slot.
-2. What happens to fringe tones.
-3. Whether a modulation jumps or glides, and who chooses it.
-4. Whether chords strictly follow melodies, or parsimony gets a vote.
-5. The size gate number, after the probe.
-6. How the parts divide one cycle's onsets: can two parts use the same onset, or does each onset belong to one part?
+The six questions from 2026-10-21. The sprint built a proposal for each; each still needs a ruling:
+
+1. **Compose's timing goal: a tempo range, or an onset density per slot.** Built as both: a 90–130 BPM range picks N, then a density floor of 3 onsets per slot lowers S, and only then N.
+2. **What happens to fringe tones.** Built as chunk-lines' outside tones: allowed only on a weak slot, resolved by step.
+3. **Whether a modulation jumps or glides, and who chooses it.** Built as a jump at a bar boundary, chosen by Compose, with an off switch. The lab can't trigger one by hand yet.
+4. **Whether chords strictly follow melodies, or parsimony gets a vote.** Built with melody first; parsimony only breaks ties.
+5. **The size gate number, after the probe.** Proposed: 1,048,576 onsets, and a minimum of 3 tones.
+6. **How the parts divide one cycle's onsets.** Built as shared: two parts may sound the same onset. The inner voice alone avoids the lead's.
+
+Raised during the sprint:
+
+7. **Default root.** A root must be heard at least max(2, 1% of onsets) times, falling back to half the most-heard tone's count. Is that the right sense of "the root is present"?
+8. **Chords follow the first lead, not the kept one.** The second pass's lead was kept in 86% of phrases, and 6 of 814 strong notes end up off their chord.
+9. **Rare colours.** maj7 is the most common chord (25%), and mMaj7 and aug appear on tone-rich rows. Hear them first, then rule.
+10. **Folding modulation offsets** into [−50, +50)¢ as a pure relabel. Do the folded names read right?
+11. **Grids past 2^53** are refused for v1 (four coprime layers near 10,000 already pass it). Lift with BigInt or two-part positions?
+12. **Bass.** Its own sparse type, mined bar by bar and opening on the root. It is two octaves under the lead, with legato off by default.
+13. **Comping** uses one layer's first strike per slot. Is that the clave Avery means?
+14. **Sounds and legato defaults per part.** The lead and bass sounds follow their legato; chords, comping and inner are chosen by the seed.
+15. **Times count from the downbeat (the phase), looping.** A pickup note just before bar 1 sounds at the end of the cycle.
+16. **Velocities** are fixed per part, with small accents.
