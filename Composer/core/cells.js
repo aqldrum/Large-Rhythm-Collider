@@ -13,9 +13,10 @@
 //   window      a node is a slot's candidate when it is within `swing` of the way from the slot's anchor to the
 //               neighbouring anchor on its side: with even anchors that is swing / P of the cycle either side, the
 //               window of chunk-super-row; with partitioned anchors each side scales with its own pulse. The swing is
-//               given, or sized in ONSETS as chunk-lines' `buildLattice` sizes it: about `moments` onsets of the row
-//               around the anchor at the row's mean density, swing = moments·P / (2n), rounded to 1/10000 and held in
-//               [1e-4, 0.5]. At 0.5 the windows meet halfway, so every node is some slot's and a node exactly midway
+//               given (a double, read to 1/10000 as chunk-super-row reads it), or sized in ONSETS as chunk-lines'
+//               `buildLattice` sizes it: about `moments` onsets of the row around the anchor at the row's mean density,
+//               swing = moments·P / (2n), held at most 0.5 — kept as that exact fraction, not rounded to 1/10000 as
+//               chunk-lines rounds it (the probe found the rounded window drifting past ~0.6M onsets). At 0.5 the windows meet halfway, so every node is some slot's and a node exactly midway
 //               belongs to the slot it follows. Membership at an edge is decided in whole numbers (BigInt), never in
 //               doubles.
 //   candidates  per tone: how many of the slot's nodes, their strikes, their registers, and the nearest node with its
@@ -87,10 +88,17 @@ export function partitionSizes(T, P) {
   return { T, P, G, R, delta, sizes };
 }
 
-/** the swing that holds about `moments` onsets in a window at the row's mean density (chunk-lines buildLattice) */
+/**
+ * The swing that holds about `moments` onsets in a window at the row's mean density, moments·P / (2n) at most 1/2, as
+ * an exact fraction [num, den] (a moments that is not whole is read to 1e-6).
+ */
 export function swingForMoments(row, P, moments = DEFAULT_MOMENTS) {
-  if (!(moments > 0)) fail(`bad moments ${moments}`);
-  return Math.min(0.5, Math.max(1e-4, Math.round((moments * P) / (2 * row.n) * 1e4) / 1e4));
+  if (!(moments > 0 && Number.isFinite(moments))) fail(`bad moments ${moments}`);
+  const scale = Number.isInteger(moments) ? 1 : 1e6;
+  let num = Math.round(moments * scale) * P, den = 2 * row.n * scale;
+  if (2 * num >= den) return [1, 2];
+  const g = gcd(num, den);
+  return [num / g, den / g];
 }
 
 /** the phase at a tick of the row: [tick, grid], reduced */
@@ -139,7 +147,7 @@ function anchorsOf(row, P, mode, [pn, pd], { sizes: given, subdivide } = {}) {
  *   opts = { bars, slotsPerBar, anchors: 'even' | 'partitioned', phase: [num, den] of the cycle (default [0, 1]),
  *            moments (default 12) or swing (a share of a mean slot, overriding moments),
  *            sizes (partitioned: P pulse sizes in ticks, e.g. a dragged order), subdivide (partitioned: ticks per grid tick) }
- * → { version, mode, bars, slotsPerBar, P, phase, moments, swing, window, pulses, slotOfNode,
+ * → { version, mode, bars, slotsPerBar, P, phase, moments, swing, swingExact: [num, den], window, pulses, slotOfNode,
  *     slots: [{ index, bar, beat, anchor, at, tick, length, reach, nodes, strikes, tones }] }
  *   anchor   the anchor as a double in [0, 1) of the cycle; `at` the same as an exact [num, den] (a string where past 2^53)
  *   tick     the anchor in ticks of the row (a double; whole for partitioned anchors unless subdivided)
@@ -152,14 +160,18 @@ export function buildCells(row, opts = {}) {
   const { bars, slotsPerBar, anchors: mode = 'even', phase = [0, 1], moments = DEFAULT_MOMENTS, swing: swingIn } = opts;
   if (!(Number.isInteger(bars) && bars >= 1 && Number.isInteger(slotsPerBar) && slotsPerBar >= 1)) fail(`bad meter ${bars} × ${slotsPerBar}`);
   const P = bars * slotsPerBar, ph = readPhase(phase);
-  const swingAsked = swingIn != null ? Math.min(0.5, Math.max(0, Number(swingIn))) : swingForMoments(row, P, moments);
-  if (!Number.isFinite(swingAsked)) fail(`bad swing ${swingIn}`);
-  const sn = Math.round(swingAsked * SWING_DEN), swing = sn / SWING_DEN;
+  let sn, sd;
+  if (swingIn != null) {
+    const asked = Math.min(0.5, Math.max(0, Number(swingIn)));
+    if (!Number.isFinite(asked)) fail(`bad swing ${swingIn}`);
+    sn = Math.round(asked * SWING_DEN); sd = SWING_DEN;
+  } else [sn, sd] = swingForMoments(row, P, moments);
+  const swing = sn / sd;
   const { AD, num, pulses } = anchorsOf(row, P, mode, ph, opts);
 
   const grid = row.grid, G = BigInt(grid), M = G * AD;   // a node's offset from an anchor is s / M of the cycle, s in (−M/2, M/2]
-  const SN = BigInt(sn), SD = BigInt(SWING_DEN), half = 2 * sn === SWING_DEN;
-  const w = sn / SWING_DEN / P;
+  const SN = BigInt(sn), SD = BigInt(sd), half = 2 * sn === sd;
+  const w = swing / P;
   const T = row.tones.length, stamp = new Int32Array(T).fill(-1), at = new Int32Array(T);
   const slotOfNode = new Int32Array(row.n).fill(-1);
   const slots = [];
@@ -210,7 +222,7 @@ export function buildCells(row, opts = {}) {
   }
   return {
     version: COMPOSER_CELLS_VERSION, mode, bars, slotsPerBar, P, phase: ph,
-    moments: swingIn != null ? null : moments, swing, window: w, pulses, slotOfNode, slots,
+    moments: swingIn != null ? null : moments, swing, swingExact: [sn, sd], window: w, pulses, slotOfNode, slots,
   };
 }
 

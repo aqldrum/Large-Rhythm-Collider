@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { buildRow, onsetCount, siteFraction, fractionCents, nodeAt, isRow, lowerBoundTick, ONSET_GATE, COMPOSER_ROW_VERSION } from '../core/row.js';
+import { buildRow, onsetCount, siteFraction, fractionCents, nodeAt, isRow, lowerBoundTick, toneGate, ONSET_GATE, MIN_TONES, COMPOSER_ROW_VERSION } from '../core/row.js';
 import { RHYTHMS, OVERWORLD_RUNTIME, lcmOf } from './rhythms.mjs';
 
 let PASS = true, checks = 0;
@@ -94,20 +94,23 @@ console.log('\n— onset count and gate');
     if (lcmOf(l) <= 2e5 && n !== brute(l).nodes.length) { bad = `${l}: ${n}`; break; }
   }
   check('the count from the layers alone equals the built row, and a tick walk over 14·14·8·5 small rhythms', !bad, bad);
-  check(`the default gate is the Cosmos rhythm card's ${ONSET_GATE}`, ONSET_GATE === 16384);
-  const dense = [16384, 3];   // 16384 + 3 − gcd 1 = 16386 onsets
+  check(`the default gate is the probe's 2^20 (${ONSET_GATE})`, ONSET_GATE === 1048576);
+  const dense = [1048576, 3];   // 1048576 + 3 − gcd 1 = 1048578 onsets
   const refused = buildRow(dense);
-  check('over the gate: { tooDense, onsets, gate }, no row', refused.tooDense === true && refused.onsets === 16386 && refused.gate === 16384 && !isRow(refused) && Object.keys(refused).length === 3, JSON.stringify(refused));
-  const at = buildRow([16384, 2]);   // gcd 2: exactly 16384 onsets
-  check('at the gate exactly: built', isRow(at) && at.n === 16384);
-  check('a raised gate builds it', isRow(buildRow(dense, { gate: 20000 })) && buildRow(dense, { gate: 20000 }).n === 16386);
+  check('over the gate: { tooDense, onsets, gate }, no row', refused.tooDense === true && refused.onsets === 1048578 && refused.gate === 1048576 && !isRow(refused) && Object.keys(refused).length === 3, JSON.stringify(refused));
+  const t0 = Date.now(), at = buildRow([1048576, 2]), took = Date.now() - t0;   // gcd 2: exactly 2^20 onsets
+  check(`at the gate exactly: built (2^20 onsets in ${took} ms)`, isRow(at) && at.n === 1048576 && at.tones.length === 1);
+  check('a raised gate builds it', isRow(buildRow(dense, { gate: 1100000 })) && buildRow(dense, { gate: 1100000 }).n === 1048578);
   check('a lowered gate refuses 8:7:6:5 (22 onsets) at 21 and builds it at 22', buildRow([8, 7, 6, 5], { gate: 21 }).tooDense === true && isRow(buildRow([8, 7, 6, 5], { gate: 22 })));
   const huge = buildRow([999983, 999979, 999961, 999959], { gate: Infinity });
-  check('a grid past 2^53 (only past a raised gate): { tooLarge, grid, limit }', huge.tooLarge === true && huge.grid === (999983n * 999979n * 999961n * 999959n).toString() && huge.limit === Number.MAX_SAFE_INTEGER, JSON.stringify(huge));
+  check('a grid past 2^53, past the gate: { tooLarge, grid, limit }', huge.tooLarge === true && huge.grid === (999983n * 999979n * 999961n * 999959n).toString() && huge.limit === Number.MAX_SAFE_INTEGER, JSON.stringify(huge));
+  const inside = buildRow([10007, 10009, 10037, 10039]);
+  check('a grid past 2^53 INSIDE the gate (four coprime layers near 10^4, 40,089 onsets): tooLarge', inside.tooLarge === true && onsetCount([10007, 10009, 10037, 10039]) === 40089, JSON.stringify(inside));
   check('the gate refuses before it allocates: 4 layers near 10^6 at the default gate is a quick tooDense', (() => { const t = Date.now(), r = buildRow([999983, 999979, 999961, 999959]); return r.tooDense && r.onsets === 999983 + 999979 + 999961 + 999959 - 6 + 4 - 1 && Date.now() - t < 50; })());
   const big = buildRow([997, 991, 983, 977]);
   check('a grid past 2^25 builds (997:991:983:977, grid 948892238557): ticks exact as doubles', isRow(big) && big.grid === 948892238557 && big.tick[big.n - 1] < big.grid && big.n === 3945 && Number.isSafeInteger(big.tick[big.n - 1]));
   check('bad layers throw', throws(() => buildRow([]), /no layers/) && throws(() => buildRow([0, 0]), /no layers/) && throws(() => buildRow([3, 2.5]), /positive whole/) && throws(() => buildRow([3, -2]), /positive whole/) && throws(() => buildRow([1, 2, 3, 4, 5]), /at most 4/));
+  check(`toneGate: under ${MIN_TONES} distinct tones is { tooFewTones } (3:2 has 1, 8:7:6:5 has 7)`, JSON.stringify(toneGate(buildRow([3, 2]))) === JSON.stringify({ tooFewTones: true, tones: 1, min: 3 }) && toneGate(buildRow([8, 7, 6, 5])) === null && toneGate(buildRow([3, 2]), 1) === null);
   check('bad gate throws', throws(() => buildRow([3, 2], { gate: 0 }), /bad gate/));
 }
 

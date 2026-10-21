@@ -39,8 +39,8 @@ const cmp = ([a, b], [c, d]) => { const l = a * d, r = c * b; return l < r ? -1 
 const absF = ([a, b]) => [a < 0n ? -a : a, b], half = [1n, 2n];
 const wrap = (f) => { let [n, d] = f; n %= d; if (n < 0n) n += d; let g = [n, d]; if (cmp(g, half) > 0) g = sub(g, [1n, 1n]); return g; };
 const around = (f) => { const [n, d] = f; let r = n % d; if (r < 0n) r += d; return [r, d]; };   // into [0, 1)
-function bruteCells(row, { P, slotsPerBar, mode, phase, swing, sizes }) {
-  const sn = Math.round(Math.min(0.5, Math.max(0, swing)) * SWING_DEN), sw = fr(sn, SWING_DEN), atHalf = 2 * sn === SWING_DEN;
+function bruteCells(row, { P, slotsPerBar, mode, phase, swing: [sn, sd], sizes }) {
+  const sw = fr(sn, sd), atHalf = 2 * sn === sd;
   let anchors;
   if (mode === 'even') anchors = Array.from({ length: P }, (_, k) => around(add(fr(phase[0], phase[1]), fr(k, P))));
   else {
@@ -86,7 +86,7 @@ console.log('\n— a second producer, exact fractions, both anchor modes');
         if (phase[0] >= phase[1]) continue;
         for (const swing of [0, 0.1, 0.18, 0.37, 0.5, null]) {
           const cells = buildCells(row, { bars, slotsPerBar: S, anchors: mode, phase, ...(swing == null ? {} : { swing }) });
-          const b = bruteCells(row, { P, slotsPerBar: S, mode, phase, swing: cells.swing, sizes: cells.pulses?.sizes });
+          const b = bruteCells(row, { P, slotsPerBar: S, mode, phase, swing: swing == null ? swingForMoments(row, P) : [Math.round(swing * SWING_DEN), SWING_DEN], sizes: cells.pulses?.sizes });
           runs++;
           if (JSON.stringify(shapeOf(cells)) !== JSON.stringify(bruteShape(b))) { bad = `${layers} ${bars}×${S} ${mode} phase ${phase} swing ${swing}: ${firstDiff(shapeOf(cells), bruteShape(b))}`; break; }
           const slotOf = new Int32Array(row.n).fill(-1); b.forEach((s, k) => s.members.forEach((i) => { slotOf[i] = k; }));
@@ -165,7 +165,7 @@ console.log('\n— partitioned anchors');
   const order = cells.pulses.sizes.slice().reverse(), dragged = buildCells(row, { bars: 2, slotsPerBar: 8, anchors: 'partitioned', sizes: order });
   check('a given order (the pulses reversed, as if dragged) is used as given', dragged.pulses.given && dragged.pulses.sizes.join() === order.join() && dragged.slots[1].tick === order[0]);
   check('bad modes and meters throw', throws(() => buildCells(row, { bars: 2, slotsPerBar: 8, anchors: 'odd' }), /anchors must be/) && throws(() => buildCells(row, { bars: 0, slotsPerBar: 8 }), /bad meter/) && throws(() => buildCells(row, { bars: 1, slotsPerBar: 4, phase: [3, 2] }), /bad phase/));
-  check('a refused row is not cut', throws(() => buildCells(buildRow([16384, 3]), { bars: 1, slotsPerBar: 4 }), /built row/));
+  check('a refused row is not cut', throws(() => buildCells(buildRow([1048576, 3]), { bars: 1, slotsPerBar: 4 }), /built row/));
   check('partitionSizes refuses more pulses than ticks', throws(() => partitionSizes(6, 7), /cannot cut/));
 }
 
@@ -199,13 +199,19 @@ console.log('\n— windows');
     if (row.n < 1000) continue;
     for (const moments of [6, 12, 24]) {
       const c = buildCells(row, { bars: 4, slotsPerBar: 8, moments });
-      if (c.swing !== swingForMoments(row, 32, moments) || c.moments !== moments) bad = `${layers}: swing`;
+      const [sn, sd] = swingForMoments(row, 32, moments); if (c.swingExact.join() !== [sn, sd].join() || Math.abs(c.swing - Math.min(0.5, moments * 32 / (2 * row.n))) > 1e-15 || c.moments !== moments) bad = `${layers}: swing`;
       const mean = c.slots.reduce((n, s) => n + s.nodes, 0) / c.P;
       densities.push(mean / moments);
       if (mean < 0.6 * moments || mean > 1.4 * moments) bad = `${layers}: ${mean.toFixed(1)} onsets a slot for moments ${moments}`;
     }
   }
   check(`windows sized in onsets: rows of 1000+ onsets hold about \`moments\` a slot (mean ${(densities.reduce((a, b) => a + b, 0) / densities.length).toFixed(2)} × moments over ${densities.length} cuts)`, !bad && densities.length >= 15, bad);
+  {
+    const t0 = Date.now(), big = buildRow([700001, 300007]), built = Date.now() - t0;   // ~10^6 onsets
+    const t1 = Date.now(), c = buildCells(big, { bars: 4, slotsPerBar: 8, moments: 12 }), cut = Date.now() - t1;
+    const mean = c.slots.reduce((n, s) => n + s.nodes, 0) / c.P;
+    check(`no drift at 10^6 onsets (the probe's rounded window drifted there): ${mean.toFixed(2)} onsets a slot for moments 12 (row ${built} ms, cut ${cut} ms)`, big.n === 1000007 && mean > 11 && mean < 13 && c.swing === 12 * 32 / (2 * big.n), `${mean} ${c.swingExact}`);
+  }
   const r = buildRow([8, 7, 6, 5]);
   check('a small row: the onset window clamps at swing 0.5', buildCells(r, { bars: 2, slotsPerBar: 8 }).swing === 0.5);
   const a = buildCells(r, { bars: 2, slotsPerBar: 4, anchors: 'partitioned' }), b = buildCells(r, { bars: 2, slotsPerBar: 4, anchors: 'partitioned' });
@@ -261,8 +267,10 @@ if (!fs.existsSync(superRowFile) || !fs.existsSync(linesFile)) {
     for (const [bars, S] of [[2, 4], [2, 8], [4, 8]]) for (const moments of [6, 12]) {
       if (bad) break;
       const frame = lines.bestFrames(o, 25)[0], phase = [0, 1];
-      const lat = lines.buildLattice(o, { bars, slotsPerBar: S, phase, moments, frame }), mine = buildCells(row, { bars, slotsPerBar: S, phase, moments });
-      if (lat.swing !== mine.swing) bad = `lattice swing ${lat.swing} vs ${mine.swing}`;
+      // chunk-lines rounds the onset-sized swing to 1/10000 (and floors it at 1e-4); ours is exact, so the strikes are
+      // compared at its swing, and ours is checked to round to it
+      const lat = lines.buildLattice(o, { bars, slotsPerBar: S, phase, moments, frame }), exact = buildCells(row, { bars, slotsPerBar: S, phase, moments }), mine = buildCells(row, { bars, slotsPerBar: S, phase, swing: lat.swing });
+      if (lat.swing !== Math.min(0.5, Math.max(1e-4, Math.round(exact.swing * 1e4) / 1e4))) bad = `lattice swing ${lat.swing} vs ${exact.swing}`;
       else if (lat.slots.map((s) => s.strikes).join() !== mine.slots.map((s) => s.strikes).join()) bad = 'lattice strikes';
       else if (lat.slots.some((s, k) => Math.abs(s.anchor - mine.slots[k].anchor) > 1e-15)) bad = 'lattice anchors';
     }

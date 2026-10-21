@@ -17,12 +17,18 @@
 //              beside it as `toneLabels`, so the lab and the main page name a tone the same way.
 //   octave     the tone's own register, as in chunk-super-row: longest / gap = fraction × 2^octave.
 //   owners     bit b set when layer b (A = bit 0) strikes there; `strikes` is how many layers that is.
-//   gate       by onset count (DESIGN_NOTES "Sprint defaults" 5): a row over it is not built. The count comes from the
-//              layers alone (inclusion–exclusion over gcds), so a row too dense to build costs nothing to refuse.
+//   gate       by onset count (DESIGN_NOTES "Sprint defaults" 5, set from the cost probe): a row over it is not built.
+//              The count comes from the layers alone (inclusion–exclusion over gcds), so a row too dense to build costs
+//              nothing to refuse. No spread over a row-sized array anywhere (`Math.max(...gaps)` overflows the stack
+//              past ~124k arguments): loops only.
 
 export const COMPOSER_ROW_VERSION = 'composer-row-v1';
-/** the onset gate until the cost probe says otherwise: the Cosmos rhythm card's cap */
-export const ONSET_GATE = 16384;
+/** the hard onset cap (2^20), from the cost probe (Composer/probe/FINDINGS.md): past it build time and memory, not
+ *  mining, become the cost. Proposed, not ruled. Where Compose may run inside it is phase 4's business. */
+export const ONSET_GATE = 1048576;
+/** a row with fewer distinct tones than this has nothing to compose (the probe's 1-tone row "composed" 83 lines on one
+ *  pitch). The row still builds; `toneGate` is what Compose and the line miner ask. Proposed, not ruled. */
+export const MIN_TONES = 3;
 export const LAYER_NAMES = Object.freeze(['A', 'B', 'C', 'D']);
 export const MAX_LAYERS = 4;
 
@@ -67,12 +73,15 @@ export function onsetCount(layers) {
   return n;
 }
 
+/** n/d in cents in [0, 1200), rounded exactly as chunk-tunes' toneCents rounds it (its fold costs the low bits; keeping
+ *  them would let two lines the picker prices alike by a hair break the other way) */
+const centsOf = (n, d) => { const c = 1200 * Math.log2(n / d); return ((c % 1200) + 1200) % 1200; };
+
 /** cents of a fraction string n/d, folded into [0, 1200) */
 export function fractionCents(fraction) {
   const [n, d] = String(fraction).split('/').map(Number);
   if (!(n > 0 && d > 0)) fail(`not a ratio: ${fraction}`);
-  const c = 1200 * (Math.log2(n) - Math.log2(d));
-  return ((c % 1200) + 1200) % 1200;
+  return centsOf(n, d);
 }
 
 /**
@@ -146,7 +155,7 @@ export function buildRow(layers, { gate = ONSET_GATE } = {}) {
     if (byGap.has(gap[i])) continue;
     const [num, den, octave] = foldedTone(longest, gap[i]), f = `${num}/${den}`;
     byGap.set(gap[i], { f, octave });
-    if (!names.has(f)) names.set(f, { f, num, den, c: 1200 * (Math.log2(num) - Math.log2(den)) });
+    if (!names.has(f)) names.set(f, { f, num, den, c: centsOf(num, den) });
   }
   const tuned = [...names.values()].sort((a, b) => a.c - b.c || (a.f < b.f ? -1 : a.f > b.f ? 1 : 0));
   const toneIndex = new Map(tuned.map((t, i) => [t.f, i]));
@@ -156,12 +165,20 @@ export function buildRow(layers, { gate = ONSET_GATE } = {}) {
     const g = byGap.get(gap[i]), t = toneIndex.get(g.f);
     tone[i] = t; octave[i] = g.octave; toneCount[t]++; if (toneFirst[t] < 0) toneFirst[t] = i;
   }
-  return {
+  const row = {
     version: COMPOSER_ROW_VERSION, layers: values, active, grid, n, longest,
     tick, x, gap, tone, octave, owners, strikes,
-    tones: tuned.map((t) => t.f), toneCents: Float64Array.from(tuned, (t) => t.c),
-    toneLabels: tuned.map((t) => siteFraction(t.num / t.den, [t.num, t.den])), toneCount, toneFirst,
+    tones: tuned.map((t) => t.f), toneCents: Float64Array.from(tuned, (t) => t.c), toneCount, toneFirst,
   };
+  // the site's spellings cost up to a thousand divisions a tone past a denominator of 1000, so they are made when first read
+  let labels = null;
+  Object.defineProperty(row, 'toneLabels', { enumerable: true, get: () => (labels ??= tuned.map((t) => siteFraction(t.num / t.den, [t.num, t.den]))) });
+  return row;
+}
+
+/** null when the row has tones enough to compose, else { tooFewTones: true, tones, min } */
+export function toneGate(row, min = MIN_TONES) {
+  return row.tones.length >= min ? null : { tooFewTones: true, tones: row.tones.length, min };
 }
 
 /** is this a built row, not a refusal? */
