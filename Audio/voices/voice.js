@@ -14,9 +14,13 @@
 //
 // The amp envelope is role-specific and reproduces today's three engines exactly for the `classic`
 // recipe (row = gap-aware pluck, bed = silent-born swell, audition = held linear ADSR), so the seam can
-// be verified at parity before richer recipes are heard.
+// be verified at parity before richer recipes are heard. The generic `note` role schedules the plan's
+// amp MOMENTS one for one (the caller's ADSR, or the recipe's own held/struck envelope).
+//
+// Every handle can also retune live: setFrequency() glides each oscillator to the new pitch × its ratio,
+// and each key-tracked filter to its new cutoff.
 
-import { ENV_FLOOR } from './plan.js';
+import { ENV_FLOOR, retuneSpec, ampValueAt } from './plan.js';
 
 // ── shared immutable buffers, cached per AudioContext (never per onset; matches makeImpulse's lifetime) ──
 const noiseBufferCache = new WeakMap();   // ctx -> mono white-noise AudioBuffer (a color ingredient, not a voice)
@@ -127,6 +131,28 @@ function applyAuditionAttack(param, amp, when) {
   param.setValueAtTime(amp.sustain, when + amp.attack + amp.decay + 0.01);
 }
 
+// note: the plan's moments, scheduled one for one from `when` (an exponential ramp never targets zero).
+function applyNoteMoments(param, moments, when) {
+  for (const m of moments) {
+    if (m.ramp === 'set') param.setValueAtTime(m.value, when + m.at);
+    else if (m.ramp === 'exp') param.exponentialRampToValueAtTime(Math.max(m.value, 1e-9), when + m.at);
+    else param.linearRampToValueAtTime(m.value, when + m.at);
+  }
+}
+
+// Glide one frequency AudioParam to `target` from `at` (main Playback's handleFundamentalChange curve): hold the
+// current value, then an exponential ramp over `glideSec` — or a step when the glide is ~0.
+function glideParam(param, target, at, glideSec) {
+  const safeTarget = Math.max(0.0001, target);
+  if (typeof param.cancelAndHoldAtTime === 'function') param.cancelAndHoldAtTime(at);
+  else {
+    param.cancelScheduledValues(at);
+    param.setValueAtTime(Math.max(0.0001, param.value), at);
+  }
+  if (glideSec > 0.001) param.exponentialRampToValueAtTime(safeTarget, at + glideSec);
+  else param.setValueAtTime(safeTarget, at);
+}
+
 // a component's OWN short envelope (e.g. a glass bell that decays under the body). Static-level components
 // (no sub) skip this entirely and route straight through.
 function applySubEnvelope(param, sub, level, when) {
@@ -148,7 +174,9 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
   const role = plan.role;
   const amp = plan.amp;
   const startTime = when;
-  const endAt = role === 'row' ? when + amp.duration : Infinity;
+  const endAt = role === 'row' ? when + amp.duration
+    : role === 'note' && amp.stopAt != null ? when + amp.stopAt
+      : Infinity;
   const sampleSeconds = 1 / ctx.sampleRate;
 
   const ampEnv = ctx.createGain();
@@ -169,9 +197,10 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
   // the amp env directly. filters[0] sits closest to the sources; filters[n-1] feeds the amp env.
   const driftPairs = [];   // [lfo, depthGain] to detach on completion (the lfo is shared per context)
   const envFilters = [];   // [biquad, spec] carrying a birth sweep or swell brightness (both on detune)
+  let chain = [];          // the per-voice biquads, in plan order (setFrequency retunes the key-tracked ones)
   let head = ampEnv;
   if (plan.filters.length) {
-    const chain = plan.filters.map(spec => {
+    chain = plan.filters.map(spec => {
       const bq = ctx.createBiquadFilter();
       bq.type = spec.type;
       bq.frequency.setValueAtTime(spec.freq, when);
@@ -195,6 +224,7 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
   }
 
   const sources = [];
+  const oscs = [];   // the pitched sources, in plan.components order
   for (const component of plan.components) {
     const osc = ctx.createOscillator();
     if (component.wave === 'custom' && component.harmonics) osc.setPeriodicWave(periodicWave(ctx, component.harmonics));
@@ -213,8 +243,10 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
       osc.connect(head);
     }
     sources.push(osc);
+    oscs.push(osc);
   }
 
+  let noiseSrc = null;
   if (plan.noise) {
     const src = ctx.createBufferSource();
     src.buffer = noiseBuffer(ctx);
@@ -224,17 +256,24 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
     gain.connect(head);
     graphNodes.push(gain);
     sources.push(src);
+    noiseSrc = src;
   }
 
   // role attack (bed is silent-born — the caller drives it via swell()).
   if (role === 'row') applyRowAttack(ampEnv.gain, amp, when);
   else if (role === 'audition') applyAuditionAttack(ampEnv.gain, amp, when);
+  else if (role === 'note') applyNoteMoments(ampEnv.gain, amp.moments, when);
   else ampEnv.gain.value = ENV_FLOOR;   // bed
 
-  // start every source; the row's fixed gate also schedules the stop here.
+  // start every source; the row's fixed gate also schedules the stop here, as does a note that ends by itself
+  // (a fixed duration, or a struck sound's natural decay). A note's noise burst stops once its chiff is over.
   for (const src of sources) {
     src.start(when);
     if (role === 'row') { try { src.stop(endAt + (amp.micro ? sampleSeconds : 0.02)); } catch {} }
+    else if (role === 'note') {
+      const stopAt = src === noiseSrc ? Math.min(endAt, when + plan.noise.attack + plan.noise.decay + 0.01) : endAt;
+      if (Number.isFinite(stopAt)) { try { src.stop(stopAt); } catch {} }
+    }
   }
 
   // ── lifecycle bookkeeping ──
@@ -281,6 +320,25 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
     stopAll(at + release + 0.05);
   }
 
+  // note: from wherever the envelope is at `at`, a linear fall to silence over `release` (main Playback's
+  // releaseLayerVoice; for a struck sound, the damp). A struck sound that rings ignores a release, and a note
+  // already over by `at` has nothing left to release.
+  function releaseNote(at, release) {
+    if (amp.ring || at >= endAt) return;
+    const param = ampEnv.gain;
+    const releaseTime = Math.max(0.01, release);
+    if (typeof param.cancelAndHoldAtTime === 'function') {
+      param.cancelAndHoldAtTime(at);
+    } else {
+      param.cancelScheduledValues(at);
+      param.setValueAtTime(ampValueAt(amp.moments, at - startTime), at);
+    }
+    param.linearRampToValueAtTime(0, at + releaseTime);
+    // the noise burst already has its own (earlier) stop; re-stopping it later would only keep it alive, silent.
+    const stopAt = Math.min(endAt, at + releaseTime + 0.01);
+    for (const src of sources) { if (src !== noiseSrc) { try { src.stop(stopAt); } catch {} } }
+  }
+
   function releaseAudition(at, release) {
     const param = ampEnv.gain;
     const stopAt = at + Math.max(0.01, release);
@@ -300,12 +358,15 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
 
     // Graceful release from `at`. Idempotent (a later natural end, or a second release, is a no-op).
     // `release` is the release time in seconds the caller wants (role conventions preserved: the row
-    // player passes VOICE_RELEASE, the bed BED_RELEASE/0.05, audition LEAD_RELEASE/0.05).
-    release(at, release = 0.05) {
+    // player passes VOICE_RELEASE, the bed BED_RELEASE/0.05, audition LEAD_RELEASE/0.05). Omitted, it is
+    // 0.05 — or, for a note, the plan's own release (the caller's ADSR release, or the recipe's release/damp).
+    release(at, release) {
       if (released) return;
       released = true;
+      if (release === undefined) release = role === 'note' ? amp.release : 0.05;
       try {
-        if (role === 'bed') releaseBed(at, release);
+        if (role === 'note') releaseNote(at, release);
+        else if (role === 'bed') releaseBed(at, release);
         else if (role === 'audition') releaseAudition(at, release);
         else releaseRow(at, release);
       } catch {
@@ -346,6 +407,32 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
         detune.linearRampToValueAtTime(spec.swellCents, at + amp.attack);
         detune.linearRampToValueAtTime(spec.swellCents * amp.sustainFrac, at + amp.attack + amp.release);
       }
+    },
+
+    // Live retune: from `at` (default now), glide every oscillator to `hz` × its component ratio and every
+    // key-tracked filter to its cutoff at `hz`, over `glideSec` (0 = a step). Ratios between components are kept
+    // exactly; a component's register-rolloff LEVEL stays as planned at birth. Before the voice has started, the
+    // birth pitch is simply replaced. A plan built by hand (not by planVoice) has no retune data, so its
+    // components keep their ratios to the first one and its filters stay put.
+    setFrequency(hz, at = ctx.currentTime, glideSec = 0) {
+      const target = +hz;
+      if (!(target > 0) || !Number.isFinite(target) || completed) return;
+      const spec = retuneSpec(plan);
+      const ceiling = spec ? spec.ceiling : ctx.sampleRate * 0.45;
+      const first = plan.components[0]?.freq || 1;
+      const beforeStart = at <= startTime;
+      const retarget = (param, value) => {
+        if (beforeStart) param.setValueAtTime(value, startTime);
+        else glideParam(param, value, at, Math.max(0, +glideSec || 0));
+      };
+      oscs.forEach((osc, i) => {
+        const ratio = spec ? spec.ratios[i] : plan.components[i].freq / first;
+        retarget(osc.frequency, Math.min(ceiling, target * ratio));
+      });
+      if (spec) chain.forEach((bq, i) => {
+        const kt = spec.keyTracks[i];
+        if (kt) retarget(bq.frequency, Math.min(ceiling, kt.maxHz, Math.max(kt.minHz, target * kt.harmonics)));
+      });
     },
 
     // Crossfade fade-IN for a no-onset instrument hot-swap. Cancels whatever attack this voice scheduled at

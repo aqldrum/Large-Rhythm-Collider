@@ -1,0 +1,41 @@
+{
+  "note": "SHA-256 digest of cosmos-voice-snapshot.mjs buildSnapshot() run on the ORIGINAL Cosmos/audio/instruments/ modules at commit 96008cf, before the move to Audio/voices/. Never regenerate this from the current code: it is the reference the current code must still match.",
+  "source": "96008cf:Cosmos/audio/instruments/{instrument-presets,voice-plan,instrument-voice}.js",
+  "taken": "2026-10-21",
+  "whole": "e8406be25c3ed5efc056d36ba1d4e416edd4333f0982cb1f6ecc9ab0688dde2c",
+  "catalog": "211f914779b79e377bd0aad1c4d9d63c582bdcf443118442bd6c38ad05c8f250",
+  "recipes": "432617a40ec20d2eb6d520dea4d832b23a6f72ed025fa83ab355a87aa19efc59",
+  "plans": {
+    "classic/row": "dd3af4ff9ca41423ae2d29e35a0292c544ef3cdc181f15769b1ba08df7cbbe40",
+    "classic/bed": "99c78fce72f1259361e15babab189079fb1f43906ad3ed4ae9f7775f8c960d52",
+    "classic/audition": "b004ae50a5dd33877bdb1b4fe7b0234b70f81deb9b46b95eaf1c059aed6fdd4e",
+    "glass/row": "a67c229a88e7afacfb1321f62d4742c1d3b210352c7efc1a5d1e319a62d6bb60",
+    "glass/bed": "605f53f6fa641ecafcbd72d59479a4625363c815eb445b90208fa27f7a22508d",
+    "glass/audition": "90aef0220cf25976c2f19372fa0f51f160e61dd01bcc0a93100ede13002b747f",
+    "warm/row": "6f6bdc57817f96625f32f0b34b14818881ac118eb48c46637b1ff114d230b6fe",
+    "warm/bed": "ee3d7fdb9cf3c82955b6458439fe94e4e2b4e44bc208d0a980aef31252d2fee0",
+    "warm/audition": "1a7bf7fe599655d357572fc5cf50cc373d35300193b5390e2144792d26b3c20c",
+    "bogus/row": "16b5d8b74fa07bcefb6047c42f3dd21cfb214288043737c76adad000cbd3103c",
+    "bogus/bed": "4aacb4eb44c4c45fdc6e6469fa4f89d9e04f3a0099c1338cfe89777a9fe146e1",
+    "bogus/audition": "fb370753c8ec9b8e558894e22950ecf13b5b2040f3447d1a920e6e47bace2005"
+  },
+  "graphs": {
+    "classic/row": "a548e09128ff0d02b3423badff1e9ee750bf9eede2d66692e76b7ad5a18dc267",
+    "classic/bed": "801ba9ab9ee3571d8321af894063594127567b9883cd925ca9865947998a120b",
+    "classic/audition": "0cba4e2a7c61ce34582e88252fd005ad947bfa91e58ef64d02099c9049db0da7",
+    "glass/row": "2227e8563814a073d42b16fafba82a4b3397258743f0a5ab9ce2a8453deaa680",
+    "glass/bed": "d798f5bccbe5bf7d9c429612892ce335bd8aa3d877e06264f17f934d51d1a0a0",
+    "glass/audition": "875321b343f6203014ddfd3e02c8f1326e7834b8653e7a19f0f99d82999fbdb4",
+    "warm/row": "417c10421e7864779b866154c45afceee31abe027211c229cba2c11af19af99b",
+    "warm/bed": "a2e7ba7d9367e3f1dbc2a0c1b1a1350962c66995195b47893569b960e4bb8cbc",
+    "warm/audition": "63ca0db71a0f5c543c50e7429948468d59b1961fea9878d732768668c3be3d63",
+    "bogus/row": "eba0b0c5d9d1a66f390893de8f13c8fd2f461686f14baec9eeefdf3748fa0f55",
+    "bogus/bed": "3b38bbcd11ebcfe4beb4c4cea36701fff0e23b61d3b5156c2b0b6a232b1f4a8e",
+    "bogus/audition": "0c1d56cc863aadd173d7fc5d56012a6d533a729ff38a4009a14525e805902f48"
+  },
+  "counts": {
+    "plans": 936,
+    "graphs": 2340,
+    "recipes": 21
+  }
+}

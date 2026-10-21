@@ -42,7 +42,98 @@ function normalizeAmp(role, t = {}) {
   });
 }
 
-function planComponent(component, baseFreq, sampleRate) {
+// ── the generic `note` role's loudness ──────────────────────────────────────────────────────────────
+// A note's amp is a list of MOMENTS from the note's start — { at, value, ramp: 'set' | 'linear' | 'exp' } — that
+// the renderer schedules one for one on the amp gain, plus what a release needs. Three kinds:
+//   • adsr   — the caller's { attack, decay, sustain (a fraction of peak), release }. With a duration it is
+//              main Playback's startStandardNote curve; with duration null it is startLegatoNote's held curve.
+//   • held   — a recipe amp { kind: 'held', attack, release }: at its peak for the note's length, the release inside it.
+//   • struck — a recipe amp { kind: 'struck', attack, decay, track, ring, damp }: 80 dB down over its decay, rung
+//              out or damped at the note's end. held and struck are chunk-tunes' ampMoments, value for value.
+// duration null = hold until the handle's release(); a struck sound still dies away by itself.
+
+const TAIL = 0.01;        // a struck sound's last step from its floor to silence
+const STOP_PAD = 0.02;    // sources stop this long after a recipe-amp note is silent
+
+// How long a struck sound takes to die away at a pitch: its decay at 220 Hz, a higher note sooner by `track`.
+export function decaySeconds(amp, hz) {
+  return Math.min(8, Math.max(0.08, num(amp.decay) * (220 / hz) ** num(amp.track)));
+}
+
+// The loudness at `t` seconds from the note's start, read from its moments as an AudioParam would play them.
+export function ampValueAt(moments, t) {
+  if (!moments.length || t < moments[0].at) return 0;
+  let value = moments[0].value;
+  for (let i = 1; i < moments.length; i++) {
+    const a = moments[i - 1], b = moments[i];
+    if (t >= b.at) { value = b.value; continue; }
+    if (b.ramp === 'set') return value;
+    const x = (t - a.at) / (b.at - a.at);
+    return b.ramp === 'exp' ? a.value * (b.value / a.value) ** x : a.value + (b.value - a.value) * x;
+  }
+  return value;
+}
+
+const moment = (at, value, ramp) => Object.freeze({ at, value, ramp });
+
+function planNoteAmp(recipeAmp, t, hz) {
+  const P = Math.max(0, num(t.peak, 1));
+  const duration = t.duration == null ? null : Math.max(0, num(t.duration));
+  let kind, moments, release, ring = false, seconds = null, stopAt = null;
+  if (recipeAmp && recipeAmp.kind === 'struck') {
+    kind = 'struck';
+    const attack = Math.max(0, num(recipeAmp.attack)), D = decaySeconds(recipeAmp, hz), natural = attack + D;
+    ring = !!recipeAmp.ring;
+    release = Math.max(0, num(recipeAmp.damp));
+    if (ring || duration == null || duration >= natural) {
+      moments = [moment(0, 0, 'set'), moment(attack, P, 'linear'), moment(natural, P * ENV_FLOOR, 'exp'), moment(natural + TAIL, 0, 'linear')];
+      seconds = natural + TAIL;
+    } else if (duration <= attack) {
+      moments = [moment(0, 0, 'set'), moment(duration, attack > 0 ? P * (duration / attack) : P, 'linear'), moment(duration + release, 0, 'linear')];
+      seconds = duration + release;
+    } else {
+      moments = [moment(0, 0, 'set'), moment(attack, P, 'linear'), moment(duration, P * ENV_FLOOR ** ((duration - attack) / D), 'exp'), moment(duration + release, 0, 'linear')];
+      seconds = duration + release;
+    }
+    stopAt = seconds + STOP_PAD;
+  } else if (recipeAmp && recipeAmp.kind === 'held') {
+    kind = 'held';
+    release = Math.max(0, num(recipeAmp.release));
+    if (duration == null) {
+      moments = [moment(0, 0, 'set'), moment(Math.max(0, num(recipeAmp.attack)), P, 'linear')];
+    } else {
+      const r = Math.min(release, duration / 2), attack = Math.min(Math.max(0, num(recipeAmp.attack)), duration - r);
+      moments = [moment(0, 0, 'set'), moment(attack, P, 'linear'), moment(Math.max(attack, duration - r), P, 'set'), moment(duration, 0, 'linear')];
+      seconds = duration;
+      stopAt = seconds + STOP_PAD;
+    }
+  } else {
+    kind = 'adsr';
+    const attack = Math.max(0, num(t.attack)), decay = Math.max(0, num(t.decay)), S = Math.max(0, num(t.sustain, 1)) * P;
+    const r = Math.max(0, num(t.release));
+    release = Math.max(r, 0.01);
+    if (duration == null) {
+      moments = [moment(0, 0, 'set'), moment(attack, P, 'linear'), moment(attack + decay, S, 'linear'), moment(attack + decay + 0.01, S, 'set')];
+    } else {
+      const sustainTime = Math.max(0, duration - attack - decay - r);
+      moments = [moment(0, 0, 'set'), moment(attack, P, 'linear'), moment(attack + decay, S, 'linear'), moment(attack + decay + sustainTime, S, 'set'), moment(duration, 0, 'linear')];
+      seconds = Math.max(0.01, duration);
+      stopAt = seconds;
+    }
+  }
+  return Object.freeze({ kind, peak: P, duration, moments: Object.freeze(moments), release, ring, seconds, stopAt });
+}
+
+// ── retune data, kept beside the plan ───────────────────────────────────────────────────────────────
+// What setFrequency() needs (each built component's ratio, each key-tracked filter's rule, the ceiling) lives in a
+// side table keyed by the frozen plan rather than on it, so the Cosmos row/bed/audition plans stay byte-identical to
+// their pre-library shape (the Cosmos guard) while every voice can still retune.
+const retuneTable = new WeakMap();
+export function retuneSpec(plan) { return retuneTable.get(plan) || null; }
+
+// noteRules: the `note` role (new with the shared library) also cuts a 'custom' harmonic table where it leaves the
+// band and floors sub-envelope times at 0.5 ms, as chunk-tunes does. The Cosmos roles keep their frozen behavior.
+function planComponent(component, baseFreq, sampleRate, noteRules = false) {
   const ratio = num(component.ratio, 1) || 1;
   const raw = baseFreq * ratio;
   if (!(raw > 0) || !Number.isFinite(raw)) return null;
@@ -60,15 +151,16 @@ function planComponent(component, baseFreq, sampleRate) {
     const octavesUp = Math.max(0, Math.log2(baseFreq / (num(component.rolloffRefHz, 220) || 220)));
     level *= Math.max(num(component.rolloffFloor, 0.12), 1 - num(component.registerRolloff) * octavesUp);
   }
-  const sub = component.sub
-    ? Object.freeze({ attack: num(component.sub.attack), decay: num(component.sub.decay), sustain: num(component.sub.sustain) })
-    : null;
+  const sub = !component.sub ? null : noteRules
+    ? Object.freeze({ attack: Math.max(0.0005, num(component.sub.attack)), decay: Math.max(0.0005, num(component.sub.decay)), sustain: Math.max(0, num(component.sub.sustain)) })
+    : Object.freeze({ attack: num(component.sub.attack), decay: num(component.sub.decay), sustain: num(component.sub.sustain) });
   // 'custom' needs a usable harmonic table (finite, non-negative, not all zero); otherwise it degrades to a
   // sine so a malformed recipe still sounds rather than throwing on the audio path.
   let wave = component.wave || 'sine';
   let harmonics = null;
   if (wave === 'custom') {
-    const table = Array.isArray(component.harmonics) ? component.harmonics.map(h => Math.max(0, num(h))) : [];
+    let table = Array.isArray(component.harmonics) ? component.harmonics.map(h => Math.max(0, num(h))) : [];
+    if (noteRules) table = table.filter((_, i) => raw * (i + 1) < ceiling);
     if (table.some(h => h > 0)) harmonics = Object.freeze(table);
     else wave = 'sine';
   }
@@ -83,17 +175,26 @@ function planComponent(component, baseFreq, sampleRate) {
 }
 
 // recipe: a frozen role recipe from recipes.getRecipe(id, role).
-// opts.role: 'row' | 'bed' | 'audition'. opts.baseFreq: pre-detune base pitch (Hz).
-// opts.timing: role-specific envelope inputs (see normalizeAmp). opts.sampleRate: ctx.sampleRate.
-export function planVoice(recipe, { role = 'row', baseFreq, timing = {}, sampleRate = 48000 } = {}) {
-  const base = num(baseFreq);
+// opts.role: 'row' | 'bed' | 'audition' | 'note'. opts.baseFreq: pre-detune base pitch (Hz).
+// opts.timing: role-specific envelope inputs (see normalizeAmp; for `note`: { attack, decay, sustain, release,
+//   peak, duration } — duration null holds until release, and a recipe `amp` replaces the ADSR). opts.sampleRate:
+//   ctx.sampleRate. opts.low (`note` only): play the recipe's `low` components (a chord's bass note) if it has them.
+export function planVoice(recipe, { role = 'row', baseFreq, timing = {}, sampleRate = 48000, low = false } = {}) {
+  const noteRole = role === 'note';
+  const ceiling = ceilingHz(sampleRate);
+  // The note role plans at the clamped pitch (as chunk-tunes does), so a register rolloff, a key-tracked cutoff and a
+  // struck decay all read the pitch actually heard. The Cosmos roles keep the raw base (their frozen behavior).
+  const base = noteRole ? Math.min(num(baseFreq), ceiling) : num(baseFreq);
   const components = [];
-  for (const component of recipe?.components || []) {
-    const planned = planComponent(component, base, sampleRate);
-    if (planned) components.push(planned);
+  const ratios = [];
+  const componentSpecs = (noteRole && low && recipe?.low) || recipe?.components || [];
+  for (const component of componentSpecs) {
+    const planned = planComponent(component, base, sampleRate, noteRole);
+    if (planned) { components.push(planned); ratios.push(num(component.ratio, 1) || 1); }
   }
+  const noiseTime = v => (noteRole ? Math.max(0.0005, num(v)) : num(v));
   const noise = recipe?.noise
-    ? Object.freeze({ level: num(recipe.noise.level), attack: num(recipe.noise.attack), decay: num(recipe.noise.decay) })
+    ? Object.freeze({ level: num(recipe.noise.level), attack: noiseTime(recipe.noise.attack), decay: noiseTime(recipe.noise.decay) })
     : null;
   // A PER-VOICE filter chain (0..n biquads, applied in order before the amp envelope). Warm uses two — a
   // high-pass under the fundamental and a key-tracked low-pass; classic uses none. A filter may declare a slow
@@ -103,15 +204,17 @@ export function planVoice(recipe, { role = 'row', baseFreq, timing = {}, sampleR
   // across the keyboard. An `env` is a birth sweep of the cutoff in cents (start → peak → settle at 0); a
   // `swellCents` lifts the bed's cutoff with each swell. Both ride the filter's detune, so they cost no nodes.
   const filterSpecs = recipe?.filters || (recipe?.filter ? [recipe.filter] : []);
+  const keyTracks = [];
   const filters = Object.freeze((filterSpecs || []).map(f => {
     let freq = num(f.freq, 1000);
-    if (f.keyTrack && base > 0) {
-      const kt = f.keyTrack;
-      freq = Math.min(num(kt.maxHz, Infinity), Math.max(num(kt.minHz, 20), base * num(kt.harmonics, 6)));
-    }
+    const kt = f.keyTrack
+      ? Object.freeze({ harmonics: num(f.keyTrack.harmonics, 6), minHz: num(f.keyTrack.minHz, 20), maxHz: num(f.keyTrack.maxHz, Infinity) })
+      : null;
+    keyTracks.push(kt);
+    if (kt && base > 0) freq = Math.min(kt.maxHz, Math.max(kt.minHz, base * kt.harmonics));
     return Object.freeze({
       type: f.type === 'highpass' ? 'highpass' : 'lowpass',
-      freq: Math.min(ceilingHz(sampleRate), freq),
+      freq: Math.min(ceiling, freq),
       Q: num(f.Q, 0.7071),
       drift: f.drift ? Object.freeze({ rateHz: Math.max(0, num(f.drift.rateHz, 0.06)), depthCents: num(f.drift.depthCents) }) : null,
       env: f.env ? Object.freeze({
@@ -124,14 +227,16 @@ export function planVoice(recipe, { role = 'row', baseFreq, timing = {}, sampleR
   // COST is the count of REAL source nodes (oscillators + one noise source). A culled partial does not
   // count. This is what a caller admits against its live-oscillator ceiling before creating any node.
   const cost = components.length + (noise ? 1 : 0);
-  return Object.freeze({
+  const plan = Object.freeze({
     role,
     cost,
     components: Object.freeze(components),
     noise,
     filters,
     outputTrim: num(recipe?.outputTrim, 1),
-    amp: normalizeAmp(role, timing),
+    amp: noteRole ? planNoteAmp(recipe?.amp, timing, base) : normalizeAmp(role, timing),
     flags: Object.freeze({ role, micro: !!timing.micro }),
   });
+  retuneTable.set(plan, Object.freeze({ ceiling, ratios: Object.freeze(ratios), keyTracks: Object.freeze(keyTracks) }));
+  return plan;
 }
