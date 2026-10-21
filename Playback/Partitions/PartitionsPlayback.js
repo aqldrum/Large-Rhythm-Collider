@@ -1,5 +1,16 @@
 // PartitionsPlayback.js - Schedules partition layer ticks and sample playback
 
+// The shared drum library (Audio/drums/, ES modules), resolved against this script's own URL so it loads from a
+// classic script. Until it arrives (or if it fails to), samples play through the legacy path below, unchanged.
+const PARTITIONS_DRUMS_URL = (() => {
+    try {
+        const src = document.currentScript?.src;
+        return src ? new URL('../../Audio/drums/index.js', src).href : new URL('Audio/drums/index.js', document.baseURI).href;
+    } catch (_) {
+        return 'Audio/drums/index.js';
+    }
+})();
+
 class PartitionsPlayback {
     constructor() {
         this.audioContext = null;
@@ -29,6 +40,9 @@ class PartitionsPlayback {
         this.flashEpoch = 0;
         this._lastEventsFingerprint = null;
         this._lastGroupingWarnKey = null;
+
+        this.drums = null; // Audio/drums/ module namespace, once loaded
+        this.drumsReady = this.loadDrumsModule();
 
         this.setupEventListeners();
         console.log('🥁 PartitionsPlayback initialized');
@@ -526,6 +540,20 @@ class PartitionsPlayback {
         return { orderedSizes, orderedIndices };
     }
 
+    loadDrumsModule() {
+        return import(PARTITIONS_DRUMS_URL)
+            .then((drums) => {
+                this.drums = drums;
+                return drums;
+            })
+            .catch((error) => {
+                console.warn('[PartitionsPlayback] Shared drum library unavailable; samples stay on the legacy path', error);
+                return null;
+            });
+    }
+
+    // `url` is the layer's sample-select value: a sample URL (built-in or blob: user sample), or `made:<id>` for a
+    // made kit sound (Audio/drums/made.js). MIDI is scheduled first and for every hit, whatever the sound.
     async triggerSample(url, layerIndex, volumeDb, time, durationSec) {
         window.lrcMidiOut?.schedulePartitionHit(layerIndex, time, volumeDb, this.layerTranspose[layerIndex], durationSec);
         if (!url || !this.audioContext) return;
@@ -534,7 +562,69 @@ class PartitionsPlayback {
             return;
         }
         const scheduleTime = Math.max(time, now + 0.001);
+
+        if (url.startsWith('made:')) {
+            const drums = this.drums || await this.drumsReady;
+            if (!drums || time < this.audioContext.currentTime - 0.005) return;
+            this.triggerMadeDrum(drums, drums.madeDrumOf(url), layerIndex, scheduleTime);
+            return;
+        }
+        if (!this.drums) {
+            await this.triggerSampleLegacy(url, layerIndex, scheduleTime);
+            return;
+        }
+
         const buffer = await this.loadSample(url);
+        if (!buffer) return;
+        const transpose = this.layerTranspose[layerIndex] ?? 0;
+        const handle = this.drums.playSample({
+            ctx: this.audioContext,
+            out: this.layerInput(layerIndex),
+            buffer,
+            at: scheduleTime,
+            rate: Math.pow(2, transpose / 12),
+            envelope: this.layerADSR[layerIndex] || this.layerADSR[0]
+        });
+        this.trackStroke(handle);
+    }
+
+    // A made kit sound: its own envelope (the layer ADSR is for samples), pitched by the layer's transpose, through
+    // the layer's filters and gain. It plays at chunk-tunes' made-vs-sample balance: chunk-tunes plays a kit sample at
+    // the channel's sampleLevel where Partitions plays it at 1, so the made sound is lifted by the same factor.
+    triggerMadeDrum(drums, id, layerIndex, at) {
+        const made = id ? drums.MADE_DRUMS[id] : null;
+        if (!made) return;
+        const transpose = this.layerTranspose[layerIndex] ?? 0;
+        const handle = made.play({
+            ctx: this.audioContext,
+            out: this.layerInput(layerIndex),
+            at,
+            pitch: Math.pow(2, transpose / 12),
+            peak: 1 / made.sampleLevel
+        });
+        this.trackStroke(handle);
+    }
+
+    // Where a layer's strokes enter: its filter chain, else its gain, else the bus or the destination.
+    layerInput(layerIndex) {
+        const gainNode = this.layerGains[layerIndex] || this.outputGain;
+        const filterChain = this.layerFilters[layerIndex];
+        if (filterChain && gainNode) return filterChain.highpass;
+        if (gainNode) return gainNode;
+        return this.audioContext.destination;
+    }
+
+    // Handles share activeSources with legacy BufferSources: both answer stop(), which is all stopAllActiveSources asks.
+    trackStroke(handle) {
+        this.activeSources.add(handle);
+        handle.onEnded(() => {
+            this.activeSources.delete(handle);
+        });
+    }
+
+    // The pre-library sample path, kept verbatim for the moments before Audio/drums/ has loaded (or if it can't).
+    async triggerSampleLegacy(url, layerIndex, scheduleTime) {
+        const buffer = await this.loadSampleLegacy(url);
         if (!buffer) return;
 
         const source = this.audioContext.createBufferSource();
@@ -579,6 +669,13 @@ class PartitionsPlayback {
     }
 
     async loadSample(url) {
+        if (!this.drums) return this.loadSampleLegacy(url);
+        return this.drums.loadSample(this.audioContext, url, {
+            onError: (failedUrl, error) => console.warn('[PartitionsPlayback] Failed to load sample', failedUrl, error)
+        });
+    }
+
+    async loadSampleLegacy(url) {
         if (this.sampleCache.has(url)) return this.sampleCache.get(url);
         try {
             const response = await fetch(url, { cache: 'no-store' });
@@ -599,6 +696,7 @@ class PartitionsPlayback {
     invalidateSampleCache(url) {
         if (!url) return;
         this.sampleCache.delete(url);
+        if (this.drums && this.audioContext) this.drums.invalidateSample(this.audioContext, url);
     }
 
     stopAllActiveSources() {

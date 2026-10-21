@@ -1544,6 +1544,13 @@ class PartitionsUI {
                                 <option value="assets/audio/cym2.wav" ${defaultSample === 'assets/audio/cym2.wav' ? 'selected' : ''}>Cym 2</option>
                                 <option value="assets/audio/cym3.wav" ${defaultSample === 'assets/audio/cym3.wav' ? 'selected' : ''}>Cym 3</option>
                                 <option value="assets/audio/cym4.wav" ${defaultSample === 'assets/audio/cym4.wav' ? 'selected' : ''}>Cym 4</option>
+                                <optgroup label="Synth" data-made-drums="true">
+                                    <option value="made:kick">Synth Kick</option>
+                                    <option value="made:snare">Synth Snare</option>
+                                    <option value="made:hihat">Synth Hat</option>
+                                    <option value="made:perc">Synth Perc</option>
+                                    <option value="made:cym">Synth Cym</option>
+                                </optgroup>
                             </select>
                         </div>
                         <div style="color: #aaa; font-size: 11px;">
