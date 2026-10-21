@@ -4,6 +4,11 @@ class LayerControlsUI {
     constructor(playback, options = {}) {
         this.playback = playback;
         this.containerId = options.containerId || 'layer-controls-container';
+        this.adsrKnobs = {};
+
+        // The sound menu lists the shared voice library's sounds once its module has loaded (normally before this
+        // UI renders); if it arrives later, refill the menu that is showing.
+        window.addEventListener('lrcvoicesready', () => this.refreshSoundSelect(this.playback.currentLayer));
     }
 
     setContainer(containerId) {
@@ -72,13 +77,8 @@ class LayerControlsUI {
             <!-- Oscillator Controls -->
             <div class="oscillator-controls">
                 <div class="control-group">
-                    <label for="waveform-${layer}">Waveform</label>
-                    <select id="waveform-${layer}">
-                        <option value="sine" ${state.waveform === 'sine' ? 'selected' : ''}>Sine</option>
-                        <option value="triangle" ${state.waveform === 'triangle' ? 'selected' : ''}>Triangle</option>
-                        <option value="sawtooth" ${state.waveform === 'sawtooth' ? 'selected' : ''}>Sawtooth</option>
-                        <option value="square" ${state.waveform === 'square' ? 'selected' : ''}>Square</option>
-                    </select>
+                    <label for="sound-${layer}">Sound</label>
+                    <select id="sound-${layer}">${this.soundOptionsHTML(this.playback.getLayerSound(state))}</select>
                 </div>
                 <div class="control-group">
                     <label for="volume-${layer}">Volume</label>
@@ -111,6 +111,40 @@ class LayerControlsUI {
         this.createADSRKnobs(layer, state);
     }
 
+    // The four waveforms, then the shared voice library's other sounds in an optgroup (just the waveforms until
+    // Audio/lrc-voices-bridge.js has loaded).
+    soundOptionsHTML(selected) {
+        const option = ({ id, label }) => `<option value="${id}" ${id === selected ? 'selected' : ''}>${label}</option>`;
+        const sounds = window.lrcVoices?.soundOptions() || [
+            { id: 'sine', label: 'Sine', basic: true },
+            { id: 'triangle', label: 'Triangle', basic: true },
+            { id: 'sawtooth', label: 'Sawtooth', basic: true },
+            { id: 'square', label: 'Square', basic: true }
+        ];
+        const basic = sounds.filter(sound => sound.basic).map(option).join('');
+        const others = sounds.filter(sound => !sound.basic).map(option).join('');
+        return others ? `${basic}<optgroup label="Instruments">${others}</optgroup>` : basic;
+    }
+
+    refreshSoundSelect(layer) {
+        const select = document.getElementById(`sound-${layer}`);
+        const state = this.playback.layerStates[layer];
+        if (!select || !state) return;
+        select.innerHTML = this.soundOptionsHTML(this.playback.getLayerSound(state));
+        this.updateEnvelopeLock(layer);
+    }
+
+    // A struck sound (marimba, vibes, …) keeps its own envelope: Attack, Decay and Sustain gray out (their values are
+    // kept for when the layer goes back to a sound that uses them). Release stays live: it damps the sound at note end.
+    updateEnvelopeLock(layer) {
+        const state = this.playback.layerStates[layer];
+        if (!state) return;
+        const struck = !!window.lrcVoices?.isStruck(this.playback.getLayerSound(state));
+        ['attack', 'decay', 'sustain'].forEach(param => {
+            this.adsrKnobs[param]?.setDisabled(struck, struck ? 'This sound has its own envelope' : '');
+        });
+    }
+
     createADSRKnobs(layer, state) {
         const adsrContainer = document.getElementById(`adsr-${layer}`);
         if (!adsrContainer) return;
@@ -124,13 +158,16 @@ class LayerControlsUI {
             release: { min: 0.001, max: 5, step: 0.001, unit: 'ms', precision: 0 }
         };
 
+        this.adsrKnobs = {};
         Object.entries(knobConfigs).forEach(([param, config]) => {
             const knob = new ADSRKnob(adsrContainer, param, state.adsr[param], config);
             knob.onChange = (value) => {
                 state.adsr[param] = value;
                 console.log(`Layer ${layer.toUpperCase()} ${param}: ${value}`);
             };
+            this.adsrKnobs[param] = knob;
         });
+        this.updateEnvelopeLock(layer);
     }
 
     bindLayerControlListeners(layer) {
@@ -150,10 +187,11 @@ class LayerControlsUI {
             });
         }
 
-        const waveformSelect = document.getElementById(`waveform-${layer}`);
-        if (waveformSelect) {
-            waveformSelect.addEventListener('change', (e) => {
-                state.waveform = e.target.value;
+        const soundSelect = document.getElementById(`sound-${layer}`);
+        if (soundSelect) {
+            soundSelect.addEventListener('change', (e) => {
+                state.sound = e.target.value;
+                this.updateEnvelopeLock(layer);
             });
         }
 
