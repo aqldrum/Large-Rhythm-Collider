@@ -325,17 +325,30 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
   // already over by `at` has nothing left to release.
   function releaseNote(at, release) {
     if (amp.ring || at >= endAt) return;
+    fadeNote(at, Math.max(0.01, release), noteSeed(at));
+  }
+
+  // Where a fade starts on engines without cancelAndHoldAtTime: the planned curve at `at` — or, before the note has
+  // begun, the gain's current value (its default, 1), as main Playback's releaseLayerVoice always read it. A legato note
+  // released while still scheduled ahead (fast notes, inside the scheduler's lookahead) therefore still sounds, as a
+  // short fade, exactly as it did before the library; cancelAndHoldAtTime holds that same default.
+  function noteSeed(at) {
+    return at < startTime ? ampEnv.gain.value : ampValueAt(amp.moments, at - startTime);
+  }
+
+  // note: the fall itself. The sources stop just after it, even past a fixed-length note's own end (the planned
+  // fall to zero there was cancelled, so stopping at the old end would cut the fade short). The noise burst already
+  // has its own (earlier) stop; re-stopping it later would only keep it alive, silent.
+  function fadeNote(at, seconds, seed) {
     const param = ampEnv.gain;
-    const releaseTime = Math.max(0.01, release);
     if (typeof param.cancelAndHoldAtTime === 'function') {
       param.cancelAndHoldAtTime(at);
     } else {
       param.cancelScheduledValues(at);
-      param.setValueAtTime(ampValueAt(amp.moments, at - startTime), at);
+      param.setValueAtTime(seed, at);
     }
-    param.linearRampToValueAtTime(0, at + releaseTime);
-    // the noise burst already has its own (earlier) stop; re-stopping it later would only keep it alive, silent.
-    const stopAt = Math.min(endAt, at + releaseTime + 0.01);
+    param.linearRampToValueAtTime(0, at + seconds);
+    const stopAt = at + seconds + 0.01;
     for (const src of sources) { if (src !== noiseSrc) { try { src.stop(stopAt); } catch {} } }
   }
 
@@ -378,6 +391,22 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
     // Hard stop / disposal at `at` — silences even a scheduled-but-unsounded future voice. Safe to call
     // repeatedly and in addition to release() (used by deck/star/context teardown).
     stop(at) { stopAll(at); },
+
+    // NOTE only: a quick fade to silence from `at` over `seconds`, then stop — main Playback's hard cleanup (a tempo
+    // change, all voices cleared). Unlike release() it always acts: after an earlier release (it overtakes a longer
+    // one) and on a ringing struck sound. Other roles simply stop once the fade time is up.
+    fadeOut(at, seconds = 0.02) {
+      if (completed) return;
+      const wasReleased = released;
+      released = true;
+      if (role !== 'note') { stopAll(at + seconds); return; }
+      try {
+        // Seed for engines without cancelAndHoldAtTime: the planned curve until a release has rewritten it.
+        fadeNote(at, Math.max(0.005, seconds), wasReleased ? Math.max(0, ampEnv.gain.value) : noteSeed(at));
+      } catch {
+        try { stopAll(at); } catch {}
+      }
+    },
 
     // Called once when the LAST source truly ends (the natural free point for the caller's budget/index).
     onComplete(cb) { completeCb = cb; if (completed) cb(); },
