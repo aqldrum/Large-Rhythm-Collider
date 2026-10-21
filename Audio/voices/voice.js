@@ -1,4 +1,4 @@
-// Cosmos/audio/instruments/instrument-voice.js — the Web Audio renderer for one instrument voice.
+// Audio/voices/voice.js — the Web Audio renderer for one instrument voice (moved from Cosmos/audio/instruments/instrument-voice.js).
 //
 // createInstrumentVoice() builds the node graph for a planVoice() plan and returns an opaque HANDLE.
 // It is the only place in the instrument subsystem that touches Web Audio. It owns every node it
@@ -16,7 +16,7 @@
 // recipe (row = gap-aware pluck, bed = silent-born swell, audition = held linear ADSR), so the seam can
 // be verified at parity before richer recipes are heard.
 
-import { ENV_FLOOR } from './voice-plan.js';
+import { ENV_FLOOR } from './plan.js';
 
 // ── shared immutable buffers, cached per AudioContext (never per onset; matches makeImpulse's lifetime) ──
 const noiseBufferCache = new WeakMap();   // ctx -> mono white-noise AudioBuffer (a color ingredient, not a voice)

@@ -1,11 +1,11 @@
-// assert-instrument-voice.mjs — proofs for the Web Audio renderer handle (../instruments/instrument-voice.js)
+// assert-instrument-voice.mjs — proofs for the Web Audio renderer handle (Audio/voices/voice.js)
 // against a recording MOCK AudioContext (Node has no Web Audio). It verifies the LIFECYCLE contract the
 // three engines depend on: exactly-once source frees, idempotent release, a scheduled future voice being
 // silenced, the shared detune applied to audio exactly once (never folded into the frequency), the bed
 // swell operating on the amp envelope, and onComplete firing only when the LAST source truly ends.
-import { planVoice, ENV_FLOOR } from '../audio/instruments/voice-plan.js';
-import { createInstrumentVoice } from '../audio/instruments/instrument-voice.js';
-import { getRecipe } from '../audio/instruments/instrument-presets.js';
+import { planVoice, ENV_FLOOR } from '../../Audio/voices/plan.js';
+import { createInstrumentVoice } from '../../Audio/voices/voice.js';
+import { getRecipe } from '../../Audio/voices/recipes.js';
 
 let PASS = true;
 const check = (label, ok, detail = '') => { if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail ? ` — ${detail}` : ''}`); };

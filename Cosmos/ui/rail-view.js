@@ -34,7 +34,7 @@ import {
   setInstrument,
 } from '../audio/cosmos-audio.js';
 import { HARMONY_SOURCES, SCALE_POLICIES } from '../audio/harmony-policy.js';
-import { INSTRUMENTS } from '../audio/instruments/instrument-presets.js';
+import { INSTRUMENTS } from '../../Audio/voices/recipes.js';
 
 // param → engine setter. Each is a thin, guarded, additive setter whose default reproduces the intended
 // entry sound (assert-rail-bindings.mjs). Values are in ENGINE units: cents for PITCH/FUNDAMENTAL,

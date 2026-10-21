@@ -6,7 +6,7 @@ import { ensureFlight, stopFlight } from './flight-view.js';
 import { M } from './ui/mode.js';
 import { initAudio, resumeAudio, panicMidiOut, setInstrument, currentInstrument, setMix } from './audio/cosmos-audio.js';
 import { ensureRail, resetRailForEntry, applyRailToEngine } from './ui/rail-view.js';
-import { INSTRUMENT_IDS, PRODUCTION_INSTRUMENT_IDS } from './audio/instruments/instrument-presets.js';
+import { INSTRUMENT_IDS, PRODUCTION_INSTRUMENT_IDS } from '../Audio/voices/recipes.js';
 
 // ENTER: swallow the page and start flying. Add the class FIRST so the overlay/canvas have layout before
 // ensureFlight()'s resize() reads clientWidth/Height (the class change forces a synchronous reflow on read).

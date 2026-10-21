@@ -9,7 +9,7 @@ import {
   SpatialGridRowPlayer, culledGridRowFrequency, nearestCulledToneVoices,
   nextRowLayerGapTicks, rowEnvelopePlan, shouldScheduleRowAction,
 } from '../audio/spatial-grid-row-player.js';
-import { getRecipe } from '../audio/instruments/instrument-presets.js';
+import { getRecipe } from '../../Audio/voices/recipes.js';
 import { bedTargetsForPolicy, harmonyPolicySelectionKey, matchHarmonyTarget, normalizeHarmonyPolicy, signedCircularCentsDistance } from '../audio/harmony-policy.js';
 import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP, toAudioListenerPosition } from '../audio/spatial-audio-frame.js';
 import {
@@ -642,7 +642,7 @@ const aura = readFileSync(new URL('../ui/grid-row-aura.js', import.meta.url), 'u
 const worker = readFileSync(new URL('../workers/cull2-program-worker.js', import.meta.url), 'utf8');
 const page = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
 const style = readFileSync(new URL('../../style.css', import.meta.url), 'utf8');
-const voiceRenderer = readFileSync(new URL('../audio/instruments/instrument-voice.js', import.meta.url), 'utf8');
+const voiceRenderer = readFileSync(new URL('../../Audio/voices/voice.js', import.meta.url), 'utf8');
 check('compiler is a dedicated worker receiving compact finalized ownership',
   worker.includes('compileGridAudioProgram') && flight.includes('ProgramWorkerPool') && flight.includes('ratioOwners: z.ratioOwners'));
 check('main scheduler only schedules precompiled row programs',

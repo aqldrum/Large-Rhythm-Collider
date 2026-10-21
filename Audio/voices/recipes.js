@@ -1,14 +1,14 @@
-// Cosmos/audio/instruments/instrument-presets.js — the pure palette catalog.
+// Audio/voices/recipes.js — the pure palette catalog (moved from Cosmos/audio/instruments/instrument-presets.js).
 //
 // Engine-agnostic, like harmony-policy.js: frozen IDs/labels, a default, a normalizer, and the
-// per-role RECIPE DATA that voice-plan.js turns into a bounded synthesis plan. It owns NO Web Audio
+// per-role RECIPE DATA that plan.js turns into a bounded synthesis plan. It owns NO Web Audio
 // nodes, NO DOM, NO storage, and it never enumerates rhythms. Nothing here imports from cosmos-audio
 // (so the module stays headless-testable) or from sound-design/ or docs/ (reference assets are local).
 //
 // A "recipe" is three ROLE recipes (row / bed / audition). Each role recipe is a small bag of
 // oscillator components, an optional noise burst, an optional per-VOICE filter, and an output trim for
-// matched loudness. voice-plan.js resolves component ratios to Hz, clamps out-of-band partials, scales
-// bell energy by register, and reports the source COST; instrument-voice.js realizes the plan.
+// matched loudness. plan.js resolves component ratios to Hz, clamps out-of-band partials, scales
+// bell energy by register, and reports the source COST; voice.js realizes the plan.
 //
 // Roles differ on purpose (the work order): rows are short articulate plucks, the bed is a sustained
 // swell with much less attack coloration, audition is a held/legato voice. A palette is not one

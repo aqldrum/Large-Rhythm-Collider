@@ -1,12 +1,12 @@
 // assert-instruments.mjs — proofs for the PURE instrument layer: the palette catalog
-// (../instruments/instrument-presets.js) and the recipe→plan compiler (../instruments/voice-plan.js).
+// (Audio/voices/recipes.js) and the recipe→plan compiler (Audio/voices/plan.js).
 // No AudioContext or DOM — these two modules must be fully headless-testable (the renderer's Web Audio
 // graph is covered by assert-instrument-voice.mjs).
 import {
   INSTRUMENTS, INSTRUMENT_IDS, PRODUCTION_INSTRUMENT_IDS, INSTRUMENT_ROLES,
   DEFAULT_INSTRUMENT, normalizeInstrumentId, getRecipe, instrumentLabel,
-} from '../audio/instruments/instrument-presets.js';
-import { planVoice, ENV_FLOOR } from '../audio/instruments/voice-plan.js';
+} from '../../Audio/voices/recipes.js';
+import { planVoice, ENV_FLOOR } from '../../Audio/voices/plan.js';
 
 let PASS = true;
 const check = (label, ok, detail = '') => { if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail ? ` — ${detail}` : ''}`); };

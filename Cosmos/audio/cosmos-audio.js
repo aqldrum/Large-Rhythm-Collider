@@ -28,9 +28,9 @@ import { TransportClock, TRANSPORT_TICK_MS, SCHEDULE_AHEAD_SECONDS } from './tra
 // from pure per-role recipes. This module is the composition root — it owns the SELECTED palette and the
 // role/pitch/timing each voice is scheduled with, injects the recipe into the row player, and keeps its
 // own MIDI/visual/exposure side-channels. It never inlines an oscillator graph or a patch catalog.
-import { getRecipe as instrumentRecipe, normalizeInstrumentId, DEFAULT_INSTRUMENT } from './instruments/instrument-presets.js';
-import { planVoice } from './instruments/voice-plan.js';
-import { createInstrumentVoice } from './instruments/instrument-voice.js';
+import { getRecipe as instrumentRecipe, normalizeInstrumentId, DEFAULT_INSTRUMENT } from '../../Audio/voices/recipes.js';
+import { planVoice } from '../../Audio/voices/plan.js';
+import { createInstrumentVoice } from '../../Audio/voices/voice.js';
 
 const ROOT_HZ = 220;             // Phase 0: one root for every voice (per-star root is a later phase)
 const LOOKAHEAD_MS = TRANSPORT_TICK_MS;      // scheduler tick cadence (the pulse now comes from a worker)

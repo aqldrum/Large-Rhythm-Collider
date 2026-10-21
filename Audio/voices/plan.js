@@ -1,7 +1,7 @@
-// Cosmos/audio/instruments/voice-plan.js — the pure recipe→plan compiler.
+// Audio/voices/plan.js — the pure recipe→plan compiler (moved from Cosmos/audio/instruments/voice-plan.js).
 //
-// planVoice() turns a frozen role recipe (instrument-presets.js) plus a role/pitch/timing into a bounded,
-// finite SYNTHESIS PLAN that instrument-voice.js realizes as Web Audio nodes. It creates NO nodes, reads
+// planVoice() turns a frozen role recipe (recipes.js) plus a role/pitch/timing into a bounded,
+// finite SYNTHESIS PLAN that voice.js realizes as Web Audio nodes. It creates NO nodes, reads
 // NO clocks, and solves NO harmony — it is the seam between "what a palette is" and "how it sounds".
 //
 // It is where the two safety rules the work order names get enforced, purely and testably:
@@ -10,7 +10,7 @@
 //   • the source COST is the count of real source nodes the plan will create (oscillators + noise), so a
 //     caller can admit against its oscillator ceiling BEFORE building a graph.
 
-// Shared with instrument-voice.js: the non-zero floor an exponential ramp can target (0 is illegal for
+// Shared with voice.js: the non-zero floor an exponential ramp can target (0 is illegal for
 // exponentialRampToValueAtTime). Matches the row/bed engines' historical 0.0001.
 export const ENV_FLOOR = 0.0001;
 
@@ -82,7 +82,7 @@ function planComponent(component, baseFreq, sampleRate) {
   });
 }
 
-// recipe: a frozen role recipe from instrument-presets.getRecipe(id, role).
+// recipe: a frozen role recipe from recipes.getRecipe(id, role).
 // opts.role: 'row' | 'bed' | 'audition'. opts.baseFreq: pre-detune base pitch (Hz).
 // opts.timing: role-specific envelope inputs (see normalizeAmp). opts.sampleRate: ctx.sampleRate.
 export function planVoice(recipe, { role = 'row', baseFreq, timing = {}, sampleRate = 48000 } = {}) {
