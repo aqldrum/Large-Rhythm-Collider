@@ -79,11 +79,12 @@ console.log('\n— chords by hand');
   const s = modulationStep(1140, 0, 0, 15);
   check('modulationStep: 40¢ sharp of B snaps by −40 onto B', s.modulate && Math.abs(s.dev - 40) < 1e-6 && Math.abs(s.offset + 40) < 1e-6 && classOfCents(1140 + s.offset).pc === 11 && classOfCents(1140 + s.offset).dev === 0);
   check('…a root 49¢ flat snaps up by 49, a root at exactly ±15 stays', Math.abs(modulationStep(951, 0, 0, 15).offset - 49) < 1e-9 && !modulationStep(15, 0, 0, 15).modulate && !modulationStep(-15, 0, 0, 15).modulate);
-  // folding: −48.2¢ in, a root (1098¢) sounding 49.8¢ sharp of A# — unfolded the offset would reach −98¢; folded it reads +2¢, one class up
+  // folding is a relabel: −48.2¢ in, a root (1098¢) sounding 49.8¢ sharp of A#; the snap takes the offset to −98¢ either
+  // way, and folded the grid NAMES it +2¢ with the root one class up (B, not A#), the pitch unmoved
   const unf = modulationStep(1098, -48.2, 0, 15, { fold: false }), fol = modulationStep(1098, -48.2, 0, 15);
-  check('folding: the −98¢ case reads as +2¢, the root one class over (B, not A#)', Math.abs(unf.offset + 98) < 1e-9 && Math.abs(fol.offset - 2) < 1e-9
-    && classOfCents(1098 + unf.offset).pc === 10 && classOfCents(1098 + fol.offset).pc === 11 && Math.abs(classOfCents(1098 + fol.offset).dev) < 1e-9, `${unf.offset} ${fol.offset}`);
-  check('folding keeps every offset in [−50, +50)', [[30, 0], [1140, 49], [951, -49], [649, 30], [10, -45]].every(([c, o]) => { const x = modulationStep(c, o, 0, 15).offset; return x >= -50 && x < 50; }));
+  check('folding: the −98¢ case reads as +2¢, one class up; the sounding offset stays −98¢', Math.abs(unf.offset + 98) < 1e-9 && Math.abs(fol.offset + 98) < 1e-9
+    && Math.abs(unf.named + 98) < 1e-9 && Math.abs(fol.named - 2) < 1e-9 && fol.shift === -1 && classOfCents(1098 + unf.offset).pc === 10 && classOfCents(1098 + fol.named).pc === 11, JSON.stringify({ unf, fol }));
+  check('folding keeps every named offset in [−50, +50)', [[30, 0], [1140, 49], [951, -49], [649, 30], [10, -45]].every(([c, o]) => { const x = modulationStep(c, o, 0, 15).named; return x >= -50 && x < 50; }));
   check('strong beats: the downbeat and, in an even bar, the middle', isStrongBeat(0, 8) && isStrongBeat(4, 8) && !isStrongBeat(2, 8) && isStrongBeat(0, 5) && !isStrongBeat(2, 5));
 }
 
@@ -110,7 +111,7 @@ console.log('\n— on real rows');
       if (c.frame.root !== c.rootTone || c.frame.frameCentsEachSide !== e || c.pcs.join() !== c.intervals.map((i) => mod(c.rootPc + i, 12)).sort((a, b) => a - b).join()) { bad = `${where} bar ${c.bar}: frame or classes`; break; }
       // the modulation rule: offsets change only where a modulation is recorded
       const m = byBar.get(c.bar);
-      if (m) { mods++; if (!modulation || Math.abs(m.fundamentalRatio - 2 ** (m.cents / 1200)) > 1e-12) { bad = `${where}: a modulation ${JSON.stringify(m)}`; break; } offset = m.cents; }
+      if (m) { mods++; if (!modulation || Math.abs(m.fundamentalRatio - 2 ** (m.rawCents / 1200)) > 1e-12 || Math.abs(classOfCents(m.rawCents - m.cents).dev) > 1e-9) { bad = `${where}: a modulation ${JSON.stringify(m)}`; break; } offset = m.cents; }
       if (c.offsetCents !== offset) { bad = `${where} bar ${c.bar}: offset ${c.offsetCents} vs ${offset}`; break; }
       if (c.offGrid) offGrid++;
       // every strong note held, or counted
@@ -146,10 +147,15 @@ console.log('\n— on real rows');
   {
     const row = buildRow([768, 769]), cells = buildCells(row, { bars: 8, slotsPerBar: 8, phase: downbeats(row, 64, 1, defaultRoot(row))[0] });
     const loose = harmonize(row, cells, { table: 'lean', foldOffsets: false }), folded = harmonize(row, cells, { table: 'lean' });
+    const unnamed = (t) => ({ scale: t.scale, bars: t.bars.map(({ name, ...b }) => b) });   // the names may fold; nothing else
     const deep = loose.modulations.find((m) => m.cents < -50 || m.cents >= 50);
     const same = deep && folded.modulations.find((m) => m.bar === deep.bar);
-    check(`a real row: unfolded, 768:769 in 8 × 8 reaches ${deep ? deep.cents.toFixed(1) : '?'}¢ at bar ${deep?.bar}; folded it reads ${same ? same.cents.toFixed(1) : '?'}¢, its root one class up`,
+    check(`a real row: unfolded, 768:769 in 8 × 8 reaches ${deep ? deep.cents.toFixed(1) : '?'}¢ at bar ${deep?.bar}; folded it reads ${same ? same.cents.toFixed(1) : '?'}¢, its root named one class up`,
       !!deep && !!same && Math.abs(same.cents - (deep.cents + 100)) < 1e-6 && folded.chords[deep.bar].rootPc === mod(loose.chords[deep.bar].rootPc + 1, 12) && folded.modulations.every((m) => m.cents >= -50 && m.cents < 50));
+    check('…and nothing sounds different: the same retunes, root tones, chords, targets (but their names) and lead',
+      JSON.stringify(folded.chords.map((c) => [c.fundamentalRatio, c.rawOffsetCents, c.rootTone, c.quality, c.gridPcs])) === JSON.stringify(loose.chords.map((c) => [c.fundamentalRatio, c.rawOffsetCents, c.rootTone, c.quality, c.gridPcs]))
+      && JSON.stringify(folded.modulations.map((m) => [m.bar, m.rawCents, m.fundamentalRatio])) === JSON.stringify(loose.modulations.map((m) => [m.bar, m.rawCents, m.fundamentalRatio]))
+      && JSON.stringify(unnamed(folded.targets)) === JSON.stringify(unnamed(loose.targets)) && JSON.stringify(folded.lead.notes) === JSON.stringify(loose.lead.notes));
   }
   const row = buildRow([768, 769]), cells = buildCells(row, { bars: 8, slotsPerBar: 8, phase: downbeats(row, 64, 1, defaultRoot(row))[0] });
   const a = harmonize(row, cells), b = harmonize(row, cells);
@@ -157,7 +163,7 @@ console.log('\n— on real rows');
   check('8 bars of 8 slots: the lead in two phrases of 4 bars (32 slots each)', JSON.stringify(phrasesOf(cells)) === JSON.stringify([{ from: 0, bars: 4 }, { from: 4, bars: 4 }]) && a.lead.phrases.length === 2);
   check('the targets: a bar a chord in its own frame (root 0, its intervals, its tone), a parent scale over them',
     a.targets.bars.length === 8 && a.targets.bars.every((t, k) => t.root === 0 && t.tone === a.chords[k].rootFraction && t.chord.join() === a.chords[k].intervals.join() && t.scale.length === a.targets.scale.length)
-    && a.chords.every((c) => c.pcs.every((p) => a.targets.scale.includes(p))));
+    && a.chords.every((c) => c.gridPcs.every((p) => a.targets.scale.includes(p))));
   const r3 = buildRow([3, 2]);
   check('tooFewTones refused', harmonize(r3, buildCells(r3, { bars: 1, slotsPerBar: 4 })).tooFewTones === true);
   const given = harmonize(buildRow([8, 7, 6, 5]), buildCells(buildRow([8, 7, 6, 5]), { bars: 2, slotsPerBar: 8 }), { root: '3/2', referenceName: 'G' });

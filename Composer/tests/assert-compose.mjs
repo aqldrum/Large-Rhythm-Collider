@@ -9,7 +9,8 @@
 //   node Composer/tests/assert-compose.mjs
 import { buildRow } from '../core/row.js';
 import { buildCells } from '../core/cells.js';
-import { classOfCents } from '../core/frame.js';
+import { classOfCents, defaultRoot } from '../core/frame.js';
+import { downbeats } from '../core/lines.js';
 import { compose, chooseMeter, articulate, isStruck, seededRandom, PART_IDS, SOUND_PAIRS, TEMPO_RANGE, BAR_CHOICES, BEATS_PER_BAR, LEAD_TARGET_HZ, COMPOSER_SPEC_VERSION } from '../core/compose.js';
 
 let PASS = true, checks = 0;
@@ -125,6 +126,15 @@ console.log('\n— overrides, one by one');
   s = one({ enabled: { comp: false } }); check('enabled', s.parts[2].enabled === false && s.parts[0].enabled && asked(s, 'enabled.comp'));
   s = one({ baseHz: 220 }); check('baseHz', s.knobs.baseHz === 220 && asked(s, 'baseHz') && !audit(s));
   s = one({ compLayer: 'A' }); check('compLayer', s.stats.compLayer.layer === 'A' && asked(s, 'compLayer') && !audit(s));
+  {
+    const row = buildRow(L), phase = downbeats(row, 64, 1, defaultRoot(row))[0], knobs = { bars: 8, slotsPerBar: 8, anchors: 'even', phase, table: 'lean' };
+    const raw = one({ ...knobs, foldOffsets: false }), named = one(knobs);
+    const hz = (x) => JSON.stringify(x.parts.map((p) => p.notes.map((n) => [n.node, n.hz, n.time, n.duration])));
+    const deep = raw.modulations.find((m) => m.cents < -50 || m.cents >= 50), same = deep && named.modulations.find((m) => m.bar === deep.bar);
+    check(`foldOffsets: a relabel only — 768:769 in 8 × 8 reads ${deep?.cents.toFixed(1)}¢ raw and ${same?.cents.toFixed(1)}¢ folded at bar ${deep?.bar}, and every note's hz is identical`,
+      !!deep && !!same && Math.abs(same.cents - deep.cents - 100) < 1e-6 && hz(raw) === hz(named) && asked(raw, 'foldOffsets')
+      && named.chords[deep.bar].rootPc === mod(raw.chords[deep.bar].rootPc + 1, 12) && named.chords.every((c, k) => c.fundamentalRatio === raw.chords[k].fundamentalRatio));
+  }
   check('every override is in the input, as given', one({ bars: 2, sounds: { lead: 'harp' } }).input.overrides.sounds.lead === 'harp' && base.input.seed === 1);
   check('unknown overrides, sounds and layers throw', throws(() => one({ tempo: 100 }), /no override/) && throws(() => one({ sounds: { lead: 'kazoo' } }), /no note instrument/) && throws(() => one({ compLayer: 'D' }), /no layer/));
 }

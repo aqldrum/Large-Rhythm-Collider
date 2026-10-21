@@ -192,9 +192,13 @@ Timing (ms, one downbeat; lean / full):
 
 **Open, for Avery.**
 - **Chords follow the first lead.** The planner keeps this (proposed, not ruled); it's Avery's call. The exceptions above count where the two leads disagree.
-- **Offsets fold into [−50, +50)¢** (planner, phase 4; proposed, not ruled). When a modulation would push the cumulative offset past ±50¢, the root is snapped onto the neighbouring grid step instead, and the grid names it one class over. On 768:769 in 8×8, bar 5 reached −98.0¢ unfolded; folded it reads +2.0¢, with its root one class up (tested).
-  - **A correction to the planner's note:** this is not just a relabelling. The fundamental from that bar on sits 100¢ higher than unfolded, so those bars sound a semitone higher. Each retune stays small relative to the base fundamental, which was the point, but a single step can now be up to 100¢ from the previous offset, where unfolded it was at most 50¢.
-  - `foldOffsets: false` restores the old behaviour.
+- **Offsets fold into [−50, +50)¢, as a pure relabel** (planner, phase 5; proposed, not ruled; this corrects the phase 4 entry).
+  - The fold never moves a pitch. Each modulation's snap and its `fundamentalRatio` are exactly as unfolded.
+  - When the cumulative offset leaves [−50, +50)¢, the grid that names the classes shifts by whole classes instead. Chords' `rootPc`, `pcs` and names, and the reported `offsetCents` and `cents`, change; nothing else does.
+  - The sounding values stay alongside: `rawOffsetCents`, `rawCents`, `gridPcs`, `gridRootPc`, `fundamentalRatio`. The line targets are built on the sounding grid.
+  - On 768:769 in 8×8, bar 5 reads −98.0¢ raw and +2.0¢ folded, its root named one class up. Every note's hz is identical either way (tested in assert-harmony and assert-compose).
+  - `foldOffsets: false` (also a Compose override) gives the raw offsets and names.
+  - The phase 4 version moved the fundamental by 100¢ and was wrong. It is replaced.
 - **Rare colours stay for Avery to hear.** How often each quality appears over the 378 chords with modulation on in the harmonization sweep (`assert-harmony.mjs` prints this table):
 
 | quality | chords | share |
@@ -225,8 +229,8 @@ Timing (ms, one downbeat; lean / full):
 
 - `{ version: 'composer-spec-v1', input: { layers, cycleSeconds, seed, overrides }, knobs, chords, modulations, parts, decisions, stats }`
 - `knobs`: `{ bars, slotsPerBar, beatsPerBar: 4, anchors, phase: [num, den], frameCentsEachSide, root, modulation, table, tempoBpm, leader: 'lead', baseHz, cycleSeconds }`
-- `chords[bar]`: `{ bar, name, quality, intervals, pcs, rootPc, rootTone, rootNode, offsetCents, fundamentalRatio, offGrid, exceptions, empty }`
-- `modulations`: `[{ bar, cents, fundamentalRatio }]`
+- `chords[bar]`: `{ bar, name, quality, intervals, pcs, rootPc, rootTone, rootNode, offsetCents (named), rawOffsetCents, fundamentalRatio, offGrid, exceptions, empty }`
+- `modulations`: `[{ bar, cents (named), rawCents, fundamentalRatio }]`
 - `parts`: lead, chords, comp, bass, inner, each `{ id, role, sound, struck, legato, enabled, notes }`
 - each note: `{ node, tick, time, ratio, octave, hz, duration, velocity, bar, slot, retrigger }`, plus `voice` on the chords part
 - `hz` = baseHz × ratio × 2^octave × the bar's `fundamentalRatio`

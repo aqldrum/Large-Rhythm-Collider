@@ -14,7 +14,8 @@
 //   phase      one of the root's first three downbeats, by the seed. Times count from that phase — bar 1's downbeat —
 //              and the cycle loops, so a note in bar 1's first window that falls just before it sounds at the cycle's end.
 //   frame      ±15¢ (decided); the root: frame.js `defaultRoot`.
-//   modulation on (Sprint default 3); the fold of harmony.js keeps the offset in [−50, +50)¢.
+//   modulation on (Sprint default 3); harmony.js' fold relabels the classes so a reported offset stays in [−50, +50)¢,
+//              never moving a pitch (`foldOffsets`, on unless asked).
 //   leader     the lead (harmony follows melody, Sprint default 4); v1 is lead-led only.
 //   parts      lead (harmonize's), chords, comping, bass, one inner voice:
 //                chords   each bar's chord, a voice a chord class (root first, then up): the bar's onset of that class,
@@ -61,7 +62,7 @@ export const VELOCITY = Object.freeze({ lead: 0.8, chords: 0.45, comp: 0.55, bas
 export const LEAD_TARGET_HZ = Math.sqrt(440 * 660);
 const REGISTER = Object.freeze({ inner: -1200, bass: -2400, chords: -1200 });
 const COMP_SHARE = Object.freeze([0.25, 0.5]);
-const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer']);
+const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer']);
 
 const EPS = 1e-9;
 const mod = (v, n) => ((v % n) + n) % n;
@@ -170,10 +171,12 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   decide('leader', 'lead', 'v1 is lead-led: the lead is mined first and the chords follow it');
 
   // ── harmony and the lead ──
-  const h = harmonize(row, cells, { root: rootTone, frameCentsEachSide: e, modulation, table });
+  const foldOffsets = ov.foldOffsets ?? true;
+  if (ov.foldOffsets != null) decide('foldOffsets', foldOffsets, 'asked');
+  const h = harmonize(row, cells, { root: rootTone, frameCentsEachSide: e, modulation, table, foldOffsets });
   const S = cells.slotsPerBar, N = cells.bars, phaseX = phase[0] / phase[1];
   const timeOf = (tick) => mod(tick / row.grid - phaseX, 1) * T;
-  const ratioOf = (bar) => 2 ** (h.chords[bar].offsetCents / 1200);
+  const ratioOf = (bar) => h.chords[bar].fundamentalRatio;   // the sounding retune: a folded name never moves it
   const slotSeconds = (cell) => cells.slots[cell].length * T;
   // every onset's bar and slot by its place from the phase (a bar runs from its first anchor to the next bar's)
   const starts = cells.slots.map((s) => mod(s.anchor - phaseX, 1));
@@ -320,7 +323,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
       tempoBpm: meter.tempoBpm, leader: 'lead', baseHz, cycleSeconds: T,
     },
     chords: h.chords.map((c) => ({ bar: c.bar, name: c.name, quality: c.quality, intervals: [...c.intervals], pcs: [...c.pcs], rootPc: c.rootPc, rootTone: c.rootFraction, rootNode: c.rootNode,
-      offsetCents: c.offsetCents, fundamentalRatio: ratioOf(c.bar), offGrid: !!c.offGrid, exceptions: c.exceptions.length, empty: !!c.empty })),
+      offsetCents: c.offsetCents, rawOffsetCents: c.rawOffsetCents, fundamentalRatio: ratioOf(c.bar), offGrid: !!c.offGrid, exceptions: c.exceptions.length, empty: !!c.empty })),
     modulations: h.modulations.map((m) => ({ ...m })),
     parts: partList,
     decisions,
