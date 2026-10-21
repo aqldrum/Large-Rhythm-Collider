@@ -14,9 +14,11 @@
 //              register inside the line's range [low, low + width): pitch = cents + 1200 × octave above 1/1.
 //   frame      root-centred (frame.js). A FRINGE tone (in a class, outside ±frameCentsEachSide) is chunk-lines' outside
 //              tone (Sprint default 2): only on a weak slot, followed within a step by a tone inside, never last.
-//   targets    chunk-lines' shape, unchanged: { scale: steps | null, bars: [{ name, root: step, chord: steps | null,
-//              tone: fraction | null, anchor: cents }] }, a line's slots shared evenly among the bars. Rooted with no
-//              harmony (`rootTargets`): one bar, the frame's root, no chord, no scale. Phase 3 hands in a bar per chord.
+//   targets    chunk-lines' shape: { scale: steps | null, bars: [{ name, root: step, chord: steps | null,
+//              tone: fraction | null, anchor: cents, scale?: steps }] }, a line's slots shared evenly among the bars.
+//              Rooted with no harmony (`rootTargets`): one bar, the frame's root, no chord, no scale. Phase 3 hands in
+//              a bar per chord, each read in its own frame (centred on the chord's root tone: `frame` may be one frame
+//              per bar), so a bar may carry its own `scale`, the parent scale in its frame's steps.
 //   types      lead and arp as chunk-lines has them; BASS added (proposed, not ruled): Overworld's bass is a sparse lead
 //              two octaves down, which here would be the lead's own sparse lines again, so the bass is sparse, an octave
 //              wide (its octave is set where it is played), leans twice as hard on strong slots and on closing to its
@@ -152,10 +154,12 @@ export function buildLattice(row, cells, frame, { from = 0, bars = cells.bars - 
   const S = cells.slotsPerBar, P = bars * S;
   if (!(Number.isInteger(from) && from >= 0 && Number.isInteger(bars) && bars >= 1 && from + bars <= cells.bars)) fail(`bars ${from}..${from + bars} are not in the cells' ${cells.bars}`);
   if (P > MAX_SLOTS) fail(`a line is at most ${MAX_SLOTS} slots, not ${bars} × ${S}`);
+  const frames = framesFor(frame, bars);
   const own = cells.slots.slice(from * S, from * S + P);
   let heaviest = 0; for (const s of own) if (s.strikes > heaviest) heaviest = s.strikes;
   const median = own.map((s) => s.strikes).sort((a, b) => a - b)[P >> 1];
   const slots = own.map((s, k) => {
+    const frame = frames[Math.floor(k / S)];
     let most = 0; for (const t of s.tones) if (t.count > most) most = t.count;
     const cands = [];
     for (const t of s.tones) {
@@ -168,8 +172,17 @@ export function buildLattice(row, cells, frame, { from = 0, bars = cells.bars - 
     cands.sort((a, b) => a.pitch - b.pitch || a.tone - b.tone);
     return { index: k, cell: s.index, bar: s.bar, beat: s.beat, anchor: s.anchor, strikes: s.strikes, accent: heaviest ? s.strikes / heaviest : 0, weak: s.strikes < median, cands };
   });
-  return { P, S, bars, from, mode: cells.mode, phase: cells.phase, swing: cells.swing, moments: cells.moments, low, width, frame: { root: frame.rootFraction, frameCentsEachSide: frame.frameCentsEachSide }, slots };
+  return { P, S, bars, from, mode: cells.mode, phase: cells.phase, swing: cells.swing, moments: cells.moments, low, width, frame: frameSummary(frames), slots };
 }
+/** one frame for every bar of a span, or one per bar (phase 3: each bar's frame centred on its chord's root tone) */
+function framesFor(frame, bars) {
+  if (!Array.isArray(frame)) return Array.from({ length: bars }, () => frame);
+  if (frame.length !== bars) fail(`${frame.length} frames for ${bars} bars`);
+  return frame;
+}
+const frameSummary = (frames) => (frames.every((f) => f === frames[0])
+  ? { root: frames[0].rootFraction, frameCentsEachSide: frames[0].frameCentsEachSide }
+  : { roots: frames.map((f) => f.rootFraction), frameCentsEachSide: frames[0].frameCentsEachSide });
 
 export const intervalCost = (ad, r) => (ad < r.same ? r.repeat : ad <= r.step ? 0 : ad <= r.skip ? r.skipCost : r.leapCost + (ad - r.skip) / 1200);
 export const rulesOf = (rules) => ({ ...DEFAULT_RULES, ...rules, weights: { ...DEFAULT_WEIGHTS, ...(rules?.weights || {}) } });
@@ -180,7 +193,7 @@ export function rolesOf(lattice, r) {
     const g = t ? t.bars[Math.floor(k * t.bars.length / P)] : null;
     return slot.cands.map((c) => {
       if (!t) return { role: c.outside ? 'foreign' : 'tone', bar: null, foreign: c.outside, chord: 0, close: c.close };
-      const foreign = c.outside || (t.scale ? !t.scale.includes(c.pc) : false), onChord = !foreign && (!g.chord || g.chord.includes(c.pc));
+      const scale = g.scale ?? t.scale, foreign = c.outside || (scale ? !scale.includes(c.pc) : false), onChord = !foreign && (!g.chord || g.chord.includes(c.pc));
       let close;
       if (g.tone) { const key = `${c.fraction}|${g.tone}`; close = memo.get(key); if (close === undefined) memo.set(key, (close = closeCost(intervalOver(c.fraction, g.tone)))); } else close = !foreign && c.pc === g.root ? 0 : onChord ? 0.4 : 1;
       return { role: foreign ? 'foreign' : onChord ? (g.chord ? 'chord' : 'tone') : 'scale', bar: g.name, foreign, chord: foreign || onChord ? 0 : slot.accent, close };
@@ -342,7 +355,7 @@ export function mineLines(row, cells, frame, opts = {}) {
   if (!TABLES.includes(table)) fail(`table must be one of ${TABLES.join(', ')}, not ${JSON.stringify(table)}`);
   const bars = opts.bars ?? cells.bars - from;
   const types = (opts.types ?? LINE_TYPES).map((t) => (typeof t === 'string' ? LINE_TYPES.find((x) => x.type === t) ?? fail(`no line type ${t}`) : t));
-  const targets = opts.targets ?? rootTargets(row, frame), first = targets.bars[0];
+  const targets = opts.targets ?? rootTargets(row, Array.isArray(frame) ? frame[0] : frame), first = targets.bars[0];
   const harmonyWeights = targets.scale ? HARMONY_WEIGHTS : {};
   const lattices = new Map(), P = bars * cells.slotsPerBar;
   const latticeFor = (width) => { if (!lattices.has(width)) lattices.set(width, buildLattice(row, cells, frame, { from, bars, low: first.anchor, width })); return lattices.get(width); };
@@ -370,6 +383,6 @@ export function mineLines(row, cells, frame, opts = {}) {
   lines.sort((a, b) => a.perNote - b.perNote || a.cost - b.cost || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return {
     version: COMPOSER_LINES_VERSION, table, from, bars, slotsPerBar: cells.slotsPerBar, root: first.tone, over: targets.bars.map((b) => b.name),
-    frame: { root: frame.rootFraction, frameCentsEachSide: frame.frameCentsEachSide }, runs, lines,
+    frame: frameSummary(framesFor(frame, bars)), runs, lines,
   };
 }

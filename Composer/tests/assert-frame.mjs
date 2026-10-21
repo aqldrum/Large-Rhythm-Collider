@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { buildRow } from '../core/row.js';
-import { frameAt, frameOf, frameOnsetsByRoot, defaultRoot, classReport, toneIndexOf, DEFAULT_FRAME_CENTS_EACH_SIDE } from '../core/frame.js';
+import { frameAt, frameOf, frameOnsetsByRoot, defaultRoot, rootPresence, classReport, toneIndexOf, DEFAULT_FRAME_CENTS_EACH_SIDE } from '../core/frame.js';
 import { RHYTHMS, OVERWORLD_RUNTIME } from './rhythms.mjs';
 
 let PASS = true, checks = 0;
@@ -71,21 +71,30 @@ console.log('\n— the sweep and the default root');
   }
   check('the onsets in each root\'s frame, by sweep, equal a frame built on every root (52 rhythms + 2 made up × 7 knobs)', !bad, bad);
   bad = '';
+  let fellBack = 0;
   for (const layers of RHYTHMS) {
-    const row = buildRow(layers), held = brute(row, 15);
-    let best = 0;
-    for (let t = 1; t < row.tones.length; t++) {
-      const key = (x) => [held[x], row.toneCount[x], row.tones[x] === '1/1' ? 1 : 0, -row.toneCents[x]];
-      const a = key(t), b = key(best);
-      for (let k = 0; k < 4; k++) { if (a[k] > b[k]) { best = t; break; } if (a[k] < b[k]) break; }
-    }
-    if (defaultRoot(row) !== best) bad = `${layers}: ${row.tones[defaultRoot(row)]} vs ${row.tones[best]}`;
+    const row = buildRow(layers), held = brute(row, 15), need = Math.max(2, Math.ceil(row.n / 100));
+    const pickFrom = (pool) => {
+      let best = pool[0];
+      for (const t of pool.slice(1)) {
+        const key = (x) => [held[x], row.toneCount[x], row.tones[x] === '1/1' ? 1 : 0, -row.toneCents[x]];
+        const a = key(t), b = key(best);
+        for (let k = 0; k < 4; k++) { if (a[k] > b[k]) { best = t; break; } if (a[k] < b[k]) break; }
+      }
+      return best;
+    };
+    const all = row.tones.map((_, t) => t), heard = all.filter((t) => row.toneCount[t] >= need);
+    const most = Math.max(...row.toneCount), half = all.filter((t) => row.toneCount[t] >= Math.max(2, Math.ceil(most / 2)));
+    if (!heard.length) fellBack++;
+    const best = pickFrom(heard.length ? heard : half.length ? half : all);
+    if (defaultRoot(row) !== best || rootPresence(row) !== need) bad = `${layers}: ${row.tones[defaultRoot(row)]} vs ${row.tones[best]}`;
   }
-  check('defaultRoot: the most onsets in its frame, then the most heard, then 1/1, then the lowest', !bad, bad);
+  check(`defaultRoot: of the tones heard max(2, 1% of onsets) times, the most onsets in its frame, then the most heard, then 1/1, then the lowest (${fellBack} rhythms drop to half the most heard)`, !bad, bad);
   const r = buildRow([8, 7, 6, 5]);
   check('frameOf: a root given is kept; none given takes the default', frameOf(r, '3/2').rootFraction === '3/2' && frameOf(r).root === defaultRoot(r));
   const big = buildRow([4099, 4093, 4091, 4079]);
-  const t0 = performance.now(); defaultRoot(big); const t1 = performance.now();
+  const t0 = performance.now(), br = defaultRoot(big), t1 = performance.now();
+  check(`a tone-rich row with no tone at 1%: the root is heard ${big.toneCount[br]} times (the most heard: 24), not twice`, big.toneCount[br] >= 12);
   check(`defaultRoot on 4,177 tones in ${(t1 - t0).toFixed(1)} ms (one sweep, not tones²)`, t1 - t0 < 100);
 }
 

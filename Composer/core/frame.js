@@ -9,9 +9,11 @@
 //            chunk-lines' "outside" tone (Sprint default 2). chunk-lines' `frameCents = 25` is a total width, ±12.5¢
 //            here.
 //   root     a tone of the row, given by index or by its exact fraction. The frame is root-centred, so it moves with the
-//            root from chord to chord (phase 3). With no root asked, `defaultRoot` picks one (proposed, not ruled): the
-//            tone whose frame holds the most onsets — chunk-lines' `bestFrames` re-centred on tones — found by one sweep
-//            round the 100¢ circle, O(tones log tones), not bestFrames' O(tones²).
+//            root from chord to chord (phase 3). With no root asked, `defaultRoot` picks one (proposed, not ruled): of
+//            the tones heard at least max(2, 1% of the onsets) times (else half as often as the most heard tone), the
+//            one whose frame holds the most onsets —
+//            chunk-lines' `bestFrames` re-centred on tones — found by one sweep round the 100¢ circle, O(tones log
+//            tones), not bestFrames' O(tones²).
 //
 // Nothing here walks the onsets: the row's per-tone counts (`toneCount`) are all it reads.
 
@@ -20,6 +22,15 @@ export const DEFAULT_FRAME_CENTS_EACH_SIDE = 15;
 const EPS = 1e-9;
 const fail = (what) => { throw new Error(`composer/frame: ${what}`); };
 const mod = (v, n) => ((v % n) + n) % n;
+
+/** cents above a root (any real) → its class 0..11 by the nearest 100¢ step and its deviation in [−50, 50) */
+export function classOfCents(cents) {
+  const rel = mod(cents, 1200);
+  let step = Math.floor(rel / 100 + 0.5), d = rel - 100 * step;
+  if (d >= 50 - EPS) { step++; d -= 100; }   // halfway, and float dust at it, goes up
+  if (Math.abs(d) < EPS) d = 0;
+  return { pc: mod(step, 12), dev: d };
+}
 
 /** a tone of the row by index or exact fraction → its index */
 export function toneIndexOf(row, tone) {
@@ -44,11 +55,8 @@ export function frameAt(row, root, frameCentsEachSide = DEFAULT_FRAME_CENTS_EACH
   const pc = new Int8Array(T), dev = new Float64Array(T), inside = new Uint8Array(T);
   let nodes = 0, tonesInside = 0;
   for (let t = 0; t < T; t++) {
-    const rel = mod(row.toneCents[t] - rc, 1200);
-    let step = Math.floor(rel / 100 + 0.5), d = rel - 100 * step;
-    if (d >= 50 - EPS) { step++; d -= 100; }   // halfway, and float dust at it, goes up
-    if (Math.abs(d) < EPS) d = 0;
-    pc[t] = mod(step, 12); dev[t] = d;
+    const { pc: p, dev: d } = classOfCents(row.toneCents[t] - rc);
+    pc[t] = p; dev[t] = d;
     if (Math.abs(d) <= e + EPS) { inside[t] = 1; nodes += row.toneCount[t]; tonesInside++; }
   }
   return { version: COMPOSER_FRAME_VERSION, root: r, rootFraction: row.tones[r], rootCents: rc, frameCentsEachSide: e, width: 2 * e, pc, dev, inside, nodes, tonesInside };
@@ -76,18 +84,30 @@ export function frameOnsetsByRoot(row, frameCentsEachSide = DEFAULT_FRAME_CENTS_
   return out;
 }
 
+/** the onsets a tone needs of its own to be a default root: max(2, 1% of the row's onsets) (proposed, not ruled) */
+export const rootPresence = (row) => Math.max(2, Math.ceil(row.n / 100));
 /**
- * The root a frame defaults to (proposed, not ruled): the most onsets inside its frame; then the most heard root; then
- * 1/1; then the lowest cents. → tone index
+ * The root a frame defaults to (proposed, not ruled): among the tones heard at least `rootPresence(row)` times, the one
+ * whose frame holds the most onsets; then the most heard root; then 1/1; then the lowest cents. On a tone-rich row no
+ * tone may be heard that often (on 4099:4093:4091:4079 the most heard tone sounds 24 times of 16,359), and the bar then
+ * drops to half the most heard tone's count, at least 2; failing that, every tone. → tone index
  */
 export function defaultRoot(row, frameCentsEachSide = DEFAULT_FRAME_CENTS_EACH_SIDE) {
   const held = frameOnsetsByRoot(row, frameCentsEachSide);
-  let best = 0;
-  for (let t = 1; t < row.tones.length; t++) {
+  let most = 0; for (let t = 0; t < row.tones.length; t++) if (row.toneCount[t] > most) most = row.toneCount[t];
+  const better = (t, best) => {
     const d = held[t] - held[best] || row.toneCount[t] - row.toneCount[best];
-    if (d > 0 || (d === 0 && row.tones[best] !== '1/1' && (row.tones[t] === '1/1' || row.toneCents[t] < row.toneCents[best]))) best = t;
+    return d > 0 || (d === 0 && row.tones[best] !== '1/1' && (row.tones[t] === '1/1' || row.toneCents[t] < row.toneCents[best]));
+  };
+  for (const need of [rootPresence(row), Math.max(2, Math.ceil(most / 2)), 0]) {
+    let best = -1;
+    for (let t = 0; t < row.tones.length; t++) {
+      if (row.toneCount[t] < need) continue;
+      if (best < 0 || better(t, best)) best = t;
+    }
+    if (best >= 0) return best;
   }
-  return best;
+  return 0;
 }
 
 /** the frame on `root`, or on the default root when none is given */

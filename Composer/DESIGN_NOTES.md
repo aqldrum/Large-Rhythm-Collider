@@ -88,7 +88,9 @@ Main Playback's legato control acts like a sustain pedal: each layer's voice hol
   - `compose.js` (phase 4) is one pure call that runs in either place, with lean or full as a parameter.
 - **(c) A minimum-tones gate: fewer than 3 distinct tones returns `{ tooFewTones, tones, min }`.** The probe's 1-tone row "composed" 83 lines on one pitch. The row still builds; `toneGate(row)` in row.js is what the miner (and later Compose) asks.
 - **(d) A worker pool** (the table's pieces are independent; the slowest is about 0.25 s) is a later optimisation, not this sprint.
-- **A limit the new cap makes reachable:** a grid past 2^53 is refused as `{ tooLarge }`. Under 16,384 onsets that was nearly impossible. Under 2^20 it isn't: four coprime layers near 10,000 (about 40k onsets, e.g. 10007:10009:10037:10039) or three near 208,000 already pass it. Lifting it needs BigInt or two-part positions. **Open, for Avery and the planner.**
+- **A limit the new cap makes reachable:** a grid past 2^53 is refused as `{ tooLarge }`. Under 16,384 onsets that was nearly impossible. Under 2^20 it isn't: four coprime layers near 10,000 (about 40k onsets, e.g. 10007:10009:10037:10039) or three near 208,000 already pass it.
+  - **The refusal stands for v1** (planner, 2026-10-21; proposed, not ruled; Avery decides).
+  - **Open item:** BigInt or two-part positions in row.js and cells.js would lift it.
 
 ## Phase 1: row and cells (built 2026-10-21, sprint)
 
@@ -120,7 +122,15 @@ Cost, measured once (not the probe): 4099:4093:4091:4079 (16,359 onsets, 4,177 t
 Choices made without a ruling. Each is **proposed, not ruled**:
 
 - **The frame knob is `frameCentsEachSide`** (default 15, as decided). Every tone has a class 0–11, the nearest 100¢ step from the root. A tone exactly halfway goes to the step above, so deviations lie in [−50, 50). ±frame is inclusive.
-- **The default root is the tone whose frame holds the most onsets.** Ties go to the most-heard root, then 1/1, then the lowest cents. This is chunk-lines' `bestFrames` idea re-centred on tones, found by one sweep round the 100¢ circle: O(tones log tones), about 0.5 ms at 4,177 tones. On tone-rich rows the winner can be a tone with only one or two onsets of its own (on 4099:4093:4091:4079 it is 4093/3252, heard twice, whose frame holds 5,177 onsets on 1,289 tones). Its own downbeats then run out (2 of 6 asked), and `time-lines.mjs` tops them up with the row's heaviest onsets. Phase 3 roots come from chords, so this matters only for a rooted line with no harmony.
+- **The default root.** First built as the tone whose frame holds the most onsets: one sweep round the 100¢ circle, O(tones log tones), about 0.5 ms at 4,177 tones. On tone-rich rows that picked a tone heard only twice (4093/3252 on 4099:4093:4091:4079), and that tone gave only 2 of 6 downbeats. Revised in phase 3:
+  - **The rule** (planner; proposed, not ruled): a root needs max(2, 1% of the row's onsets) onsets of its own. Among those tones, the frame's total onsets wins; then the most-heard root, then 1/1, then the lowest cents.
+  - **The fallback** (builder; proposed, not ruled). The planner's fallback was the old rule. But on tone-rich rows no tone reaches 1% (the most-heard tone on the 16k row sounds 24 times of 16,359), so the old rule picked the heard-twice tone again. Instead the bar drops to half the most-heard tone's count, at least 2; only if that also fails does every tone qualify.
+  - **What it picks now:**
+    - 4099:4093:4091:4079: 4093/2304, heard 18 times, frame of 5,169 onsets
+    - 768:784: 3/2, heard 192 times
+    - 768:769: 3/2, heard 20 times
+    - 2048:2049: 16/15, heard 16 times
+    - All four now give the full 6 of 6 downbeats at 2×8 and at 4×8.
 - **The class report** gives, for each class, its core and fringe ratios with fraction, cents, deviation and onsets, most-heard first. It reads only per-tone counts: O(tones) plus a sort per class, under 2 ms at 4,177 tones.
 - **A line is mined on a span of the cycle's cells** (`from`, `bars`), not on a cut of its own. Compose fixes one phase and one meter for the cycle (phase 4), so every part reads the same slots and every note is an onset at its own time. chunk-lines' per-line downbeat search becomes the `downbeats` helper, for whoever picks the cycle's phase. Its `partitions` / 'auto' cut search isn't ported: the cells fix S.
 - **Fringe tones are chunk-lines' outside tones** (Sprint default 2): only on a weak slot, followed within a step (250¢) by a tone inside the frame, never last.
@@ -140,6 +150,50 @@ Choices made without a ruling. Each is **proposed, not ruled**:
 | 5792:5793 | 11,584 | 2,896 | 7.2 | 1.8 | 121 | 1,598 |
 
 This agrees with the probe: the picker is the cost, it doesn't track onsets, and the full table belongs in a worker. The slowest single cut of the full table was 0.45 s.
+
+## Phase 3: harmony from melody, roots, modulation (built 2026-10-21, sprint)
+
+`Composer/core/harmony.js`, checked by `Composer/tests/assert-harmony.mjs`. `harmonize(row, cells, { root, frameCentsEachSide, modulation, table, referenceName })` returns `{ lead, chords, targets, modulations, passes, exceptions }`. `chooseChord` (one bar, from cents) and `modulationStep` are exported as its pure core, so the hand-made cases test them directly.
+
+How it works. Each choice here is **proposed, not ruled**:
+
+- **The lead first.** Rooted lines with no harmony, on the frame's root, mined phrase by phrase. A phrase is as many bars as 32 slots hold: 8×8 gives two phrases of 4 bars. The lead is the miner's top-ranked line.
+- **The grid.** The composition's 12 classes are 100¢ steps from the base root. Every bar sounds at an offset in cents, 0 until a modulation.
+- **A bar's material.** Every tone its slot windows hold, weighted by onsets plus strikes, and the lead's notes in that bar.
+  - **Strong notes** are the lead's notes on the downbeat and, when a bar has an even slot count, on the middle beat. If neither sounds, the bar's first lead note is its strong note.
+  - A lead note on a fringe tone of the base frame is a passing tone: it neither asks for a chord tone nor counts toward one.
+- **The chord.** Candidate roots are the bar's tones that are the most heard within their own ±frame. For each candidate, every quality is read in that root's frame and ranked by:
+  1. fewest strong lead notes not held
+  2. most lead notes held
+  3. support: the bar's weight on the chord's classes over the bar's total, less 0.08 per chord tone and a small prior per quality (0 for the common triads and sus4, 0.02 for sus2 and the sevenths, 0.06 for dim, aug, m7b5, dim7 and mMaj7)
+  4. voice-leading distance to the previous chord (parsimony, as a tie-break only)
+  5. the lower root, then the simpler quality
+- **The vocabulary.** Triads (maj, m, dim, aug), sus (sus4, sus2, 7sus4) and sevenths (7, m7, maj7, m7b5, dim7, mMaj7). Intervals are QualityCatalog's. Every name reads back through ProgressionSolver's `parseChordSymbol` to the same classes. Names are spelled from the base root, called C unless `referenceName` says otherwise.
+- **Root tone and frame.** The chosen root tone is the bar's own tone, and `rootNode` is an onset of it in the bar's windows. The bar's frame is centred on it.
+- **The targets.** One bar per chord, read in that bar's frame (root 0, the chord's intervals, its tone and cents). The parent scale is the union of the chords' grid classes, and each bar also carries that scale in its own frame's steps. lines.js now takes one frame per bar and a per-bar scale.
+- **Modulation.** When a chosen root sounds more than ±frame off the grid at its bar's offset, the fundamental is retuned from that bar on, snapping the root exactly onto the nearest grid step. It is recorded as `{ bar, cents, fundamentalRatio = 2^(cents/1200) }`, relative to the base fundamental. Offsets accumulate across modulations; they are not folded back into ±50¢.
+  - With `modulation: false`, only roots on the grid are candidates. A bar with none keeps its best root, flagged `offGrid`, and nothing is retuned.
+- **The second pass.** The lead is re-mined over these targets. Per phrase, the kept line is the one with the lower cost per note under the harmony weights; the first lead is re-scored on the same lattice, and counts as invalid if any of its notes breaks a rule there. The chords stay those derived from the first lead. A strong note of the kept lead that its chord does not hold is counted in that chord's `exceptions`, not hidden.
+
+Measured (180 harmonizations on 9 rows × 5 meters × 2 anchor modes × modulation on and off, lean table):
+
+- The second pass's lead was kept in 186 of 216 phrases (86%).
+- 6 of 814 strong lead notes are exceptions.
+- 46 retunes with modulation on.
+- 6 chords flagged off-grid.
+
+Timing (ms, one downbeat; lean / full):
+
+| row | 2×8 | 4×8 | 8×8 |
+|---|--:|--:|--:|
+| 4099:4093:4091:4079 | 25 / 69 | 98 / 322 | 154 / 509 |
+| 768:784 | 8 / 27 | 86 / 308 | 143 / 393 |
+| 768:769 | 20 / 66 | 106 / 373 | 200 / 687 |
+
+**Open, for Avery.**
+- Does the chord follow the kept lead or the first one? Today it follows the first; the exceptions above count where they disagree.
+- Should offsets fold into ±50¢? A −98¢ offset reads as a retune of almost a semitone down, not +2¢.
+- Should rarer colours (aug, mMaj7) need more than a held lead note? On tone-rich rows they win whenever they hold one more lead note than a triad.
 
 ## Layout (agreed earlier, 2026-10-21)
 
