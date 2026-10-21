@@ -79,12 +79,18 @@ console.log('\n— chords by hand');
   const s = modulationStep(1140, 0, 0, 15);
   check('modulationStep: 40¢ sharp of B snaps by −40 onto B', s.modulate && Math.abs(s.dev - 40) < 1e-6 && Math.abs(s.offset + 40) < 1e-6 && classOfCents(1140 + s.offset).pc === 11 && classOfCents(1140 + s.offset).dev === 0);
   check('…a root 49¢ flat snaps up by 49, a root at exactly ±15 stays', Math.abs(modulationStep(951, 0, 0, 15).offset - 49) < 1e-9 && !modulationStep(15, 0, 0, 15).modulate && !modulationStep(-15, 0, 0, 15).modulate);
+  // folding: −48.2¢ in, a root (1098¢) sounding 49.8¢ sharp of A# — unfolded the offset would reach −98¢; folded it reads +2¢, one class up
+  const unf = modulationStep(1098, -48.2, 0, 15, { fold: false }), fol = modulationStep(1098, -48.2, 0, 15);
+  check('folding: the −98¢ case reads as +2¢, the root one class over (B, not A#)', Math.abs(unf.offset + 98) < 1e-9 && Math.abs(fol.offset - 2) < 1e-9
+    && classOfCents(1098 + unf.offset).pc === 10 && classOfCents(1098 + fol.offset).pc === 11 && Math.abs(classOfCents(1098 + fol.offset).dev) < 1e-9, `${unf.offset} ${fol.offset}`);
+  check('folding keeps every offset in [−50, +50)', [[30, 0], [1140, 49], [951, -49], [649, 30], [10, -45]].every(([c, o]) => { const x = modulationStep(c, o, 0, 15).offset; return x >= -50 && x < 50; }));
   check('strong beats: the downbeat and, in an even bar, the middle', isStrongBeat(0, 8) && isStrongBeat(4, 8) && !isStrongBeat(2, 8) && isStrongBeat(0, 5) && !isStrongBeat(2, 5));
 }
 
 console.log('\n— on real rows');
 {
   let runs = 0, chords = 0, exceptions = 0, strongNotes = 0, mods = 0, offGrid = 0, phrases = 0, second = 0, bad = '';
+  const qualities = new Map(CHORD_QUALITIES.map((q) => [q.id, 0]));
   const rows = [[8, 7, 6, 5], [11, 9, 7, 5], [19, 17, 16, 15], [119, 42, 15, 8], [768, 784], [768, 769], [504, 234, 520, 297], [2048, 2049], [97, 103, 37]];
   for (const layers of rows) for (const [bars, S] of [[2, 8], [4, 8], [8, 8], [4, 6], [3, 5]]) for (const anchors of ['even', 'partitioned']) for (const modulation of [true, false]) {
     const row = buildRow(layers), root = defaultRoot(row), e = 15;
@@ -98,6 +104,7 @@ console.log('\n— on real rows');
     for (const c of h.chords) {
       chords++;
       if (c.empty) continue;
+      if (modulation) qualities.set(c.quality, qualities.get(c.quality) + 1);
       // the root tone is an onset in its bar, and the bar's frame is centred on it
       if (row.tone[c.rootNode] !== c.rootTone || cells.slotOfNode[c.rootNode] < 0 || cells.slots[cells.slotOfNode[c.rootNode]].bar !== c.bar) { bad = `${where} bar ${c.bar}: root ${c.rootFraction} is not an onset in its bar`; break; }
       if (c.frame.root !== c.rootTone || c.frame.frameCentsEachSide !== e || c.pcs.join() !== c.intervals.map((i) => mod(c.rootPc + i, 12)).sort((a, b) => a - b).join()) { bad = `${where} bar ${c.bar}: frame or classes`; break; }
@@ -133,7 +140,17 @@ console.log('\n— on real rows');
   check(`${runs} harmonizations, ${chords} chords: roots are onsets in their bars, frames on the roots, the modulation rule (${mods} retunes, ${offGrid} off-grid flags with it off or forced), the lead's notes onsets`, !bad, bad);
   check(`every strong lead note held or counted: ${exceptions} exceptions of ${strongNotes} strong notes`, !bad);
   console.log(`  (the second pass's lead was kept in ${second} of ${phrases} phrases)`);
+  const sum = [...qualities.values()].reduce((a, b) => a + b, 0);
+  console.log(`  (qualities over the ${sum} chords with modulation on: ${[...qualities].map(([q, n]) => `${q} ${n} (${(100 * n / sum).toFixed(1)}%)`).join(', ')})`);
 
+  {
+    const row = buildRow([768, 769]), cells = buildCells(row, { bars: 8, slotsPerBar: 8, phase: downbeats(row, 64, 1, defaultRoot(row))[0] });
+    const loose = harmonize(row, cells, { table: 'lean', foldOffsets: false }), folded = harmonize(row, cells, { table: 'lean' });
+    const deep = loose.modulations.find((m) => m.cents < -50 || m.cents >= 50);
+    const same = deep && folded.modulations.find((m) => m.bar === deep.bar);
+    check(`a real row: unfolded, 768:769 in 8 × 8 reaches ${deep ? deep.cents.toFixed(1) : '?'}¢ at bar ${deep?.bar}; folded it reads ${same ? same.cents.toFixed(1) : '?'}¢, its root one class up`,
+      !!deep && !!same && Math.abs(same.cents - (deep.cents + 100)) < 1e-6 && folded.chords[deep.bar].rootPc === mod(loose.chords[deep.bar].rootPc + 1, 12) && folded.modulations.every((m) => m.cents >= -50 && m.cents < 50));
+  }
   const row = buildRow([768, 769]), cells = buildCells(row, { bars: 8, slotsPerBar: 8, phase: downbeats(row, 64, 1, defaultRoot(row))[0] });
   const a = harmonize(row, cells), b = harmonize(row, cells);
   check('deterministic (the full table, twice)', JSON.stringify(a) === JSON.stringify(b) && a.version === COMPOSER_HARMONY_VERSION);

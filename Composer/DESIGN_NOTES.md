@@ -191,9 +191,95 @@ Timing (ms, one downbeat; lean / full):
 | 768:769 | 20 / 66 | 106 / 373 | 200 / 687 |
 
 **Open, for Avery.**
-- Does the chord follow the kept lead or the first one? Today it follows the first; the exceptions above count where they disagree.
-- Should offsets fold into ±50¢? A −98¢ offset reads as a retune of almost a semitone down, not +2¢.
-- Should rarer colours (aug, mMaj7) need more than a held lead note? On tone-rich rows they win whenever they hold one more lead note than a triad.
+- **Chords follow the first lead.** The planner keeps this (proposed, not ruled); it's Avery's call. The exceptions above count where the two leads disagree.
+- **Offsets fold into [−50, +50)¢** (planner, phase 4; proposed, not ruled). When a modulation would push the cumulative offset past ±50¢, the root is snapped onto the neighbouring grid step instead, and the grid names it one class over. On 768:769 in 8×8, bar 5 reached −98.0¢ unfolded; folded it reads +2.0¢, with its root one class up (tested).
+  - **A correction to the planner's note:** this is not just a relabelling. The fundamental from that bar on sits 100¢ higher than unfolded, so those bars sound a semitone higher. Each retune stays small relative to the base fundamental, which was the point, but a single step can now be up to 100¢ from the previous offset, where unfolded it was at most 50¢.
+  - `foldOffsets: false` restores the old behaviour.
+- **Rare colours stay for Avery to hear.** How often each quality appears over the 378 chords with modulation on in the harmonization sweep (`assert-harmony.mjs` prints this table):
+
+| quality | chords | share |
+|---|--:|--:|
+| major_7th | 96 | 25.4% |
+| major_triad | 90 | 23.8% |
+| sus4 | 62 | 16.4% |
+| minor_triad | 34 | 9.0% |
+| sus2 | 32 | 8.5% |
+| minor_major_7th | 18 | 4.8% |
+| dom7_sus4 | 16 | 4.2% |
+| dim_triad | 8 | 2.1% |
+| dominant_7th | 8 | 2.1% |
+| aug_triad | 6 | 1.6% |
+| minor_7th | 4 | 1.1% |
+| half_dim7 | 4 | 1.1% |
+| dim7 | 0 | 0% |
+
+**Flag for Avery:** maj7 leads the table. mMaj7 and aug come mostly from tone-rich rows, where they hold one more lead note than a triad would.
+
+## Phase 4: arrangement and Compose (built 2026-10-21, sprint)
+
+`Composer/core/compose.js` and `Composer/core/compose-worker.js` (a module worker running the same pure call), checked by `Composer/tests/assert-compose.mjs`.
+
+**The call.** `compose(layers, cycleSeconds, { seed = 1, overrides, worker })` returns a deterministic, JSON-serialisable spec: the same inputs and seed give byte-identical JSON. Refusals are `{ version, input, refused: true, reason: 'tooDense' | 'tooLarge' | 'tooFewTones', detail }`.
+
+**The spec phase 5 reads:**
+
+- `{ version: 'composer-spec-v1', input: { layers, cycleSeconds, seed, overrides }, knobs, chords, modulations, parts, decisions, stats }`
+- `knobs`: `{ bars, slotsPerBar, beatsPerBar: 4, anchors, phase: [num, den], frameCentsEachSide, root, modulation, table, tempoBpm, leader: 'lead', baseHz, cycleSeconds }`
+- `chords[bar]`: `{ bar, name, quality, intervals, pcs, rootPc, rootTone, rootNode, offsetCents, fundamentalRatio, offGrid, exceptions, empty }`
+- `modulations`: `[{ bar, cents, fundamentalRatio }]`
+- `parts`: lead, chords, comp, bass, inner, each `{ id, role, sound, struck, legato, enabled, notes }`
+- each note: `{ node, tick, time, ratio, octave, hz, duration, velocity, bar, slot, retrigger }`, plus `voice` on the chords part
+- `hz` = baseHz × ratio × 2^octave × the bar's `fundamentalRatio`
+- `time` counts seconds from the phase (bar 1's downbeat). The cycle loops, so a note in bar 1's first window that falls just before the downbeat sounds at the end of the cycle.
+- `decisions`: `[{ what, value, why }]`, one per choice: frame, root, bars, slots, tempo, anchors, phase, modulation, table, leader, comping layer, and sound, legato and enabled for each part, plus baseHz.
+- `stats`: onsets, tones, grid, onsets per slot, notes per part, lead phrases, second-pass wins, exceptions, chord voices per bar, bass bars opened on the root, inner notes on lead slots, the comping layer and its score.
+
+How it works. Each choice here is **proposed, not ruled** unless marked decided:
+
+- **The meter.** N is whichever of 1, 2, 4, 8 puts 60·N·4/T inside 90–130 BPM, the nearest 110 when several do. When none does, the nearest one, and the spec says so.
+  - S starts at 8. While the slots would hold under 3 onsets each on average, S drops to 6, 4, then 3, and only then N halves, keeping the tempo before the slots. Example: 8:7:6:5 in 4 s plays 2 bars of 3 slots at 120 BPM.
+- **The other knobs.**
+  - Anchors are partitioned (decided: "it starts with partitioned anchors").
+  - The phase is one of the root's first three downbeats, picked by the seed.
+  - Frame ±15¢ (decided); the root comes from `defaultRoot`; modulation is on; the leader is the lead (v1).
+  - The lean table runs on the main thread; the full table when `worker: true`.
+- **The seed** drives the phase, the chords, comping and inner sounds (each from its proposed pair), and ties between comping layers. Everything else is rule-based.
+- **Chords.** Each chord class gets one voice, root first: the bar's onset of that class (inside the bar's frame) with the most strikes, then the earliest.
+  - The voices stack close from an octave under the bar's root, each the lowest register above the voice under it.
+  - A voice sounds at its onset, so a chord builds as its tones arrive.
+  - Legato in a chord part works per voice: a note holds until that voice's next note.
+- **Comping.** One layer of the rhythm, cut into the bars and their slots. A slot's step is the layer's first strike in it, and it sounds only when that strike's tone is one of the bar's chord tones (rhythm-claves.js' tone sets, chunk-comping.js' ranking).
+  - The layer chosen makes the best claves: 25–50% of its steps sounding, a straight (4, 8, 16) or triplet (3, 6, 12) count of steps per bar, and a stroke in every bar.
+  - A bar with no stroke is struck once on its root onset.
+  - Overworld cuts a layer by its own strike count. That fails here: a layer of a large rhythm strikes hundreds of times a bar, which first gave 350 comping notes on the 16k row. Cutting by slot steps fixes it.
+- **Bass.** Mined bar by bar, rooted on the bar's root tone, two octaves under the lead's range.
+  - The line must open on a tone of the root's class where it can; lines.js gained a `startTones` rule for this. Otherwise the cheapest line wins, and a bar with no line plays its root onset.
+  - Before `startTones`, the 16k row opened 0 of 8 bars on the root; now it opens 8 of 8.
+- **Inner voice.** A lead line, sparse or mid band, over the chords an octave under the lead.
+  - It never plays the lead's onsets, and pays 0.6 per note on a slot where the lead sounds. lines.js gained `avoidSlots`, `avoidNodes` and an `avoid` weight for this.
+- **Sounds.**
+  - Lead: flute when legato, vibes when not.
+  - Bass: sub when legato, upright when not.
+  - Chords: warm or glassbed. Comping: marimba or kalimba. Inner: reed or harp. These three are picked by the seed.
+  - A sound is "struck" when its Audio/voices note recipe has a struck envelope.
+- **Legato** (decided: per part, its own notes only).
+  - On: a note holds until the part's next note.
+  - Off: a note lasts its slot, or the gap to the part's next note if that is shorter.
+  - The last note runs to the end of the cycle.
+  - A struck sound in legato retriggers on every note. A held sound is struck once and moved: only its first note has `retrigger`.
+  - Defaults: chords and inner on, comping off, bass off. The lead is on when its median gap is 2 slots or less.
+- **Pitch.** baseHz puts the lead's median pitch at √(440·660) ≈ 539 Hz, before any bar's retune.
+- **Velocity.** Lead 0.8, +0.1 on strong beats. Chords 0.45. Comping 0.55, +0.1 per extra layer striking. Bass 0.75. Inner 0.5.
+
+**Timing** (Node; Compose end to end):
+
+| row | meter | lean | full |
+|---|---|--:|--:|
+| 4099:4093:4091:4079 (16,359 onsets), 16 s | 8 × 8 | 308 ms | 1,000 ms |
+| 768:784, 8 s | 4 × 8 | 242 ms | 947 ms |
+| 768:769, 8 s | 4 × 8 | 105 ms | 377 ms |
+
+Lean stays under the 1 s main-thread target on all three rows.
 
 ## Layout (agreed earlier, 2026-10-21)
 

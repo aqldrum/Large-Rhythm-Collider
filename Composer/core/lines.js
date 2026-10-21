@@ -44,7 +44,7 @@
 import { toneGate, MIN_TONES } from './row.js';
 
 export const COMPOSER_LINES_VERSION = 'composer-lines-v1';
-export const DEFAULT_WEIGHTS = Object.freeze({ accent: 1, support: 0.15, outside: 0.3, chord: 1, contour: 1, gap: 0.5, interval: 1, recovery: 1, close: 1 });
+export const DEFAULT_WEIGHTS = Object.freeze({ accent: 1, support: 0.15, outside: 0.3, chord: 1, contour: 1, gap: 0.5, interval: 1, recovery: 1, close: 1, avoid: 0 });
 /** under a harmony the chords pull the line and the contour only shapes it; a foreign tone is dearer (chunk-lines) */
 export const HARMONY_WEIGHTS = Object.freeze({ contour: 0.5, outside: 0.8 });
 /** cents: under `same` two pitches are one; a step is up to `step` (a whole tone, wide); a skip up to `skip` (a fourth, wide) */
@@ -204,11 +204,12 @@ export function rolesOf(lattice, r) {
 /** The cost of a line, term by term (unweighted sums in `terms`, the weighted total in `cost`). picks = [{ slot, cand }] in slot order. */
 export function scoreLine(lattice, picks, rules) {
   const r = rulesOf(rules), w = r.weights, S = lattice.S, roles = rolesOf(lattice, r);
-  const terms = { accent: 0, support: 0, outside: 0, chord: 0, contour: 0, gap: 0, interval: 0, recovery: 0, close: 0 };
+  const terms = { accent: 0, support: 0, outside: 0, chord: 0, contour: 0, gap: 0, interval: 0, recovery: 0, close: 0, avoid: 0 };
   let leap = 0;
   picks.forEach((p, i) => {
     const slot = lattice.slots[p.slot], c = slot.cands[p.cand], role = roles[p.slot][p.cand];
     terms.accent += 1 - slot.accent; terms.support += 1 - c.share; if (role.foreign) terms.outside += 1;
+    if (r.avoidSlots && r.avoidSlots[p.slot]) terms.avoid += 1;
     terms.chord += role.chord;
     if (r.contour) terms.contour += Math.abs(c.pitch - contourAt(r.contour, p.slot, lattice.P)) / 600;
     if (i === 0) { terms.gap += (p.slot / S) ** 2; return; }
@@ -252,14 +253,16 @@ export function pickLines(lattice, rules = {}) {
   const limited = r.maxRun < Infinity, F = limited ? 2 + Math.max(1, r.maxRun) : 3;
   const WIDTH = (nMax + 1) * F;
   const cost = new Float64Array(total * WIDTH).fill(Infinity), back = new Int32Array(total * WIDTH).fill(-1);
+  const avoidNodes = r.avoidNodes ? new Set(r.avoidNodes) : null, startTones = r.startTones ? new Set(r.startTones) : null;
   for (let k = 0; k < P; k++) {
-    const slot = slots[k];
+    const slot = slots[k], busy = r.avoidSlots && r.avoidSlots[k] ? w.avoid : 0;
     for (let bi = 0; bi < slot.cands.length; bi++) {
       const b = slot.cands[bi], rb = roles[k][bi];
       if (rb.foreign && !slot.weak) continue;
-      const own = w.accent * (1 - slot.accent) + w.support * (1 - b.share) + (rb.foreign ? w.outside : 0) + w.chord * rb.chord
+      if (avoidNodes && avoidNodes.has(b.node)) continue;
+      const own = busy + w.accent * (1 - slot.accent) + w.support * (1 - b.share) + (rb.foreign ? w.outside : 0) + w.chord * rb.chord
         + (r.contour ? w.contour * Math.abs(b.pitch - contourAt(r.contour, k, P)) / 600 : 0), sb = (base[k] + bi) * WIDTH;
-      if (k < maxGap) cost[sb + F] = w.gap * (k / S) ** 2 + own;
+      if (k < maxGap && (!startTones || startTones.has(b.tone))) cost[sb + F] = w.gap * (k / S) ** 2 + own;
       for (let j = Math.max(0, k - maxGap); j < k; j++) {
         const gap = w.gap * ((k - j) / S) ** 2, from = slots[j].cands;
         for (let ai = 0; ai < from.length; ai++) {
@@ -345,11 +348,14 @@ export function describeLine(row, lattice, pick, rules, tag = {}) {
  * the cheapest line per note inside each band, ranked cheapest per note first. A type's line found twice is kept once:
  * the cheaper per note under one motion, the first found across motions (chunk-lines' rule).
  *   opts = { from = 0, bars, table: 'full' | 'lean', types: [type name] | LINE_TYPES entries, targets (default:
- *            rooted on the frame's root), weights, minTones }
+ *            rooted on the frame's root), weights, minTones, register (cents added to the range and contour: −1200 an
+ *            octave down), rules (added to every run's: e.g. avoidSlots [bool by lattice slot] and avoidNodes [onset
+ *            index] — an avoided node is never a candidate, an avoided slot costs weights.avoid a note; startTones [tone
+ *            index] — the tones a line may open on) }
  * → { version, table, from, bars, slotsPerBar, root, over, frame, runs, lines } | { tooFewTones, tones, min }
  */
 export function mineLines(row, cells, frame, opts = {}) {
-  const { from = 0, table = 'full', weights = {}, minTones = MIN_TONES } = opts;
+  const { from = 0, table = 'full', weights = {}, minTones = MIN_TONES, register = 0, rules: extra = {} } = opts;
   const refused = toneGate(row, minTones);
   if (refused) return refused;
   if (!TABLES.includes(table)) fail(`table must be one of ${TABLES.join(', ')}, not ${JSON.stringify(table)}`);
@@ -358,7 +364,8 @@ export function mineLines(row, cells, frame, opts = {}) {
   const targets = opts.targets ?? rootTargets(row, Array.isArray(frame) ? frame[0] : frame), first = targets.bars[0];
   const harmonyWeights = targets.scale ? HARMONY_WEIGHTS : {};
   const lattices = new Map(), P = bars * cells.slotsPerBar;
-  const latticeFor = (width) => { if (!lattices.has(width)) lattices.set(width, buildLattice(row, cells, frame, { from, bars, low: first.anchor, width })); return lattices.get(width); };
+  const low = first.anchor + register;
+  const latticeFor = (width) => { if (!lattices.has(width)) lattices.set(width, buildLattice(row, cells, frame, { from, bars, low, width })); return lattices.get(width); };
   const lines = [], bySerial = new Map();
   let runs = 0;
   const passes = table === 'lean' ? 1 : Math.max(...types.map((t) => (t.motions || [null]).length));
@@ -368,7 +375,7 @@ export function mineLines(row, cells, frame, opts = {}) {
     const motion = motions[pass], lattice = latticeFor(type.width ?? RANGE_WIDTH);
     for (const band of type.bands) for (const contour of type.contours) {
       const [nMin, nMax] = bandNotes(band, P);
-      const rules = { ...type.rules, ...(motion ? MOTIONS[motion] : {}), strict: band.strict, contour: { ...contour, low: contour.low + first.anchor }, targets,
+      const rules = { ...type.rules, ...(motion ? MOTIONS[motion] : {}), ...extra, strict: band.strict, contour: { ...contour, low: contour.low + low }, targets,
         weights: { ...(type.rules.weights || {}), ...harmonyWeights, ...weights }, nMin, nMax };
       runs++;
       let best = null;

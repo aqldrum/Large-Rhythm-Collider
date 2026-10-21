@@ -26,8 +26,9 @@
 //                 5. the lower root, then the simpler quality
 //               The root tone is r; its frame (`frame`) is centred on it, and the bar's targets are read there.
 //   modulation  the chosen root tone sounds, at the bar's offset, more than ±frame from the grid: then from this bar on
-//               the fundamental is retuned so it lands exactly on the grid's nearest step — { bar, cents, fundamentalRatio }
-//               relative to the base fundamental. With `modulation: false` the fundamental never moves: only roots on
+//               the fundamental is retuned so it lands exactly on a step of the grid — { bar, cents, fundamentalRatio }
+//               relative to the base fundamental. The cumulative offset is folded into [−50, +50)¢ (`foldOffsets`,
+//               default on): where the nearest step would take it past, the root lands on the step beside it instead. With `modulation: false` the fundamental never moves: only roots on
 //               the grid are candidates, and a bar with none keeps its best root flagged `offGrid`.
 //   second pass the lead is mined again over the chords (a bar a chord, each in its own frame, the parent scale the
 //               union of the chords' classes), and per phrase the cheaper per note under the harmony weights is kept.
@@ -84,10 +85,14 @@ export function voiceLeading(a, b) {
  * The modulation rule on its own: a root at `rootCents` (above 1/1) in a bar sounding at `offset` cents, on the grid of
  * 100¢ steps from `gridBase`. → { dev (cents off the grid), modulate, offset (the bar's offset after it) }
  */
-export function modulationStep(rootCents, offset, gridBase, eachSide) {
+export function modulationStep(rootCents, offset, gridBase, eachSide, { fold = true } = {}) {
   const { dev } = classOfCents(rootCents + offset - gridBase);
   const modulate = Math.abs(dev) > eachSide + EPS;
-  return { dev, modulate, offset: modulate ? offset - dev : offset };
+  let next = modulate ? offset - dev : offset;
+  // folded (proposed, not ruled): the cumulative offset kept in [−50, +50)¢, so retunes never drift away from the base;
+  // a fold of 100¢ moves the root onto the neighbouring step, which the grid then names one class over
+  if (modulate && fold) { next -= 100 * Math.floor((next + 50) / 100); if (Math.abs(next) < EPS) next = 0; }
+  return { dev, modulate, offset: next };
 }
 
 /**
@@ -98,7 +103,7 @@ export function modulationStep(rootCents, offset, gridBase, eachSide) {
  * → { root (an entry of tones), quality, intervals, pcs (on the grid), rootPc, violations, held, support, offGrid,
  *     modulate, dev, offset } | null (no tones)
  */
-export function chooseChord(tones, lead, { eachSide = DEFAULT_FRAME_CENTS_EACH_SIDE, gridBase = 0, offset = 0, modulation = true, prevPcs = null } = {}) {
+export function chooseChord(tones, lead, { eachSide = DEFAULT_FRAME_CENTS_EACH_SIDE, gridBase = 0, offset = 0, modulation = true, prevPcs = null, foldOffsets = true } = {}) {
   if (!tones.length) return null;
   const e = eachSide + EPS;
   let total = 0; for (const t of tones) total += t.weight;
@@ -127,9 +132,12 @@ export function chooseChord(tones, lead, { eachSide = DEFAULT_FRAME_CENTS_EACH_S
       }
     });
   }
-  const step = modulationStep(best.root.cents, offset, gridBase, eachSide);
+  const step = modulationStep(best.root.cents, offset, gridBase, eachSide, { fold: foldOffsets });
   const modulate = modulation && step.modulate;
-  return { root: best.root, quality: best.quality, intervals: best.intervals, pcs: best.pcs, rootPc: best.rootPc, violations: best.violations, held: best.held, support: best.support,
+  // the grid names the root after the retune (a folded retune can move it one class over)
+  const rootPc = modulate ? classOfCents(best.root.cents + step.offset - gridBase).pc : best.rootPc;
+  const pcs = modulate ? best.intervals.map((i) => mod(rootPc + i, 12)).sort((a, b) => a - b) : best.pcs;
+  return { root: best.root, quality: best.quality, intervals: best.intervals, pcs, rootPc, violations: best.violations, held: best.held, support: best.support,
     offGrid: offGrid || (!modulation && step.modulate), modulate, dev: step.dev, offset: modulate ? step.offset : offset };
 }
 
@@ -179,7 +187,7 @@ function costOn(lattice, line, rules) {
 
 /**
  * Harmony from melody over the cycle's cells.
- *   opts = { root (a tone, default the frame's default root), frameCentsEachSide (15), modulation (true),
+ *   opts = { root (a tone, default the frame's default root), frameCentsEachSide (15), modulation (true), foldOffsets (true),
  *            table ('full' | 'lean'), referenceName ('C': the base root's name, for chord names), minTones }
  * → { version, root, frameCentsEachSide, modulation, table, lead, chords, targets, modulations, passes, exceptions }
  *   | { tooFewTones, tones, min }
@@ -190,7 +198,7 @@ function costOn(lattice, line, rules) {
  *   passes   { phrases: [{ from, bars, first: { id, perNote }, second: { id, perNote } | null, kept }], secondWins }
  */
 export function harmonize(row, cells, opts = {}) {
-  const { root = null, frameCentsEachSide: e = DEFAULT_FRAME_CENTS_EACH_SIDE, modulation = true, table = 'full', referenceName = 'C', minTones = MIN_TONES } = opts;
+  const { root = null, frameCentsEachSide: e = DEFAULT_FRAME_CENTS_EACH_SIDE, modulation = true, table = 'full', referenceName = 'C', minTones = MIN_TONES, foldOffsets = true } = opts;
   const refused = toneGate(row, minTones);
   if (refused) return refused;
   if (!TABLES.includes(table)) fail(`table must be one of ${TABLES.join(', ')}`);
@@ -212,7 +220,7 @@ export function harmonize(row, cells, opts = {}) {
     let strong = inBar.filter((n) => isStrongBeat(n.beat, S));
     if (!strong.length && inBar.length) strong = [inBar[0]];
     const lead = inBar.map((n) => ({ cents: n.cents, strong: strong.includes(n) }));
-    const pick = chooseChord(tones, lead, { eachSide: e, gridBase, offset, modulation, prevPcs });
+    const pick = chooseChord(tones, lead, { eachSide: e, gridBase, offset, modulation, prevPcs, foldOffsets });
     if (!pick) { chords.push(null); continue; }
     if (pick.modulate) modulations.push({ bar: k, cents: pick.offset, fundamentalRatio: 2 ** (pick.offset / 1200) });
     offset = pick.offset; prevPcs = pick.pcs;
