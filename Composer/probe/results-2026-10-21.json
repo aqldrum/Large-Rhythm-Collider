@@ -1,0 +1,9395 @@
+{
+ "meta": {
+  "date": "2026-10-21",
+  "node": "v24.12.0",
+  "platform": "darwin 24.6.0 arm64",
+  "cpu": "Apple M4 Max",
+  "cores": 14,
+  "memGB": 36,
+  "runtime": "/Users/averylogan/Dev/LRC/Compiler/Codex Compiler (dev)/Overworld/econ/runtime",
+  "mainThreadHeapLimitMB": 4288,
+  "budgetsMs": {
+   "build": 180000,
+   "slots": 90000,
+   "frame": 120000,
+   "lattice": 60000,
+   "pick": 60000,
+   "mineRooted": 300000,
+   "mineLean": 300000,
+   "mineHarmony": 300000,
+   "mineDefault": 300000
+  },
+  "note": "times in ms (median of up to 5 runs when a run < 400 ms); rss in MB, sampled every 10 ms in the case's own process; heap = worker isolate used heap + external (typed arrays) after gc"
+ },
+ "results": [
+  {
+   "group": "coprime",
+   "name": "8:7:6:5",
+   "layers": [
+    8,
+    7,
+    6,
+    5
+   ],
+   "estimate": {
+    "grid": 840,
+    "onsets": 22,
+    "layerSum": 26,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 840,
+    "onsets": 22,
+    "moments": 22,
+    "tones": 7,
+    "exactTones": 7,
+    "maxGap": 105,
+    "maxOctave": 2,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.8,
+     "ms": 0.066,
+     "runs": 5,
+     "kernelMs": 0.069,
+     "kernelRuns": 5,
+     "grid": 840,
+     "onsets": 22,
+     "moments": 22,
+     "tones": 7,
+     "exactTones": 7,
+     "maxGap": 105,
+     "maxOctave": 2,
+     "toneIndexOverflow": false,
+     "heapMB": 5.6,
+     "externalMB": 3.1,
+     "rssPeakMB": 63.6
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 63.6,
+     "P8": {
+      "ms": 0.015,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 1.25,
+       "max": 2
+      },
+      "tonesPerSlot": {
+       "mean": 1.25,
+       "max": 2
+      }
+     },
+     "P16": {
+      "ms": 0.007,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 0.625,
+       "max": 1
+      },
+      "tonesPerSlot": {
+       "mean": 0.625,
+       "max": 1
+      }
+     },
+     "P32": {
+      "ms": 0.007,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 0.313,
+       "max": 1
+      },
+      "tonesPerSlot": {
+       "mean": 0.313,
+       "max": 1
+      }
+     },
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 63.8
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 63.8,
+     "ms": 0.015,
+     "runs": 5,
+     "theta": 68.826,
+     "frameTones": 4,
+     "frameNodes": 16,
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 63.9
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 63.9,
+     "2x8": {
+      "ms": 0.033,
+      "runs": 5,
+      "swing": 0.5,
+      "windowMoments": 1.375,
+      "candsPerSlot": {
+       "mean": 2.125,
+       "max": 4
+      }
+     },
+     "4x8": {
+      "ms": 0.034,
+      "runs": 5,
+      "swing": 0.5,
+      "windowMoments": 0.688,
+      "candsPerSlot": {
+       "mean": 1.063,
+       "max": 3
+      }
+     },
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 64
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 64.1,
+     "ms": 0.359,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 2,
+     "heapMB": 5.8,
+     "externalMB": 3.1,
+     "rssPeakMB": 67.2
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 67.4,
+     "ms": 23.062,
+     "runs": 5,
+     "planMs": 0.076,
+     "latticeMs": 0.823,
+     "pickMs": 18.145,
+     "describeMs": 3.656,
+     "mergeMs": 0.093,
+     "maxPieceMs": 1.324,
+     "pieces": 36,
+     "tasks": 9,
+     "lineRuns": 432,
+     "lines": 193,
+     "root": "7/4",
+     "candsPerSlot": {
+      "mean": 1.705,
+      "max": 7
+     },
+     "heapMB": 6.1,
+     "externalMB": 3.1,
+     "rssPeakMB": 117.4
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 117.1,
+     "ms": 5.389,
+     "runs": 5,
+     "planMs": 0.046,
+     "latticeMs": 0.276,
+     "pickMs": 4.208,
+     "describeMs": 0.775,
+     "mergeMs": 0.021,
+     "maxPieceMs": 1.229,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 60,
+     "root": "7/4",
+     "candsPerSlot": {
+      "mean": 1.827,
+      "max": 7
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.1,
+     "rssPeakMB": 124.6
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 124.6,
+     "ms": 11.072,
+     "runs": 5,
+     "planMs": 0.075,
+     "latticeMs": 1.25,
+     "pickMs": 7.725,
+     "describeMs": 1.965,
+     "mergeMs": 0.065,
+     "maxPieceMs": 0.662,
+     "pieces": 46,
+     "tasks": 8,
+     "lineRuns": 476,
+     "lines": 162,
+     "root": null,
+     "candsPerSlot": {
+      "mean": 1.659,
+      "max": 8
+     },
+     "heapMB": 6.1,
+     "externalMB": 3.1,
+     "rssPeakMB": 149.1
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 148.9,
+     "ms": 38.929,
+     "runs": 5,
+     "planMs": 0.059,
+     "latticeMs": 2.179,
+     "pickMs": 29.258,
+     "describeMs": 7.17,
+     "mergeMs": 0.18,
+     "maxPieceMs": 0.953,
+     "pieces": 84,
+     "tasks": 19,
+     "lineRuns": 993,
+     "lines": 519,
+     "root": "7/4",
+     "candsPerSlot": {
+      "mean": 2.648,
+      "max": 10
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.1,
+     "rssPeakMB": 176.4
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 176.5
+  },
+  {
+   "group": "coprime",
+   "name": "17:19:23:29",
+   "layers": [
+    17,
+    19,
+    23,
+    29
+   ],
+   "estimate": {
+    "grid": 215441,
+    "onsets": 85,
+    "layerSum": 88,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 215441,
+    "onsets": 85,
+    "moments": 85,
+    "tones": 24,
+    "exactTones": 24,
+    "maxGap": 7429,
+    "maxOctave": 4,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.5,
+     "ms": 0.149,
+     "runs": 5,
+     "kernelMs": 0.155,
+     "kernelRuns": 5,
+     "grid": 215441,
+     "onsets": 85,
+     "moments": 85,
+     "tones": 24,
+     "exactTones": 24,
+     "maxGap": 7429,
+     "maxOctave": 4,
+     "toneIndexOverflow": false,
+     "heapMB": 5.6,
+     "externalMB": 3.1,
+     "rssPeakMB": 68.7
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 68.7,
+     "P8": {
+      "ms": 0.027,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 3.875,
+       "max": 5
+      },
+      "tonesPerSlot": {
+       "mean": 3.75,
+       "max": 5
+      }
+     },
+     "P16": {
+      "ms": 0.019,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 1.938,
+       "max": 3
+      },
+      "tonesPerSlot": {
+       "mean": 1.938,
+       "max": 3
+      }
+     },
+     "P32": {
+      "ms": 0.024,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 0.969,
+       "max": 2
+      },
+      "tonesPerSlot": {
+       "mean": 0.969,
+       "max": 2
+      }
+     },
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 68.9
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 69,
+     "ms": 0.081,
+     "runs": 5,
+     "theta": 94.255,
+     "frameTones": 12,
+     "frameNodes": 47,
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 69.2
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 69.2,
+     "2x8": {
+      "ms": 0.11,
+      "runs": 5,
+      "swing": 0.5,
+      "windowMoments": 5.313,
+      "candsPerSlot": {
+       "mean": 7.438,
+       "max": 10
+      }
+     },
+     "4x8": {
+      "ms": 0.09,
+      "runs": 5,
+      "swing": 0.5,
+      "windowMoments": 2.656,
+      "candsPerSlot": {
+       "mean": 4.188,
+       "max": 7
+      }
+     },
+     "heapMB": 5.8,
+     "externalMB": 3.1,
+     "rssPeakMB": 69.4
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 69.4,
+     "ms": 0.833,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 5.8,
+     "externalMB": 3.1,
+     "rssPeakMB": 74.6
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 75,
+     "ms": 111.395,
+     "runs": 5,
+     "planMs": 0.113,
+     "latticeMs": 3.308,
+     "pickMs": 99.421,
+     "describeMs": 8.905,
+     "mergeMs": 0.139,
+     "maxPieceMs": 8.665,
+     "pieces": 27,
+     "tasks": 9,
+     "lineRuns": 324,
+     "lines": 254,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 5.735,
+      "max": 18
+     },
+     "heapMB": 6.1,
+     "externalMB": 3.1,
+     "rssPeakMB": 133
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 132.6,
+     "ms": 22.412,
+     "runs": 5,
+     "planMs": 0.061,
+     "latticeMs": 1.076,
+     "pickMs": 18.671,
+     "describeMs": 2.668,
+     "mergeMs": 0.038,
+     "maxPieceMs": 6.298,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 83,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 5.957,
+      "max": 18
+     },
+     "heapMB": 6.1,
+     "externalMB": 3.1,
+     "rssPeakMB": 152
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 152,
+     "ms": 37.181,
+     "runs": 5,
+     "planMs": 0.119,
+     "latticeMs": 1.615,
+     "pickMs": 30.463,
+     "describeMs": 5.27,
+     "mergeMs": 0.063,
+     "maxPieceMs": 5.251,
+     "pieces": 22,
+     "tasks": 8,
+     "lineRuns": 212,
+     "lines": 139,
+     "root": "17/16",
+     "candsPerSlot": {
+      "mean": 7.13,
+      "max": 20
+     },
+     "heapMB": 6.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 170.4
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 170.1,
+     "ms": 151.214,
+     "runs": 5,
+     "planMs": 0.078,
+     "latticeMs": 2.53,
+     "pickMs": 132.613,
+     "describeMs": 15.264,
+     "mergeMs": 0.192,
+     "maxPieceMs": 7.335,
+     "pieces": 57,
+     "tasks": 19,
+     "lineRuns": 681,
+     "lines": 495,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 7.863,
+      "max": 19
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.1,
+     "rssPeakMB": 213.7
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 213.7
+  },
+  {
+   "group": "coprime",
+   "name": "41:42:43",
+   "layers": [
+    41,
+    42,
+    43
+   ],
+   "estimate": {
+    "grid": 74046,
+    "onsets": 124,
+    "layerSum": 126,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 74046,
+    "onsets": 124,
+    "moments": 124,
+    "tones": 41,
+    "exactTones": 41,
+    "maxGap": 1722,
+    "maxOctave": 5,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.6,
+     "ms": 0.221,
+     "runs": 5,
+     "kernelMs": 0.115,
+     "kernelRuns": 5,
+     "grid": 74046,
+     "onsets": 124,
+     "moments": 124,
+     "tones": 41,
+     "exactTones": 41,
+     "maxGap": 1722,
+     "maxOctave": 5,
+     "toneIndexOverflow": false,
+     "heapMB": 5.6,
+     "externalMB": 3.1,
+     "rssPeakMB": 68
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 68.2,
+     "P8": {
+      "ms": 0.031,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 5.25,
+       "max": 6
+      },
+      "tonesPerSlot": {
+       "mean": 5,
+       "max": 6
+      }
+     },
+     "P16": {
+      "ms": 0.014,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 2.625,
+       "max": 3
+      },
+      "tonesPerSlot": {
+       "mean": 2.625,
+       "max": 3
+      }
+     },
+     "P32": {
+      "ms": 0.021,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 1.313,
+       "max": 3
+      },
+      "tonesPerSlot": {
+       "mean": 1.313,
+       "max": 3
+      }
+     },
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 68.3
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 68.3,
+     "ms": 0.09,
+     "runs": 5,
+     "theta": 65.825,
+     "frameTones": 19,
+     "frameNodes": 70,
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 68.3
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 68.3,
+     "2x8": {
+      "ms": 0.129,
+      "runs": 5,
+      "swing": 0.5,
+      "windowMoments": 7.75,
+      "candsPerSlot": {
+       "mean": 12.25,
+       "max": 15
+      }
+     },
+     "4x8": {
+      "ms": 0.117,
+      "runs": 5,
+      "swing": 0.5,
+      "windowMoments": 3.875,
+      "candsPerSlot": {
+       "mean": 6.375,
+       "max": 8
+      }
+     },
+     "heapMB": 5.8,
+     "externalMB": 3.1,
+     "rssPeakMB": 69.6
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 69.8,
+     "ms": 1.651,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 5.8,
+     "externalMB": 3.1,
+     "rssPeakMB": 74
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 74.2,
+     "ms": 494.876,
+     "runs": 1,
+     "planMs": 0.519,
+     "latticeMs": 6.994,
+     "pickMs": 453.817,
+     "describeMs": 33.163,
+     "mergeMs": 0.382,
+     "maxPieceMs": 18.392,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 518,
+     "root": "861/688",
+     "candsPerSlot": {
+      "mean": 8.2,
+      "max": 24
+     },
+     "heapMB": 6.1,
+     "externalMB": 3.1,
+     "rssPeakMB": 126.7
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 126.7,
+     "ms": 46.82,
+     "runs": 5,
+     "planMs": 0.084,
+     "latticeMs": 0.673,
+     "pickMs": 41.71,
+     "describeMs": 4.356,
+     "mergeMs": 0.038,
+     "maxPieceMs": 13.388,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 85,
+     "root": "861/688",
+     "candsPerSlot": {
+      "mean": 8.615,
+      "max": 24
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.1,
+     "rssPeakMB": 136.3
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 136.3,
+     "ms": 212.212,
+     "runs": 5,
+     "planMs": 0.103,
+     "latticeMs": 2.641,
+     "pickMs": 187.619,
+     "describeMs": 22.054,
+     "mergeMs": 0.131,
+     "maxPieceMs": 12.949,
+     "pieces": 40,
+     "tasks": 8,
+     "lineRuns": 428,
+     "lines": 364,
+     "root": "21/20",
+     "candsPerSlot": {
+      "mean": 7.914,
+      "max": 24
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.1,
+     "rssPeakMB": 219.6
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 219.6,
+     "ms": 567.784,
+     "runs": 1,
+     "planMs": 0.115,
+     "latticeMs": 7.55,
+     "pickMs": 503.007,
+     "describeMs": 56.789,
+     "mergeMs": 0.323,
+     "maxPieceMs": 12.724,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 998,
+     "root": "861/688",
+     "candsPerSlot": {
+      "mean": 11.044,
+      "max": 24
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.1,
+     "rssPeakMB": 277.5
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 277.5
+  },
+  {
+   "group": "coprime",
+   "name": "61:67:71:73",
+   "layers": [
+    61,
+    67,
+    71,
+    73
+   ],
+   "estimate": {
+    "grid": 21182921,
+    "onsets": 269,
+    "layerSum": 272,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 21182921,
+    "onsets": 269,
+    "moments": 269,
+    "tones": 72,
+    "exactTones": 72,
+    "maxGap": 290177,
+    "maxOctave": 6,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.4,
+     "ms": 0.506,
+     "runs": 5,
+     "kernelMs": 0.394,
+     "kernelRuns": 5,
+     "grid": 21182921,
+     "onsets": 269,
+     "moments": 269,
+     "tones": 72,
+     "exactTones": 72,
+     "maxGap": 290177,
+     "maxOctave": 6,
+     "toneIndexOverflow": false,
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 68.9
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 69,
+     "P8": {
+      "ms": 0.073,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 11.875,
+       "max": 14
+      },
+      "tonesPerSlot": {
+       "mean": 10.625,
+       "max": 13
+      }
+     },
+     "P16": {
+      "ms": 0.056,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 5.938,
+       "max": 8
+      },
+      "tonesPerSlot": {
+       "mean": 5.75,
+       "max": 8
+      }
+     },
+     "P32": {
+      "ms": 0.021,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 2.969,
+       "max": 4
+      },
+      "tonesPerSlot": {
+       "mean": 2.969,
+       "max": 4
+      }
+     },
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 69.2
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 69.3,
+     "ms": 0.167,
+     "runs": 5,
+     "theta": 62.396,
+     "frameTones": 30,
+     "frameNodes": 134,
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 69.7
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 69.8,
+     "2x8": {
+      "ms": 0.287,
+      "runs": 5,
+      "swing": 0.3569,
+      "windowMoments": 12.001,
+      "candsPerSlot": {
+       "mean": 17.25,
+       "max": 21
+      }
+     },
+     "4x8": {
+      "ms": 0.354,
+      "runs": 5,
+      "swing": 0.5,
+      "windowMoments": 8.406,
+      "candsPerSlot": {
+       "mean": 12.75,
+       "max": 16
+      }
+     },
+     "heapMB": 5.9,
+     "externalMB": 3.1,
+     "rssPeakMB": 70.3
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 70.4,
+     "ms": 3.066,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 5.9,
+     "externalMB": 3.1,
+     "rssPeakMB": 79.6
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 79.7,
+     "ms": 1375.079,
+     "runs": 1,
+     "planMs": 0.639,
+     "latticeMs": 14.765,
+     "pickMs": 1308.835,
+     "describeMs": 50.442,
+     "mergeMs": 0.398,
+     "maxPieceMs": 80.165,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 506,
+     "root": "67/64",
+     "candsPerSlot": {
+      "mean": 14.434,
+      "max": 22
+     },
+     "heapMB": 6.1,
+     "externalMB": 3.1,
+     "rssPeakMB": 142.4
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 142.2,
+     "ms": 112.9,
+     "runs": 5,
+     "planMs": 0.128,
+     "latticeMs": 2.439,
+     "pickMs": 103.275,
+     "describeMs": 6.531,
+     "mergeMs": 0.048,
+     "maxPieceMs": 37.454,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 85,
+     "root": "67/64",
+     "candsPerSlot": {
+      "mean": 14.553,
+      "max": 21
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.1,
+     "rssPeakMB": 161.5
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 161.3,
+     "ms": 491.172,
+     "runs": 1,
+     "planMs": 0.287,
+     "latticeMs": 8.346,
+     "pickMs": 429.766,
+     "describeMs": 52.573,
+     "mergeMs": 0.199,
+     "maxPieceMs": 36.068,
+     "pieces": 44,
+     "tasks": 8,
+     "lineRuns": 460,
+     "lines": 374,
+     "root": "67/64",
+     "candsPerSlot": {
+      "mean": 13.545,
+      "max": 24
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.1,
+     "rssPeakMB": 180.5
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 180.5,
+     "ms": 1206.658,
+     "runs": 1,
+     "planMs": 0.19,
+     "latticeMs": 14.121,
+     "pickMs": 1111.162,
+     "describeMs": 80.789,
+     "mergeMs": 0.396,
+     "maxPieceMs": 43.184,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 1001,
+     "root": "67/64",
+     "candsPerSlot": {
+      "mean": 16.446,
+      "max": 23
+     },
+     "heapMB": 9.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 192.6
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 192.6
+  },
+  {
+   "group": "coprime",
+   "name": "201:202:203",
+   "layers": [
+    201,
+    202,
+    203
+   ],
+   "estimate": {
+    "grid": 8242206,
+    "onsets": 604,
+    "layerSum": 606,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 8242206,
+    "onsets": 604,
+    "moments": 604,
+    "tones": 200,
+    "exactTones": 201,
+    "maxGap": 40602,
+    "maxOctave": 7,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62,
+     "ms": 0.768,
+     "runs": 5,
+     "kernelMs": 0.58,
+     "kernelRuns": 5,
+     "grid": 8242206,
+     "onsets": 604,
+     "moments": 604,
+     "tones": 200,
+     "exactTones": 201,
+     "maxGap": 40602,
+     "maxOctave": 7,
+     "toneIndexOverflow": false,
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 70.1
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 70.2,
+     "P8": {
+      "ms": 0.071,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 27.25,
+       "max": 29
+      },
+      "tonesPerSlot": {
+       "mean": 23.375,
+       "max": 28
+      }
+     },
+     "P16": {
+      "ms": 0.029,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 13.625,
+       "max": 14
+      },
+      "tonesPerSlot": {
+       "mean": 12.688,
+       "max": 14
+      }
+     },
+     "P32": {
+      "ms": 0.025,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 6.813,
+       "max": 8
+      },
+      "tonesPerSlot": {
+       "mean": 6.594,
+       "max": 8
+      }
+     },
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 70.5
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 70.6,
+     "ms": 0.845,
+     "runs": 5,
+     "theta": 66.674,
+     "frameTones": 51,
+     "frameNodes": 190,
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 71.6
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 71.6,
+     "2x8": {
+      "ms": 0.181,
+      "runs": 5,
+      "swing": 0.1589,
+      "windowMoments": 11.997,
+      "candsPerSlot": {
+       "mean": 18.25,
+       "max": 22
+      }
+     },
+     "4x8": {
+      "ms": 0.251,
+      "runs": 5,
+      "swing": 0.3179,
+      "windowMoments": 12.001,
+      "candsPerSlot": {
+       "mean": 19.25,
+       "max": 24
+      }
+     },
+     "heapMB": 5.9,
+     "externalMB": 3.1,
+     "rssPeakMB": 72.9
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 73,
+     "ms": 2.77,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6,
+     "externalMB": 3.1,
+     "rssPeakMB": 80.8
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 80.8,
+     "ms": 1279.213,
+     "runs": 1,
+     "planMs": 0.645,
+     "latticeMs": 13.113,
+     "pickMs": 1162.452,
+     "describeMs": 102.612,
+     "mergeMs": 0.392,
+     "maxPieceMs": 69.599,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 517,
+     "root": "1261/807",
+     "candsPerSlot": {
+      "mean": 18.638,
+      "max": 24
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.1,
+     "rssPeakMB": 210.5
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 210.5,
+     "ms": 128.474,
+     "runs": 5,
+     "planMs": 0.147,
+     "latticeMs": 1.371,
+     "pickMs": 112.94,
+     "describeMs": 13.852,
+     "mergeMs": 0.052,
+     "maxPieceMs": 49.869,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 95,
+     "root": "1261/807",
+     "candsPerSlot": {
+      "mean": 18.904,
+      "max": 24
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.1,
+     "rssPeakMB": 217.1
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 217.2,
+     "ms": 618.397,
+     "runs": 1,
+     "planMs": 0.343,
+     "latticeMs": 6.666,
+     "pickMs": 527.861,
+     "describeMs": 83.336,
+     "mergeMs": 0.192,
+     "maxPieceMs": 36.966,
+     "pieces": 44,
+     "tasks": 8,
+     "lineRuns": 460,
+     "lines": 385,
+     "root": "849/815",
+     "candsPerSlot": {
+      "mean": 19.173,
+      "max": 24
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.1,
+     "rssPeakMB": 228.3
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 228.1,
+     "ms": 870.934,
+     "runs": 1,
+     "planMs": 0.252,
+     "latticeMs": 10.564,
+     "pickMs": 720.812,
+     "describeMs": 138.901,
+     "mergeMs": 0.404,
+     "maxPieceMs": 30.104,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 1009,
+     "root": "1261/807",
+     "candsPerSlot": {
+      "mean": 18.312,
+      "max": 24
+     },
+     "heapMB": 9.8,
+     "externalMB": 3.1,
+     "rssPeakMB": 274.5
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 274.6
+  },
+  {
+   "group": "coprime",
+   "name": "321:322:323",
+   "layers": [
+    321,
+    322,
+    323
+   ],
+   "estimate": {
+    "grid": 33385926,
+    "onsets": 964,
+    "layerSum": 966,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 33385926,
+    "onsets": 964,
+    "moments": 964,
+    "tones": 320,
+    "exactTones": 321,
+    "maxGap": 103362,
+    "maxOctave": 8,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.5,
+     "ms": 1.023,
+     "runs": 5,
+     "kernelMs": 0.753,
+     "kernelRuns": 5,
+     "grid": 33385926,
+     "onsets": 964,
+     "moments": 964,
+     "tones": 320,
+     "exactTones": 321,
+     "maxGap": 103362,
+     "maxOctave": 8,
+     "toneIndexOverflow": false,
+     "heapMB": 5.7,
+     "externalMB": 3.2,
+     "rssPeakMB": 71.7
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 72.1,
+     "P8": {
+      "ms": 0.126,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 43,
+       "max": 43
+      },
+      "tonesPerSlot": {
+       "mean": 36.75,
+       "max": 43
+      }
+     },
+     "P16": {
+      "ms": 0.04,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 21.5,
+       "max": 23
+      },
+      "tonesPerSlot": {
+       "mean": 20.063,
+       "max": 22
+      }
+     },
+     "P32": {
+      "ms": 0.032,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 10.75,
+       "max": 12
+      },
+      "tonesPerSlot": {
+       "mean": 10.469,
+       "max": 12
+      }
+     },
+     "heapMB": 5.7,
+     "externalMB": 3.2,
+     "rssPeakMB": 72.5
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 72.6,
+     "ms": 1.941,
+     "runs": 5,
+     "theta": 76.956,
+     "frameTones": 84,
+     "frameNodes": 300,
+     "heapMB": 5.8,
+     "externalMB": 3.2,
+     "rssPeakMB": 75.3
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 75.3,
+     "2x8": {
+      "ms": 0.186,
+      "runs": 5,
+      "swing": 0.0996,
+      "windowMoments": 12.002,
+      "candsPerSlot": {
+       "mean": 18.375,
+       "max": 22
+      }
+     },
+     "4x8": {
+      "ms": 0.228,
+      "runs": 5,
+      "swing": 0.1992,
+      "windowMoments": 12.002,
+      "candsPerSlot": {
+       "mean": 19.313,
+       "max": 24
+      }
+     },
+     "heapMB": 5.9,
+     "externalMB": 3.2,
+     "rssPeakMB": 76.2
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 76.2,
+     "ms": 2.911,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6,
+     "externalMB": 3.2,
+     "rssPeakMB": 86
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 86.3,
+     "ms": 1203.747,
+     "runs": 1,
+     "planMs": 0.671,
+     "latticeMs": 13.541,
+     "pickMs": 1124.959,
+     "describeMs": 64.187,
+     "mergeMs": 0.389,
+     "maxPieceMs": 71.405,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 546,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 19.41,
+      "max": 24
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.2,
+     "rssPeakMB": 173.6
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 173.6,
+     "ms": 106.051,
+     "runs": 5,
+     "planMs": 0.223,
+     "latticeMs": 1.519,
+     "pickMs": 95.37,
+     "describeMs": 8.845,
+     "mergeMs": 0.049,
+     "maxPieceMs": 46.443,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 96,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 19.577,
+      "max": 24
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.2,
+     "rssPeakMB": 222.5
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 222.6,
+     "ms": 532.735,
+     "runs": 1,
+     "planMs": 0.418,
+     "latticeMs": 6.751,
+     "pickMs": 445.997,
+     "describeMs": 79.387,
+     "mergeMs": 0.181,
+     "maxPieceMs": 35.072,
+     "pieces": 42,
+     "tasks": 8,
+     "lineRuns": 444,
+     "lines": 348,
+     "root": "20/19",
+     "candsPerSlot": {
+      "mean": 19.289,
+      "max": 25
+     },
+     "heapMB": 7.6,
+     "externalMB": 3.2,
+     "rssPeakMB": 251.8
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 251.6,
+     "ms": 893.162,
+     "runs": 1,
+     "planMs": 0.363,
+     "latticeMs": 11.961,
+     "pickMs": 788.731,
+     "describeMs": 91.71,
+     "mergeMs": 0.398,
+     "maxPieceMs": 34.554,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 1056,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 19.387,
+      "max": 24
+     },
+     "heapMB": 9.8,
+     "externalMB": 3.2,
+     "rssPeakMB": 302.9
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 303
+  },
+  {
+   "group": "coprime",
+   "name": "83:89:97:101 (past MAX_GRID)",
+   "layers": [
+    83,
+    89,
+    97,
+    101
+   ],
+   "estimate": {
+    "grid": 72370439,
+    "onsets": 367,
+    "layerSum": 370,
+    "pastMaxGrid": true
+   },
+   "info": null,
+   "stages": {
+    "build": {
+     "status": "error",
+     "rssStartMB": 61.9,
+     "error": "chunk-super-row: grid 72370439 is past 33554432",
+     "heapMB": 5.6,
+     "externalMB": 3.1,
+     "rssPeakMB": 68.6
+    }
+   },
+   "order": [
+    "build"
+   ],
+   "maxRssMB": 68.7
+  },
+  {
+   "group": "coprime",
+   "name": "100:101:102:103 (past MAX_GRID)",
+   "layers": [
+    100,
+    101,
+    102,
+    103
+   ],
+   "estimate": {
+    "grid": 53055300,
+    "onsets": 402,
+    "layerSum": 406,
+    "pastMaxGrid": true
+   },
+   "info": null,
+   "stages": {
+    "build": {
+     "status": "error",
+     "rssStartMB": 62.6,
+     "error": "chunk-super-row: grid 53055300 is past 33554432",
+     "heapMB": 5.6,
+     "externalMB": 3.1,
+     "rssPeakMB": 69.1
+    }
+   },
+   "order": [
+    "build"
+   ],
+   "maxRssMB": 69.1
+  },
+  {
+   "group": "pair",
+   "name": "32:33",
+   "layers": [
+    32,
+    33
+   ],
+   "estimate": {
+    "grid": 1056,
+    "onsets": 64,
+    "layerSum": 65,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 1056,
+    "onsets": 64,
+    "moments": 64,
+    "tones": 16,
+    "exactTones": 16,
+    "maxGap": 32,
+    "maxOctave": 5,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.6,
+     "ms": 0.108,
+     "runs": 5,
+     "kernelMs": 0.062,
+     "kernelRuns": 5,
+     "grid": 1056,
+     "onsets": 64,
+     "moments": 64,
+     "tones": 16,
+     "exactTones": 16,
+     "maxGap": 32,
+     "maxOctave": 5,
+     "toneIndexOverflow": false,
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 67
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 68.2,
+     "P8": {
+      "ms": 0.016,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 2.25,
+       "max": 3
+      },
+      "tonesPerSlot": {
+       "mean": 2.125,
+       "max": 3
+      }
+     },
+     "P16": {
+      "ms": 0.013,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 1.625,
+       "max": 2
+      },
+      "tonesPerSlot": {
+       "mean": 1.625,
+       "max": 2
+      }
+     },
+     "P32": {
+      "ms": 0.016,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 1.313,
+       "max": 2
+      },
+      "tonesPerSlot": {
+       "mean": 1.281,
+       "max": 2
+      }
+     },
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 68.3
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 68.3,
+     "ms": 0.029,
+     "runs": 5,
+     "theta": 94.135,
+     "frameTones": 8,
+     "frameNodes": 40,
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 68.4
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 68.5,
+     "2x8": {
+      "ms": 0.079,
+      "runs": 5,
+      "swing": 0.5,
+      "windowMoments": 4,
+      "candsPerSlot": {
+       "mean": 6.375,
+       "max": 8
+      }
+     },
+     "4x8": {
+      "ms": 0.066,
+      "runs": 5,
+      "swing": 0.5,
+      "windowMoments": 2,
+      "candsPerSlot": {
+       "mean": 3.313,
+       "max": 4
+      }
+     },
+     "heapMB": 5.8,
+     "externalMB": 3.1,
+     "rssPeakMB": 68.7
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 68.7,
+     "ms": 1.379,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 5.9,
+     "externalMB": 3.1,
+     "rssPeakMB": 73.7
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 73.8,
+     "ms": 141.335,
+     "runs": 5,
+     "planMs": 0.106,
+     "latticeMs": 2.754,
+     "pickMs": 127.037,
+     "describeMs": 11.543,
+     "mergeMs": 0.196,
+     "maxPieceMs": 5.911,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 516,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 4.569,
+      "max": 14
+     },
+     "heapMB": 6.1,
+     "externalMB": 3.1,
+     "rssPeakMB": 186.6
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 186.6,
+     "ms": 13.952,
+     "runs": 5,
+     "planMs": 0.05,
+     "latticeMs": 0.554,
+     "pickMs": 11.506,
+     "describeMs": 1.682,
+     "mergeMs": 0.034,
+     "maxPieceMs": 3.952,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 85,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 4.837,
+      "max": 14
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.1,
+     "rssPeakMB": 189.7
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 189.8,
+     "ms": 42.872,
+     "runs": 5,
+     "planMs": 0.098,
+     "latticeMs": 1.294,
+     "pickMs": 36.342,
+     "describeMs": 5.717,
+     "mergeMs": 0.07,
+     "maxPieceMs": 3.852,
+     "pieces": 32,
+     "tasks": 8,
+     "lineRuns": 310,
+     "lines": 241,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 5.164,
+      "max": 15
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.1,
+     "rssPeakMB": 196.8
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 196.8,
+     "ms": 207.903,
+     "runs": 5,
+     "planMs": 0.069,
+     "latticeMs": 4.266,
+     "pickMs": 182.363,
+     "describeMs": 20.862,
+     "mergeMs": 0.342,
+     "maxPieceMs": 4.944,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 940,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 6.453,
+      "max": 19
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.1,
+     "rssPeakMB": 255.8
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 255.9
+  },
+  {
+   "group": "pair",
+   "name": "128:129",
+   "layers": [
+    128,
+    129
+   ],
+   "estimate": {
+    "grid": 16512,
+    "onsets": 256,
+    "layerSum": 257,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 16512,
+    "onsets": 256,
+    "moments": 256,
+    "tones": 64,
+    "exactTones": 64,
+    "maxGap": 128,
+    "maxOctave": 7,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.4,
+     "ms": 0.347,
+     "runs": 5,
+     "kernelMs": 0.145,
+     "kernelRuns": 5,
+     "grid": 16512,
+     "onsets": 256,
+     "moments": 256,
+     "tones": 64,
+     "exactTones": 64,
+     "maxGap": 128,
+     "maxOctave": 7,
+     "toneIndexOverflow": false,
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 69.4
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 69.6,
+     "P8": {
+      "ms": 0.055,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 10.75,
+       "max": 11
+      },
+      "tonesPerSlot": {
+       "mean": 9.125,
+       "max": 11
+      }
+     },
+     "P16": {
+      "ms": 0.035,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 5.875,
+       "max": 6
+      },
+      "tonesPerSlot": {
+       "mean": 5.563,
+       "max": 6
+      }
+     },
+     "P32": {
+      "ms": 0.021,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 2.438,
+       "max": 3
+      },
+      "tonesPerSlot": {
+       "mean": 2.406,
+       "max": 3
+      }
+     },
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 69.7
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 69.9,
+     "ms": 0.125,
+     "runs": 5,
+     "theta": 92.18,
+     "frameTones": 19,
+     "frameNodes": 100,
+     "heapMB": 5.7,
+     "externalMB": 3.1,
+     "rssPeakMB": 70
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 70.2,
+     "2x8": {
+      "ms": 0.236,
+      "runs": 5,
+      "swing": 0.375,
+      "windowMoments": 12,
+      "candsPerSlot": {
+       "mean": 19.75,
+       "max": 24
+      }
+     },
+     "4x8": {
+      "ms": 0.174,
+      "runs": 5,
+      "swing": 0.5,
+      "windowMoments": 8,
+      "candsPerSlot": {
+       "mean": 12.75,
+       "max": 16
+      }
+     },
+     "heapMB": 5.9,
+     "externalMB": 3.1,
+     "rssPeakMB": 71.1
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 71.2,
+     "ms": 2.949,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 5.9,
+     "externalMB": 3.1,
+     "rssPeakMB": 77.9
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 77.9,
+     "ms": 817.881,
+     "runs": 1,
+     "planMs": 0.528,
+     "latticeMs": 9.493,
+     "pickMs": 769.826,
+     "describeMs": 37.567,
+     "mergeMs": 0.466,
+     "maxPieceMs": 35.848,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 505,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 14.889,
+      "max": 24
+     },
+     "heapMB": 6.1,
+     "externalMB": 3.1,
+     "rssPeakMB": 168.9
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 168.7,
+     "ms": 82.704,
+     "runs": 5,
+     "planMs": 0.114,
+     "latticeMs": 1.664,
+     "pickMs": 76.3,
+     "describeMs": 5.509,
+     "mergeMs": 0.049,
+     "maxPieceMs": 27.93,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 80,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 15.135,
+      "max": 24
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.1,
+     "rssPeakMB": 214.7
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 214.7,
+     "ms": 384.136,
+     "runs": 5,
+     "planMs": 0.159,
+     "latticeMs": 4.122,
+     "pickMs": 345.36,
+     "describeMs": 34.643,
+     "mergeMs": 0.147,
+     "maxPieceMs": 22.729,
+     "pieces": 46,
+     "tasks": 8,
+     "lineRuns": 476,
+     "lines": 399,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 13.43,
+      "max": 26
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.1,
+     "rssPeakMB": 284.9
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 284.9,
+     "ms": 1072.783,
+     "runs": 1,
+     "planMs": 0.159,
+     "latticeMs": 9.914,
+     "pickMs": 1003.021,
+     "describeMs": 59.345,
+     "mergeMs": 0.344,
+     "maxPieceMs": 44.287,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 1017,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 17.301,
+      "max": 24
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.1,
+     "rssPeakMB": 296.4
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 296.4
+  },
+  {
+   "group": "pair",
+   "name": "512:513",
+   "layers": [
+    512,
+    513
+   ],
+   "estimate": {
+    "grid": 262656,
+    "onsets": 1024,
+    "layerSum": 1025,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 262656,
+    "onsets": 1024,
+    "moments": 1024,
+    "tones": 256,
+    "exactTones": 256,
+    "maxGap": 512,
+    "maxOctave": 9,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 61.9,
+     "ms": 0.864,
+     "runs": 5,
+     "kernelMs": 0.664,
+     "kernelRuns": 5,
+     "grid": 262656,
+     "onsets": 1024,
+     "moments": 1024,
+     "tones": 256,
+     "exactTones": 256,
+     "maxGap": 512,
+     "maxOctave": 9,
+     "toneIndexOverflow": false,
+     "heapMB": 5.7,
+     "externalMB": 3.2,
+     "rssPeakMB": 72.8
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 72.8,
+     "P8": {
+      "ms": 0.155,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 46,
+       "max": 47
+      },
+      "tonesPerSlot": {
+       "mean": 38.875,
+       "max": 46
+      }
+     },
+     "P16": {
+      "ms": 0.068,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 22.5,
+       "max": 23
+      },
+      "tonesPerSlot": {
+       "mean": 20.875,
+       "max": 23
+      }
+     },
+     "P32": {
+      "ms": 0.064,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 10.75,
+       "max": 11
+      },
+      "tonesPerSlot": {
+       "mean": 10.344,
+       "max": 11
+      }
+     },
+     "heapMB": 5.7,
+     "externalMB": 3.2,
+     "rssPeakMB": 74.3
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 74.3,
+     "ms": 1.313,
+     "runs": 5,
+     "theta": 90.089,
+     "frameTones": 67,
+     "frameNodes": 298,
+     "heapMB": 5.8,
+     "externalMB": 3.2,
+     "rssPeakMB": 75.8
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 75.8,
+     "2x8": {
+      "ms": 0.2,
+      "runs": 5,
+      "swing": 0.0938,
+      "windowMoments": 12.006,
+      "candsPerSlot": {
+       "mean": 20.25,
+       "max": 26
+      }
+     },
+     "4x8": {
+      "ms": 0.316,
+      "runs": 5,
+      "swing": 0.1875,
+      "windowMoments": 12,
+      "candsPerSlot": {
+       "mean": 20.906,
+       "max": 26
+      }
+     },
+     "heapMB": 5.9,
+     "externalMB": 3.2,
+     "rssPeakMB": 76.3
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 76.4,
+     "ms": 2.876,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6,
+     "externalMB": 3.2,
+     "rssPeakMB": 83.2
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 84.2,
+     "ms": 1141.99,
+     "runs": 1,
+     "planMs": 0.669,
+     "latticeMs": 13.58,
+     "pickMs": 1062.643,
+     "describeMs": 64.719,
+     "mergeMs": 0.379,
+     "maxPieceMs": 62.421,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 501,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 19.732,
+      "max": 26
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.2,
+     "rssPeakMB": 186.5
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 186.5,
+     "ms": 102.378,
+     "runs": 5,
+     "planMs": 0.204,
+     "latticeMs": 1.72,
+     "pickMs": 92.052,
+     "describeMs": 8.355,
+     "mergeMs": 0.047,
+     "maxPieceMs": 40.622,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 92,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 19.827,
+      "max": 26
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.2,
+     "rssPeakMB": 239.8
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 239.8,
+     "ms": 612.551,
+     "runs": 1,
+     "planMs": 0.452,
+     "latticeMs": 7.025,
+     "pickMs": 534.891,
+     "describeMs": 69.99,
+     "mergeMs": 0.193,
+     "maxPieceMs": 41.515,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 365,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 19.22,
+      "max": 26
+     },
+     "heapMB": 7.7,
+     "externalMB": 3.2,
+     "rssPeakMB": 252.7
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 252.6,
+     "ms": 769.925,
+     "runs": 1,
+     "planMs": 0.362,
+     "latticeMs": 11.175,
+     "pickMs": 667.705,
+     "describeMs": 90.342,
+     "mergeMs": 0.34,
+     "maxPieceMs": 39.972,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 905,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 19.395,
+      "max": 26
+     },
+     "heapMB": 9.5,
+     "externalMB": 3.2,
+     "rssPeakMB": 304.8
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 305.1
+  },
+  {
+   "group": "pair",
+   "name": "2048:2049",
+   "layers": [
+    2048,
+    2049
+   ],
+   "estimate": {
+    "grid": 4196352,
+    "onsets": 4096,
+    "layerSum": 4097,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 4196352,
+    "onsets": 4096,
+    "moments": 4096,
+    "tones": 1023,
+    "exactTones": 1024,
+    "maxGap": 2048,
+    "maxOctave": 11,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.5,
+     "ms": 3.959,
+     "runs": 5,
+     "kernelMs": 3.141,
+     "kernelRuns": 5,
+     "grid": 4196352,
+     "onsets": 4096,
+     "moments": 4096,
+     "tones": 1023,
+     "exactTones": 1024,
+     "maxGap": 2048,
+     "maxOctave": 11,
+     "toneIndexOverflow": false,
+     "heapMB": 5.8,
+     "externalMB": 3.3,
+     "rssPeakMB": 80.1
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 80.2,
+     "P8": {
+      "ms": 0.293,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 185,
+       "max": 185
+      },
+      "tonesPerSlot": {
+       "mean": 156.125,
+       "max": 185
+      }
+     },
+     "P16": {
+      "ms": 0.26,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 93,
+       "max": 93
+      },
+      "tonesPerSlot": {
+       "mean": 86.063,
+       "max": 93
+      }
+     },
+     "P32": {
+      "ms": 0.168,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 46,
+       "max": 47
+      },
+      "tonesPerSlot": {
+       "mean": 44.25,
+       "max": 46
+      }
+     },
+     "heapMB": 5.9,
+     "externalMB": 3.3,
+     "rssPeakMB": 84.4
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 84.4,
+     "ms": 17.558,
+     "runs": 5,
+     "theta": 95.792,
+     "frameTones": 262,
+     "frameNodes": 1082,
+     "heapMB": 5.9,
+     "externalMB": 3.3,
+     "rssPeakMB": 95.9
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 95.9,
+     "2x8": {
+      "ms": 0.186,
+      "runs": 5,
+      "swing": 0.0234,
+      "windowMoments": 11.981,
+      "candsPerSlot": {
+       "mean": 17.063,
+       "max": 22
+      }
+     },
+     "4x8": {
+      "ms": 0.272,
+      "runs": 5,
+      "swing": 0.0469,
+      "windowMoments": 12.006,
+      "candsPerSlot": {
+       "mean": 20.844,
+       "max": 26
+      }
+     },
+     "heapMB": 6,
+     "externalMB": 3.3,
+     "rssPeakMB": 95.9
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 95.9,
+     "ms": 3.516,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.1,
+     "externalMB": 3.3,
+     "rssPeakMB": 100.8
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 100.8,
+     "ms": 1599.412,
+     "runs": 1,
+     "planMs": 1.138,
+     "latticeMs": 12.79,
+     "pickMs": 1511.325,
+     "describeMs": 73.738,
+     "mergeMs": 0.422,
+     "maxPieceMs": 87.879,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 373,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 19.561,
+      "max": 26
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.3,
+     "rssPeakMB": 182.2
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 181.6,
+     "ms": 141.92,
+     "runs": 5,
+     "planMs": 0.462,
+     "latticeMs": 1.35,
+     "pickMs": 132.431,
+     "describeMs": 7.379,
+     "mergeMs": 0.051,
+     "maxPieceMs": 56.303,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 84,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 19.438,
+      "max": 26
+     },
+     "heapMB": 6.4,
+     "externalMB": 3.3,
+     "rssPeakMB": 189
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 189,
+     "ms": 564.128,
+     "runs": 1,
+     "planMs": 0.981,
+     "latticeMs": 8.592,
+     "pickMs": 494.261,
+     "describeMs": 60.145,
+     "mergeMs": 0.149,
+     "maxPieceMs": 57.752,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 224,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 19.346,
+      "max": 26
+     },
+     "heapMB": 7.4,
+     "externalMB": 3.3,
+     "rssPeakMB": 190.8
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 190.8,
+     "ms": 1369.522,
+     "runs": 1,
+     "planMs": 1.099,
+     "latticeMs": 14.899,
+     "pickMs": 1262.78,
+     "describeMs": 90.387,
+     "mergeMs": 0.356,
+     "maxPieceMs": 57.789,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 702,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 18.833,
+      "max": 26
+     },
+     "heapMB": 9.4,
+     "externalMB": 3.3,
+     "rssPeakMB": 322.3
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 322.4
+  },
+  {
+   "group": "pair",
+   "name": "5792:5793 (largest pair under MAX_GRID)",
+   "layers": [
+    5792,
+    5793
+   ],
+   "estimate": {
+    "grid": 33553056,
+    "onsets": 11584,
+    "layerSum": 11585,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 33553056,
+    "onsets": 11584,
+    "moments": 11584,
+    "tones": 2892,
+    "exactTones": 2896,
+    "maxGap": 5792,
+    "maxOctave": 12,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.5,
+     "ms": 13.844,
+     "runs": 5,
+     "kernelMs": 9.931,
+     "kernelRuns": 5,
+     "grid": 33553056,
+     "onsets": 11584,
+     "moments": 11584,
+     "tones": 2892,
+     "exactTones": 2896,
+     "maxGap": 5792,
+     "maxOctave": 12,
+     "toneIndexOverflow": false,
+     "heapMB": 6,
+     "externalMB": 3.7,
+     "rssPeakMB": 111.2
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 110.1,
+     "P8": {
+      "ms": 0.635,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 521.5,
+       "max": 522
+      },
+      "tonesPerSlot": {
+       "mean": 439.5,
+       "max": 522
+      }
+     },
+     "P16": {
+      "ms": 0.522,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 261.25,
+       "max": 262
+      },
+      "tonesPerSlot": {
+       "mean": 241.625,
+       "max": 262
+      }
+     },
+     "P32": {
+      "ms": 0.267,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 130.125,
+       "max": 131
+      },
+      "tonesPerSlot": {
+       "mean": 125.063,
+       "max": 131
+      }
+     },
+     "heapMB": 6.1,
+     "externalMB": 3.7,
+     "rssPeakMB": 113
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 113,
+     "ms": 132.245,
+     "runs": 5,
+     "theta": 95.553,
+     "frameTones": 733,
+     "frameNodes": 2984,
+     "heapMB": 6.1,
+     "externalMB": 3.7,
+     "rssPeakMB": 178
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 158.4,
+     "2x8": {
+      "ms": 0.206,
+      "runs": 5,
+      "swing": 0.0083,
+      "windowMoments": 12.018,
+      "candsPerSlot": {
+       "mean": 20.188,
+       "max": 26
+      }
+     },
+     "4x8": {
+      "ms": 0.279,
+      "runs": 5,
+      "swing": 0.0166,
+      "windowMoments": 12.018,
+      "candsPerSlot": {
+       "mean": 20.875,
+       "max": 26
+      }
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.7,
+     "rssPeakMB": 158.4
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 158.4,
+     "ms": 4.122,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.3,
+     "externalMB": 3.7,
+     "rssPeakMB": 162.8
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 162.8,
+     "ms": 2015.088,
+     "runs": 1,
+     "planMs": 2.245,
+     "latticeMs": 12.215,
+     "pickMs": 1939.719,
+     "describeMs": 60.51,
+     "mergeMs": 0.399,
+     "maxPieceMs": 106.764,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 494,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 19.857,
+      "max": 26
+     },
+     "heapMB": 6.6,
+     "externalMB": 3.7,
+     "rssPeakMB": 237.1
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 236.7,
+     "ms": 178.407,
+     "runs": 5,
+     "planMs": 1.17,
+     "latticeMs": 1.751,
+     "pickMs": 167.731,
+     "describeMs": 7.768,
+     "mergeMs": 0.05,
+     "maxPieceMs": 67.57,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 85,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 20.317,
+      "max": 26
+     },
+     "heapMB": 6.7,
+     "externalMB": 3.7,
+     "rssPeakMB": 266.1
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 266.1,
+     "ms": 532.369,
+     "runs": 1,
+     "planMs": 1.894,
+     "latticeMs": 6.95,
+     "pickMs": 469.293,
+     "describeMs": 54.103,
+     "mergeMs": 0.129,
+     "maxPieceMs": 44.441,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 214,
+     "root": "181/170",
+     "candsPerSlot": {
+      "mean": 19.317,
+      "max": 26
+     },
+     "heapMB": 7.3,
+     "externalMB": 3.7,
+     "rssPeakMB": 368.5
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 368.6,
+     "ms": 1490.481,
+     "runs": 1,
+     "planMs": 2.418,
+     "latticeMs": 11.593,
+     "pickMs": 1395.145,
+     "describeMs": 80.95,
+     "mergeMs": 0.375,
+     "maxPieceMs": 71.147,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 835,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 18.627,
+      "max": 26
+     },
+     "heapMB": 9.6,
+     "externalMB": 3.7,
+     "rssPeakMB": 391.6
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 391.9
+  },
+  {
+   "group": "pair",
+   "name": "5793:5794 (past MAX_GRID)",
+   "layers": [
+    5793,
+    5794
+   ],
+   "estimate": {
+    "grid": 33564642,
+    "onsets": 11586,
+    "layerSum": 11587,
+    "pastMaxGrid": true
+   },
+   "info": null,
+   "stages": {
+    "build": {
+     "status": "error",
+     "rssStartMB": 63,
+     "error": "chunk-super-row: grid 33564642 is past 33554432",
+     "heapMB": 5.6,
+     "externalMB": 3.1,
+     "rssPeakMB": 88.5
+    }
+   },
+   "order": [
+    "build"
+   ],
+   "maxRssMB": 88.7
+  },
+  {
+   "group": "scaled-48",
+   "name": "48:49 ×16",
+   "layers": [
+    768,
+    784
+   ],
+   "estimate": {
+    "grid": 37632,
+    "onsets": 1536,
+    "layerSum": 1552,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 37632,
+    "onsets": 1536,
+    "moments": 1536,
+    "tones": 24,
+    "exactTones": 24,
+    "maxGap": 48,
+    "maxOctave": 5,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 64.2,
+     "ms": 1.076,
+     "runs": 5,
+     "kernelMs": 0.908,
+     "kernelRuns": 5,
+     "grid": 37632,
+     "onsets": 1536,
+     "moments": 1536,
+     "tones": 24,
+     "exactTones": 24,
+     "maxGap": 48,
+     "maxOctave": 5,
+     "toneIndexOverflow": false,
+     "heapMB": 5.7,
+     "externalMB": 3.2,
+     "rssPeakMB": 78.2
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 78.4,
+     "P8": {
+      "ms": 0.11,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 69,
+       "max": 69
+      },
+      "tonesPerSlot": {
+       "mean": 21,
+       "max": 21
+      }
+     },
+     "P16": {
+      "ms": 0.032,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 33,
+       "max": 33
+      },
+      "tonesPerSlot": {
+       "mean": 11,
+       "max": 11
+      }
+     },
+     "P32": {
+      "ms": 0.027,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 17,
+       "max": 17
+      },
+      "tonesPerSlot": {
+       "mean": 7.5,
+       "max": 9
+      }
+     },
+     "heapMB": 5.7,
+     "externalMB": 3.2,
+     "rssPeakMB": 78.5
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 78.5,
+     "ms": 0.09,
+     "runs": 5,
+     "theta": 96.09,
+     "frameTones": 9,
+     "frameNodes": 832,
+     "heapMB": 5.8,
+     "externalMB": 3.2,
+     "rssPeakMB": 78.8
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 78.8,
+     "2x8": {
+      "ms": 0.234,
+      "runs": 5,
+      "swing": 0.0625,
+      "windowMoments": 12,
+      "candsPerSlot": {
+       "mean": 9,
+       "max": 9
+      }
+     },
+     "4x8": {
+      "ms": 0.412,
+      "runs": 5,
+      "swing": 0.125,
+      "windowMoments": 12,
+      "candsPerSlot": {
+       "mean": 10,
+       "max": 11
+      }
+     },
+     "heapMB": 6,
+     "externalMB": 3.2,
+     "rssPeakMB": 78.9
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 78.9,
+     "ms": 2.055,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 5.9,
+     "externalMB": 3.2,
+     "rssPeakMB": 85.3
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 85.3,
+     "ms": 2373.297,
+     "runs": 1,
+     "planMs": 0.962,
+     "latticeMs": 17.503,
+     "pickMs": 2327.123,
+     "describeMs": 27.27,
+     "mergeMs": 0.438,
+     "maxPieceMs": 233.031,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 446,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 15.327,
+      "max": 23
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.2,
+     "rssPeakMB": 176.3
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 176.1,
+     "ms": 139.775,
+     "runs": 5,
+     "planMs": 0.371,
+     "latticeMs": 2.08,
+     "pickMs": 132.491,
+     "describeMs": 4.1,
+     "mergeMs": 0.061,
+     "maxPieceMs": 87.865,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 88,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 12.538,
+      "max": 18
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.2,
+     "rssPeakMB": 201.9
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 201.9,
+     "ms": 509.11,
+     "runs": 1,
+     "planMs": 0.523,
+     "latticeMs": 6.573,
+     "pickMs": 488.394,
+     "describeMs": 13.509,
+     "mergeMs": 0.111,
+     "maxPieceMs": 87.382,
+     "pieces": 28,
+     "tasks": 8,
+     "lineRuns": 260,
+     "lines": 91,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 16.635,
+      "max": 21
+     },
+     "heapMB": 7,
+     "externalMB": 3.2,
+     "rssPeakMB": 211.1
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 211.1,
+     "ms": 884.131,
+     "runs": 1,
+     "planMs": 0.945,
+     "latticeMs": 12.341,
+     "pickMs": 833.788,
+     "describeMs": 36.651,
+     "mergeMs": 0.405,
+     "maxPieceMs": 51.881,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 679,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 14.913,
+      "max": 23
+     },
+     "heapMB": 9.7,
+     "externalMB": 3.2,
+     "rssPeakMB": 255.2
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 255.4
+  },
+  {
+   "group": "scaled-48",
+   "name": "48:49 ×64",
+   "layers": [
+    3072,
+    3136
+   ],
+   "estimate": {
+    "grid": 150528,
+    "onsets": 6144,
+    "layerSum": 6208,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 150528,
+    "onsets": 6144,
+    "moments": 6144,
+    "tones": 24,
+    "exactTones": 24,
+    "maxGap": 48,
+    "maxOctave": 5,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.6,
+     "ms": 2.644,
+     "runs": 5,
+     "kernelMs": 1.938,
+     "kernelRuns": 5,
+     "grid": 150528,
+     "onsets": 6144,
+     "moments": 6144,
+     "tones": 24,
+     "exactTones": 24,
+     "maxGap": 48,
+     "maxOctave": 5,
+     "toneIndexOverflow": false,
+     "heapMB": 5.8,
+     "externalMB": 3.4,
+     "rssPeakMB": 90.3
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 91.5,
+     "P8": {
+      "ms": 0.146,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 277,
+       "max": 277
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "P16": {
+      "ms": 0.114,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 139,
+       "max": 139
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "P32": {
+      "ms": 0.115,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 69,
+       "max": 69
+      },
+      "tonesPerSlot": {
+       "mean": 21,
+       "max": 21
+      }
+     },
+     "heapMB": 5.9,
+     "externalMB": 3.4,
+     "rssPeakMB": 92.6
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 92.9,
+     "ms": 0.073,
+     "runs": 5,
+     "theta": 96.09,
+     "frameTones": 9,
+     "frameNodes": 3328,
+     "heapMB": 5.9,
+     "externalMB": 3.4,
+     "rssPeakMB": 93
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 93,
+     "2x8": {
+      "ms": 0.085,
+      "runs": 5,
+      "swing": 0.0156,
+      "windowMoments": 11.981,
+      "candsPerSlot": {
+       "mean": 7,
+       "max": 7
+      }
+     },
+     "4x8": {
+      "ms": 0.161,
+      "runs": 5,
+      "swing": 0.0313,
+      "windowMoments": 12.019,
+      "candsPerSlot": {
+       "mean": 9,
+       "max": 9
+      }
+     },
+     "heapMB": 6,
+     "externalMB": 3.4,
+     "rssPeakMB": 93
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 93.1,
+     "ms": 1.986,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.1,
+     "externalMB": 3.4,
+     "rssPeakMB": 98.8
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 98.8,
+     "ms": 1322.202,
+     "runs": 1,
+     "planMs": 1.456,
+     "latticeMs": 9.824,
+     "pickMs": 1289.634,
+     "describeMs": 20.923,
+     "mergeMs": 0.365,
+     "maxPieceMs": 159.867,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 298,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 12.387,
+      "max": 21
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.4,
+     "rssPeakMB": 192.1
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 191.7,
+     "ms": 60.825,
+     "runs": 5,
+     "planMs": 0.605,
+     "latticeMs": 0.814,
+     "pickMs": 57.44,
+     "describeMs": 1.948,
+     "mergeMs": 0.05,
+     "maxPieceMs": 26.623,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 45,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 8.231,
+      "max": 9
+     },
+     "heapMB": 6.4,
+     "externalMB": 3.4,
+     "rssPeakMB": 206.8
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 206.7,
+     "ms": 464.521,
+     "runs": 1,
+     "planMs": 0.942,
+     "latticeMs": 4.614,
+     "pickMs": 444.28,
+     "describeMs": 14.521,
+     "mergeMs": 0.164,
+     "maxPieceMs": 40.313,
+     "pieces": 40,
+     "tasks": 8,
+     "lineRuns": 392,
+     "lines": 101,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 15.352,
+      "max": 21
+     },
+     "heapMB": 7.6,
+     "externalMB": 3.4,
+     "rssPeakMB": 243.3
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 243.3,
+     "ms": 502.812,
+     "runs": 1,
+     "planMs": 2.253,
+     "latticeMs": 7.206,
+     "pickMs": 469.932,
+     "describeMs": 23.073,
+     "mergeMs": 0.349,
+     "maxPieceMs": 19.099,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 279,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 10.438,
+      "max": 21
+     },
+     "heapMB": 9.8,
+     "externalMB": 3.4,
+     "rssPeakMB": 290.9
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 291.2
+  },
+  {
+   "group": "scaled-48",
+   "name": "48:49 ×256",
+   "layers": [
+    12288,
+    12544
+   ],
+   "estimate": {
+    "grid": 602112,
+    "onsets": 24576,
+    "layerSum": 24832,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 602112,
+    "onsets": 24576,
+    "moments": 24576,
+    "tones": 24,
+    "exactTones": 24,
+    "maxGap": 48,
+    "maxOctave": 5,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.4,
+     "ms": 9.767,
+     "runs": 5,
+     "kernelMs": 7.084,
+     "kernelRuns": 5,
+     "grid": 602112,
+     "onsets": 24576,
+     "moments": 24576,
+     "tones": 24,
+     "exactTones": 24,
+     "maxGap": 48,
+     "maxOctave": 5,
+     "toneIndexOverflow": false,
+     "heapMB": 6.4,
+     "externalMB": 4.2,
+     "rssPeakMB": 151.3
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 138.7,
+     "P8": {
+      "ms": 0.271,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 1107,
+       "max": 1107
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "P16": {
+      "ms": 0.248,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 555,
+       "max": 555
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "P32": {
+      "ms": 0.189,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 277,
+       "max": 277
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "heapMB": 6.4,
+     "externalMB": 4.2,
+     "rssPeakMB": 139.9
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 140.3,
+     "ms": 0.064,
+     "runs": 5,
+     "theta": 96.09,
+     "frameTones": 9,
+     "frameNodes": 13312,
+     "heapMB": 6.5,
+     "externalMB": 4.2,
+     "rssPeakMB": 140.4
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 140.3,
+     "2x8": {
+      "ms": 0.088,
+      "runs": 5,
+      "swing": 0.0039,
+      "windowMoments": 11.981,
+      "candsPerSlot": {
+       "mean": 7,
+       "max": 7
+      }
+     },
+     "4x8": {
+      "ms": 0.131,
+      "runs": 5,
+      "swing": 0.0078,
+      "windowMoments": 11.981,
+      "candsPerSlot": {
+       "mean": 7,
+       "max": 7
+      }
+     },
+     "heapMB": 6.5,
+     "externalMB": 4.2,
+     "rssPeakMB": 140.3
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 140.4,
+     "ms": 1.197,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.6,
+     "externalMB": 4.2,
+     "rssPeakMB": 143.8
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 144.5,
+     "ms": 248.827,
+     "runs": 5,
+     "planMs": 2.823,
+     "latticeMs": 3.422,
+     "pickMs": 232.238,
+     "describeMs": 10.726,
+     "mergeMs": 0.296,
+     "maxPieceMs": 12.399,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 90,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 7.08,
+      "max": 9
+     },
+     "heapMB": 6.9,
+     "externalMB": 4.2,
+     "rssPeakMB": 339.8
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 339.8,
+     "ms": 25.366,
+     "runs": 5,
+     "planMs": 2.426,
+     "latticeMs": 0.908,
+     "pickMs": 20.465,
+     "describeMs": 1.655,
+     "mergeMs": 0.041,
+     "maxPieceMs": 8.501,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 42,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 7.154,
+      "max": 9
+     },
+     "heapMB": 7,
+     "externalMB": 4.2,
+     "rssPeakMB": 343.1
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 343.1,
+     "ms": 749.6,
+     "runs": 1,
+     "planMs": 3.823,
+     "latticeMs": 7.46,
+     "pickMs": 717.127,
+     "describeMs": 21.039,
+     "mergeMs": 0.152,
+     "maxPieceMs": 54.52,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 99,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 14.675,
+      "max": 21
+     },
+     "heapMB": 5.8,
+     "externalMB": 4.2,
+     "rssPeakMB": 345.8
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 344.5,
+     "ms": 637.599,
+     "runs": 1,
+     "planMs": 6.593,
+     "latticeMs": 8.325,
+     "pickMs": 598.577,
+     "describeMs": 23.756,
+     "mergeMs": 0.348,
+     "maxPieceMs": 29.28,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 176,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 10.091,
+      "max": 20
+     },
+     "heapMB": 5.7,
+     "externalMB": 4.2,
+     "rssPeakMB": 346.5
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 346.5
+  },
+  {
+   "group": "scaled-48",
+   "name": "48:49 ×1024",
+   "layers": [
+    49152,
+    50176
+   ],
+   "estimate": {
+    "grid": 2408448,
+    "onsets": 98304,
+    "layerSum": 99328,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 2408448,
+    "onsets": 98304,
+    "moments": 98304,
+    "tones": 24,
+    "exactTones": 24,
+    "maxGap": 48,
+    "maxOctave": 5,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.4,
+     "ms": 37.646,
+     "runs": 5,
+     "kernelMs": 24.635,
+     "kernelRuns": 5,
+     "grid": 2408448,
+     "onsets": 98304,
+     "moments": 98304,
+     "tones": 24,
+     "exactTones": 24,
+     "maxGap": 48,
+     "maxOctave": 5,
+     "toneIndexOverflow": false,
+     "heapMB": 8.7,
+     "externalMB": 7.6,
+     "rssPeakMB": 349
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 312,
+     "P8": {
+      "ms": 0.793,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 4421,
+       "max": 4421
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "P16": {
+      "ms": 0.554,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 2211,
+       "max": 2211
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "P32": {
+      "ms": 0.573,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 1107,
+       "max": 1107
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "heapMB": 8.7,
+     "externalMB": 7.6,
+     "rssPeakMB": 312.7
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 312.8,
+     "ms": 0.103,
+     "runs": 5,
+     "theta": 96.09,
+     "frameTones": 9,
+     "frameNodes": 53248,
+     "heapMB": 8.7,
+     "externalMB": 7.6,
+     "rssPeakMB": 313
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 313.1,
+     "2x8": {
+      "ms": 0.098,
+      "runs": 5,
+      "swing": 0.001,
+      "windowMoments": 12.288,
+      "candsPerSlot": {
+       "mean": 9,
+       "max": 9
+      }
+     },
+     "4x8": {
+      "ms": 0.135,
+      "runs": 5,
+      "swing": 0.002,
+      "windowMoments": 12.288,
+      "candsPerSlot": {
+       "mean": 9,
+       "max": 9
+      }
+     },
+     "heapMB": 8.8,
+     "externalMB": 7.6,
+     "rssPeakMB": 313.3
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 313.3,
+     "ms": 2.729,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 8.9,
+     "externalMB": 7.6,
+     "rssPeakMB": 316.4
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 316.4,
+     "ms": 688.674,
+     "runs": 1,
+     "planMs": 11.514,
+     "latticeMs": 7.024,
+     "pickMs": 655.841,
+     "describeMs": 13.86,
+     "mergeMs": 0.435,
+     "maxPieceMs": 37.233,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 78,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 9,
+      "max": 9
+     },
+     "heapMB": 9.1,
+     "externalMB": 7.6,
+     "rssPeakMB": 412.2
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 412,
+     "ms": 71.681,
+     "runs": 5,
+     "planMs": 8.423,
+     "latticeMs": 0.707,
+     "pickMs": 60.78,
+     "describeMs": 2.05,
+     "mergeMs": 0.056,
+     "maxPieceMs": 26.083,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 48,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 9,
+      "max": 9
+     },
+     "heapMB": 9.2,
+     "externalMB": 7.6,
+     "rssPeakMB": 460.3
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 449.6,
+     "ms": 714.772,
+     "runs": 1,
+     "planMs": 12.568,
+     "latticeMs": 6.402,
+     "pickMs": 676.679,
+     "describeMs": 18.913,
+     "mergeMs": 0.211,
+     "maxPieceMs": 53.998,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 88,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 15.475,
+      "max": 21
+     },
+     "heapMB": 9.2,
+     "externalMB": 7.6,
+     "rssPeakMB": 493.8
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 493.8,
+     "ms": 720.902,
+     "runs": 1,
+     "planMs": 22.629,
+     "latticeMs": 7.568,
+     "pickMs": 665.836,
+     "describeMs": 24.431,
+     "mergeMs": 0.438,
+     "maxPieceMs": 29.281,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 177,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 10.767,
+      "max": 20
+     },
+     "heapMB": 12.8,
+     "externalMB": 7.6,
+     "rssPeakMB": 518.9
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 519
+  },
+  {
+   "group": "scaled-48",
+   "name": "48:49 ×4096",
+   "layers": [
+    196608,
+    200704
+   ],
+   "estimate": {
+    "grid": 9633792,
+    "onsets": 393216,
+    "layerSum": 397312,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 9633792,
+    "onsets": 393216,
+    "moments": 393216,
+    "tones": 24,
+    "exactTones": 24,
+    "maxGap": 48,
+    "maxOctave": 5,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": false,
+    "defaultStackSpreadError": "Maximum call stack size exceeded"
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.5,
+     "ms": 153.046,
+     "runs": 5,
+     "kernelMs": 114.263,
+     "kernelRuns": 5,
+     "grid": 9633792,
+     "onsets": 393216,
+     "moments": 393216,
+     "tones": 24,
+     "exactTones": 24,
+     "maxGap": 48,
+     "maxOctave": 5,
+     "toneIndexOverflow": false,
+     "heapMB": 17.6,
+     "externalMB": 21.1,
+     "rssPeakMB": 731.1
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 600.3,
+     "P8": {
+      "ms": 2.134,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 17693,
+       "max": 17693
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "P16": {
+      "ms": 2.203,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 8845,
+       "max": 8845
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "P32": {
+      "ms": 2.248,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 4421,
+       "max": 4421
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "heapMB": 17.7,
+     "externalMB": 21.1,
+     "rssPeakMB": 600.7
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 601.1,
+     "ms": 0.227,
+     "runs": 5,
+     "theta": 96.09,
+     "frameTones": 9,
+     "frameNodes": 212992,
+     "heapMB": 17.7,
+     "externalMB": 21.1,
+     "rssPeakMB": 601.2
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 601.2,
+     "2x8": {
+      "ms": 0.098,
+      "runs": 5,
+      "swing": 0.0002,
+      "windowMoments": 9.83,
+      "candsPerSlot": {
+       "mean": 7,
+       "max": 7
+      }
+     },
+     "4x8": {
+      "ms": 0.157,
+      "runs": 5,
+      "swing": 0.0005,
+      "windowMoments": 12.288,
+      "candsPerSlot": {
+       "mean": 9,
+       "max": 9
+      }
+     },
+     "heapMB": 17.8,
+     "externalMB": 21.1,
+     "rssPeakMB": 601.2
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 601.2,
+     "ms": 2.955,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 17.9,
+     "externalMB": 21.1,
+     "rssPeakMB": 601.3
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 601.2,
+     "ms": 683.464,
+     "runs": 1,
+     "planMs": 41.83,
+     "latticeMs": 6.182,
+     "pickMs": 620.151,
+     "describeMs": 14.873,
+     "mergeMs": 0.428,
+     "maxPieceMs": 42.605,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 82,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 8.28,
+      "max": 9
+     },
+     "heapMB": 18.1,
+     "externalMB": 21.1,
+     "rssPeakMB": 620
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 611.8,
+     "ms": 93.766,
+     "runs": 5,
+     "planMs": 33.459,
+     "latticeMs": 0.635,
+     "pickMs": 56.223,
+     "describeMs": 2.17,
+     "mergeMs": 0.059,
+     "maxPieceMs": 26.06,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 45,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 8.231,
+      "max": 9
+     },
+     "heapMB": 18.2,
+     "externalMB": 21.1,
+     "rssPeakMB": 704.7
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 648.7,
+     "ms": 736.929,
+     "runs": 1,
+     "planMs": 49.907,
+     "latticeMs": 6.798,
+     "pickMs": 660.129,
+     "describeMs": 19.896,
+     "mergeMs": 0.198,
+     "maxPieceMs": 48.236,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 97,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 14.858,
+      "max": 18
+     },
+     "heapMB": 18.2,
+     "externalMB": 21.1,
+     "rssPeakMB": 756.8
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 757,
+     "ms": 714.812,
+     "runs": 1,
+     "planMs": 90.452,
+     "latticeMs": 10.363,
+     "pickMs": 589.129,
+     "describeMs": 24.515,
+     "mergeMs": 0.354,
+     "maxPieceMs": 29.225,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 183,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 10.735,
+      "max": 23
+     },
+     "heapMB": 21.8,
+     "externalMB": 21.1,
+     "rssPeakMB": 791.4
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 791.4
+  },
+  {
+   "group": "scaled-48",
+   "name": "48:49 ×14266",
+   "layers": [
+    684768,
+    699034
+   ],
+   "estimate": {
+    "grid": 33553632,
+    "onsets": 1369536,
+    "layerSum": 1383802,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 33553632,
+    "onsets": 1369536,
+    "moments": 1369536,
+    "tones": 24,
+    "exactTones": 24,
+    "maxGap": 48,
+    "maxOctave": 5,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": false,
+    "defaultStackSpreadError": "Maximum call stack size exceeded"
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.9,
+     "ms": 699.53,
+     "runs": 1,
+     "kernelMs": 475.247,
+     "kernelRuns": 1,
+     "grid": 33553632,
+     "onsets": 1369536,
+     "moments": 1369536,
+     "tones": 24,
+     "exactTones": 24,
+     "maxGap": 48,
+     "maxOctave": 5,
+     "toneIndexOverflow": false,
+     "heapMB": 47.4,
+     "externalMB": 65.8,
+     "rssPeakMB": 950.7
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 736.5,
+     "P8": {
+      "ms": 7.537,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 61630,
+       "max": 61631
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "P16": {
+      "ms": 7.165,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 30814.5,
+       "max": 30815
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "P32": {
+      "ms": 7.058,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 15406.75,
+       "max": 15407
+      },
+      "tonesPerSlot": {
+       "mean": 24,
+       "max": 24
+      }
+     },
+     "heapMB": 47.5,
+     "externalMB": 65.8,
+     "rssPeakMB": 738.3
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 736.4,
+     "ms": 0.797,
+     "runs": 5,
+     "theta": 96.09,
+     "frameTones": 9,
+     "frameNodes": 741832,
+     "heapMB": 47.5,
+     "externalMB": 65.8,
+     "rssPeakMB": 737.3
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 737.4,
+     "2x8": {
+      "ms": 0.341,
+      "runs": 5,
+      "swing": 0.0001,
+      "windowMoments": 17.119,
+      "candsPerSlot": {
+       "mean": 20.5,
+       "max": 26
+      }
+     },
+     "4x8": {
+      "ms": 0.235,
+      "runs": 5,
+      "swing": 0.0001,
+      "windowMoments": 8.56,
+      "candsPerSlot": {
+       "mean": 12.875,
+       "max": 16
+      }
+     },
+     "heapMB": 47.6,
+     "externalMB": 65.8,
+     "rssPeakMB": 741
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 738.8,
+     "ms": 2.165,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 47.7,
+     "externalMB": 65.8,
+     "rssPeakMB": 741.3
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 742,
+     "ms": 1491.778,
+     "runs": 1,
+     "planMs": 142.117,
+     "latticeMs": 16.183,
+     "pickMs": 1303.514,
+     "describeMs": 29.581,
+     "mergeMs": 0.382,
+     "maxPieceMs": 60.525,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 89,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 15.92,
+      "max": 34
+     },
+     "heapMB": 47.9,
+     "externalMB": 65.8,
+     "rssPeakMB": 856.2
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 855.8,
+     "ms": 228.837,
+     "runs": 5,
+     "planMs": 121.995,
+     "latticeMs": 1.82,
+     "pickMs": 100.28,
+     "describeMs": 4.348,
+     "mergeMs": 0.068,
+     "maxPieceMs": 33.551,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 48,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 16.385,
+      "max": 34
+     },
+     "heapMB": 48,
+     "externalMB": 65.8,
+     "rssPeakMB": 986.6
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 932.6,
+     "ms": 695.005,
+     "runs": 1,
+     "planMs": 176.267,
+     "latticeMs": 7.968,
+     "pickMs": 478.156,
+     "describeMs": 32.386,
+     "mergeMs": 0.228,
+     "maxPieceMs": 28.216,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 186,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 16.125,
+      "max": 34
+     },
+     "heapMB": 48,
+     "externalMB": 65.8,
+     "rssPeakMB": 1005.3
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 973.4,
+     "ms": 1610.504,
+     "runs": 1,
+     "planMs": 321.238,
+     "latticeMs": 14.396,
+     "pickMs": 1227.67,
+     "describeMs": 46.802,
+     "mergeMs": 0.4,
+     "maxPieceMs": 39.961,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 186,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 19.68,
+      "max": 40
+     },
+     "heapMB": 51.7,
+     "externalMB": 65.8,
+     "rssPeakMB": 1037.7
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 1037.7
+  },
+  {
+   "group": "scaled-256",
+   "name": "256:257 ×4",
+   "layers": [
+    1024,
+    1028
+   ],
+   "estimate": {
+    "grid": 263168,
+    "onsets": 2048,
+    "layerSum": 2052,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 263168,
+    "onsets": 2048,
+    "moments": 2048,
+    "tones": 128,
+    "exactTones": 128,
+    "maxGap": 256,
+    "maxOctave": 8,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.1,
+     "ms": 1.231,
+     "runs": 5,
+     "kernelMs": 0.696,
+     "kernelRuns": 5,
+     "grid": 263168,
+     "onsets": 2048,
+     "moments": 2048,
+     "tones": 128,
+     "exactTones": 128,
+     "maxGap": 256,
+     "maxOctave": 8,
+     "toneIndexOverflow": false,
+     "heapMB": 5.7,
+     "externalMB": 3.2,
+     "rssPeakMB": 76.4
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 76.6,
+     "P8": {
+      "ms": 0.113,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 93,
+       "max": 93
+      },
+      "tonesPerSlot": {
+       "mean": 40.5,
+       "max": 47
+      }
+     },
+     "P16": {
+      "ms": 0.133,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 46,
+       "max": 47
+      },
+      "tonesPerSlot": {
+       "mean": 33.25,
+       "max": 46
+      }
+     },
+     "P32": {
+      "ms": 0.115,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 22.5,
+       "max": 23
+      },
+      "tonesPerSlot": {
+       "mean": 19.25,
+       "max": 23
+      }
+     },
+     "heapMB": 5.8,
+     "externalMB": 3.2,
+     "rssPeakMB": 76.9
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 77,
+     "ms": 0.435,
+     "runs": 5,
+     "theta": 89.052,
+     "frameTones": 34,
+     "frameNodes": 664,
+     "heapMB": 5.8,
+     "externalMB": 3.2,
+     "rssPeakMB": 77.8
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 77.8,
+     "2x8": {
+      "ms": 0.172,
+      "runs": 5,
+      "swing": 0.0469,
+      "windowMoments": 12.006,
+      "candsPerSlot": {
+       "mean": 16.75,
+       "max": 23
+      }
+     },
+     "4x8": {
+      "ms": 0.226,
+      "runs": 5,
+      "swing": 0.0938,
+      "windowMoments": 12.006,
+      "candsPerSlot": {
+       "mean": 19,
+       "max": 23
+      }
+     },
+     "heapMB": 6,
+     "externalMB": 3.2,
+     "rssPeakMB": 77.9
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 77.9,
+     "ms": 2.708,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6,
+     "externalMB": 3.2,
+     "rssPeakMB": 85.9
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 85.9,
+     "ms": 1173.69,
+     "runs": 1,
+     "planMs": 0.842,
+     "latticeMs": 11.769,
+     "pickMs": 1125.473,
+     "describeMs": 35.207,
+     "mergeMs": 0.398,
+     "maxPieceMs": 67.319,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 534,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 18.77,
+      "max": 24
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.2,
+     "rssPeakMB": 161.2
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 160.8,
+     "ms": 123.908,
+     "runs": 5,
+     "planMs": 0.316,
+     "latticeMs": 1.631,
+     "pickMs": 117.634,
+     "describeMs": 4.422,
+     "mergeMs": 0.054,
+     "maxPieceMs": 50.18,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 93,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 17.096,
+      "max": 23
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.2,
+     "rssPeakMB": 248.1
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 248.1,
+     "ms": 610.27,
+     "runs": 1,
+     "planMs": 0.574,
+     "latticeMs": 7.683,
+     "pickMs": 542.942,
+     "describeMs": 58.85,
+     "mergeMs": 0.22,
+     "maxPieceMs": 45.201,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 451,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 19.446,
+      "max": 26
+     },
+     "heapMB": 6.4,
+     "externalMB": 3.2,
+     "rssPeakMB": 269.6
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 269.6,
+     "ms": 683.923,
+     "runs": 1,
+     "planMs": 0.667,
+     "latticeMs": 10.208,
+     "pickMs": 628.711,
+     "describeMs": 43.951,
+     "mergeMs": 0.386,
+     "maxPieceMs": 27.824,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 911,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 17.453,
+      "max": 24
+     },
+     "heapMB": 9.8,
+     "externalMB": 3.2,
+     "rssPeakMB": 282.1
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 282.2
+  },
+  {
+   "group": "scaled-256",
+   "name": "256:257 ×16",
+   "layers": [
+    4096,
+    4112
+   ],
+   "estimate": {
+    "grid": 1052672,
+    "onsets": 8192,
+    "layerSum": 8208,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 1052672,
+    "onsets": 8192,
+    "moments": 8192,
+    "tones": 128,
+    "exactTones": 128,
+    "maxGap": 256,
+    "maxOctave": 8,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.3,
+     "ms": 3.493,
+     "runs": 5,
+     "kernelMs": 2.575,
+     "kernelRuns": 5,
+     "grid": 1052672,
+     "onsets": 8192,
+     "moments": 8192,
+     "tones": 128,
+     "exactTones": 128,
+     "maxGap": 256,
+     "maxOctave": 8,
+     "toneIndexOverflow": false,
+     "heapMB": 5.9,
+     "externalMB": 3.5,
+     "rssPeakMB": 90.3
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 90.4,
+     "P8": {
+      "ms": 0.211,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 369,
+       "max": 369
+      },
+      "tonesPerSlot": {
+       "mean": 110,
+       "max": 110
+      }
+     },
+     "P16": {
+      "ms": 0.13,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 185,
+       "max": 185
+      },
+      "tonesPerSlot": {
+       "mean": 64,
+       "max": 64
+      }
+     },
+     "P32": {
+      "ms": 0.119,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 93,
+       "max": 93
+      },
+      "tonesPerSlot": {
+       "mean": 40.5,
+       "max": 47
+      }
+     },
+     "heapMB": 6,
+     "externalMB": 3.5,
+     "rssPeakMB": 91.8
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 92.1,
+     "ms": 0.438,
+     "runs": 5,
+     "theta": 89.052,
+     "frameTones": 34,
+     "frameNodes": 2656,
+     "heapMB": 6,
+     "externalMB": 3.5,
+     "rssPeakMB": 92.5
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 92.5,
+     "2x8": {
+      "ms": 0.167,
+      "runs": 5,
+      "swing": 0.0117,
+      "windowMoments": 11.981,
+      "candsPerSlot": {
+       "mean": 8,
+       "max": 8
+      }
+     },
+     "4x8": {
+      "ms": 0.244,
+      "runs": 5,
+      "swing": 0.0234,
+      "windowMoments": 11.981,
+      "candsPerSlot": {
+       "mean": 8.5,
+       "max": 9
+      }
+     },
+     "heapMB": 6.1,
+     "externalMB": 3.5,
+     "rssPeakMB": 92.6
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 92.7,
+     "ms": 3.116,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.1,
+     "externalMB": 3.5,
+     "rssPeakMB": 97.9
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 98.1,
+     "ms": 2061.672,
+     "runs": 1,
+     "planMs": 1.779,
+     "latticeMs": 16.975,
+     "pickMs": 2015.726,
+     "describeMs": 26.767,
+     "mergeMs": 0.424,
+     "maxPieceMs": 174.125,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 407,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 15.32,
+      "max": 22
+     },
+     "heapMB": 6.4,
+     "externalMB": 3.5,
+     "rssPeakMB": 182.2
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 181.8,
+     "ms": 104.645,
+     "runs": 5,
+     "planMs": 0.929,
+     "latticeMs": 1.28,
+     "pickMs": 99.781,
+     "describeMs": 2.84,
+     "mergeMs": 0.057,
+     "maxPieceMs": 48.762,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 68,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 9.538,
+      "max": 12
+     },
+     "heapMB": 6.4,
+     "externalMB": 3.5,
+     "rssPeakMB": 183.3
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 183.3,
+     "ms": 970.37,
+     "runs": 1,
+     "planMs": 1.954,
+     "latticeMs": 12.467,
+     "pickMs": 920.951,
+     "describeMs": 34.774,
+     "mergeMs": 0.225,
+     "maxPieceMs": 90.25,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 373,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 17.817,
+      "max": 23
+     },
+     "heapMB": 6.5,
+     "externalMB": 3.5,
+     "rssPeakMB": 233.7
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 233.5,
+     "ms": 625.436,
+     "runs": 1,
+     "planMs": 2.502,
+     "latticeMs": 11.414,
+     "pickMs": 574.337,
+     "describeMs": 36.764,
+     "mergeMs": 0.419,
+     "maxPieceMs": 27.702,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 531,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 14.873,
+      "max": 22
+     },
+     "heapMB": 9.9,
+     "externalMB": 3.5,
+     "rssPeakMB": 284
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 284.1
+  },
+  {
+   "group": "scaled-256",
+   "name": "256:257 ×64",
+   "layers": [
+    16384,
+    16448
+   ],
+   "estimate": {
+    "grid": 4210688,
+    "onsets": 32768,
+    "layerSum": 32832,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 4210688,
+    "onsets": 32768,
+    "moments": 32768,
+    "tones": 128,
+    "exactTones": 128,
+    "maxGap": 256,
+    "maxOctave": 8,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62,
+     "ms": 14.093,
+     "runs": 5,
+     "kernelMs": 9.133,
+     "kernelRuns": 5,
+     "grid": 4210688,
+     "onsets": 32768,
+     "moments": 32768,
+     "tones": 128,
+     "exactTones": 128,
+     "maxGap": 256,
+     "maxOctave": 8,
+     "toneIndexOverflow": false,
+     "heapMB": 6.6,
+     "externalMB": 4.6,
+     "rssPeakMB": 189.8
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 165.4,
+     "P8": {
+      "ms": 0.416,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 1475,
+       "max": 1475
+      },
+      "tonesPerSlot": {
+       "mean": 128,
+       "max": 128
+      }
+     },
+     "P16": {
+      "ms": 0.252,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 739,
+       "max": 739
+      },
+      "tonesPerSlot": {
+       "mean": 128,
+       "max": 128
+      }
+     },
+     "P32": {
+      "ms": 0.361,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 369,
+       "max": 369
+      },
+      "tonesPerSlot": {
+       "mean": 110,
+       "max": 110
+      }
+     },
+     "heapMB": 6.7,
+     "externalMB": 4.6,
+     "rssPeakMB": 165.8
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 165.9,
+     "ms": 0.429,
+     "runs": 5,
+     "theta": 89.052,
+     "frameTones": 34,
+     "frameNodes": 10624,
+     "heapMB": 6.7,
+     "externalMB": 4.6,
+     "rssPeakMB": 166.4
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 166.4,
+     "2x8": {
+      "ms": 0.074,
+      "runs": 5,
+      "swing": 0.0029,
+      "windowMoments": 11.878,
+      "candsPerSlot": {
+       "mean": 6,
+       "max": 6
+      }
+     },
+     "4x8": {
+      "ms": 0.2,
+      "runs": 5,
+      "swing": 0.0059,
+      "windowMoments": 12.083,
+      "candsPerSlot": {
+       "mean": 10,
+       "max": 10
+      }
+     },
+     "heapMB": 6.8,
+     "externalMB": 4.6,
+     "rssPeakMB": 166.5
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 166.5,
+     "ms": 2.915,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.9,
+     "externalMB": 4.6,
+     "rssPeakMB": 171.7
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 171.8,
+     "ms": 1463.966,
+     "runs": 1,
+     "planMs": 4.213,
+     "latticeMs": 11.367,
+     "pickMs": 1430.181,
+     "describeMs": 17.773,
+     "mergeMs": 0.432,
+     "maxPieceMs": 111.629,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 256,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 12.453,
+      "max": 22
+     },
+     "heapMB": 7.1,
+     "externalMB": 4.6,
+     "rssPeakMB": 249
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 248.7,
+     "ms": 102.97,
+     "runs": 5,
+     "planMs": 2.652,
+     "latticeMs": 1.057,
+     "pickMs": 96.888,
+     "describeMs": 2.08,
+     "mergeMs": 0.055,
+     "maxPieceMs": 44.09,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 48,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 8.769,
+      "max": 10
+     },
+     "heapMB": 7.2,
+     "externalMB": 4.6,
+     "rssPeakMB": 260.9
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 260.9,
+     "ms": 821.636,
+     "runs": 1,
+     "planMs": 4.545,
+     "latticeMs": 9.123,
+     "pickMs": 780.762,
+     "describeMs": 26.868,
+     "mergeMs": 0.339,
+     "maxPieceMs": 105.093,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 308,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 19.1,
+      "max": 25
+     },
+     "heapMB": 7.2,
+     "externalMB": 4.6,
+     "rssPeakMB": 307.4
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 307.4,
+     "ms": 472.072,
+     "runs": 1,
+     "planMs": 8.577,
+     "latticeMs": 9.876,
+     "pickMs": 427.768,
+     "describeMs": 25.456,
+     "mergeMs": 0.396,
+     "maxPieceMs": 14.466,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 227,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 11.442,
+      "max": 22
+     },
+     "heapMB": 10.6,
+     "externalMB": 4.6,
+     "rssPeakMB": 339.7
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 339.7
+  },
+  {
+   "group": "scaled-256",
+   "name": "256:257 ×128",
+   "layers": [
+    32768,
+    32896
+   ],
+   "estimate": {
+    "grid": 8421376,
+    "onsets": 65536,
+    "layerSum": 65664,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 8421376,
+    "onsets": 65536,
+    "moments": 65536,
+    "tones": 128,
+    "exactTones": 128,
+    "maxGap": 256,
+    "maxOctave": 8,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.9,
+     "ms": 26.149,
+     "runs": 5,
+     "kernelMs": 18.035,
+     "kernelRuns": 5,
+     "grid": 8421376,
+     "onsets": 65536,
+     "moments": 65536,
+     "tones": 128,
+     "exactTones": 128,
+     "maxGap": 256,
+     "maxOctave": 8,
+     "toneIndexOverflow": false,
+     "heapMB": 7.7,
+     "externalMB": 6.1,
+     "rssPeakMB": 294.6
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 260.8,
+     "P8": {
+      "ms": 1.048,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 2951,
+       "max": 2951
+      },
+      "tonesPerSlot": {
+       "mean": 128,
+       "max": 128
+      }
+     },
+     "P16": {
+      "ms": 0.408,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 1475,
+       "max": 1475
+      },
+      "tonesPerSlot": {
+       "mean": 128,
+       "max": 128
+      }
+     },
+     "P32": {
+      "ms": 0.554,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 739,
+       "max": 739
+      },
+      "tonesPerSlot": {
+       "mean": 128,
+       "max": 128
+      }
+     },
+     "heapMB": 7.7,
+     "externalMB": 6.1,
+     "rssPeakMB": 263.9
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 264,
+     "ms": 0.463,
+     "runs": 5,
+     "theta": 89.052,
+     "frameTones": 34,
+     "frameNodes": 21248,
+     "heapMB": 7.7,
+     "externalMB": 6.1,
+     "rssPeakMB": 264.2
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 264.2,
+     "2x8": {
+      "ms": 0.098,
+      "runs": 5,
+      "swing": 0.0015,
+      "windowMoments": 12.288,
+      "candsPerSlot": {
+       "mean": 10,
+       "max": 10
+      }
+     },
+     "4x8": {
+      "ms": 0.11,
+      "runs": 5,
+      "swing": 0.0029,
+      "windowMoments": 11.878,
+      "candsPerSlot": {
+       "mean": 6,
+       "max": 6
+      }
+     },
+     "heapMB": 7.8,
+     "externalMB": 6.1,
+     "rssPeakMB": 264.2
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 264.2,
+     "ms": 2.964,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 7.8,
+     "externalMB": 6.1,
+     "rssPeakMB": 267.3
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 267.2,
+     "ms": 930.255,
+     "runs": 1,
+     "planMs": 7.507,
+     "latticeMs": 6.267,
+     "pickMs": 901.516,
+     "describeMs": 14.606,
+     "mergeMs": 0.358,
+     "maxPieceMs": 71.664,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 137,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 8.347,
+      "max": 12
+     },
+     "heapMB": 8.1,
+     "externalMB": 6.1,
+     "rssPeakMB": 383.3
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 382.8,
+     "ms": 66.947,
+     "runs": 5,
+     "planMs": 5.252,
+     "latticeMs": 0.68,
+     "pickMs": 59.186,
+     "describeMs": 1.888,
+     "mergeMs": 0.056,
+     "maxPieceMs": 22.654,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 48,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 7.231,
+      "max": 10
+     },
+     "heapMB": 8.2,
+     "externalMB": 6.1,
+     "rssPeakMB": 407.3
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 399.4,
+     "ms": 549.062,
+     "runs": 1,
+     "planMs": 8.629,
+     "latticeMs": 8.463,
+     "pickMs": 508,
+     "describeMs": 23.742,
+     "mergeMs": 0.228,
+     "maxPieceMs": 53.957,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 250,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 15.942,
+      "max": 20
+     },
+     "heapMB": 8.2,
+     "externalMB": 6.1,
+     "rssPeakMB": 425.3
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 425.2,
+     "ms": 519.543,
+     "runs": 1,
+     "planMs": 15.394,
+     "latticeMs": 7.973,
+     "pickMs": 470.075,
+     "describeMs": 25.698,
+     "mergeMs": 0.403,
+     "maxPieceMs": 14.516,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 178,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 10.728,
+      "max": 22
+     },
+     "heapMB": 11.6,
+     "externalMB": 6.1,
+     "rssPeakMB": 466
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 466
+  },
+  {
+   "group": "scaled-256",
+   "name": "256:257 ×510",
+   "layers": [
+    130560,
+    131070
+   ],
+   "estimate": {
+    "grid": 33553920,
+    "onsets": 261120,
+    "layerSum": 261630,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 33553920,
+    "onsets": 261120,
+    "moments": 261120,
+    "tones": 128,
+    "exactTones": 128,
+    "maxGap": 256,
+    "maxOctave": 8,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": false,
+    "defaultStackSpreadError": "Maximum call stack size exceeded"
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.5,
+     "ms": 113.086,
+     "runs": 5,
+     "kernelMs": 75.869,
+     "kernelRuns": 5,
+     "grid": 33553920,
+     "onsets": 261120,
+     "moments": 261120,
+     "tones": 128,
+     "exactTones": 128,
+     "maxGap": 256,
+     "maxOctave": 8,
+     "toneIndexOverflow": false,
+     "heapMB": 13.6,
+     "externalMB": 15.1,
+     "rssPeakMB": 649.2
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 546.7,
+     "P8": {
+      "ms": 1.932,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 11750.5,
+       "max": 11751
+      },
+      "tonesPerSlot": {
+       "mean": 128,
+       "max": 128
+      }
+     },
+     "P16": {
+      "ms": 1.578,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 5874.75,
+       "max": 5875
+      },
+      "tonesPerSlot": {
+       "mean": 128,
+       "max": 128
+      }
+     },
+     "P32": {
+      "ms": 1.767,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 2937.875,
+       "max": 2939
+      },
+      "tonesPerSlot": {
+       "mean": 128,
+       "max": 128
+      }
+     },
+     "heapMB": 13.7,
+     "externalMB": 15.1,
+     "rssPeakMB": 547.2
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 547.2,
+     "ms": 0.566,
+     "runs": 5,
+     "theta": 89.052,
+     "frameTones": 34,
+     "frameNodes": 84660,
+     "heapMB": 13.7,
+     "externalMB": 15.1,
+     "rssPeakMB": 547.2
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 547.2,
+     "2x8": {
+      "ms": 0.206,
+      "runs": 5,
+      "swing": 0.0004,
+      "windowMoments": 13.056,
+      "candsPerSlot": {
+       "mean": 20,
+       "max": 25
+      }
+     },
+     "4x8": {
+      "ms": 0.206,
+      "runs": 5,
+      "swing": 0.0007,
+      "windowMoments": 11.424,
+      "candsPerSlot": {
+       "mean": 16.563,
+       "max": 22
+      }
+     },
+     "heapMB": 13.8,
+     "externalMB": 15.1,
+     "rssPeakMB": 547.2
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 547.2,
+     "ms": 3.433,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 13.9,
+     "externalMB": 15.1,
+     "rssPeakMB": 547.3
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 547.3,
+     "ms": 1363.983,
+     "runs": 1,
+     "planMs": 25.417,
+     "latticeMs": 11.25,
+     "pickMs": 1290.56,
+     "describeMs": 36.324,
+     "mergeMs": 0.432,
+     "maxPieceMs": 63.137,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 91,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 17.71,
+      "max": 25
+     },
+     "heapMB": 14.1,
+     "externalMB": 15.1,
+     "rssPeakMB": 595.5
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 595.1,
+     "ms": 130.551,
+     "runs": 5,
+     "planMs": 20.31,
+     "latticeMs": 1.459,
+     "pickMs": 104.235,
+     "describeMs": 5.331,
+     "mergeMs": 0.061,
+     "maxPieceMs": 40.779,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 48,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 17.712,
+      "max": 25
+     },
+     "heapMB": 14.2,
+     "externalMB": 15.1,
+     "rssPeakMB": 704.2
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 698.7,
+     "ms": 869.846,
+     "runs": 1,
+     "planMs": 34.563,
+     "latticeMs": 7.145,
+     "pickMs": 770.756,
+     "describeMs": 57.154,
+     "mergeMs": 0.227,
+     "maxPieceMs": 51.576,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 400,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 17.877,
+      "max": 28
+     },
+     "heapMB": 15.8,
+     "externalMB": 15.1,
+     "rssPeakMB": 722.3
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 722.3,
+     "ms": 1100.552,
+     "runs": 1,
+     "planMs": 53.907,
+     "latticeMs": 10.404,
+     "pickMs": 995.597,
+     "describeMs": 40.264,
+     "mergeMs": 0.38,
+     "maxPieceMs": 36.179,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 186,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 16.611,
+      "max": 25
+     },
+     "heapMB": 17.8,
+     "externalMB": 15.1,
+     "rssPeakMB": 756.5
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 756.5
+  },
+  {
+   "group": "scaled-41",
+   "name": "41:42:43 ×64",
+   "layers": [
+    2624,
+    2688,
+    2752
+   ],
+   "estimate": {
+    "grid": 4738944,
+    "onsets": 7936,
+    "layerSum": 8064,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 4738944,
+    "onsets": 7936,
+    "moments": 7936,
+    "tones": 41,
+    "exactTones": 41,
+    "maxGap": 1722,
+    "maxOctave": 5,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.2,
+     "ms": 3.822,
+     "runs": 5,
+     "kernelMs": 2.863,
+     "kernelRuns": 5,
+     "grid": 4738944,
+     "onsets": 7936,
+     "moments": 7936,
+     "tones": 41,
+     "exactTones": 41,
+     "maxGap": 1722,
+     "maxOctave": 5,
+     "toneIndexOverflow": false,
+     "heapMB": 5.9,
+     "externalMB": 3.5,
+     "rssPeakMB": 90.9
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 90.6,
+     "P8": {
+      "ms": 0.114,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 357,
+       "max": 357
+      },
+      "tonesPerSlot": {
+       "mean": 41,
+       "max": 41
+      }
+     },
+     "P16": {
+      "ms": 0.137,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 179,
+       "max": 179
+      },
+      "tonesPerSlot": {
+       "mean": 41,
+       "max": 41
+      }
+     },
+     "P32": {
+      "ms": 0.116,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 89,
+       "max": 89
+      },
+      "tonesPerSlot": {
+       "mean": 31,
+       "max": 31
+      }
+     },
+     "heapMB": 6,
+     "externalMB": 3.5,
+     "rssPeakMB": 91.6
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 91.9,
+     "ms": 0.075,
+     "runs": 5,
+     "theta": 65.825,
+     "frameTones": 19,
+     "frameNodes": 4480,
+     "heapMB": 6,
+     "externalMB": 3.5,
+     "rssPeakMB": 92
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 92,
+     "2x8": {
+      "ms": 0.086,
+      "runs": 5,
+      "swing": 0.0121,
+      "windowMoments": 12.003,
+      "candsPerSlot": {
+       "mean": 8,
+       "max": 8
+      }
+     },
+     "4x8": {
+      "ms": 0.151,
+      "runs": 5,
+      "swing": 0.0242,
+      "windowMoments": 12.003,
+      "candsPerSlot": {
+       "mean": 8,
+       "max": 8
+      }
+     },
+     "heapMB": 6,
+     "externalMB": 3.5,
+     "rssPeakMB": 92.1
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 92.2,
+     "ms": 3.176,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.1,
+     "externalMB": 3.5,
+     "rssPeakMB": 98.3
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 98.4,
+     "ms": 3204.493,
+     "runs": 1,
+     "planMs": 1.884,
+     "latticeMs": 11.062,
+     "pickMs": 3157.451,
+     "describeMs": 33.557,
+     "mergeMs": 0.539,
+     "maxPieceMs": 242.079,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 436,
+     "root": "861/688",
+     "candsPerSlot": {
+      "mean": 16.5,
+      "max": 22
+     },
+     "heapMB": 6.4,
+     "externalMB": 3.5,
+     "rssPeakMB": 211.5
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 211.6,
+     "ms": 184.222,
+     "runs": 5,
+     "planMs": 0.897,
+     "latticeMs": 1.177,
+     "pickMs": 178.459,
+     "describeMs": 3.395,
+     "mergeMs": 0.057,
+     "maxPieceMs": 84.086,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 84,
+     "root": "861/688",
+     "candsPerSlot": {
+      "mean": 11.5,
+      "max": 12
+     },
+     "heapMB": 6.4,
+     "externalMB": 3.5,
+     "rssPeakMB": 242.3
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 242.3,
+     "ms": 1153.214,
+     "runs": 1,
+     "planMs": 1.187,
+     "latticeMs": 7.454,
+     "pickMs": 1119.168,
+     "describeMs": 25.215,
+     "mergeMs": 0.191,
+     "maxPieceMs": 114.944,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 182,
+     "root": "21/20",
+     "candsPerSlot": {
+      "mean": 17.975,
+      "max": 21
+     },
+     "heapMB": 6.4,
+     "externalMB": 3.5,
+     "rssPeakMB": 286.3
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 286.1,
+     "ms": 1621.969,
+     "runs": 1,
+     "planMs": 1.715,
+     "latticeMs": 13.026,
+     "pickMs": 1547.657,
+     "describeMs": 59.192,
+     "mergeMs": 0.379,
+     "maxPieceMs": 62.096,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 865,
+     "root": "861/688",
+     "candsPerSlot": {
+      "mean": 17.036,
+      "max": 23
+     },
+     "heapMB": 9.9,
+     "externalMB": 3.5,
+     "rssPeakMB": 321.3
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 321.7
+  },
+  {
+   "group": "scaled-41",
+   "name": "41:42:43 ×453",
+   "layers": [
+    18573,
+    19026,
+    19479
+   ],
+   "estimate": {
+    "grid": 33542838,
+    "onsets": 56172,
+    "layerSum": 57078,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 33542838,
+    "onsets": 56172,
+    "moments": 56172,
+    "tones": 41,
+    "exactTones": 41,
+    "maxGap": 1722,
+    "maxOctave": 5,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.2,
+     "ms": 26.95,
+     "runs": 5,
+     "kernelMs": 19.112,
+     "kernelRuns": 5,
+     "grid": 33542838,
+     "onsets": 56172,
+     "moments": 56172,
+     "tones": 41,
+     "exactTones": 41,
+     "maxGap": 1722,
+     "maxOctave": 5,
+     "toneIndexOverflow": false,
+     "heapMB": 7.4,
+     "externalMB": 5.7,
+     "rssPeakMB": 264.3
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 244.2,
+     "P8": {
+      "ms": 0.615,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 2528,
+       "max": 2529
+      },
+      "tonesPerSlot": {
+       "mean": 41,
+       "max": 41
+      }
+     },
+     "P16": {
+      "ms": 0.393,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 1264,
+       "max": 1265
+      },
+      "tonesPerSlot": {
+       "mean": 41,
+       "max": 41
+      }
+     },
+     "P32": {
+      "ms": 0.383,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 632,
+       "max": 633
+      },
+      "tonesPerSlot": {
+       "mean": 41,
+       "max": 41
+      }
+     },
+     "heapMB": 7.4,
+     "externalMB": 5.7,
+     "rssPeakMB": 244.9
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 244.9,
+     "ms": 0.087,
+     "runs": 5,
+     "theta": 65.825,
+     "frameTones": 19,
+     "frameNodes": 31710,
+     "heapMB": 7.4,
+     "externalMB": 5.7,
+     "rssPeakMB": 245
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 245,
+     "2x8": {
+      "ms": 0.178,
+      "runs": 5,
+      "swing": 0.0017,
+      "windowMoments": 11.937,
+      "candsPerSlot": {
+       "mean": 18.063,
+       "max": 23
+      }
+     },
+     "4x8": {
+      "ms": 0.226,
+      "runs": 5,
+      "swing": 0.0034,
+      "windowMoments": 11.937,
+      "candsPerSlot": {
+       "mean": 18.188,
+       "max": 23
+      }
+     },
+     "heapMB": 7.6,
+     "externalMB": 5.7,
+     "rssPeakMB": 245
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 245,
+     "ms": 6.51,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 7.6,
+     "externalMB": 5.7,
+     "rssPeakMB": 253.2
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 253.2,
+     "ms": 2219.136,
+     "runs": 1,
+     "planMs": 7.257,
+     "latticeMs": 12.358,
+     "pickMs": 2149.418,
+     "describeMs": 49.624,
+     "mergeMs": 0.479,
+     "maxPieceMs": 119.806,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 499,
+     "root": "861/688",
+     "candsPerSlot": {
+      "mean": 17.089,
+      "max": 24
+     },
+     "heapMB": 7.9,
+     "externalMB": 5.7,
+     "rssPeakMB": 384
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 383.7,
+     "ms": 214.727,
+     "runs": 5,
+     "planMs": 4.602,
+     "latticeMs": 1.26,
+     "pickMs": 202.222,
+     "describeMs": 6.683,
+     "mergeMs": 0.067,
+     "maxPieceMs": 85.718,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 94,
+     "root": "861/688",
+     "candsPerSlot": {
+      "mean": 17.043,
+      "max": 24
+     },
+     "heapMB": 8,
+     "externalMB": 5.7,
+     "rssPeakMB": 396.6
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 393.9,
+     "ms": 1092.397,
+     "runs": 1,
+     "planMs": 7.688,
+     "latticeMs": 6.344,
+     "pickMs": 1034.678,
+     "describeMs": 43.449,
+     "mergeMs": 0.238,
+     "maxPieceMs": 68.36,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 404,
+     "root": "21/20",
+     "candsPerSlot": {
+      "mean": 18.001,
+      "max": 25
+     },
+     "heapMB": 8,
+     "externalMB": 5.7,
+     "rssPeakMB": 410.7
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 410.5,
+     "ms": 1571.571,
+     "runs": 1,
+     "planMs": 11.734,
+     "latticeMs": 10.454,
+     "pickMs": 1478.131,
+     "describeMs": 70.806,
+     "mergeMs": 0.446,
+     "maxPieceMs": 69.63,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 1026,
+     "root": "861/688",
+     "candsPerSlot": {
+      "mean": 17.331,
+      "max": 24
+     },
+     "heapMB": 11.7,
+     "externalMB": 5.7,
+     "rssPeakMB": 443.2
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 443.2
+  },
+  {
+   "group": "scaled-15",
+   "name": "15:16:17 ×1024",
+   "layers": [
+    15360,
+    16384,
+    17408
+   ],
+   "estimate": {
+    "grid": 4177920,
+    "onsets": 47104,
+    "layerSum": 49152,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 4177920,
+    "onsets": 47104,
+    "moments": 47104,
+    "tones": 15,
+    "exactTones": 15,
+    "maxGap": 240,
+    "maxOctave": 4,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.4,
+     "ms": 24.682,
+     "runs": 5,
+     "kernelMs": 16.522,
+     "kernelRuns": 5,
+     "grid": 4177920,
+     "onsets": 47104,
+     "moments": 47104,
+     "tones": 15,
+     "exactTones": 15,
+     "maxGap": 240,
+     "maxOctave": 4,
+     "toneIndexOverflow": false,
+     "heapMB": 7.1,
+     "externalMB": 5.3,
+     "rssPeakMB": 211.1
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 193.9,
+     "P8": {
+      "ms": 0.482,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 2117,
+       "max": 2117
+      },
+      "tonesPerSlot": {
+       "mean": 15,
+       "max": 15
+      }
+     },
+     "P16": {
+      "ms": 0.257,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 1059,
+       "max": 1059
+      },
+      "tonesPerSlot": {
+       "mean": 15,
+       "max": 15
+      }
+     },
+     "P32": {
+      "ms": 0.311,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 531,
+       "max": 531
+      },
+      "tonesPerSlot": {
+       "mean": 15,
+       "max": 15
+      }
+     },
+     "heapMB": 7.1,
+     "externalMB": 5.3,
+     "rssPeakMB": 195.9
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 195.9,
+     "ms": 0.061,
+     "runs": 5,
+     "theta": 81.358,
+     "frameTones": 9,
+     "frameNodes": 34816,
+     "heapMB": 7.2,
+     "externalMB": 5.3,
+     "rssPeakMB": 196
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 196,
+     "2x8": {
+      "ms": 0.065,
+      "runs": 5,
+      "swing": 0.002,
+      "windowMoments": 11.776,
+      "candsPerSlot": {
+       "mean": 5,
+       "max": 5
+      }
+     },
+     "4x8": {
+      "ms": 0.13,
+      "runs": 5,
+      "swing": 0.0041,
+      "windowMoments": 12.07,
+      "candsPerSlot": {
+       "mean": 5,
+       "max": 5
+      }
+     },
+     "heapMB": 7.2,
+     "externalMB": 5.3,
+     "rssPeakMB": 196
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 196,
+     "ms": 3.187,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 7.3,
+     "externalMB": 5.3,
+     "rssPeakMB": 200.7
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 200.7,
+     "ms": 218.574,
+     "runs": 5,
+     "planMs": 5.584,
+     "latticeMs": 3.388,
+     "pickMs": 200.717,
+     "describeMs": 8.849,
+     "mergeMs": 0.329,
+     "maxPieceMs": 11.946,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 52,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 5,
+      "max": 5
+     },
+     "heapMB": 7.6,
+     "externalMB": 5.3,
+     "rssPeakMB": 411.5
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 410.6,
+     "ms": 23.76,
+     "runs": 5,
+     "planMs": 4.613,
+     "latticeMs": 0.539,
+     "pickMs": 17.172,
+     "describeMs": 1.458,
+     "mergeMs": 0.046,
+     "maxPieceMs": 7.398,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 46,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 5,
+      "max": 5
+     },
+     "heapMB": 7.6,
+     "externalMB": 5.3,
+     "rssPeakMB": 422.7
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 416.9,
+     "ms": 101.972,
+     "runs": 5,
+     "planMs": 6.227,
+     "latticeMs": 1.752,
+     "pickMs": 87.371,
+     "describeMs": 6.204,
+     "mergeMs": 0.193,
+     "maxPieceMs": 4.983,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 66,
+     "root": null,
+     "candsPerSlot": {
+      "mean": 5.167,
+      "max": 19
+     },
+     "heapMB": 7.7,
+     "externalMB": 5.3,
+     "rssPeakMB": 450.9
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 450.2,
+     "ms": 889.073,
+     "runs": 1,
+     "planMs": 12.412,
+     "latticeMs": 6.86,
+     "pickMs": 846.946,
+     "describeMs": 22.486,
+     "mergeMs": 0.368,
+     "maxPieceMs": 45.705,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 152,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 9.727,
+      "max": 21
+     },
+     "heapMB": 7.7,
+     "externalMB": 5.3,
+     "rssPeakMB": 453.5
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 453.5
+  },
+  {
+   "group": "scaled-15",
+   "name": "15:16:17 ×8224",
+   "layers": [
+    123360,
+    131584,
+    139808
+   ],
+   "estimate": {
+    "grid": 33553920,
+    "onsets": 378304,
+    "layerSum": 394752,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 33553920,
+    "onsets": 378304,
+    "moments": 378304,
+    "tones": 15,
+    "exactTones": 15,
+    "maxGap": 240,
+    "maxOctave": 4,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": false,
+    "defaultStackSpreadError": "Maximum call stack size exceeded"
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.6,
+     "ms": 185.278,
+     "runs": 5,
+     "kernelMs": 137.47,
+     "kernelRuns": 5,
+     "grid": 33553920,
+     "onsets": 378304,
+     "moments": 378304,
+     "tones": 15,
+     "exactTones": 15,
+     "maxGap": 240,
+     "maxOctave": 4,
+     "toneIndexOverflow": false,
+     "heapMB": 17.2,
+     "externalMB": 20.4,
+     "rssPeakMB": 763.7
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 636.3,
+     "P8": {
+      "ms": 2.357,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 17021,
+       "max": 17021
+      },
+      "tonesPerSlot": {
+       "mean": 15,
+       "max": 15
+      }
+     },
+     "P16": {
+      "ms": 2.142,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 8511,
+       "max": 8511
+      },
+      "tonesPerSlot": {
+       "mean": 15,
+       "max": 15
+      }
+     },
+     "P32": {
+      "ms": 2.105,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 4255,
+       "max": 4255
+      },
+      "tonesPerSlot": {
+       "mean": 15,
+       "max": 15
+      }
+     },
+     "heapMB": 17.2,
+     "externalMB": 20.4,
+     "rssPeakMB": 636.9
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 637.7,
+     "ms": 0.242,
+     "runs": 5,
+     "theta": 81.358,
+     "frameTones": 9,
+     "frameNodes": 279616,
+     "heapMB": 17.3,
+     "externalMB": 20.4,
+     "rssPeakMB": 637.7
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 637.7,
+     "2x8": {
+      "ms": 0.107,
+      "runs": 5,
+      "swing": 0.0003,
+      "windowMoments": 14.186,
+      "candsPerSlot": {
+       "mean": 7,
+       "max": 7
+      }
+     },
+     "4x8": {
+      "ms": 0.122,
+      "runs": 5,
+      "swing": 0.0005,
+      "windowMoments": 11.822,
+      "candsPerSlot": {
+       "mean": 5,
+       "max": 5
+      }
+     },
+     "heapMB": 17.3,
+     "externalMB": 20.4,
+     "rssPeakMB": 638.3
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 638.3,
+     "ms": 1.757,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 17.4,
+     "externalMB": 20.4,
+     "rssPeakMB": 638.9
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 639.3,
+     "ms": 269.118,
+     "runs": 5,
+     "planMs": 44.587,
+     "latticeMs": 3.599,
+     "pickMs": 209.857,
+     "describeMs": 11.719,
+     "mergeMs": 0.331,
+     "maxPieceMs": 13.228,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 52,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 5.64,
+      "max": 7
+     },
+     "heapMB": 16.4,
+     "externalMB": 20.4,
+     "rssPeakMB": 749.7
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 731.4,
+     "ms": 60.785,
+     "runs": 5,
+     "planMs": 38.422,
+     "latticeMs": 0.752,
+     "pickMs": 20.256,
+     "describeMs": 1.556,
+     "mergeMs": 0.052,
+     "maxPieceMs": 8.743,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 46,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 5.615,
+      "max": 7
+     },
+     "heapMB": 16.4,
+     "externalMB": 20.4,
+     "rssPeakMB": 792.8
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 731.6,
+     "ms": 155.063,
+     "runs": 5,
+     "planMs": 57.654,
+     "latticeMs": 2.003,
+     "pickMs": 88.399,
+     "describeMs": 6.854,
+     "mergeMs": 0.214,
+     "maxPieceMs": 5.07,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 70,
+     "root": null,
+     "candsPerSlot": {
+      "mean": 4.992,
+      "max": 16
+     },
+     "heapMB": 16.5,
+     "externalMB": 20.4,
+     "rssPeakMB": 829.9
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 811.8,
+     "ms": 1155.306,
+     "runs": 1,
+     "planMs": 103.86,
+     "latticeMs": 8.888,
+     "pickMs": 1015.819,
+     "describeMs": 26.328,
+     "mergeMs": 0.411,
+     "maxPieceMs": 54.08,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 152,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 11.298,
+      "max": 21
+     },
+     "heapMB": 16.5,
+     "externalMB": 20.4,
+     "rssPeakMB": 863.8
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 863.8
+  },
+  {
+   "group": "tones16k",
+   "name": "8:9 ×1024",
+   "layers": [
+    8192,
+    9216
+   ],
+   "estimate": {
+    "grid": 73728,
+    "onsets": 16384,
+    "layerSum": 17408,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 73728,
+    "onsets": 16384,
+    "moments": 16384,
+    "tones": 4,
+    "exactTones": 4,
+    "maxGap": 8,
+    "maxOctave": 3,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.1,
+     "ms": 12.002,
+     "runs": 5,
+     "kernelMs": 9.958,
+     "kernelRuns": 5,
+     "grid": 73728,
+     "onsets": 16384,
+     "moments": 16384,
+     "tones": 4,
+     "exactTones": 4,
+     "maxGap": 8,
+     "maxOctave": 3,
+     "toneIndexOverflow": false,
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 118
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 115.3,
+     "P8": {
+      "ms": 0.17,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 737,
+       "max": 737
+      },
+      "tonesPerSlot": {
+       "mean": 4,
+       "max": 4
+      }
+     },
+     "P16": {
+      "ms": 0.165,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 369,
+       "max": 369
+      },
+      "tonesPerSlot": {
+       "mean": 4,
+       "max": 4
+      }
+     },
+     "P32": {
+      "ms": 0.168,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 185,
+       "max": 185
+      },
+      "tonesPerSlot": {
+       "mean": 4,
+       "max": 4
+      }
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 115.3
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 115.6,
+     "ms": 0.056,
+     "runs": 5,
+     "theta": 98.045,
+     "frameTones": 3,
+     "frameNodes": 14336,
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 115.6
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 115.6,
+     "2x8": {
+      "ms": 0.094,
+      "runs": 5,
+      "swing": 0.0059,
+      "windowMoments": 12.083,
+      "candsPerSlot": {
+       "mean": 7,
+       "max": 7
+      }
+     },
+     "4x8": {
+      "ms": 0.125,
+      "runs": 5,
+      "swing": 0.0117,
+      "windowMoments": 11.981,
+      "candsPerSlot": {
+       "mean": 6,
+       "max": 6
+      }
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.9,
+     "rssPeakMB": 115.6
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 115.7,
+     "ms": 1.008,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.3,
+     "externalMB": 3.9,
+     "rssPeakMB": 118.1
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 118.1,
+     "ms": 434.434,
+     "runs": 1,
+     "planMs": 3.435,
+     "latticeMs": 5.433,
+     "pickMs": 412.714,
+     "describeMs": 12.429,
+     "mergeMs": 0.423,
+     "maxPieceMs": 19.274,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 97,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 6.32,
+      "max": 7
+     },
+     "heapMB": 6.6,
+     "externalMB": 3.9,
+     "rssPeakMB": 181.6
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 181.3,
+     "ms": 41.493,
+     "runs": 5,
+     "planMs": 2.511,
+     "latticeMs": 0.712,
+     "pickMs": 37.004,
+     "describeMs": 1.766,
+     "mergeMs": 0.053,
+     "maxPieceMs": 14.83,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 48,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 6.308,
+      "max": 7
+     },
+     "heapMB": 6.7,
+     "externalMB": 3.9,
+     "rssPeakMB": 190.1
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 189.3,
+     "ms": 176.042,
+     "runs": 5,
+     "planMs": 2.273,
+     "latticeMs": 2.646,
+     "pickMs": 165.991,
+     "describeMs": 5.838,
+     "mergeMs": 0.184,
+     "maxPieceMs": 10.549,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 78,
+     "root": null,
+     "candsPerSlot": {
+      "mean": 5.1,
+      "max": 7
+     },
+     "heapMB": 6.7,
+     "externalMB": 3.9,
+     "rssPeakMB": 339.4
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 339.2,
+     "ms": 340.158,
+     "runs": 5,
+     "planMs": 5.89,
+     "latticeMs": 4.538,
+     "pickMs": 313.67,
+     "describeMs": 14.566,
+     "mergeMs": 0.409,
+     "maxPieceMs": 12.669,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 173,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 6.764,
+      "max": 7
+     },
+     "heapMB": 6.7,
+     "externalMB": 3.9,
+     "rssPeakMB": 388
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 388.2
+  },
+  {
+   "group": "tones16k",
+   "name": "32:33 ×256",
+   "layers": [
+    8192,
+    8448
+   ],
+   "estimate": {
+    "grid": 270336,
+    "onsets": 16384,
+    "layerSum": 16640,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 270336,
+    "onsets": 16384,
+    "moments": 16384,
+    "tones": 16,
+    "exactTones": 16,
+    "maxGap": 32,
+    "maxOctave": 5,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.2,
+     "ms": 7.4,
+     "runs": 5,
+     "kernelMs": 5.451,
+     "kernelRuns": 5,
+     "grid": 270336,
+     "onsets": 16384,
+     "moments": 16384,
+     "tones": 16,
+     "exactTones": 16,
+     "maxGap": 32,
+     "maxOctave": 5,
+     "toneIndexOverflow": false,
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 117.1
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 112.8,
+     "P8": {
+      "ms": 0.188,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 739,
+       "max": 739
+      },
+      "tonesPerSlot": {
+       "mean": 16,
+       "max": 16
+      }
+     },
+     "P16": {
+      "ms": 0.173,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 371,
+       "max": 371
+      },
+      "tonesPerSlot": {
+       "mean": 16,
+       "max": 16
+      }
+     },
+     "P32": {
+      "ms": 0.125,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 185,
+       "max": 185
+      },
+      "tonesPerSlot": {
+       "mean": 16,
+       "max": 16
+      }
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 112.9
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 113,
+     "ms": 0.08,
+     "runs": 5,
+     "theta": 94.135,
+     "frameTones": 8,
+     "frameNodes": 10240,
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 113
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 113,
+     "2x8": {
+      "ms": 0.11,
+      "runs": 5,
+      "swing": 0.0059,
+      "windowMoments": 12.083,
+      "candsPerSlot": {
+       "mean": 10,
+       "max": 10
+      }
+     },
+     "4x8": {
+      "ms": 0.118,
+      "runs": 5,
+      "swing": 0.0117,
+      "windowMoments": 11.981,
+      "candsPerSlot": {
+       "mean": 8,
+       "max": 8
+      }
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.9,
+     "rssPeakMB": 113
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 113,
+     "ms": 2.476,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.4,
+     "externalMB": 3.9,
+     "rssPeakMB": 117
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 117.1,
+     "ms": 847.438,
+     "runs": 1,
+     "planMs": 2.993,
+     "latticeMs": 6.608,
+     "pickMs": 822.819,
+     "describeMs": 14.606,
+     "mergeMs": 0.411,
+     "maxPieceMs": 44.082,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 78,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 8.64,
+      "max": 10
+     },
+     "heapMB": 6.6,
+     "externalMB": 3.9,
+     "rssPeakMB": 187.8
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 187.5,
+     "ms": 81.568,
+     "runs": 5,
+     "planMs": 1.949,
+     "latticeMs": 0.764,
+     "pickMs": 76.973,
+     "describeMs": 2.513,
+     "mergeMs": 0.072,
+     "maxPieceMs": 32.031,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 48,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 8.615,
+      "max": 10
+     },
+     "heapMB": 6.7,
+     "externalMB": 3.9,
+     "rssPeakMB": 224
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 224,
+     "ms": 871.672,
+     "runs": 1,
+     "planMs": 2.641,
+     "latticeMs": 5.921,
+     "pickMs": 846.976,
+     "describeMs": 15.912,
+     "mergeMs": 0.221,
+     "maxPieceMs": 68.347,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 244,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 11.975,
+      "max": 17
+     },
+     "heapMB": 6.7,
+     "externalMB": 3.9,
+     "rssPeakMB": 256.6
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 256.6,
+     "ms": 697.901,
+     "runs": 1,
+     "planMs": 5.651,
+     "latticeMs": 9.11,
+     "pickMs": 655.51,
+     "describeMs": 27.258,
+     "mergeMs": 0.372,
+     "maxPieceMs": 27.451,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 168,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 11.622,
+      "max": 17
+     },
+     "heapMB": 10.1,
+     "externalMB": 3.9,
+     "rssPeakMB": 309.2
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 309.2
+  },
+  {
+   "group": "tones16k",
+   "name": "128:129 ×64",
+   "layers": [
+    8192,
+    8256
+   ],
+   "estimate": {
+    "grid": 1056768,
+    "onsets": 16384,
+    "layerSum": 16448,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 1056768,
+    "onsets": 16384,
+    "moments": 16384,
+    "tones": 64,
+    "exactTones": 64,
+    "maxGap": 128,
+    "maxOctave": 7,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 63.2,
+     "ms": 6.935,
+     "runs": 5,
+     "kernelMs": 5.129,
+     "kernelRuns": 5,
+     "grid": 1056768,
+     "onsets": 16384,
+     "moments": 16384,
+     "tones": 64,
+     "exactTones": 64,
+     "maxGap": 128,
+     "maxOctave": 7,
+     "toneIndexOverflow": false,
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 120.3
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 118.3,
+     "P8": {
+      "ms": 0.23,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 737,
+       "max": 737
+      },
+      "tonesPerSlot": {
+       "mean": 64,
+       "max": 64
+      }
+     },
+     "P16": {
+      "ms": 0.219,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 369,
+       "max": 369
+      },
+      "tonesPerSlot": {
+       "mean": 64,
+       "max": 64
+      }
+     },
+     "P32": {
+      "ms": 0.18,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 185,
+       "max": 185
+      },
+      "tonesPerSlot": {
+       "mean": 55,
+       "max": 55
+      }
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 119.6
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 119.7,
+     "ms": 0.126,
+     "runs": 5,
+     "theta": 92.18,
+     "frameTones": 19,
+     "frameNodes": 6400,
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 119.8
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 119.8,
+     "2x8": {
+      "ms": 0.213,
+      "runs": 5,
+      "swing": 0.0059,
+      "windowMoments": 12.083,
+      "candsPerSlot": {
+       "mean": 10,
+       "max": 10
+      }
+     },
+     "4x8": {
+      "ms": 0.252,
+      "runs": 5,
+      "swing": 0.0117,
+      "windowMoments": 11.981,
+      "candsPerSlot": {
+       "mean": 8,
+       "max": 8
+      }
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.9,
+     "rssPeakMB": 119.8
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 119.8,
+     "ms": 3.129,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.4,
+     "externalMB": 3.9,
+     "rssPeakMB": 126.3
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 126.3,
+     "ms": 1226.858,
+     "runs": 1,
+     "planMs": 2.612,
+     "latticeMs": 13.828,
+     "pickMs": 1187.813,
+     "describeMs": 22.142,
+     "mergeMs": 0.463,
+     "maxPieceMs": 136.436,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 262,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 12.347,
+      "max": 22
+     },
+     "heapMB": 6.6,
+     "externalMB": 3.9,
+     "rssPeakMB": 258.5
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 258.2,
+     "ms": 82.489,
+     "runs": 5,
+     "planMs": 1.736,
+     "latticeMs": 1.525,
+     "pickMs": 76.712,
+     "describeMs": 2.741,
+     "mergeMs": 0.066,
+     "maxPieceMs": 32.409,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 48,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 8.462,
+      "max": 10
+     },
+     "heapMB": 6.7,
+     "externalMB": 3.9,
+     "rssPeakMB": 260.2
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 259.4,
+     "ms": 853.606,
+     "runs": 1,
+     "planMs": 2.499,
+     "latticeMs": 11.604,
+     "pickMs": 810.537,
+     "describeMs": 28.742,
+     "mergeMs": 0.223,
+     "maxPieceMs": 84.225,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 324,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 18.475,
+      "max": 23
+     },
+     "heapMB": 6.7,
+     "externalMB": 3.9,
+     "rssPeakMB": 321.6
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 321.6,
+     "ms": 500.966,
+     "runs": 1,
+     "planMs": 5.042,
+     "latticeMs": 9.774,
+     "pickMs": 454.43,
+     "describeMs": 31.275,
+     "mergeMs": 0.445,
+     "maxPieceMs": 17.593,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 246,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 11.99,
+      "max": 22
+     },
+     "heapMB": 10.1,
+     "externalMB": 3.9,
+     "rssPeakMB": 347.8
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 348.1
+  },
+  {
+   "group": "tones16k",
+   "name": "512:513 ×16",
+   "layers": [
+    8192,
+    8208
+   ],
+   "estimate": {
+    "grid": 4202496,
+    "onsets": 16384,
+    "layerSum": 16400,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 4202496,
+    "onsets": 16384,
+    "moments": 16384,
+    "tones": 256,
+    "exactTones": 256,
+    "maxGap": 512,
+    "maxOctave": 9,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.8,
+     "ms": 7.739,
+     "runs": 5,
+     "kernelMs": 6.033,
+     "kernelRuns": 5,
+     "grid": 4202496,
+     "onsets": 16384,
+     "moments": 16384,
+     "tones": 256,
+     "exactTones": 256,
+     "maxGap": 512,
+     "maxOctave": 9,
+     "toneIndexOverflow": false,
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 116.2
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 113.5,
+     "P8": {
+      "ms": 0.352,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 737,
+       "max": 737
+      },
+      "tonesPerSlot": {
+       "mean": 220,
+       "max": 220
+      }
+     },
+     "P16": {
+      "ms": 0.264,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 369,
+       "max": 369
+      },
+      "tonesPerSlot": {
+       "mean": 127,
+       "max": 127
+      }
+     },
+     "P32": {
+      "ms": 0.161,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 185,
+       "max": 185
+      },
+      "tonesPerSlot": {
+       "mean": 80,
+       "max": 93
+      }
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 114.1
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 114.2,
+     "ms": 1.347,
+     "runs": 5,
+     "theta": 90.089,
+     "frameTones": 67,
+     "frameNodes": 4768,
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 115.3
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 115.3,
+     "2x8": {
+      "ms": 0.106,
+      "runs": 5,
+      "swing": 0.0059,
+      "windowMoments": 12.083,
+      "candsPerSlot": {
+       "mean": 10,
+       "max": 10
+      }
+     },
+     "4x8": {
+      "ms": 0.16,
+      "runs": 5,
+      "swing": 0.0117,
+      "windowMoments": 11.981,
+      "candsPerSlot": {
+       "mean": 8.5,
+       "max": 9
+      }
+     },
+     "heapMB": 6.3,
+     "externalMB": 3.9,
+     "rssPeakMB": 115.3
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 115.4,
+     "ms": 3.514,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.4,
+     "externalMB": 3.9,
+     "rssPeakMB": 118.5
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 118.5,
+     "ms": 2200.714,
+     "runs": 1,
+     "planMs": 2.626,
+     "latticeMs": 12.969,
+     "pickMs": 2157.427,
+     "describeMs": 27.27,
+     "mergeMs": 0.422,
+     "maxPieceMs": 162.428,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 437,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 15.913,
+      "max": 24
+     },
+     "heapMB": 6.6,
+     "externalMB": 3.9,
+     "rssPeakMB": 216.7
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 216.6,
+     "ms": 137.597,
+     "runs": 5,
+     "planMs": 1.46,
+     "latticeMs": 1.145,
+     "pickMs": 132.036,
+     "describeMs": 2.522,
+     "mergeMs": 0.056,
+     "maxPieceMs": 65.216,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 70,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 9.846,
+      "max": 12
+     },
+     "heapMB": 6.7,
+     "externalMB": 3.9,
+     "rssPeakMB": 242.7
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 242.3,
+     "ms": 991.441,
+     "runs": 1,
+     "planMs": 2.333,
+     "latticeMs": 8.337,
+     "pickMs": 950.419,
+     "describeMs": 30.152,
+     "mergeMs": 0.2,
+     "maxPieceMs": 111.474,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 324,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 17.317,
+      "max": 23
+     },
+     "heapMB": 8.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 353.1
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 353,
+     "ms": 991.23,
+     "runs": 1,
+     "planMs": 3.512,
+     "latticeMs": 10.944,
+     "pickMs": 943.561,
+     "describeMs": 32.812,
+     "mergeMs": 0.401,
+     "maxPieceMs": 35.943,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 553,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 15.406,
+      "max": 24
+     },
+     "heapMB": 10.1,
+     "externalMB": 3.9,
+     "rssPeakMB": 363.8
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 363.9
+  },
+  {
+   "group": "tones16k",
+   "name": "2048:2049 ×4",
+   "layers": [
+    8192,
+    8196
+   ],
+   "estimate": {
+    "grid": 16785408,
+    "onsets": 16384,
+    "layerSum": 16388,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 16785408,
+    "onsets": 16384,
+    "moments": 16384,
+    "tones": 1023,
+    "exactTones": 1024,
+    "maxGap": 2048,
+    "maxOctave": 11,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.5,
+     "ms": 14.452,
+     "runs": 5,
+     "kernelMs": 12.05,
+     "kernelRuns": 5,
+     "grid": 16785408,
+     "onsets": 16384,
+     "moments": 16384,
+     "tones": 1023,
+     "exactTones": 1024,
+     "maxGap": 2048,
+     "maxOctave": 11,
+     "toneIndexOverflow": false,
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 117.6
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 113.7,
+     "P8": {
+      "ms": 0.301,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 737,
+       "max": 737
+      },
+      "tonesPerSlot": {
+       "mean": 316.5,
+       "max": 369
+      }
+     },
+     "P16": {
+      "ms": 0.639,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 369,
+       "max": 369
+      },
+      "tonesPerSlot": {
+       "mean": 264.5,
+       "max": 369
+      }
+     },
+     "P32": {
+      "ms": 0.575,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 185,
+       "max": 185
+      },
+      "tonesPerSlot": {
+       "mean": 156.125,
+       "max": 185
+      }
+     },
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 115.7
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 115.9,
+     "ms": 17.88,
+     "runs": 5,
+     "theta": 95.792,
+     "frameTones": 262,
+     "frameNodes": 4328,
+     "heapMB": 6.2,
+     "externalMB": 3.9,
+     "rssPeakMB": 125.4
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 125.5,
+     "2x8": {
+      "ms": 0.17,
+      "runs": 5,
+      "swing": 0.0059,
+      "windowMoments": 12.083,
+      "candsPerSlot": {
+       "mean": 16.25,
+       "max": 23
+      }
+     },
+     "4x8": {
+      "ms": 0.204,
+      "runs": 5,
+      "swing": 0.0117,
+      "windowMoments": 11.981,
+      "candsPerSlot": {
+       "mean": 15.5,
+       "max": 20
+      }
+     },
+     "heapMB": 6.4,
+     "externalMB": 3.9,
+     "rssPeakMB": 125.5
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 125.5,
+     "ms": 5.266,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.4,
+     "externalMB": 3.9,
+     "rssPeakMB": 131.8
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 131.8,
+     "ms": 2412.039,
+     "runs": 1,
+     "planMs": 2.623,
+     "latticeMs": 11.735,
+     "pickMs": 2361.932,
+     "describeMs": 35.327,
+     "mergeMs": 0.421,
+     "maxPieceMs": 132.704,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 448,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 17.29,
+      "max": 26
+     },
+     "heapMB": 6.7,
+     "externalMB": 3.9,
+     "rssPeakMB": 218.8
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 218.8,
+     "ms": 212.125,
+     "runs": 5,
+     "planMs": 1.64,
+     "latticeMs": 1.2,
+     "pickMs": 205.847,
+     "describeMs": 4.202,
+     "mergeMs": 0.062,
+     "maxPieceMs": 87.576,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 94,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 15.635,
+      "max": 24
+     },
+     "heapMB": 6.8,
+     "externalMB": 3.9,
+     "rssPeakMB": 291.8
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 291.4,
+     "ms": 564.843,
+     "runs": 1,
+     "planMs": 2.407,
+     "latticeMs": 7.707,
+     "pickMs": 510.751,
+     "describeMs": 43.805,
+     "mergeMs": 0.174,
+     "maxPieceMs": 56.398,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 283,
+     "root": "16/15",
+     "candsPerSlot": {
+      "mean": 18.325,
+      "max": 24
+     },
+     "heapMB": 7.7,
+     "externalMB": 3.9,
+     "rssPeakMB": 332.3
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 332.3,
+     "ms": 2173.581,
+     "runs": 1,
+     "planMs": 3.548,
+     "latticeMs": 11.132,
+     "pickMs": 2114.129,
+     "describeMs": 44.408,
+     "mergeMs": 0.364,
+     "maxPieceMs": 99.631,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 770,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 16.699,
+      "max": 26
+     },
+     "heapMB": 10.1,
+     "externalMB": 3.9,
+     "rssPeakMB": 351.4
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 351.6
+  },
+  {
+   "group": "dense",
+   "name": "L/p, p=16·27·25·7",
+   "layers": [
+    4725,
+    2800,
+    3024,
+    10800
+   ],
+   "estimate": {
+    "grid": 75600,
+    "onsets": 19440,
+    "layerSum": 21349,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 75600,
+    "onsets": 19440,
+    "moments": 19440,
+    "tones": 4,
+    "exactTones": 4,
+    "maxGap": 7,
+    "maxOctave": 2,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": true
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.7,
+     "ms": 9.373,
+     "runs": 5,
+     "kernelMs": 6.661,
+     "kernelRuns": 5,
+     "grid": 75600,
+     "onsets": 19440,
+     "moments": 19440,
+     "tones": 4,
+     "exactTones": 4,
+     "maxGap": 7,
+     "maxOctave": 2,
+     "toneIndexOverflow": false,
+     "heapMB": 6.2,
+     "externalMB": 4,
+     "rssPeakMB": 124.6
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 122.8,
+     "P8": {
+      "ms": 0.278,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 877.25,
+       "max": 879
+      },
+      "tonesPerSlot": {
+       "mean": 4,
+       "max": 4
+      }
+     },
+     "P16": {
+      "ms": 0.229,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 439.125,
+       "max": 441
+      },
+      "tonesPerSlot": {
+       "mean": 4,
+       "max": 4
+      }
+     },
+     "P32": {
+      "ms": 0.24,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 219.563,
+       "max": 222
+      },
+      "tonesPerSlot": {
+       "mean": 4,
+       "max": 4
+      }
+     },
+     "heapMB": 6.3,
+     "externalMB": 4,
+     "rssPeakMB": 124.3
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 124.3,
+     "ms": 0.056,
+     "runs": 5,
+     "theta": 66.871,
+     "frameTones": 3,
+     "frameNodes": 15450,
+     "heapMB": 6.3,
+     "externalMB": 4,
+     "rssPeakMB": 124.4
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 124.4,
+     "2x8": {
+      "ms": 0.099,
+      "runs": 5,
+      "swing": 0.0049,
+      "windowMoments": 11.907,
+      "candsPerSlot": {
+       "mean": 6,
+       "max": 7
+      }
+     },
+     "4x8": {
+      "ms": 0.138,
+      "runs": 5,
+      "swing": 0.0099,
+      "windowMoments": 12.029,
+      "candsPerSlot": {
+       "mean": 5.875,
+       "max": 7
+      }
+     },
+     "heapMB": 6.4,
+     "externalMB": 4,
+     "rssPeakMB": 124.4
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 124.5,
+     "ms": 2.698,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 6.4,
+     "externalMB": 4,
+     "rssPeakMB": 132.2
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 133.9,
+     "ms": 533.933,
+     "runs": 1,
+     "planMs": 4.622,
+     "latticeMs": 6.715,
+     "pickMs": 509.396,
+     "describeMs": 12.788,
+     "mergeMs": 0.412,
+     "maxPieceMs": 27.374,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 476,
+     "root": "7/4",
+     "candsPerSlot": {
+      "mean": 6.583,
+      "max": 7
+     },
+     "heapMB": 6.7,
+     "externalMB": 4,
+     "rssPeakMB": 227.7
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 227.4,
+     "ms": 45.727,
+     "runs": 5,
+     "planMs": 2.754,
+     "latticeMs": 0.776,
+     "pickMs": 40.311,
+     "describeMs": 1.865,
+     "mergeMs": 0.058,
+     "maxPieceMs": 17.904,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 93,
+     "root": "7/4",
+     "candsPerSlot": {
+      "mean": 6.548,
+      "max": 7
+     },
+     "heapMB": 6.8,
+     "externalMB": 4,
+     "rssPeakMB": 248.5
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 248.5,
+     "ms": 371.475,
+     "runs": 5,
+     "planMs": 4.109,
+     "latticeMs": 3.058,
+     "pickMs": 356.773,
+     "describeMs": 8.334,
+     "mergeMs": 0.156,
+     "maxPieceMs": 25.839,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 377,
+     "root": null,
+     "candsPerSlot": {
+      "mean": 5.57,
+      "max": 7
+     },
+     "heapMB": 6.8,
+     "externalMB": 4,
+     "rssPeakMB": 365.5
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 365.5,
+     "ms": 363.233,
+     "runs": 5,
+     "planMs": 6.939,
+     "latticeMs": 5.024,
+     "pickMs": 335.143,
+     "describeMs": 15.678,
+     "mergeMs": 0.491,
+     "maxPieceMs": 15.36,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 678,
+     "root": "7/4",
+     "candsPerSlot": {
+      "mean": 6.652,
+      "max": 7
+     },
+     "heapMB": 6.8,
+     "externalMB": 4,
+     "rssPeakMB": 393.9
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 394.2
+  },
+  {
+   "group": "dense",
+   "name": "L/p, p=32·27·25·49",
+   "layers": [
+    33075,
+    39200,
+    42336,
+    21600
+   ],
+   "estimate": {
+    "grid": 1058400,
+    "onsets": 129888,
+    "layerSum": 136211,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 1058400,
+    "onsets": 129888,
+    "moments": 129888,
+    "tones": 13,
+    "exactTones": 13,
+    "maxGap": 25,
+    "maxOctave": 4,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": false,
+    "defaultStackSpreadError": "Maximum call stack size exceeded"
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.3,
+     "ms": 47.959,
+     "runs": 5,
+     "kernelMs": 33.637,
+     "kernelRuns": 5,
+     "grid": 1058400,
+     "onsets": 129888,
+     "moments": 129888,
+     "tones": 13,
+     "exactTones": 13,
+     "maxGap": 25,
+     "maxOctave": 4,
+     "toneIndexOverflow": false,
+     "heapMB": 9.6,
+     "externalMB": 9.1,
+     "rssPeakMB": 399.4
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 349.3,
+     "P8": {
+      "ms": 1.829,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 5844.5,
+       "max": 5845
+      },
+      "tonesPerSlot": {
+       "mean": 13,
+       "max": 13
+      }
+     },
+     "P16": {
+      "ms": 0.899,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 2924.75,
+       "max": 2927
+      },
+      "tonesPerSlot": {
+       "mean": 13,
+       "max": 13
+      }
+     },
+     "P32": {
+      "ms": 1.111,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 1463.875,
+       "max": 1467
+      },
+      "tonesPerSlot": {
+       "mean": 13,
+       "max": 13
+      }
+     },
+     "heapMB": 9.7,
+     "externalMB": 9.1,
+     "rssPeakMB": 353.2
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 353.2,
+     "ms": 0.126,
+     "runs": 5,
+     "theta": 67.672,
+     "frameTones": 7,
+     "frameNodes": 103614,
+     "heapMB": 9.7,
+     "externalMB": 9.1,
+     "rssPeakMB": 353.3
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 353.3,
+     "2x8": {
+      "ms": 0.091,
+      "runs": 5,
+      "swing": 0.0007,
+      "windowMoments": 11.365,
+      "candsPerSlot": {
+       "mean": 8.313,
+       "max": 10
+      }
+     },
+     "4x8": {
+      "ms": 0.162,
+      "runs": 5,
+      "swing": 0.0015,
+      "windowMoments": 12.177,
+      "candsPerSlot": {
+       "mean": 9.063,
+       "max": 12
+      }
+     },
+     "heapMB": 9.8,
+     "externalMB": 9.1,
+     "rssPeakMB": 353.3
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 353.3,
+     "ms": 1.971,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 9.9,
+     "externalMB": 9.1,
+     "rssPeakMB": 356.3
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 356.4,
+     "ms": 830.852,
+     "runs": 1,
+     "planMs": 19.676,
+     "latticeMs": 8.005,
+     "pickMs": 782.426,
+     "describeMs": 20.272,
+     "mergeMs": 0.474,
+     "maxPieceMs": 53.52,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 532,
+     "root": "25/16",
+     "candsPerSlot": {
+      "mean": 9.188,
+      "max": 13
+     },
+     "heapMB": 10.1,
+     "externalMB": 9.1,
+     "rssPeakMB": 434.8
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 435,
+     "ms": 88.674,
+     "runs": 5,
+     "planMs": 15.471,
+     "latticeMs": 1.003,
+     "pickMs": 70.11,
+     "describeMs": 2.762,
+     "mergeMs": 0.066,
+     "maxPieceMs": 33.826,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 95,
+     "root": "25/16",
+     "candsPerSlot": {
+      "mean": 8.644,
+      "max": 12
+     },
+     "heapMB": 10.2,
+     "externalMB": 9.1,
+     "rssPeakMB": 467.5
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 439.3,
+     "ms": 441.427,
+     "runs": 1,
+     "planMs": 24.765,
+     "latticeMs": 5.481,
+     "pickMs": 395.235,
+     "describeMs": 15.69,
+     "mergeMs": 0.256,
+     "maxPieceMs": 31.859,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 413,
+     "root": "25/24",
+     "candsPerSlot": {
+      "mean": 9.461,
+      "max": 14
+     },
+     "heapMB": 11.9,
+     "externalMB": 9.1,
+     "rssPeakMB": 468.3
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 468.4,
+     "ms": 638.569,
+     "runs": 1,
+     "planMs": 39.788,
+     "latticeMs": 8.967,
+     "pickMs": 560.357,
+     "describeMs": 29.009,
+     "mergeMs": 0.448,
+     "maxPieceMs": 27.37,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 933,
+     "root": "25/16",
+     "candsPerSlot": {
+      "mean": 9.386,
+      "max": 14
+     },
+     "heapMB": 13.8,
+     "externalMB": 9.1,
+     "rssPeakMB": 487.8
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 487.8
+  },
+  {
+   "group": "dense",
+   "name": "L/p, p=64·81·25·49",
+   "layers": [
+    99225,
+    78400,
+    254016,
+    129600
+   ],
+   "estimate": {
+    "grid": 6350400,
+    "onsets": 544320,
+    "layerSum": 561241,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 6350400,
+    "onsets": 544320,
+    "moments": 544320,
+    "tones": 13,
+    "exactTones": 13,
+    "maxGap": 25,
+    "maxOctave": 4,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": false,
+    "defaultStackSpreadError": "Maximum call stack size exceeded"
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.2,
+     "ms": 265.871,
+     "runs": 5,
+     "kernelMs": 186.082,
+     "kernelRuns": 5,
+     "grid": 6350400,
+     "onsets": 544320,
+     "moments": 544320,
+     "tones": 13,
+     "exactTones": 13,
+     "maxGap": 25,
+     "maxOctave": 4,
+     "toneIndexOverflow": false,
+     "heapMB": 21,
+     "externalMB": 28,
+     "rssPeakMB": 846.8
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 698.8,
+     "P8": {
+      "ms": 4.996,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 24496,
+       "max": 24497
+      },
+      "tonesPerSlot": {
+       "mean": 13,
+       "max": 13
+      }
+     },
+     "P16": {
+      "ms": 3.406,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 12246.5,
+       "max": 12249
+      },
+      "tonesPerSlot": {
+       "mean": 13,
+       "max": 13
+      }
+     },
+     "P32": {
+      "ms": 3.397,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 6123.75,
+       "max": 6126
+      },
+      "tonesPerSlot": {
+       "mean": 13,
+       "max": 13
+      }
+     },
+     "heapMB": 21.1,
+     "externalMB": 28,
+     "rssPeakMB": 699.3
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 699.3,
+     "ms": 0.436,
+     "runs": 5,
+     "theta": 67.672,
+     "frameTones": 7,
+     "frameNodes": 369346,
+     "heapMB": 21.1,
+     "externalMB": 28,
+     "rssPeakMB": 699.3
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 699.5,
+     "2x8": {
+      "ms": 0.145,
+      "runs": 5,
+      "swing": 0.0002,
+      "windowMoments": 13.608,
+      "candsPerSlot": {
+       "mean": 9.75,
+       "max": 13
+      }
+     },
+     "4x8": {
+      "ms": 0.176,
+      "runs": 5,
+      "swing": 0.0004,
+      "windowMoments": 13.608,
+      "candsPerSlot": {
+       "mean": 9.938,
+       "max": 13
+      }
+     },
+     "heapMB": 21.2,
+     "externalMB": 28,
+     "rssPeakMB": 699.5
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 699.8,
+     "ms": 2.291,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 21.3,
+     "externalMB": 28,
+     "rssPeakMB": 700
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 702.2,
+     "ms": 1125.347,
+     "runs": 1,
+     "planMs": 64.999,
+     "latticeMs": 10.141,
+     "pickMs": 1026.146,
+     "describeMs": 23.631,
+     "mergeMs": 0.43,
+     "maxPieceMs": 69.968,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 528,
+     "root": "25/16",
+     "candsPerSlot": {
+      "mean": 11.793,
+      "max": 16
+     },
+     "heapMB": 21.5,
+     "externalMB": 28,
+     "rssPeakMB": 770.4
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 770.4,
+     "ms": 150.219,
+     "runs": 5,
+     "planMs": 55.926,
+     "latticeMs": 1.423,
+     "pickMs": 91.081,
+     "describeMs": 2.962,
+     "mergeMs": 0.067,
+     "maxPieceMs": 46.975,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 93,
+     "root": "25/16",
+     "candsPerSlot": {
+      "mean": 11.837,
+      "max": 16
+     },
+     "heapMB": 21.6,
+     "externalMB": 28,
+     "rssPeakMB": 856
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 795,
+     "ms": 724.304,
+     "runs": 1,
+     "planMs": 92.804,
+     "latticeMs": 6.324,
+     "pickMs": 607.729,
+     "describeMs": 17.218,
+     "mergeMs": 0.228,
+     "maxPieceMs": 47.257,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 418,
+     "root": "25/24",
+     "candsPerSlot": {
+      "mean": 10.076,
+      "max": 15
+     },
+     "heapMB": 21.6,
+     "externalMB": 28,
+     "rssPeakMB": 835.9
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 802.8,
+     "ms": 802.67,
+     "runs": 1,
+     "planMs": 146.058,
+     "latticeMs": 8.034,
+     "pickMs": 619.089,
+     "describeMs": 29.067,
+     "mergeMs": 0.421,
+     "maxPieceMs": 31.503,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 926,
+     "root": "25/16",
+     "candsPerSlot": {
+      "mean": 11.733,
+      "max": 19
+     },
+     "heapMB": 25.3,
+     "externalMB": 28,
+     "rssPeakMB": 862.1
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 864.5
+  },
+  {
+   "group": "dense",
+   "name": "L/p, p=64·81·125·49",
+   "layers": [
+    496125,
+    392000,
+    254016,
+    648000
+   ],
+   "estimate": {
+    "grid": 31752000,
+    "onsets": 1753920,
+    "layerSum": 1790141,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 31752000,
+    "onsets": 1753920,
+    "moments": 1753920,
+    "tones": 25,
+    "exactTones": 25,
+    "maxGap": 49,
+    "maxOctave": 5,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": false,
+    "defaultStackSpreadError": "Maximum call stack size exceeded"
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.5,
+     "ms": 906.146,
+     "runs": 1,
+     "kernelMs": 624.635,
+     "kernelRuns": 1,
+     "grid": 31752000,
+     "onsets": 1753920,
+     "moments": 1753920,
+     "tones": 25,
+     "exactTones": 25,
+     "maxGap": 49,
+     "maxOctave": 5,
+     "toneIndexOverflow": false,
+     "heapMB": 59.1,
+     "externalMB": 83.4,
+     "rssPeakMB": 1433.6
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 1125.8,
+     "P8": {
+      "ms": 11.876,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 78928,
+       "max": 78929
+      },
+      "tonesPerSlot": {
+       "mean": 25,
+       "max": 25
+      }
+     },
+     "P16": {
+      "ms": 11.139,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 39462.5,
+       "max": 39465
+      },
+      "tonesPerSlot": {
+       "mean": 25,
+       "max": 25
+      }
+     },
+     "P32": {
+      "ms": 10.652,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 19731.75,
+       "max": 19734
+      },
+      "tonesPerSlot": {
+       "mean": 25,
+       "max": 25
+      }
+     },
+     "heapMB": 59.2,
+     "externalMB": 83.4,
+     "rssPeakMB": 1127.6
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 1127.3,
+     "ms": 1.023,
+     "runs": 5,
+     "theta": 31.787,
+     "frameTones": 9,
+     "frameNodes": 1091382,
+     "heapMB": 59.2,
+     "externalMB": 83.4,
+     "rssPeakMB": 1130.5
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 1126.9,
+     "2x8": {
+      "ms": 0.259,
+      "runs": 5,
+      "swing": 0.0001,
+      "windowMoments": 21.924,
+      "candsPerSlot": {
+       "mean": 17,
+       "max": 23
+      }
+     },
+     "4x8": {
+      "ms": 0.314,
+      "runs": 5,
+      "swing": 0.0001,
+      "windowMoments": 10.962,
+      "candsPerSlot": {
+       "mean": 11.813,
+       "max": 17
+      }
+     },
+     "heapMB": 59.4,
+     "externalMB": 83.4,
+     "rssPeakMB": 1128.1
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 1126.9,
+     "ms": 3.117,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 59.4,
+     "externalMB": 83.4,
+     "rssPeakMB": 1129.9
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 1129.9,
+     "ms": 1482.247,
+     "runs": 1,
+     "planMs": 175.269,
+     "latticeMs": 11.468,
+     "pickMs": 1268.296,
+     "describeMs": 26.777,
+     "mergeMs": 0.436,
+     "maxPieceMs": 78.26,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 501,
+     "root": "49/32",
+     "candsPerSlot": {
+      "mean": 15.175,
+      "max": 31
+     },
+     "heapMB": 59.6,
+     "externalMB": 83.4,
+     "rssPeakMB": 1233.5
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 1218.7,
+     "ms": 279.036,
+     "runs": 5,
+     "planMs": 162.228,
+     "latticeMs": 1.576,
+     "pickMs": 111.42,
+     "describeMs": 3.882,
+     "mergeMs": 0.066,
+     "maxPieceMs": 52.9,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 94,
+     "root": "49/32",
+     "candsPerSlot": {
+      "mean": 15.481,
+      "max": 31
+     },
+     "heapMB": 59.7,
+     "externalMB": 83.4,
+     "rssPeakMB": 1326.1
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 1223.6,
+     "ms": 711.379,
+     "runs": 1,
+     "planMs": 319.106,
+     "latticeMs": 7.689,
+     "pickMs": 361.916,
+     "describeMs": 22.433,
+     "mergeMs": 0.234,
+     "maxPieceMs": 31.685,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 395,
+     "root": "49/48",
+     "candsPerSlot": {
+      "mean": 14.289,
+      "max": 33
+     },
+     "heapMB": 58.5,
+     "externalMB": 83.4,
+     "rssPeakMB": 1320.9
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 1304.3,
+     "ms": 1724.597,
+     "runs": 1,
+     "planMs": 495.626,
+     "latticeMs": 15.976,
+     "pickMs": 1163.037,
+     "describeMs": 49.523,
+     "mergeMs": 0.436,
+     "maxPieceMs": 38.233,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 863,
+     "root": "49/32",
+     "candsPerSlot": {
+      "mean": 18.656,
+      "max": 36
+     },
+     "heapMB": 62.2,
+     "externalMB": 83.4,
+     "rssPeakMB": 1382.2
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 1435.2
+  },
+  {
+   "group": "dense",
+   "name": "L/p, p=2·3·5·10001",
+   "layers": [
+    150015,
+    100010,
+    60006,
+    30
+   ],
+   "estimate": {
+    "grid": 300030,
+    "onsets": 220030,
+    "layerSum": 310061,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 300030,
+    "onsets": 220030,
+    "moments": 220030,
+    "tones": 1,
+    "exactTones": 1,
+    "maxGap": 2,
+    "maxOctave": 1,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": false,
+    "defaultStackSpreadError": "Maximum call stack size exceeded"
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.3,
+     "ms": 228.354,
+     "runs": 5,
+     "kernelMs": 199.366,
+     "kernelRuns": 5,
+     "grid": 300030,
+     "onsets": 220030,
+     "moments": 220030,
+     "tones": 1,
+     "exactTones": 1,
+     "maxGap": 2,
+     "maxOctave": 1,
+     "toneIndexOverflow": false,
+     "heapMB": 12.4,
+     "externalMB": 13.2,
+     "rssPeakMB": 652.9
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 573.4,
+     "P8": {
+      "ms": 1.936,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 9901.25,
+       "max": 9902
+      },
+      "tonesPerSlot": {
+       "mean": 1,
+       "max": 1
+      }
+     },
+     "P16": {
+      "ms": 1.279,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 4950.625,
+       "max": 4952
+      },
+      "tonesPerSlot": {
+       "mean": 1,
+       "max": 1
+      }
+     },
+     "P32": {
+      "ms": 1.299,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 2475.313,
+       "max": 2476
+      },
+      "tonesPerSlot": {
+       "mean": 1,
+       "max": 1
+      }
+     },
+     "heapMB": 12.4,
+     "externalMB": 13.2,
+     "rssPeakMB": 574.5
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 574.5,
+     "ms": 0.158,
+     "runs": 5,
+     "theta": 0,
+     "frameTones": 1,
+     "frameNodes": 220030,
+     "heapMB": 12.4,
+     "externalMB": 13.2,
+     "rssPeakMB": 574.9
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 575.2,
+     "2x8": {
+      "ms": 0.054,
+      "runs": 5,
+      "swing": 0.0004,
+      "windowMoments": 11.002,
+      "candsPerSlot": {
+       "mean": 2,
+       "max": 2
+      }
+     },
+     "4x8": {
+      "ms": 0.093,
+      "runs": 5,
+      "swing": 0.0009,
+      "windowMoments": 12.377,
+      "candsPerSlot": {
+       "mean": 2,
+       "max": 2
+      }
+     },
+     "heapMB": 12.5,
+     "externalMB": 13.2,
+     "rssPeakMB": 575.2
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 575.3,
+     "ms": 0.455,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 12.5,
+     "externalMB": 13.2,
+     "rssPeakMB": 575.3
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 576.8,
+     "ms": 132.435,
+     "runs": 5,
+     "planMs": 52.704,
+     "latticeMs": 1.786,
+     "pickMs": 71.862,
+     "describeMs": 4.879,
+     "mergeMs": 0.282,
+     "maxPieceMs": 3.759,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 83,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 2,
+      "max": 2
+     },
+     "heapMB": 12.8,
+     "externalMB": 13.2,
+     "rssPeakMB": 706.3
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 645.4,
+     "ms": 58.88,
+     "runs": 5,
+     "planMs": 49.506,
+     "latticeMs": 0.345,
+     "pickMs": 8.012,
+     "describeMs": 0.975,
+     "mergeMs": 0.039,
+     "maxPieceMs": 3.569,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 49,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 2,
+      "max": 2
+     },
+     "heapMB": 12.8,
+     "externalMB": 13.2,
+     "rssPeakMB": 709.2
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 648.7,
+     "ms": 122.26,
+     "runs": 5,
+     "planMs": 48.272,
+     "latticeMs": 1.142,
+     "pickMs": 69.56,
+     "describeMs": 4.012,
+     "mergeMs": 0.213,
+     "maxPieceMs": 4.199,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 76,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 2,
+      "max": 2
+     },
+     "heapMB": 12.9,
+     "externalMB": 13.2,
+     "rssPeakMB": 728.2
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 673.5,
+     "ms": 187.279,
+     "runs": 5,
+     "planMs": 129.587,
+     "latticeMs": 2.294,
+     "pickMs": 45.276,
+     "describeMs": 8.592,
+     "mergeMs": 0.491,
+     "maxPieceMs": 1.786,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 185,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 2,
+      "max": 2
+     },
+     "heapMB": 12.9,
+     "externalMB": 13.2,
+     "rssPeakMB": 752
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 752.3
+  },
+  {
+   "group": "dense",
+   "name": "L/p, p=2·3·5·100001",
+   "layers": [
+    1500015,
+    1000010,
+    600006,
+    30
+   ],
+   "estimate": {
+    "grid": 3000030,
+    "onsets": 2200030,
+    "layerSum": 3100061,
+    "pastMaxGrid": false
+   },
+   "info": {
+    "grid": 3000030,
+    "onsets": 2200030,
+    "moments": 2200030,
+    "tones": 1,
+    "exactTones": 1,
+    "maxGap": 2,
+    "maxOctave": 1,
+    "toneIndexOverflow": false,
+    "defaultStackSpreadOk": false,
+    "defaultStackSpreadError": "Maximum call stack size exceeded"
+   },
+   "stages": {
+    "build": {
+     "status": "ok",
+     "rssStartMB": 62.6,
+     "ms": 2637.789,
+     "runs": 1,
+     "kernelMs": 2387.296,
+     "kernelRuns": 1,
+     "grid": 3000030,
+     "onsets": 2200030,
+     "moments": 2200030,
+     "tones": 1,
+     "exactTones": 1,
+     "maxGap": 2,
+     "maxOctave": 1,
+     "toneIndexOverflow": false,
+     "heapMB": 72.8,
+     "externalMB": 103.8,
+     "rssPeakMB": 2230
+    },
+    "slots": {
+     "status": "ok",
+     "rssStartMB": 1674,
+     "P8": {
+      "ms": 12.861,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 99001.25,
+       "max": 99002
+      },
+      "tonesPerSlot": {
+       "mean": 1,
+       "max": 1
+      }
+     },
+     "P16": {
+      "ms": 12.429,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 49500.625,
+       "max": 49501
+      },
+      "tonesPerSlot": {
+       "mean": 1,
+       "max": 1
+      }
+     },
+     "P32": {
+      "ms": 11.961,
+      "runs": 5,
+      "nodesPerSlot": {
+       "mean": 24750.313,
+       "max": 24752
+      },
+      "tonesPerSlot": {
+       "mean": 1,
+       "max": 1
+      }
+     },
+     "heapMB": 72.8,
+     "externalMB": 103.8,
+     "rssPeakMB": 1677.2
+    },
+    "frame": {
+     "status": "ok",
+     "rssStartMB": 1674.8,
+     "ms": 1.127,
+     "runs": 5,
+     "theta": 0,
+     "frameTones": 1,
+     "frameNodes": 2200030,
+     "heapMB": 72.8,
+     "externalMB": 103.8,
+     "rssPeakMB": 1680
+    },
+    "lattice": {
+     "status": "ok",
+     "rssStartMB": 1675.2,
+     "2x8": {
+      "ms": 0.103,
+      "runs": 5,
+      "swing": 0.0001,
+      "windowMoments": 27.5,
+      "candsPerSlot": {
+       "mean": 2,
+       "max": 2
+      }
+     },
+     "4x8": {
+      "ms": 0.131,
+      "runs": 5,
+      "swing": 0.0001,
+      "windowMoments": 13.75,
+      "candsPerSlot": {
+       "mean": 2,
+       "max": 2
+      }
+     },
+     "heapMB": 72.9,
+     "externalMB": 103.8,
+     "rssPeakMB": 1677.2
+    },
+    "pick": {
+     "status": "ok",
+     "rssStartMB": 1675.1,
+     "ms": 0.484,
+     "runs": 5,
+     "P": 32,
+     "nMin": 13,
+     "nMax": 19,
+     "lines": 7,
+     "heapMB": 73,
+     "externalMB": 103.8,
+     "rssPeakMB": 1688.7
+    },
+    "mineRooted": {
+     "status": "ok",
+     "rssStartMB": 1678.4,
+     "ms": 649.891,
+     "runs": 1,
+     "planMs": 536.088,
+     "latticeMs": 4.167,
+     "pickMs": 100.431,
+     "describeMs": 8.84,
+     "mergeMs": 0.365,
+     "maxPieceMs": 7.75,
+     "pieces": 54,
+     "tasks": 9,
+     "lineRuns": 648,
+     "lines": 83,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 2,
+      "max": 2
+     },
+     "heapMB": 73.2,
+     "externalMB": 103.8,
+     "rssPeakMB": 1863.4
+    },
+    "mineLean": {
+     "status": "ok",
+     "rssStartMB": 1699.2,
+     "ms": 517.371,
+     "runs": 1,
+     "planMs": 502.846,
+     "latticeMs": 0.615,
+     "pickMs": 12.382,
+     "describeMs": 1.469,
+     "mergeMs": 0.059,
+     "maxPieceMs": 3.999,
+     "pieces": 10,
+     "tasks": 5,
+     "lineRuns": 96,
+     "lines": 50,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 2,
+      "max": 2
+     },
+     "heapMB": 73.2,
+     "externalMB": 103.8,
+     "rssPeakMB": 1886.3
+    },
+    "mineHarmony": {
+     "status": "ok",
+     "rssStartMB": 1708.4,
+     "ms": 577.993,
+     "runs": 1,
+     "planMs": 493.533,
+     "latticeMs": 2.793,
+     "pickMs": 74.903,
+     "describeMs": 6.522,
+     "mergeMs": 0.243,
+     "maxPieceMs": 6.84,
+     "pieces": 48,
+     "tasks": 8,
+     "lineRuns": 492,
+     "lines": 60,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 2,
+      "max": 2
+     },
+     "heapMB": 73.2,
+     "externalMB": 103.8,
+     "rssPeakMB": 1849.6
+    },
+    "mineDefault": {
+     "status": "ok",
+     "rssStartMB": 1720.1,
+     "ms": 1399.939,
+     "runs": 1,
+     "planMs": 1326.74,
+     "latticeMs": 4.848,
+     "pickMs": 56.653,
+     "describeMs": 11.388,
+     "mergeMs": 0.31,
+     "maxPieceMs": 2.94,
+     "pieces": 114,
+     "tasks": 19,
+     "lineRuns": 1362,
+     "lines": 173,
+     "root": "1/1",
+     "candsPerSlot": {
+      "mean": 2,
+      "max": 2
+     },
+     "heapMB": 76.7,
+     "externalMB": 103.8,
+     "rssPeakMB": 2043.7
+    }
+   },
+   "order": [
+    "build",
+    "slots",
+    "frame",
+    "lattice",
+    "pick",
+    "mineRooted",
+    "mineLean",
+    "mineHarmony",
+    "mineDefault"
+   ],
+   "maxRssMB": 2230
+  },
+  {
+   "group": "dense",
+   "name": "L/p, p=2·3·5·1118479 (grid just under MAX_GRID)",
+   "layers": [
+    16777185,
+    11184790,
+    6710874,
+    30
+   ],
+   "estimate": {
+    "grid": 33554370,
+    "onsets": 24606546,
+    "layerSum": 34672879,
+    "pastMaxGrid": false
+   },
+   "info": null,
+   "stages": {
+    "build": {
+     "status": "error",
+     "rssStartMB": 62.3,
+     "error": "Map maximum size exceeded",
+     "heapMB": 5.5,
+     "externalMB": 3.1,
+     "rssPeakMB": 2033.7
+    }
+   },
+   "order": [
+    "build"
+   ],
+   "maxRssMB": 2034.2
+  }
+ ]
+}
