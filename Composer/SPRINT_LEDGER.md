@@ -27,7 +27,7 @@ The planner keeps this file current after every phase. If the planner thread is 
 | S. Cosmos seam survey + superrow probe (read-only) | none; report saved to the git-ignored `Cosmos/docs/composition-survey-2026-10-22/REPORT.md` | none | DONE |
 | E1. Cosmos Compose mode: Rhythm card + Grid card superrow, bed silenced, clock takeover/hand-back, LOD exit; new `Composer/core/superrow.js` | `sprint/cosmos-compose` | S (seam map, window definition) | dispatched (from 5c82db7) |
 | C. Composer tab on the main page | `sprint/integration` | A+B merged | dispatched (from d9f2f85) |
-| T. Compose trace: an opt-in, pure observer in `Composer/core`; output unchanged when it's off | `sprint/trace` | A+B merged | dispatched (from d9f2f85) |
+| T. Compose trace: an opt-in, pure observer in `Composer/core`; output unchanged when it's off | `sprint/trace` | A+B merged | MERGED (bc812ae..e964c66, merge e99cbcc); 47/0 suites |
 | E2. Cosmos onset dust + choreography from the trace | `sprint/cosmos-dust` | T, E1 | waiting |
 | D. Merge everything, final suites, morning listen list | `composer-sprint` | all | waiting |
 
@@ -53,3 +53,4 @@ Parallel lanes: E1 runs beside A/B (it touches only Cosmos files and a new core 
 - C and T dispatched in parallel. C must not edit Composer/core; T edits only core, tests and docs.
 - Survey done. Key facts: `cosmos-audio.js` is the one clock authority, with no suspend API; MIDI out sits behind no gain; superrow common grid = G < 2^24, so the 2^53 gate never fails; most cube grids pass whole; proposed budget Θ = 65,536 nodes as a tier key. E1 dispatched with the planner's proposed defaults (see its brief in the report when it lands). C was asked to give the player an optional `destination`, with injectable timers, for Cosmos reuse.
 - Merge notes: E1 may add ≤ 5 lines to `compose.js` (a prebuilt-row entry), which conflicts with T, and imports `Composer/lab/lab-player.js` from one adapter. Re-point that import after C merges.
+- T merged cleanly; 47/0. The trace costs +0.1–0.7 % time and ~100 KB on the 16k row; `Composer/TRACE.md` is the contract. Open for Avery: a best-per-root chord candidate list vs. the top 6 overall.
