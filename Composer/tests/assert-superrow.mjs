@@ -148,7 +148,10 @@ console.log('\n— superrow-worker.js, run in Node');
   const rhythms = bloomOf(840, { maxRhythms: 200 }), dist = Float64Array.from(rhythms, (_, i) => (i * 7919) % 200);
   const { message, transfer } = answerSuperrow({ id: 9, grid: 840, layersFlat: flattenLayers(rhythms), dist, budget: 2000 });
   check(`a composed superrow: ${message.window.fitted} of ${message.window.visible} rhythms, ${message.superrow?.n} nodes ≤ 2,000, 110 BPM`, message.ok && message.id === 9 && !message.spec.refused && message.superrow.n <= 2000 && Math.abs(message.spec.knobs.tempoBpm - 110) < 1e-9);
-  check('its arrays go as transfers', transfer.length === 5 && transfer.every((b) => b instanceof ArrayBuffer));
+  check('its arrays go as transfers (tick, tone, toneCents, octave — E2\'s dust — and the three source arrays)', transfer.length === 7 && transfer.every((b) => b instanceof ArrayBuffer));
+  check('…with each tone\'s cents and each node\'s octave, for the dust\'s clock face (E2)', message.superrow.toneCents.length === message.superrow.tones.length && message.superrow.octave.length === message.superrow.n);
+  const traced = answerSuperrow({ id: 10, grid: 840, layersFlat: flattenLayers(rhythms), dist, budget: 2000, options: { trace: true } }).message;
+  check('options.trace: the superrow\'s compose trace comes back in spec.trace, of the superrow\'s own row (E2)', traced.ok && traced.spec.trace?.grid === 840 && traced.spec.trace.onsets === traced.superrow.n && !message.spec.trace);
   check('nothing fits: refused "empty", the window reported', (() => { const r = answerSuperrow({ id: 1, layersFlat: flattenLayers([[3000, 2999]]), budget: 100 }).message; return r.ok && r.refused.reason === 'empty' && r.window.skipped.budget === 1; })());
   check('a bad message is ok: false, not a throw', answerSuperrow({ id: 2 }).message.ok === false);
 }

@@ -24,6 +24,11 @@
 // 'composing' { target, rhythms? } · 'composed' { target, spec, window?, superrow? } · 'perform' { target, spec,
 // startedAt } · 'note' (the player's booking events: { kind, part, node, tick, when, cycle, … }) · 'level' { level } ·
 // 'refused' { target, reason, detail } · 'stop' { target, reason, prev }.
+//
+// COMPOSE DUST (E2, 2026-10-22 night): `createComposeMode({ trace: true, dust: k })` asks both workers for the compose
+// trace (spec.trace) and a Rhythm compose for k of its onsets sampled (spec.dust). Both are taken OFF the spec before it
+// is played (the player never sees them, as the main page keeps its trace apart) and ride on 'composed' instead:
+// { target, spec (plain), trace, dust, window?, superrow? }. Off (the default), the spec goes through untouched.
 
 import { onsetCount, ONSET_GATE, MAX_LAYERS } from '../../Composer/core/row.js';
 import { cycleSecondsForTempo, barometer, flattenLayers, DEFAULT_BUDGET, DEFAULT_SOURCE_BUDGET, DEFAULT_TEMPO_BPM } from '../../Composer/core/superrow.js';
@@ -114,7 +119,14 @@ export function composeButtonView(info, here) {
  *              keys? } } — Grid targets only, polled every frame()
  *   budget     () → Θ (the tier's composeBudget)
  */
-export function createComposeMode({ composer, performer, gather = null, now = () => Date.now(), budget = () => DEFAULT_BUDGET, sourceBudget = DEFAULT_SOURCE_BUDGET, bpm = COMPOSE_TEMPO_BPM } = {}) {
+export function createComposeMode({ composer, performer, gather = null, now = () => Date.now(), budget = () => DEFAULT_BUDGET, sourceBudget = DEFAULT_SOURCE_BUDGET, bpm = COMPOSE_TEMPO_BPM, trace = false, dust = 0 } = {}) {
+  // COMPOSE DUST (E2): what the workers are asked for beyond the spec, and the spec taken apart from it
+  const extras = { ...(trace ? { trace: true } : {}) };
+  const apart = (spec) => {
+    if (!spec || (spec.trace === undefined && spec.dust === undefined)) return { spec, trace: null, dust: null };
+    const { trace: tr = null, dust: du = null, ...plain } = spec;
+    return { spec: plain, trace: tr, dust: du };
+  };
   let state = S.IDLE, target = null, token = 0, progress = null, notice = null, result = null, outSince = null, level = 1;
   const listeners = new Map();
   const emit = (type, payload) => { for (const fn of listeners.get(type) || []) { try { fn(payload); } catch (err) { console.warn(`[cosmos compose] '${type}' listener threw`, err); } } };
@@ -126,9 +138,10 @@ export function createComposeMode({ composer, performer, gather = null, now = ()
     target = null; progress = null; result = null;
     setState(S.IDLE);
   }
-  function startPerforming(t, spec, extra = {}) {
+  function startPerforming(t, given, extra = {}) {
+    const { spec, trace: tr, dust: du } = apart(given);   // COMPOSE DUST (E2): the trace and dust never reach the player
     result = { spec, ...extra, barometer: extra.window ? barometer(extra.window) : null };
-    emit('composed', { target: t, spec, ...extra });
+    emit('composed', { target: t, spec, ...extra, ...(tr || du ? { trace: tr, dust: du } : {}) });
     const ok = performer.perform(spec, { onNote: (e) => emit('note', { ...e, target: t }) });
     if (!ok) { refuse('audio', null, 'the audio is not running'); return; }
     level = 1; outSince = null;
@@ -150,7 +163,7 @@ export function createComposeMode({ composer, performer, gather = null, now = ()
     setState(S.COMPOSING);
     emit('composing', { target: t, onsets: c.onsets });
     const my = token, T = cycleSecondsForTempo(c.onsets, { bpm });
-    composer.rhythm(t.layers, T, { seed: COMPOSE_SEED }).then((spec) => onSpec(my, t, spec, {}), (err) => onFail(my, err));
+    composer.rhythm(t.layers, T, { seed: COMPOSE_SEED, ...extras, ...(dust > 0 ? { dust } : {}) }).then((spec) => onSpec(my, t, spec, {}), (err) => onFail(my, err));
   }
   function composeGrid(t, g) {
     const snap = g.snapshot();
@@ -158,11 +171,11 @@ export function createComposeMode({ composer, performer, gather = null, now = ()
     setState(S.COMPOSING);
     emit('composing', { target: t, rhythms: snap.rhythms.length });
     const my = token, layersFlat = flattenLayers(snap.rhythms), dist = snap.dist || null;
-    const payload = { grid: t.grid, layersFlat, dist, budget: budget(), sourceBudget, bpm, options: { seed: COMPOSE_SEED } };
+    const payload = { grid: t.grid, layersFlat, dist, budget: budget(), sourceBudget, bpm, options: { seed: COMPOSE_SEED, ...extras } };
     composer.superrow(payload, [layersFlat.buffer, ...(dist ? [dist.buffer] : [])]).then((reply) => {
       if (my !== token) return;
       if (reply.refused) { refuse(reply.refused.reason, reply.window, reply.window ? `nothing fits: ${barometer(reply.window).text}` : 'nothing fits'); return; }
-      const superrow = reply.superrow ? { ...reply.superrow, keys: snap.keys || null } : null;
+      const superrow = reply.superrow ? { ...reply.superrow, keys: snap.keys || null, pis: snap.pis || null } : null;   // pis: E2's dust origins
       onSpec(my, t, reply.spec, { window: reply.window, superrow });
     }, (err) => onFail(my, err));
   }

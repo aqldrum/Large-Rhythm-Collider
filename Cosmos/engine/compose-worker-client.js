@@ -1,6 +1,7 @@
 // compose-worker-client.js — Cosmos's handle on the Composer's two module workers (Compose mode, E1, 2026-10-22).
 //
-//   rhythm(layers, cycleSeconds, options)  → Promise<spec>          Composer/core/compose-worker.js (one rhythm)
+//   rhythm(layers, cycleSeconds, options)  → Promise<spec>          Composer/core/compose-worker.js (one rhythm);
+//                                                                    options.trace → spec.trace, options.dust → spec.dust
 //   superrow(payload, transfer)            → Promise<reply>          Composer/core/superrow-worker.js (a grid's window)
 //   cancel()   terminates whichever worker is busy (the only way to stop a long compose) and rejects its promise with
 //              { cancelled: true }; the next request builds a fresh worker.
@@ -45,7 +46,9 @@ export function createComposeClient({ factories = defaultFactories } = {}) {
   });
 
   return {
-    rhythm(layers, cycleSeconds, options = {}) { return post('rhythm', { layers, cycleSeconds, options }).then((r) => r.spec); },
+    // COMPOSE DUST (E2): a reply's `dust` (options.dust, the row's onsets sampled) rides on the spec like its trace;
+    // cosmos-compose.js takes both off before the spec is played
+    rhythm(layers, cycleSeconds, options = {}) { return post('rhythm', { layers, cycleSeconds, options }).then((r) => (r.dust ? { ...r.spec, dust: r.dust } : r.spec)); },
     superrow(payload, transfer = []) { return post('superrow', payload, transfer); },
     get busy() { return lanes.rhythm.pending.size + lanes.superrow.pending.size > 0; },
     cancel() {
