@@ -25,11 +25,11 @@ The planner keeps this file current after every phase. If the planner thread is 
 | A. Drums (core + lab) | `sprint/drums` | none | MERGED (b8c2617..e9e8305, merge d9f2f85); 46/0 suites |
 | B. Targeted progressions (core + lab) | `sprint/progression` | none | MERGED (0d4c15c..fa6d814); 45/0 suites |
 | S. Cosmos seam survey + superrow probe (read-only) | none; report saved to the git-ignored `Cosmos/docs/composition-survey-2026-10-22/REPORT.md` | none | DONE |
-| E1. Cosmos Compose mode: Rhythm card + Grid card superrow, bed silenced, clock takeover/hand-back, LOD exit; new `Composer/core/superrow.js` | `sprint/cosmos-compose` | S (seam map, window definition) | dispatched (from 5c82db7) |
+| E1. Cosmos Compose mode: Rhythm card + Grid card superrow, bed silenced, clock takeover/hand-back, LOD exit; new `Composer/core/superrow.js` | `sprint/cosmos-compose` | S (seam map, window definition) | MERGED (628ba99..82896ca, merge 18bfb41); 53/0 |
 | C. Composer tab on the main page | `sprint/integration` | A+B merged | MERGED (81cf5ff..93c04d9, merge d4feda7); 51/0 suites |
 | T. Compose trace: an opt-in, pure observer in `Composer/core`; output unchanged when it's off | `sprint/trace` | A+B merged | MERGED (bc812ae..e964c66, merge e99cbcc); 47/0 suites |
-| E2. Cosmos onset dust + choreography from the trace | `sprint/cosmos-dust` | T, E1 | waiting |
-| M. Compose animation on the main page, from the trace (stretch) | `sprint/animate` | C, T | dispatched (from d4feda7) |
+| E2. Cosmos onset dust + choreography from the trace | `sprint/cosmos-dust` | T, E1 | dispatched (from fdbb9ea) |
+| M. Compose animation on the main page, from the trace (stretch) | `sprint/animate` | C, T | MERGED (fd884f2..081c2e1, merge fdbb9ea); 54/0 |
 | D. Merge everything, final suites, morning listen list | `composer-sprint` | all | waiting |
 
 Parallel lanes: E1 runs beside A/B (it touches only Cosmos files and a new core module). C runs beside T (main-page files vs. `Composer/core`). The trace waits for A+B because all three would edit `compose.js`. Stretch, if time allows: animate the main-page Compose from the trace.
@@ -59,3 +59,6 @@ Parallel lanes: E1 runs beside A/B (it touches only Cosmos files and a new core 
 - Morning flag (live site, pre-existing on main): `LRCModule.calculateTotalLCM(...activeLayers)` returns NaN with fewer than 4 layers (`lcm(x, undefined)`), seen in Node only. Not fixed.
 - C's open calls for Avery: keep playing across tabs; the wash and part colours; lit nodes on other plot types; the audio path (own context vs. the page master/effects/MIDI); auto-compose on open.
 - M dispatched (main-page Compose animation from the trace). It must not edit `Composer/core` or `Cosmos`.
+- E1 merged. compose() keeps the prebuilt-row entry beside the trace's refusal wrapper. The planner re-pointed the Cosmos adapter to `Composer/perform/composer-player.js` with `destination` (the wrapContext proxy is removed; its test updated). E1's calls for Avery: T = 240·N/110 (exactly 110 BPM); seed fixed at 1; stop at evict − 1 cell after a 400 ms dwell; Esc order ride → composition → card → exit; summed strikes pin the comping velocity (a `log2` option is built); one node per (tick, tone)?; does a second press reseed?
+- M merged (docs conflict only); 54/0. "Show the work" toggle, on by default; ~7.5 s; Skip/Esc/click skip. Open: any click in the tab skips (too eager?); only the Compose button animates.
+- E2 dispatched (the last build phase). After it: D (final merge, suites, morning list).
