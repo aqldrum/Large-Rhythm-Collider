@@ -101,8 +101,8 @@ console.log('\n  note role — held (duration null) until release (main Playback
     nodes.osc[0].stopped.length === 0 && plan.amp.seconds === null && plan.amp.stopAt === null);
   check('reading the held curve far past its attack gives the sustain level', near(ampValueAt(plan.amp.moments, 60), S));
   h.release(12);
-  check('release(at) holds the envelope there and falls linearly to 0 over the ADSR release, then stops',
-    same(calls(ampEnv.gain).slice(-2), [['hold', 12], ['lin', 0, 12.3]]) && same(nodes.osc[0].stopped, [12.31]));
+  check('release(at) holds the envelope there, re-sets the settled sustain at `at`, and falls linearly to 0 over the ADSR release, then stops',
+    same(calls(ampEnv.gain).slice(-3), [['hold', 12], ['set', S, 12], ['lin', 0, 12.3]]) && same(nodes.osc[0].stopped, [12.31]));
   const n = ampEnv.gain._calls.length;
   h.release(13);
   check('a second release is a no-op', ampEnv.gain._calls.length === n && nodes.osc[0].stopped.length === 1);
@@ -119,6 +119,29 @@ console.log('\n  note role — held (duration null) until release (main Playback
   const { h, nodes, ampEnv } = noteVoice('sine', { attack: 0.01, decay: 0.1, sustain: 0.5, release: 0.2, peak: 1, duration: 0.5 });
   h.release(10.6);
   check('a release after a fixed-length note has ended changes nothing', calls(ampEnv.gain).length === 5 && same(nodes.osc[0].stopped, [10.5]));
+}
+
+{
+  // The click at the Composer lab's loop point (2026-10-22): a real engine's cancelAndHoldAtTime inserts no hold when no
+  // event lies past `at`, so a release booked on a settled (sustaining) note would ramp from the envelope's LAST event —
+  // a jump partway down when booked late. The release must start from the sustain value AT `at`.
+  const adsr = { attack: 0.02, decay: 0.15, sustain: 0.6, release: 0.08 };
+  const { h, ampEnv } = noteVoice('triangle', { ...adsr, peak: 0.5, duration: null });
+  h.release(18);
+  check('a release long after the envelope settled starts from the sustain at its own time (no ramp from the decay\'s end)',
+    same(calls(ampEnv.gain).slice(-3), [['hold', 18], ['set', 0.3, 18], ['lin', 0, 18.08]]));
+}
+{
+  const { h, ampEnv } = noteVoice('triangle', { attack: 0.02, decay: 0.15, sustain: 0.6, release: 0.08, peak: 0.5, duration: null });
+  h.release(10.05);
+  check('…while a release mid-decay just holds the ramp there (an event lies past it), with nothing re-set',
+    same(calls(ampEnv.gain).slice(-2), [['hold', 10.05], ['lin', 0, 10.13]]));
+}
+{
+  const { h, ampEnv } = noteVoice('triangle', { attack: 0.02, decay: 0.15, sustain: 0.6, release: 0.08, peak: 0.5, duration: null });
+  h.fadeOut(20, 0.03);
+  check('a fadeOut on a settled held note (Stop) also starts from the sustain at its own time',
+    same(calls(ampEnv.gain).slice(-3), [['hold', 20], ['set', 0.3, 20], ['lin', 0, 20.03]]));
 }
 
 console.log('\n  note role — a recipe amp overrides the caller\'s envelope');

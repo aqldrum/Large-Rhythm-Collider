@@ -292,6 +292,9 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
 
   // ── lifecycle bookkeeping ──
   let released = false;
+  // note: when the envelope's last scheduled event happens (its planned moments, then any fade booked since).
+  // Past it nothing is scheduled, and a real engine's cancelAndHoldAtTime holds nothing there (see fadeNote).
+  let envSettledAt = role === 'note' && amp?.moments?.length ? when + amp.moments[amp.moments.length - 1].at : -Infinity;
   let completed = false;
   let endedCount = 0;
   let completeCb = null;
@@ -357,11 +360,17 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
     const param = ampEnv.gain;
     if (typeof param.cancelAndHoldAtTime === 'function') {
       param.cancelAndHoldAtTime(at);
+      // With no event scheduled past `at` (the envelope has settled at its sustain), a real engine inserts no hold, and
+      // the ramp below would run from the envelope's LAST event, long before `at`. Booked early, that is a slow fade
+      // across the whole held note; booked late (inside a lookahead), the gain jumps partway down at once: a click.
+      // So the settled value is set again at `at`, and the fall starts there.
+      if (at >= envSettledAt) param.setValueAtTime(seed, at);
     } else {
       param.cancelScheduledValues(at);
       param.setValueAtTime(seed, at);
     }
     param.linearRampToValueAtTime(0, at + seconds);
+    envSettledAt = Math.max(envSettledAt, at + seconds);
     const stopAt = at + seconds + 0.01;
     for (const src of sources) { if (src !== noiseSrc) { try { src.stop(stopAt); } catch {} } }
   }
