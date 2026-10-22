@@ -20,13 +20,18 @@ The planner keeps this file current after every phase. If the planner thread is 
 
 ## Phases
 
-| Phase | Branch | Status |
-| --- | --- | --- |
-| A. Drums (core + lab) | `sprint/drums` | dispatched |
-| B. Targeted progressions (core + lab) | `sprint/progression` | dispatched |
-| C. Composer tab on the main page | `sprint/integration` (after A+B merge) | waiting |
-| D. Final suites + morning listen list | `composer-sprint` | waiting |
-| S. Cosmos seam survey + superrow probe (read-only) | none; output in the planner's scratchpad `cosmos-survey/REPORT.md` | dispatched |
+| Phase | Branch | Depends on | Status |
+| --- | --- | --- | --- |
+| A. Drums (core + lab) | `sprint/drums` | none | dispatched |
+| B. Targeted progressions (core + lab) | `sprint/progression` | none | dispatched |
+| S. Cosmos seam survey + superrow probe (read-only) | none; output in the planner's scratchpad `cosmos-survey/REPORT.md` | none | dispatched |
+| E1. Cosmos Compose mode: Rhythm card + Grid card superrow, bed silenced, clock takeover/hand-back, LOD exit; new `Composer/core/superrow.js` | `sprint/cosmos-compose` | S (seam map, window definition) | waiting |
+| C. Composer tab on the main page | `sprint/integration` | A+B merged | waiting |
+| T. Compose trace: an opt-in, pure observer in `Composer/core`; output unchanged when it's off | `sprint/trace` | A+B merged | waiting |
+| E2. Cosmos onset dust + choreography from the trace | `sprint/cosmos-dust` | T, E1 | waiting |
+| D. Merge everything, final suites, morning listen list | `composer-sprint` | all | waiting |
+
+Parallel lanes: E1 runs beside A/B (it touches only Cosmos files and a new core module). C runs beside T (main-page files vs. `Composer/core`). The trace waits for A+B because all three would edit `compose.js`. Stretch, if time allows: animate the main-page Compose from the trace.
 
 ## Next sprint: Cosmos composition mode (Avery, 2026-10-22)
 
@@ -42,3 +47,4 @@ The planner keeps this file current after every phase. If the planner thread is 
 
 - 2026-10-22 night: sprint branch and phase worktrees created; A and B dispatched in parallel.
 - 2026-10-22 night: Cosmos plan recorded; read-only survey + superrow probe dispatched (writes only to the planner's scratchpad).
+- 2026-10-22 night: Avery asked for the Cosmos build to start tonight too; plan widened to E1/T/E2 (table above).
