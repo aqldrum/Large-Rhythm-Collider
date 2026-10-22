@@ -293,7 +293,14 @@ console.log('\n  fundamental glide while notes sound');
       p.handleFundamentalChange(0);   // a step
     };
     const r = pair(steps, { hold });
-    check(`${hold ? 'with' : 'without'} cancelAndHoldAtTime: legato, standard and bridge voices glide identically (and a zero glide steps)`, !graphDiff(r), graphDiff(r));
+    if (!hold) check('without cancelAndHoldAtTime: legato, standard and bridge voices glide identically (and a zero glide steps)', !graphDiff(r), graphDiff(r));
+    else {
+      // With cancelAndHoldAtTime the library also re-sets the settled pitch at the glide's start (2026-10-22): a real
+      // engine inserts no hold when nothing is scheduled past that time, so without it a ramp would run from the
+      // voice's last event. This mock always holds, so the extra set is redundant here: what is heard must match.
+      const gap = renderGap(r, 9.99, 10.8);
+      check('with cancelAndHoldAtTime: legato, standard and bridge voices glide as before, heard (and a zero glide steps)', gap < 1e-6, `max diff ${gap.toExponential(2)}`);
+    }
     check(`${hold ? 'with' : 'without'}: the held note's noteData follows the new fundamental`, near(r.neu.activeLayerVoices[0].noteData.frequency, 98 * 1.5));
   }
 }

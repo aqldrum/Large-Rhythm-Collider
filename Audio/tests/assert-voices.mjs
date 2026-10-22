@@ -180,10 +180,23 @@ console.log('\n  setFrequency — every oscillator glides, ratios kept; key-trac
   const { h, nodes, plan } = noteVoice('marimba', { peak: 0.5, duration: null }, { baseFreq: 440 });
   h.setFrequency(330, 11, 0.05);
   const ratios = [1, 4, 9.2];
-  check('a ramp is scheduled on EVERY oscillator (hold, then an exponential glide to the new pitch × its ratio)',
-    nodes.osc.length === 3 && nodes.osc.every((o, i) => same(calls(o.frequency).slice(-2), calls({ _calls: [['hold', 11], ['exp', 330 * ratios[i], 11.05]] }))));
+  check('a ramp is scheduled on EVERY oscillator (hold, re-set the settled pitch at the start, then an exponential glide to the new pitch × its ratio)',
+    nodes.osc.length === 3 && nodes.osc.every((o, i) => same(calls(o.frequency).slice(-3), calls({ _calls: [['hold', 11], ['set', 440 * ratios[i], 11], ['exp', 330 * ratios[i], 11.05]] }))));
   check('the noise source is unpitched and untouched', nodes.buffer.length === 1 && !nodes.buffer[0].frequency);
   check('a fixed-cutoff filter stays put', calls(nodes.filter[0].frequency).length === 1 && plan.filters[0].freq === 5200);
+}
+{
+  // Glides booked ahead (the Composer lab books a held voice's whole chain at once): each must start at its own
+  // time from the pitch the last one settled on. A real engine inserts no hold when nothing is scheduled past
+  // that time, so without the re-set the ramp would run from the previous event, across the whole gap.
+  const { h, nodes } = noteVoice('sine', { peak: 0.5, duration: null }, { baseFreq: 440 });
+  h.setFrequency(330, 11, 0.02);
+  h.setFrequency(495, 12, 0.02);
+  check('glides booked ahead each start at their own time, from the pitch the one before settled on',
+    same(calls(nodes.osc[0].frequency).slice(-6), [['hold', 11], ['set', 440, 11], ['exp', 330, 11.02], ['hold', 12], ['set', 330, 12], ['exp', 495, 12.02]]));
+  h.setFrequency(660, 12.01, 0.05);
+  check('…a glide that starts while one is still moving holds where it is instead (no jump to the old target)',
+    same(calls(nodes.osc[0].frequency).slice(-2), [['hold', 12.01], ['exp', 660, 12.06]]));
 }
 {
   const { h, nodes } = noteVoice('warm', { peak: 0.5, duration: null }, { baseFreq: 220 });

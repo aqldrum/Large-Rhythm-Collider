@@ -44,7 +44,7 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
   const state = {
     input: { layers: [...PRESETS[0].layers], cycleSeconds: PRESETS[0].cycleSeconds, seed: 1 },
     knobs: Object.fromEntries(KNOBS.map((k) => [k, null])),
-    table: 'full', spec: null, parts: {}, levels: Object.fromEntries(PART_IDS.map((id) => [id, 0.8])),
+    table: 'full', spec: null, parts: {}, levels: Object.fromEntries(PART_IDS.map((id) => [id, 0.8])), glideMs: 12,
     status: 'idle', error: null, lastMs: null, dirty: true,
   };
   const listeners = new Set();
@@ -110,6 +110,7 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
       changed();
     },
     setLevel(id, value) { state.levels[id] = Number(value); player?.setLevel(id, state.levels[id]); },   // no re-render: a slider is mid-drag
+    setGlide(ms) { state.glideMs = Math.max(0, Number(ms) || 0); player?.setGlide(state.glideMs / 1000); },   // portamento; no re-render
 
     perform() {
       if (!state.spec || state.spec.refused) return;
@@ -117,6 +118,7 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
       if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
       player ??= createPlayer({ ctx, timers });
       for (const id of PART_IDS) player.setLevel(id, state.levels[id]);
+      player.setGlide(state.glideMs / 1000);
       player.play(state.spec, api.currentParts);
       state.status = 'playing'; changed();
     },

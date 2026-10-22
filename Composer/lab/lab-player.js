@@ -42,7 +42,7 @@ function chainsOfUncached(part) {
 
 /**
  * createPlayer({ ctx, voices, timers, options }) → { buses, master, limiter, play(spec, getParts), stop(), tick(),
- *   setLevel(id, v), playhead(), playing }
+ *   setLevel(id, v), setGlide(seconds), playhead(), playing }
  *   voices   { planVoice, createInstrumentVoice, getRecipe } (the library's, by default; a test may wrap them)
  *   timers   { setInterval, clearInterval } (the page's, by default; a test drives tick() itself)
  *   getParts () → the parts as they play now (the lab's sound, legato and on/off), read at every tick
@@ -121,6 +121,10 @@ export function createPlayer({ ctx, voices = { planVoice, createInstrumentVoice,
       live.clear();
     },
     setLevel(id, value) { const b = busOf(id); b.gain.setTargetAtTime(Math.max(0, value), ctx.currentTime, 0.02); },
+    /** portamento: how long a held voice takes to move to its next note, in seconds (0 = a step). Notes booked
+     *  from now on use it; the ~150 ms already booked keep the old length. */
+    setGlide(seconds) { o.glide = Math.max(0, Number(seconds) || 0); },
+    get glide() { return o.glide; },
     /** where the loop is, 0..1 of the cycle (null when stopped) */
     playhead() { if (!playing || !spec) return null; const T = spec.knobs.cycleSeconds, t = ctx.currentTime - loopStart; return t < 0 ? 0 : (t % T) / T; },
     get liveVoices() { return live.size; },

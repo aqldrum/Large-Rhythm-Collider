@@ -91,9 +91,58 @@ for (const part of lab.currentParts()) {
 const expected = lab.currentParts().filter((p) => p.enabled).reduce((n, p) => n + p.notes.filter((x) => x.retrigger).length, 0);
 check(`every enabled part's notes start at their spec times, on their part's bus, at their hz (${starts} voices for ${expected} retriggering notes)`, !missing && starts === expected, missing);
 check(`a note without retrigger glides its part's held voice with setFrequency (${glides} glides)`, !glideMiss && glides === lab.currentParts().reduce((n, p) => n + p.notes.filter((x) => !x.retrigger).length, 0) && glides > 0, glideMiss || `${glides}`);
+// The glide starts AT the note, not at the voice's last event: each ramp is anchored by a setValueAtTime of the
+// previous pitch at the note's time, and ends glideMs later. (Without the anchor a ramp booked ahead slides across
+// the whole gap between two notes; that was the long portamento Avery heard.)
+const anchorMiss = (glideSec) => {
+  for (const part of lab.currentParts()) {
+    if (!part.enabled) continue;
+    for (const chain of chainsOf(part)) {
+      const first = chain.notes[0], hit = oscs.find((o) => near(o.started, L0 + first.time, 1e-9) && busOf(o, player.buses) === part.id);
+      if (!hit) continue;
+      let prev = first.hz;
+      for (const n of chain.notes.slice(1)) {
+        const at = L0 + n.time, calls = hit.frequency.calls;
+        const r = calls.findIndex((c) => c[0] === 'exponentialRampToValueAtTime' && near(c[1], n.hz, 1e-6) && near(c[2], at + glideSec, 1e-9));
+        if (r < 0) return `${part.id}: no ${Math.round(glideSec * 1000)} ms ramp to ${n.hz.toFixed(2)} at ${n.time.toFixed(3)}`;
+        if (!calls.slice(0, r).some((c) => c[0] === 'setValueAtTime' && near(c[1], prev, 1e-6) && near(c[2], at, 1e-9))) return `${part.id}: the glide to ${n.hz.toFixed(2)} is not anchored at ${n.time.toFixed(3)}`;
+        prev = n.hz;
+      }
+    }
+  }
+  return '';
+};
+const miss12 = anchorMiss(0.012);
+check('every glide is anchored at its note and lasts the Glide setting (12 ms by default)', lab.state.glideMs === 12 && !miss12, miss12);
 const chordsChains = chainsOf(lab.state.parts.chords);
 check('in the chords part a chain is one voice\'s', chordsChains.every((c) => c.notes.every((n) => n.voice === c.voice)));
 check('the second cycle starts booking after the first (loop)', oscs.some((o) => o.started >= L0 + T - 1e-9));
+
+console.log('\n— the Glide control (portamento)');
+{
+  const gctx = makeCtx(), glab = createLabController({ createContext: () => gctx, timers });
+  await glab.press();
+  glab.setGlide(200);
+  glab.perform();
+  const gplayer = glab.player, G0 = gplayer.loopStart, T2 = glab.state.spec.knobs.cycleSeconds;
+  for (let t = 0; t <= T2; t += 0.025) { gctx.currentTime = G0 + t; gplayer.tick(); }
+  const goscs = gctx.nodes.filter((n) => n.kind === 'osc');
+  let longMiss = '', checked = 0;
+  for (const part of glab.currentParts()) {
+    if (!part.enabled) continue;
+    for (const chain of chainsOf(part)) {
+      const hit = goscs.find((o) => near(o.started, G0 + chain.notes[0].time, 1e-9) && busOf(o, gplayer.buses) === part.id);
+      for (const n of chain.notes.slice(1)) {
+        checked++;
+        if (!hit?.frequency.calls.some((c) => c[0] === 'exponentialRampToValueAtTime' && near(c[1], n.hz, 1e-6) && near(c[2], G0 + n.time + 0.2, 1e-9))) longMiss = `${part.id}: no 200 ms glide to ${n.hz.toFixed(2)}`;
+      }
+    }
+  }
+  check(`Glide set to 200 ms before Perform: every glide lasts 200 ms (${checked})`, glab.state.glideMs === 200 && gplayer.glide === 0.2 && checked > 0 && !longMiss, longMiss);
+  glab.setGlide(0);
+  check('Glide 0 reaches the playing player at once (notes booked from now on step)', gplayer.glide === 0);
+  glab.stop();
+}
 
 console.log('\n— stop, levels, toggles');
 const before = oscs.length, now = ctx.currentTime;

@@ -140,17 +140,29 @@ function applyNoteMoments(param, moments, when) {
   }
 }
 
+// The value each retunable param was last set to and when that setting finished (its birth value, or the end of
+// its last glide). An exponential ramp runs from the PREVIOUS event, and cancelAndHoldAtTime inserts no hold when
+// nothing is scheduled past `at`, so a glide booked ahead of time would otherwise slide all the way from the last
+// event: the whole gap between two notes, not `glideSec`. Knowing the settled value lets each glide start at `at`.
+const SETTLED = new WeakMap();
+const settle = (param, value, end) => SETTLED.set(param, { value, end });
+
 // Glide one frequency AudioParam to `target` from `at` (main Playback's handleFundamentalChange curve): hold the
-// current value, then an exponential ramp over `glideSec` — or a step when the glide is ~0.
+// value it has at `at`, then an exponential ramp over `glideSec` — or a step when the glide is ~0.
 function glideParam(param, target, at, glideSec) {
   const safeTarget = Math.max(0.0001, target);
-  if (typeof param.cancelAndHoldAtTime === 'function') param.cancelAndHoldAtTime(at);
-  else {
+  const settled = SETTLED.get(param);
+  const midGlide = settled && at < settled.end;
+  if (typeof param.cancelAndHoldAtTime === 'function') {
+    param.cancelAndHoldAtTime(at);   // mid-glide, this holds the ramp's value at `at`
+    if (!midGlide) param.setValueAtTime(Math.max(0.0001, settled ? settled.value : param.value), at);
+  } else {
     param.cancelScheduledValues(at);
-    param.setValueAtTime(Math.max(0.0001, param.value), at);
+    param.setValueAtTime(Math.max(0.0001, !midGlide && settled ? settled.value : param.value), at);
   }
   if (glideSec > 0.001) param.exponentialRampToValueAtTime(safeTarget, at + glideSec);
   else param.setValueAtTime(safeTarget, at);
+  settle(param, safeTarget, at + (glideSec > 0.001 ? glideSec : 0));
 }
 
 // a component's OWN short envelope (e.g. a glass bell that decays under the body). Static-level components
@@ -204,6 +216,7 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
       const bq = ctx.createBiquadFilter();
       bq.type = spec.type;
       bq.frequency.setValueAtTime(spec.freq, when);
+      settle(bq.frequency, spec.freq, when);
       bq.Q.value = spec.Q;
       graphNodes.push(bq);
       if (spec.drift && spec.drift.depthCents) {
@@ -230,6 +243,7 @@ export function createInstrumentVoice({ ctx, destination, plan, when, detuneBus 
     if (component.wave === 'custom' && component.harmonics) osc.setPeriodicWave(periodicWave(ctx, component.harmonics));
     else osc.type = component.wave;
     osc.frequency.setValueAtTime(component.freq, when);
+    settle(osc.frequency, component.freq, when);
     if (component.detuneCents) osc.detune.setValueAtTime(component.detuneCents, when);   // static spread; the bus sums on top
     if (detuneBus) { detuneBus.connect(osc.detune); osc._instrDetuneBus = detuneBus; }
     if (component.level !== 1 || component.sub) {
