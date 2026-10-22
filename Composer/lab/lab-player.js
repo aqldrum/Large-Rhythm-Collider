@@ -20,13 +20,20 @@
 //            change opens a new segment where the booking has reached (the lookahead's edge), so what is booked
 //            keeps its place and the playhead never jumps: it takes effect within ~150 ms.
 //   stop     every live voice fades out over 30 ms and stops; nothing more is booked.
+//   drums    the spec's drum strokes (drums.js), booked like a note's start on the same clock map (so they loop, follow
+//            the phase and the live tempo), each a one-shot through Audio/drums into its own bus, 'drums': a `made:`
+//            choice is playMadeDrum at the stroke's velocity; a sample URL is playSample at the velocity × the made
+//            channel's sampleLevel (chunk-tunes' balance), loaded on first use, the made sound standing in until it is.
 
 import { getRecipe, normalizeNoteInstrumentId } from '../../Audio/voices/recipes.js';
 import { planVoice } from '../../Audio/voices/plan.js';
 import { createInstrumentVoice } from '../../Audio/voices/voice.js';
+import * as drumLibrary from '../../Audio/drums/index.js';
 
 export const PLAYER_DEFAULTS = Object.freeze({ tickMs: 25, aheadSeconds: 0.15, master: 0.8, level: 0.8, release: 0.08, glide: 0.012, stopFade: 0.03, factor: 1 });
 const LIMITER = Object.freeze({ threshold: -10, knee: 6, ratio: 6, attack: 0.003, release: 0.2 });
+/** a drum voice's made kit sound (Audio/drums ids), its stand-in while a sample loads */
+const MADE_OF = Object.freeze({ kick: 'kick', snare: 'snare', hat: 'hihat', perc: 'perc', cym: 'cym' });
 
 const chainCache = new WeakMap();
 /** a part's notes grouped as the player books them: [{ voice, notes: [note] }] — a chain begins at a retrigger */
@@ -59,7 +66,7 @@ const endOf = (chain) => { const last = chain.notes[chain.notes.length - 1]; ret
  *   timers   { setInterval, clearInterval } (the page's, by default; a test drives tick() itself)
  *   getParts () → the parts as they play now (the lab's sound, legato and on/off), read at every tick
  */
-export function createPlayer({ ctx, voices = { planVoice, createInstrumentVoice, getRecipe }, timers = globalThis, options = {} } = {}) {
+export function createPlayer({ ctx, voices = { planVoice, createInstrumentVoice, getRecipe }, drums: drumLib = drumLibrary, timers = globalThis, options = {} } = {}) {
   const o = { ...PLAYER_DEFAULTS, ...options };
   const limiter = ctx.createDynamicsCompressor();
   for (const [k, v] of Object.entries(LIMITER)) limiter[k].value = v;
@@ -68,7 +75,8 @@ export function createPlayer({ ctx, voices = { planVoice, createInstrumentVoice,
   master.gain.value = o.master;
   master.connect(limiter);
   const buses = {}, live = new Set();
-  let spec = null, getParts = null, loopStart = 0, timer = null, playing = false;
+  let spec = null, getParts = null, getDrums = null, loopStart = 0, timer = null, playing = false;
+  const samples = new Map();   // url → AudioBuffer once loaded (null while loading or failed)
   // booked: the clock up to which everything is booked; bookedSpec: the same instant in spec time
   let booked = 0, bookedSpec = 0;
   /** the clock↔spec map: segments { t0, s0, factor } in time order, the last one current */
@@ -100,6 +108,23 @@ export function createPlayer({ ctx, voices = { planVoice, createInstrumentVoice,
     live.add(entry);
     if (!alone) holding.push({ chain, base, handle, next: 1, entry });
   };
+  /** one drum stroke at clock time `at` through the drums bus; a sample not loaded yet starts loading, the made sound
+   *  of its voice standing in */
+  const strike = (choice, hit, at) => {
+    if (!choice) return;
+    const out = busOf('drums'), made = drumLib.madeDrumOf(choice);
+    let handle = null;
+    if (made) handle = drumLib.playMadeDrum(made, { ctx, out, at, peak: hit.velocity });
+    else {
+      const buffer = samples.get(choice);
+      if (buffer) handle = drumLib.playSample({ ctx, out, buffer, at, peak: hit.velocity * (drumLib.MADE_DRUMS[MADE_OF[hit.voice]]?.sampleLevel ?? 0.6) });
+      else {
+        if (!samples.has(choice)) { samples.set(choice, null); drumLib.loadSample(ctx, choice).then((b) => { if (b) samples.set(choice, b); else samples.delete(choice); }); }
+        handle = drumLib.playMadeDrum(MADE_OF[hit.voice], { ctx, out, at, peak: hit.velocity });
+      }
+    }
+    if (handle) live.add({ handle, end: handle.end + 0.05 });
+  };
   /** book a held chain's moves and release that fall before spec time `until`; true once its release is booked */
   const advance = (h, until) => {
     const notes = h.chain.notes;
@@ -123,9 +148,10 @@ export function createPlayer({ ctx, voices = { planVoice, createInstrumentVoice,
     const keep = Math.min(now, booked);
     while (segments.length > 1 && segments[1].t0 <= keep) segments.shift();
     const until = specAt(horizon);
-    const parts = getParts();
+    const parts = getParts(), drums = getDrums ? getDrums() : null;
     for (let c = Math.floor(bookedSpec / T); c * T < until; c++) {
       const base = c * T;
+      if (drums?.enabled) for (const hit of drums.hits) { const S = base + hit.time; if (S >= bookedSpec && S < until) strike(drums.kit[hit.voice], hit, clockOf(S)); }
       for (const part of parts) {
         if (!part.enabled) continue;
         for (const chain of chainsOf(part)) {
@@ -141,11 +167,13 @@ export function createPlayer({ ctx, voices = { planVoice, createInstrumentVoice,
   return {
     buses, master, limiter,
     get playing() { return playing; },
-    /** start looping `spec` now (a little ahead, so the first notes are not late), at the current time factor */
-    play(theSpec, theParts) {
+    /** start looping `spec` now (a little ahead, so the first notes are not late), at the current time factor;
+     *  theDrums () → the drums as they play now (the spec's own by default), read at every tick */
+    play(theSpec, theParts, theDrums) {
       if (playing) this.stop();
-      spec = theSpec; getParts = theParts || (() => theSpec.parts);
+      spec = theSpec; getParts = theParts || (() => theSpec.parts); getDrums = theDrums || (() => theSpec.drums);
       for (const p of spec.parts) busOf(p.id);
+      busOf('drums');
       loopStart = ctx.currentTime + 0.05; booked = loopStart; bookedSpec = 0; playing = true;
       segments = [{ t0: loopStart, s0: 0, factor: o.factor }]; holding = [];
       master.gain.cancelScheduledValues(ctx.currentTime);

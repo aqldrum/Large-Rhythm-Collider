@@ -56,6 +56,13 @@
   td:first-child { color: var(--accent); white-space: nowrap; font-family: monospace; }
   td:nth-child(2) { font-family: monospace; white-space: nowrap; }
   .note { color: var(--muted); font-size: 11px; }
+  /* drums: a band a voice in the drum lane's bars */
+  .bar .dtick { position: absolute; width: 2px; height: 4px; }
+  .bar .dtick.kick { top: 4px; background: #ff6b6b; } .bar .dtick.snare { top: 9px; background: #f9ca24; } .bar .dtick.hat { top: 14px; background: #aaa; }
+  .bar .dtick.perc { top: 19px; background: #4ecdc4; } .bar .dtick.cym { top: 24px; background: #fff; }
+  .bar .dlabel { position: absolute; right: 4px; top: 3px; font-size: 10px; color: var(--muted); }
+  #drumKit { margin-top: 8px; }
+  #drumKit select { width: 120px; }
 </style>
 </head>
 <body>
@@ -84,6 +91,7 @@
   <section>
     <h2>Lanes</h2>
     <div class="lanes" id="lanes"><div id="playhead"></div></div>
+    <div class="row" id="drumKit" title="the drum kit: a sound a voice (Audio/drums' made kit, or the site's samples); off silences the voice"></div>
   </section>
   <section>
     <details id="decisions"><summary>Decisions — what Compose chose, and why</summary><table id="decisionTable"></table></details>

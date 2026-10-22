@@ -231,7 +231,8 @@ export function arrangeDrums(spec, options = {}) {
   const beats = beatsOf(S), m = beats.m, h = 1 / (2 * m);
   const decisions = [];
   const decide = (what, value, why) => { decisions.push({ what, value, why }); return value; };
-  decide('drums.mode', opt.mode, options?.mode != null ? 'asked' : 'the steady backbeat by default (the sprint brief): kick on beats 1 and 3, snare on 2 and 4, a hat on every slot');
+  // what is decided depends on the options as resolved, never on how they were spelled ({} and the defaults agree)
+  decide('drums.mode', opt.mode, opt.mode !== 'backbeat' ? 'asked' : 'the steady backbeat by default (the sprint brief): kick on beats 1 and 3, snare on 2 and 4, a hat on every slot');
   decide('drums.beats', beats.pos, m === 1
     ? `the bar's ${S} slots cut in 4 beats as Partitions cuts a block (${beats.sizes.join(', ')} slots)`
     : `${S} slot${S === 1 ? '' : 's'} a bar is under 4 beats: cut on 1/${m} slots (${beats.sizes.map((s) => `${s}/${m}`).join(', ')}), a beat between anchors landing on a real onset inside its slot`);
@@ -321,7 +322,7 @@ export function arrangeDrums(spec, options = {}) {
       });
     }
   }
-  decide('drums.kit', { ...opt.kit }, options?.kit ? 'asked' : 'the made kit of Audio/drums (chunk-tunes\' strokes)');
+  decide('drums.kit', { ...opt.kit }, DRUM_VOICES.some((v) => opt.kit[v] !== DEFAULT_KIT[v]) ? 'asked' : 'the made kit of Audio/drums (chunk-tunes\' strokes)');
   if (opt.mode === 'against' || Object.values(opt.perBar).includes('against')) decide('drums.seed', seed, 'the seed orders the empty slots `against` fills (a generator of its own: Compose\'s draws do not move)');
 
   // ── one stroke a voice an onset (the louder kept), in time order ──

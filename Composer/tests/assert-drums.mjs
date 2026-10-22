@@ -136,7 +136,8 @@ console.log('\n— determinism and the seed');
 {
   const a = compose([41, 42, 43], 8, { seed: 5 }), b = compose([41, 42, 43], 8, { seed: 5 });
   check('the same rhythm and seed: byte-identical drums', JSON.stringify(a.drums) === JSON.stringify(b.drums));
-  check('arranging again from the spec gives the same drums as Compose did', JSON.stringify(arrangeDrums(a, {})) === JSON.stringify(a.drums));
+  check('arranging again from the spec gives the same drums as Compose did, however the defaults are spelled', JSON.stringify(arrangeDrums(a, {})) === JSON.stringify(a.drums)
+    && JSON.stringify(arrangeDrums(a, { enabled: true, mode: 'backbeat', fills: true, kit: { ...DEFAULT_KIT } })) === JSON.stringify(a.drums));
   let same = true, moved = false;
   for (const { spec } of specs) for (const mode of DRUM_MODES) {
     const x = arrangeDrums(spec, { mode, seed: 1 }), y = arrangeDrums(spec, { mode, seed: 1 }), z = arrangeDrums(spec, { mode, seed: 2 });

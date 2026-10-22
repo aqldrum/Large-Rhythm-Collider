@@ -12,10 +12,16 @@
 //   tempo      a playback tempo over the spec's own (TEMPO_LIMITS): the player scales the spec's times by
 //              factor = the spec's tempo / this one, live, nothing re-composed; a new Compose resets it to the new
 //              spec's tempo (proposed). The spec is never touched; JSON export adds a top-level `playback`.
+//   drums      the Drums (Perc) part as it plays now: a mode or curated pattern, fills, on/off, a level and a kit sound
+//              a voice. A change re-arranges the drums from the spec with drums.js' own `arrangeDrums`, on this
+//              thread, nothing re-composed (live while playing); a new Compose re-arranges them with the same options.
 
 import { compose, rearticulate, PART_IDS } from '../core/compose.js';
 import { NOTE_INSTRUMENT_IDS, getInstrument } from '../../Audio/voices/recipes.js';
 import { createPlayer } from './lab-player.js';
+import { arrangeDrums, DRUM_MODES, DRUM_VOICES, DEFAULT_KIT } from '../core/drums.js';
+import { DRUM_PATTERNS } from '../core/drum-patterns.js';
+import { MADE_DRUM_CHOICES } from '../../Audio/drums/index.js';
 
 export const LAB_VERSION = 'composer-lab-v1';
 /** a few rhythms across sizes; 41:42:43 first (tone-rich, mid-size) */
@@ -34,6 +40,17 @@ export const TEMPO_LIMITS = Object.freeze([30, 300]);
 /** every sound a part can play: the note-role instruments of Audio/voices, in the catalog's order */
 export const soundChoices = () => NOTE_INSTRUMENT_IDS.map((id) => ({ id, label: getInstrument(id).label }));
 
+// ── drums ──
+const DRUM_MODE_LABELS = { backbeat: 'backbeat (default)', with: 'clave: with lead + comping', against: 'clave: against lead + comping', partition: 'partition: the downbeat layer' };
+/** every drum mode: the layered modes, then each curated pattern */
+export const drumModeChoices = () => DRUM_MODES.map((id) => ({ id, label: DRUM_MODE_LABELS[id] ?? `pattern: ${DRUM_PATTERNS[id].label}` }));
+/** the built-in samples Partitions plays (assets/audio, relative to this page) */
+const SAMPLE_KINDS = { kick: 'kick', snare: 'snare', hat: 'hat', perc: 'perc', cym: 'cym' };
+/** a voice's sound choices: off, the made kit of Audio/drums, the site's samples of that kind */
+export const kitChoices = (voice) => [{ value: '', label: 'off' }, ...MADE_DRUM_CHOICES.map((c) => ({ value: c.value, label: `${c.label} (made)` })),
+  ...[1, 2, 3, 4].map((i) => ({ value: `../../assets/audio/${SAMPLE_KINDS[voice]}${i}.wav`, label: `${SAMPLE_KINDS[voice]}${i}.wav` }))];
+export const DRUM_LAB_VOICES = DRUM_VOICES;
+
 /** layers as typed: a number, blank or 0 (absent) → [a, b, c, d] */
 export function readLayers(values) {
   return [0, 1, 2, 3].map((i) => { const v = Number(values[i]); return Number.isInteger(v) && v > 0 ? v : 0; });
@@ -49,7 +66,8 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
   const state = {
     input: { layers: [...PRESETS[0].layers], cycleSeconds: PRESETS[0].cycleSeconds, seed: 1 },
     knobs: Object.fromEntries(KNOBS.map((k) => [k, null])),
-    table: 'full', spec: null, parts: {}, levels: Object.fromEntries(PART_IDS.map((id) => [id, 0.8])), glideMs: 12, tempoBpm: null,
+    table: 'full', spec: null, parts: {}, levels: { ...Object.fromEntries(PART_IDS.map((id) => [id, 0.8])), drums: 0.8 }, glideMs: 12, tempoBpm: null,
+    drumOptions: { enabled: true, mode: 'backbeat', fills: true, kit: { ...DEFAULT_KIT } }, drums: null,
     status: 'idle', error: null, lastMs: null, dirty: true,
   };
   const listeners = new Set();
@@ -80,8 +98,8 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
         const spec = await runCompose(state.input.layers, state.input.cycleSeconds, { seed: state.input.seed, overrides: overrides(), worker: state.table === 'full' });
         if (mine !== run) return state.spec;   // a newer compose took over
         state.spec = spec; state.lastMs = clock() - t0; state.dirty = false;
-        if (spec.refused) { state.parts = {}; state.status = 'refused'; }
-        else { state.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); state.status = 'ready'; state.tempoBpm = spec.knobs.tempoBpm; }
+        if (spec.refused) { state.parts = {}; state.drums = null; state.status = 'refused'; }
+        else { state.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); state.drums = arrangeDrums(spec, state.drumOptions); state.status = 'ready'; state.tempoBpm = spec.knobs.tempoBpm; }
       } catch (err) {
         if (mine !== run) return state.spec;
         state.status = 'error'; state.error = String(err && err.message ? err.message : err);
@@ -106,7 +124,7 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
     /** the parts as they play now, in the spec's order */
     currentParts: () => PART_IDS.map((id) => state.parts[id]).filter(Boolean),
     /** the spec with the parts as they play now: what JSON export downloads */
-    currentSpec: () => (state.spec && !state.spec.refused ? { ...state.spec, parts: api.currentParts() } : state.spec),
+    currentSpec: () => (state.spec && !state.spec.refused ? { ...state.spec, parts: api.currentParts(), drums: state.drums } : state.spec),
     /** what JSON export downloads: the spec as it plays now, plus how it is played (never written into the spec) */
     exportObject: () => (state.spec && !state.spec.refused ? { ...api.currentSpec(), playback: { tempoBpm: api.tempo(), factor: api.tempoFactor() } } : state.spec),
     exportJSON: () => JSON.stringify(api.exportObject(), null, 2),
@@ -114,6 +132,15 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
       const part = state.parts[id];
       if (!part) return;
       state.parts[id] = rearticulate(part, { sound: sound ?? part.sound, legato: legato ?? part.legato, enabled: enabled ?? part.enabled, cycleSeconds: state.spec.knobs.cycleSeconds });
+      changed();
+    },
+    /** the drums as they play now: { enabled, mode, fills, kit: { voice: choice }, layer, hitsPerBar } merged in, the
+     *  drums re-arranged from the spec (cheap, this thread); live while playing, nothing re-composed */
+    setDrums({ kit, ...rest } = {}) {
+      const o = state.drumOptions;
+      for (const [k, v] of Object.entries(rest)) { if (v === null) delete o[k]; else if (v !== undefined) o[k] = v; }
+      if (kit) o.kit = { ...o.kit, ...kit };
+      if (state.spec && !state.spec.refused) state.drums = arrangeDrums(state.spec, o);
       changed();
     },
     setLevel(id, value) { state.levels[id] = Number(value); player?.setLevel(id, state.levels[id]); },   // no re-render: a slider is mid-drag
@@ -139,10 +166,10 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
       ctx ??= createContext();
       if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
       player ??= createPlayer({ ctx, timers });
-      for (const id of PART_IDS) player.setLevel(id, state.levels[id]);
+      for (const id of [...PART_IDS, 'drums']) player.setLevel(id, state.levels[id]);
       player.setGlide(state.glideMs / 1000);
       player.setTimeFactor(api.tempoFactor());
-      player.play(state.spec, api.currentParts);
+      player.play(state.spec, api.currentParts, () => state.drums);
       state.status = 'playing'; changed();
     },
     stop() { player?.stop(); if (state.status === 'playing') state.status = 'ready'; changed(); },
