@@ -48,6 +48,10 @@
 //              √(440·660) ≈ 539 Hz.
 //
 // Refusals: { refused: true, reason: 'tooDense' | 'tooLarge' | 'tooFewTones', detail }.
+//
+// The trace (`trace: true`; trace.js, Composer/TRACE.md): `spec.trace`, every decision above as ordered, untimed events
+// pointing at the row's onsets, for a renderer to animate. It observes and never steers: without `spec.trace` the spec
+// is byte-identical to the one composed with the trace off, and off (the default) nothing of it runs.
 
 import { buildRow, toneGate, isRow, ONSET_GATE, MIN_TONES } from './row.js';
 import { buildCells, ANCHOR_MODES } from './cells.js';
@@ -57,6 +61,7 @@ import { harmonize, phrasesOf, isStrongBeat, DEFAULT_SETTLE_PASSES, MAX_SETTLE_P
 import { getInstrument } from '../../Audio/voices/recipes.js';
 import { readProgression, harmonyPins, describeProgression } from './progression.js';
 import { arrangeDrums } from './drums.js';
+import { createTrace, refusedTrace } from './trace.js';
 
 export const COMPOSER_SPEC_VERSION = 'composer-spec-v1';
 export const BEATS_PER_BAR = 4;
@@ -153,10 +158,11 @@ export function rearticulate(part, { sound = part.sound, legato = part.legato, e
  *                  baseHz, compLayer, presence ('cluster' | 'exact'), settlePasses (an integer 0..3) }, worker (true:
  *                  the full table unless asked), progression ([a ratio of the row | null] a bar: progression.js;
  *                  absent or all null: lead-led, exactly as without it),
- *                  drums (drums.js `arrangeDrums` options, or false: no `drums` in the spec) }
+ *                  drums (drums.js `arrangeDrums` options, or false: no `drums` in the spec),
+ *                  trace (true: `spec.trace`, the compose trace of trace.js; off by default) }
  * → the spec (see the head of this file and Composer/DESIGN_NOTES.md "Phase 4"), or a refusal
  */
-export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker = false, progression = null, drums = {} } = {}) {
+export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker = false, progression = null, drums = {}, trace = false } = {}) {
   const input = { layers: [...layers], cycleSeconds, seed, overrides: JSON.parse(JSON.stringify(overrides ?? {})) };
   // ── a targeted progression (progression.js): recorded in the input only when it asks for a root ──
   if (progression != null && !Array.isArray(progression)) fail(`progression must be a list, one root a bar (a ratio or null)`);
@@ -165,10 +171,14 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   for (const k of Object.keys(overrides || {})) if (!OVERRIDES.includes(k)) fail(`no override "${k}" (overrides are ${OVERRIDES.join(', ')})`);
   const ov = overrides || {}, T = cycleSeconds;
 
+  const refusal = (r) => (trace ? { ...r, trace: refusedTrace(r, { cycleSeconds }) } : r);
   const row = buildRow(layers, { gate: ONSET_GATE });
-  if (!isRow(row)) return { version: COMPOSER_SPEC_VERSION, input, refused: true, reason: row.tooDense ? 'tooDense' : 'tooLarge', detail: row };
+  if (!isRow(row)) return refusal({ version: COMPOSER_SPEC_VERSION, input, refused: true, reason: row.tooDense ? 'tooDense' : 'tooLarge', detail: row });
   const few = toneGate(row, MIN_TONES);
-  if (few) return { version: COMPOSER_SPEC_VERSION, input, refused: true, reason: 'tooFewTones', detail: few };
+  if (few) return refusal({ version: COMPOSER_SPEC_VERSION, input, refused: true, reason: 'tooFewTones', detail: few });
+  // the trace's recorder (trace.js), or null: every `rec?.` below is skipped, arguments and all, when it is off
+  const rec = trace ? createTrace(row, { cycleSeconds: T, meter: { bars: BAR_CHOICES, slots: SLOT_CHOICES, tempoRange: TEMPO_RANGE, beatsPerBar: BEATS_PER_BAR } }) : null;
+  rec?.row();
 
   const rng = seededRandom(seed), decisions = [];
   const decide = (what, value, why) => { decisions.push({ what, value, why }); return value; };
@@ -179,6 +189,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   if (!PRESENCE_MODES.includes(presence)) fail(`presence must be one of ${PRESENCE_MODES.join(', ')}`);
   const rootTone = ov.root != null ? toneIndexOf(row, ov.root) : defaultRoot(row, e, { presence });
   const heardAs = presence === 'cluster' ? clusterPresence(row, e).presence[rootTone] : null;
+  rec?.root(e, presence, rootTone, ov.root != null);
   decide('root', row.tones[rootTone], ov.root != null ? 'asked' : presence === 'exact'
     ? `the tone heard at least max(2, 1%) of the onsets (or half the most heard) whose ±${e}¢ frame holds the most onsets; heard ${row.toneCount[rootTone]} times`
     : `the loudest tone of its ±${e}¢ cluster, the cluster heard at least max(2, 1%) of the onsets (or half the largest cluster), whose ±${e}¢ frame holds the most onsets; heard ${row.toneCount[rootTone]} times, its cluster ${heardAs}`);
@@ -186,17 +197,20 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   decide('bars', meter.bars, ov.bars != null ? 'asked' : meter.notes.filter((x) => /bar|BPM/.test(x) && !/slot/.test(x)).join('; '));
   decide('slotsPerBar', meter.slotsPerBar, ov.slotsPerBar != null ? 'asked' : meter.notes.filter((x) => /slot|onsets/.test(x)).join('; '));
   decide('tempoBpm', meter.tempoBpm, `60 × ${meter.bars} bars × ${BEATS_PER_BAR} beats / ${T} s`);
+  rec?.meter(meter, { bars: ov.bars, slotsPerBar: ov.slotsPerBar });
   const anchors = decide('anchors', ov.anchors ?? 'partitioned', ov.anchors ? 'asked' : 'partitioned pulses first (decided: "it starts with partitioned anchors")');
   if (!ANCHOR_MODES.includes(anchors)) fail(`anchors must be one of ${ANCHOR_MODES.join(', ')}`);
   const P = meter.bars * meter.slotsPerBar;
   let phase;
-  if (ov.phase) { phase = ov.phase; decide('phase', phase, 'asked'); }
+  if (ov.phase) { phase = ov.phase; decide('phase', phase, 'asked'); rec?.phase(null, null, phase); }
   else {
     const beats = downbeats(row, P, 3, rootTone, { anchors, cluster: presence === 'cluster' ? e : null }), at = Math.floor(rng() * beats.length);
     phase = beats[at];
     decide('phase', phase, `downbeat ${at + 1} of the root's first ${beats.length} (where it first sounds, then ${presence === 'cluster' ? `the heaviest onsets of its ±${e}¢ cluster` : 'its heaviest onsets'}), by the seed`);
+    rec?.phase(beats, at, phase);
   }
   const cells = buildCells(row, { bars: meter.bars, slotsPerBar: meter.slotsPerBar, anchors, phase });
+  rec?.cells(cells);
   const modulation = decide('modulation', ov.modulation ?? true, ov.modulation != null ? 'asked' : 'on by default (Sprint default 3): a jump at a bar where a root is off the grid');
   const table = decide('table', ov.table ?? (worker ? 'full' : 'lean'), ov.table ? 'asked' : worker ? 'in a worker: the full table' : 'on the main thread: the lean table (the cost probe)');
   if (!TABLES.includes(table)) fail(`table must be one of ${TABLES.join(', ')}`);
@@ -206,6 +220,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   decide('leader', leader, leader === 'lead' ? 'v1 is lead-led: the lead is mined first and the chords follow it'
     : leader === 'progression' ? 'a progression asked a root for every bar: the chords first, from those roots, and the lead over them'
     : 'a progression asked roots for some bars: those kept, the rest of the chords following the lead');
+  if (prog) rec?.progression(prog, leader);
 
   // ── harmony and the lead ──
   const foldOffsets = ov.foldOffsets ?? true;
@@ -213,7 +228,8 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   const settlePasses = decide('settlePasses', ov.settlePasses ?? DEFAULT_SETTLE_PASSES, ov.settlePasses != null ? 'asked'
     : `up to ${DEFAULT_SETTLE_PASSES} more rounds of chords from the kept lead and the lead over them, until the chords settle or repeat (asked for by Avery; the cap and the stopping rules proposed, not ruled)`);
   if (!(Number.isInteger(settlePasses) && settlePasses >= 0 && settlePasses <= MAX_SETTLE_PASSES)) fail(`settlePasses must be an integer 0..${MAX_SETTLE_PASSES}`);
-  const h = harmonize(row, cells, { root: rootTone, frameCentsEachSide: e, modulation, table, foldOffsets, settlePasses, ...(targeted ? { progression: harmonyPins(prog) } : {}) });
+  const h = harmonize(row, cells, { root: rootTone, frameCentsEachSide: e, modulation, table, foldOffsets, settlePasses, ...(targeted ? { progression: harmonyPins(prog) } : {}), trace: rec });
+  rec?.harmony(h);
   if (prog) { const d = targeted ? describeProgression(prog, h.chords, row) : { value: prog.roots.map(() => 'auto'), why: `no root of the progression could be used, so every bar is auto: ${prog.notes.join('; ')}` }; decide('progression', d.value, d.why); }
   const S = cells.slotsPerBar, N = cells.bars, phaseX = phase[0] / phase[1];
   const timeOf = (tick) => mod(tick / row.grid - phaseX, 1) * T;
@@ -302,6 +318,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     const notes = line ? line.notes.map((n) => ({ node: n.node, tone: n.tone, octave: n.octave, pitch: n.pitch, bar: k, slot: n.cell, time: timeOf(row.tick[n.node]), slotSeconds: slotSeconds(n.cell) }))
       : c.rootNode != null ? [(() => { const { octave, pitch } = pitchAtLeast(c.rootTone, c.rootCents + REGISTER.bass - 50); return { node: c.rootNode, tone: c.rootTone, octave, pitch, bar: k, slot: posSlot[c.rootNode], time: timeOf(row.tick[c.rootNode]), slotSeconds: slotSeconds(posSlot[c.rootNode]) }; })()] : [];
     if (notes.length && classOfCents(row.toneCents[notes[0].tone] - c.rootCents).pc === 0) bassRooted++;
+    rec?.bassBar(k, line ?? null, notes.length && classOfCents(row.toneCents[notes[0].tone] - c.rootCents).pc === 0);
     parts.bass.push(...notes);
   }
   // inner: over the chords an octave under the lead, off the lead's onsets
@@ -313,6 +330,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     const avoidSlots = Array.from({ length: bars * S }, (_, j) => leadCells.has(from * S + j));
     const got = mineLines(row, cells, frames, { from, bars, types: ['lead'], table, targets: sub, register: REGISTER.inner, rules: { avoidSlots, avoidNodes: leadNodes }, weights: { avoid: 0.6 } });
     const line = (got.lines || []).find((l) => l.band !== 'dense');
+    rec?.innerPhrase(from, bars, line ?? null);
     if (!line) continue;
     for (const n of line.notes) { if (leadCells.has(n.cell)) innerOnLead++; parts.inner.push({ node: n.node, tone: n.tone, octave: n.octave, pitch: n.pitch, bar: n.bar, slot: n.cell, time: timeOf(row.tick[n.node]), slotSeconds: slotSeconds(n.cell) }); }
   }
@@ -355,6 +373,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     };
   };
   const partList = [out('lead', parts.lead), out('chords', voices, { voice: true }), out('comp', parts.comp), out('bass', parts.bass), out('inner', parts.inner)];
+  rec?.parts(partList, { comp, compChoices, compAsked: ov.compLayer != null });
 
   const counts = Object.fromEntries(partList.map((p) => [p.id, p.notes.length]));
   const spec = {
@@ -381,5 +400,6 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   };
   // ── drums (drums.js): from the spec alone, so the lab re-arranges them without composing again; `drums: false` leaves them out ──
   if (drums !== false) spec.drums = arrangeDrums(spec, drums === true ? {} : drums);
+  if (rec) { rec.drums(spec); rec.done(spec); spec.trace = rec.finish(); }
   return spec;
 }

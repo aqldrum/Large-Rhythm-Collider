@@ -152,6 +152,19 @@ export function clusterPresence(row, frameCentsEachSide = DEFAULT_FRAME_CENTS_EA
  * 16,359) while clusters of near-identical ratios are. → tone index
  */
 export function defaultRoot(row, frameCentsEachSide = DEFAULT_FRAME_CENTS_EACH_SIDE, { presence = 'cluster' } = {}) {
+  const { heard, pool, better, rungs } = rootRanking(row, frameCentsEachSide, presence);
+  for (const need of rungs) {
+    let best = -1;
+    for (const t of pool) {
+      if (heard[t] < need) continue;
+      if (best < 0 || better(t, best)) best = t;
+    }
+    if (best >= 0) return best;
+  }
+  return 0;
+}
+/** what defaultRoot ranks by: the frame's onsets by root, presence, the candidate pool, the comparator and the rungs */
+function rootRanking(row, frameCentsEachSide, presence) {
   if (!PRESENCE_MODES.includes(presence)) fail(`presence must be one of ${PRESENCE_MODES.join(', ')}, not ${JSON.stringify(presence)}`);
   const held = frameOnsetsByRoot(row, frameCentsEachSide), T = row.tones.length;
   const cl = presence === 'cluster' ? clusterPresence(row, frameCentsEachSide) : null;
@@ -162,15 +175,22 @@ export function defaultRoot(row, frameCentsEachSide = DEFAULT_FRAME_CENTS_EACH_S
     const d = held[t] - held[best] || heard[t] - heard[best] || row.toneCount[t] - row.toneCount[best];
     return d > 0 || (d === 0 && row.tones[best] !== '1/1' && (row.tones[t] === '1/1' || row.toneCents[t] < row.toneCents[best]));
   };
-  for (const need of [rootPresence(row), Math.max(2, Math.ceil(most / 2)), 0]) {
-    let best = -1;
-    for (const t of pool) {
-      if (heard[t] < need) continue;
-      if (best < 0 || better(t, best)) best = t;
-    }
-    if (best >= 0) return best;
+  return { held, heard, pool, better, rungs: [rootPresence(row), Math.max(2, Math.ceil(most / 2)), 0] };
+}
+/**
+ * defaultRoot's ranking, spelled out (for the compose trace): the first rung any candidate passes, and its candidates
+ * best first, at most `count` — the first is defaultRoot's pick. → { need, rung (0..2), pool (candidates before the
+ * rung), eligible (after it), ranked: [{ tone, frameOnsets, presence, onsets }] }
+ */
+export function rankRoots(row, frameCentsEachSide = DEFAULT_FRAME_CENTS_EACH_SIDE, { presence = 'cluster', count = 8 } = {}) {
+  const { held, heard, pool, better, rungs } = rootRanking(row, frameCentsEachSide, presence);
+  for (let rung = 0; rung < rungs.length; rung++) {
+    const need = rungs[rung], eligible = pool.filter((t) => heard[t] >= need);
+    if (!eligible.length) continue;
+    eligible.sort((a, b) => (better(a, b) ? -1 : better(b, a) ? 1 : a - b));
+    return { need, rung, pool: pool.length, eligible: eligible.length, ranked: eligible.slice(0, count).map((t) => ({ tone: t, frameOnsets: held[t], presence: heard[t], onsets: row.toneCount[t] })) };
   }
-  return 0;
+  return { need: 0, rung: rungs.length, pool: pool.length, eligible: 0, ranked: [] };
 }
 
 /** the tones of a tone's ±e cluster (`inCluster`), itself among them, by index → [tone] (O(tones)) */

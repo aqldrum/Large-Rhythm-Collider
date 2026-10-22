@@ -1,8 +1,12 @@
 // compose-worker.js — Compose in a module worker: the same pure call as compose.js, run off the main thread.
 //
 //   new Worker(new URL('./compose-worker.js', import.meta.url), { type: 'module' })
-//   worker.postMessage({ id, layers, cycleSeconds, options })   options as compose(): { seed, overrides }
+//   worker.postMessage({ id, layers, cycleSeconds, options })   options as compose(): { seed, overrides, progression,
+//                                                                drums, trace }
 //   ← { id, ok: true, spec }  |  { id, ok: false, error }
+//
+// `options.trace: true` sends the compose trace back in `spec.trace` (trace.js, Composer/TRACE.md): plain JSON, so it
+// survives the structured clone as it is. A page that wants it apart takes it off the spec (`const { trace, ...spec }`).
 //
 // In a worker the table is the full one unless `options.overrides.table` asks otherwise (`worker: true`). A refusal
 // (tooDense, tooLarge, tooFewTones) is a spec with `refused: true`, sent as ok; only a thrown error is not ok.

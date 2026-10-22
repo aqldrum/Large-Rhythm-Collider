@@ -117,12 +117,13 @@ function classWeights(tones, rootCents, e) {
  *   tones  [{ tone, cents, weight, count, node }]   the bar's tones (may be empty)
  *   lead   [{ cents, strong }]                      the lead's notes in the bar, passing tones left out (may be empty)
  *   pin    { tone, cents }                          the root asked
- *   opts   { eachSide, gridBase, offset, modulation, prevPcs, foldOffsets }
+ *   opts   { eachSide, gridBase, offset, modulation, prevPcs, foldOffsets, observe (chooseChord's: the compose trace;
+ *            a quality the bar does not support is shown with a null key and the classes it lacks) }
  * → chooseChord's fields + { targeted: true, fallback: null | quality id, sounded: 'exact' | 'cluster' | 'absent',
  *     missing: [interval] (the classes the chosen quality lacks in the bar; on a fallback, those of
  *     the catalog quality the bar comes nearest to) }
  */
-export function chooseChordOnRoot(tones, lead, pin, { eachSide = DEFAULT_FRAME_CENTS_EACH_SIDE, gridBase = 0, offset = 0, modulation = true, prevPcs = null, foldOffsets = true } = {}) {
+export function chooseChordOnRoot(tones, lead, pin, { eachSide = DEFAULT_FRAME_CENTS_EACH_SIDE, gridBase = 0, offset = 0, modulation = true, prevPcs = null, foldOffsets = true, observe = null } = {}) {
   if (!pin || !Number.isFinite(pin.cents)) fail('a pinned root needs its tone and cents');
   const e = eachSide + EPS;
   let total = 0; for (const t of tones) total += t.weight;
@@ -143,7 +144,7 @@ export function chooseChordOnRoot(tones, lead, pin, { eachSide = DEFAULT_FRAME_C
   };
   const pickOf = (list, ok, offsetIndex = 0) => {
     let best = null;
-    list.forEach((q, qi) => { if (!ok(q)) return; const r = rank(q, qi + offsetIndex); if (!best || before(r.key, best.key)) best = r; });
+    list.forEach((q, qi) => { if (!ok(q)) { observe?.(root, q, rootPc0, null, null, null, null, lacks(q)); return; } const r = rank(q, qi + offsetIndex); observe?.(root, q, rootPc0, r.violations, r.held, r.support, r.key); if (!best || before(r.key, best.key)) best = r; });
     return best;
   };
   let best = pickOf(CHORD_QUALITIES, (q) => lacks(q).length <= MAX_MISSING), fallback = null, missing = best ? lacks(best.quality) : [];

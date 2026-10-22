@@ -110,11 +110,12 @@ export const namingShift = (offset) => Math.floor((offset + 50) / 100);
  * One bar's chord, from its material in cents (the pure core of `harmonize`, usable on made-up bars):
  *   tones  [{ tone, cents, weight (onsets + strikes), count }]   the bar's tones; a candidate root must be among them
  *   lead   [{ cents, strong }]                                   the lead's notes in the bar, passing tones left out
- *   opts   { eachSide, gridBase, offset, modulation, prevPcs }
+ *   opts   { eachSide, gridBase, offset, modulation, prevPcs, foldOffsets, observe (the compose trace's: called with
+ *            every (root, quality) ranked: root, quality, rootPc, violations, held, support, key) }
  * → { root (an entry of tones), quality, intervals, pcs (on the grid), rootPc, violations, held, support, offGrid,
  *     modulate, dev, offset } | null (no tones)
  */
-export function chooseChord(tones, lead, { eachSide = DEFAULT_FRAME_CENTS_EACH_SIDE, gridBase = 0, offset = 0, modulation = true, prevPcs = null, foldOffsets = true } = {}) {
+export function chooseChord(tones, lead, { eachSide = DEFAULT_FRAME_CENTS_EACH_SIDE, gridBase = 0, offset = 0, modulation = true, prevPcs = null, foldOffsets = true, observe = null } = {}) {
   if (!tones.length) return null;
   const e = eachSide + EPS;
   let total = 0; for (const t of tones) total += t.weight;
@@ -138,6 +139,7 @@ export function chooseChord(tones, lead, { eachSide = DEFAULT_FRAME_CENTS_EACH_S
       support = (total ? support / total : 0) - SUPPORT_PER_TONE * q.intervals.length - q.prior;
       const pcs = q.intervals.map((i) => mod(rootPc + i, 12)).sort((a, b) => a - b);
       const key = [violations, -held, -Math.round(support * 1e9) / 1e9, voiceLeading(pcs, prevPcs), r.cents, qi];
+      observe?.(r, q, rootPc, violations, held, support, key);   // the compose trace (trace.js), when on
       if (!best || before(key, best.key)) {
         best = { key, root: r, quality: q, intervals: [...q.intervals], pcs, rootPc, violations, held, support };
       }
@@ -251,7 +253,8 @@ export function settleRounds(start, cap, { derive, key, advance }) {
  * Harmony from melody over the cycle's cells.
  *   opts = { root (a tone, default the frame's default root), frameCentsEachSide (15), modulation (true), foldOffsets (true),
  *            table ('full' | 'lean'), referenceName ('C': the base root's name, for chord names), minTones,
- *            settlePasses (0..3, default 3: extra rounds of chords ↔ lead, below) }
+ *            settlePasses (0..3, default 3: extra rounds of chords ↔ lead, below), progression (progression.js
+ *            `harmonyPins`), trace (a trace.js recorder, or null: it is shown every decision and steers none) }
  * → { version, root, frameCentsEachSide, modulation, table, lead, chords, targets, modulations, passes, exceptions, settle }
  *   | { tooFewTones, tones, min }
  *   lead     { phrases: [line], notes: [note], kept: ['first' | 'second' | 'round1'.. per phrase: the pass its line is from] }
@@ -277,7 +280,7 @@ export function settleRounds(start, cap, { derive, key, advance }) {
  * kept chords.
  */
 export function harmonize(row, cells, opts = {}) {
-  const { root = null, frameCentsEachSide: e = DEFAULT_FRAME_CENTS_EACH_SIDE, modulation = true, table = 'full', referenceName = 'C', minTones = MIN_TONES, foldOffsets = true, settlePasses = DEFAULT_SETTLE_PASSES, progression = null } = opts;
+  const { root = null, frameCentsEachSide: e = DEFAULT_FRAME_CENTS_EACH_SIDE, modulation = true, table = 'full', referenceName = 'C', minTones = MIN_TONES, foldOffsets = true, settlePasses = DEFAULT_SETTLE_PASSES, progression = null, trace: rec = null } = opts;
   const refused = toneGate(row, minTones);
   if (refused) return refused;
   if (!TABLES.includes(table)) fail(`table must be one of ${TABLES.join(', ')}`);
@@ -291,19 +294,24 @@ export function harmonize(row, cells, opts = {}) {
   const allPinned = (from, bars) => !!pins && pins.slice(from, from + bars).every((t) => t != null);
 
   // 1. the lead, rooted, no harmony (not for a phrase whose every bar is pinned)
-  const firstLines = phrases.map(({ from, bars }) => (allPinned(from, bars) ? null : mineLines(row, cells, base, { from, bars, types: ['lead'], table }).lines[0] ?? null));
+  const firstLines = phrases.map(({ from, bars }, i) => {
+    if (allPinned(from, bars)) { rec?.lead('first', i, from, bars, null); return null; }
+    const mined = mineLines(row, cells, base, { from, bars, types: ['lead'], table }).lines;
+    rec?.lead('first', i, from, bars, mined);
+    return mined[0] ?? null;
+  });
   const leadNotesOf = (lines) => lines.flatMap((l) => (l ? l.notes : []));
 
   // 2. a chord a bar, from a lead: the offset walked from bar 1
   const material = barMaterial(row, cells), gridBase = base.rootCents;
-  const chordsFrom = (leadNotes) => {
+  const chordsFrom = (leadNotes, round = 0) => {
     const chords = [], modulations = [];
     let offset = 0, prevPcs = null;
     for (let k = 0; k < cells.bars; k++) {
       const tones = [...material[k].values()];
       const { inBar, strong } = strongNotesOf(leadNotes, k, S);
       const lead = inBar.map((n) => ({ cents: n.cents, strong: strong.includes(n) }));
-      const pin = pins ? pins[k] : null, how = { eachSide: e, gridBase, offset, modulation, prevPcs, foldOffsets };
+      const pin = pins ? pins[k] : null, how = { eachSide: e, gridBase, offset, modulation, prevPcs, foldOffsets, observe: rec?.candidates(round, k, (foldOffsets ? namingShift(offset) : 0) - refPc) };
       const pick = pin != null ? progression.choose(tones, lead, { tone: pin, cents: row.toneCents[pin] }, how) : chooseChord(tones, lead, how);
       if (!pick) { chords.push(null); continue; }
       if (pick.modulate) modulations.push({ bar: k, cents: pick.named.offset, rawCents: pick.offset, fundamentalRatio: 2 ** (pick.offset / 1200) });
@@ -322,6 +330,7 @@ export function harmonize(row, cells, opts = {}) {
       if (!near) fail('no bar of the cycle holds a tone');
       chords[k] = { ...near, bar: k, empty: true };
     }
+    rec?.chords(round, chords, modulations);
     return { chords, modulations };
   };
 
@@ -338,7 +347,7 @@ export function harmonize(row, cells, opts = {}) {
     let newerWins = 0, cost = 0, count = 0;
     phrases.forEach(({ from, bars }, i) => {
       const frames = chords.slice(from, from + bars).map((c) => c.frame), sub = { scale: targets.scale, bars: targets.bars.slice(from, from + bars) };
-      const newer = mineLines(row, cells, frames, { from, bars, types: ['lead'], table, targets: sub }).lines[0] ?? null;
+      const mined = mineLines(row, cells, frames, { from, bars, types: ['lead'], table, targets: sub }).lines, newer = mined[0] ?? null;
       const cur = held[i];
       let under = Infinity;
       if (cur) {
@@ -350,6 +359,7 @@ export function harmonize(row, cells, opts = {}) {
       if (useNewer) newerWins++;
       if (kept) { cost += (useNewer ? newer.perNote : under) * kept.notes.length; count += kept.notes.length; }
       info.push({ from, bars, cur, curTag: heldTags[i], under, newer, useNewer });
+      rec?.lead(tag, i, from, bars, mined, { cur, curTag: heldTags[i], under, useNewer });
     });
     return { lines, tags, info, newerWins, perNote: count ? cost / count : 0 };
   };
@@ -379,8 +389,9 @@ export function harmonize(row, cells, opts = {}) {
   const stateOf = (d, targets, l, info = null) => ({ chords: d.chords, modulations: d.modulations, targets, lines: l.lines, tags: l.tags, cost: l.perNote, exceptions: exceptionsOf(d.chords, leadNotesOf(l.lines)), info, newerWins: l.newerWins });
 
   // rounds 1..settlePasses: the chords from the kept lead, until they settle, repeat, or the cap
+  let round = 0;
   const run = settleRounds(stateOf(d0, t0, l0), settlePasses, {
-    derive: (state) => chordsFrom(leadNotesOf(state.lines)),
+    derive: (state) => { round++; rec?.settle(round); return chordsFrom(leadNotesOf(state.lines), round); },
     key: (x) => chordKey(Array.isArray(x) ? x : x.chords),
     advance: (d, prev, i) => { const targets = targetsOf(d.chords), l = leadOver(d.chords, targets, prev.lines, prev.tags, `round${i}`); return stateOf(d, targets, l, l.info); },
   });
@@ -390,6 +401,7 @@ export function harmonize(row, cells, opts = {}) {
       phrases: st ? st.info.map((x) => ({ from: x.from, bars: x.bars, current: x.cur ? { id: x.cur.id, line: x.curTag, perNoteUnderHarmony: x.under } : null, newer: x.newer ? { id: x.newer.id, perNote: x.newer.perNote } : null, kept: x.useNewer ? 'newer' : 'current' })) : [],
       ...('repeats' in r ? { repeats: r.repeats } : {}) });
   }
+  rec?.settled(run, passes);
   const final = run.states[run.chosen], notes = leadNotesOf(final.lines);
   const exceptions = exceptionsOf(final.chords, notes, true);
 
