@@ -22,12 +22,12 @@ The planner keeps this file current after every phase. If the planner thread is 
 
 | Phase | Branch | Depends on | Status |
 | --- | --- | --- | --- |
-| A. Drums (core + lab) | `sprint/drums` | none | dispatched |
+| A. Drums (core + lab) | `sprint/drums` | none | MERGED (b8c2617..e9e8305, merge d9f2f85); 46/0 suites |
 | B. Targeted progressions (core + lab) | `sprint/progression` | none | MERGED (0d4c15c..fa6d814); 45/0 suites |
 | S. Cosmos seam survey + superrow probe (read-only) | none; output in the planner's scratchpad `cosmos-survey/REPORT.md` | none | dispatched |
 | E1. Cosmos Compose mode: Rhythm card + Grid card superrow, bed silenced, clock takeover/hand-back, LOD exit; new `Composer/core/superrow.js` | `sprint/cosmos-compose` | S (seam map, window definition) | waiting |
-| C. Composer tab on the main page | `sprint/integration` | A+B merged | waiting |
-| T. Compose trace: an opt-in, pure observer in `Composer/core`; output unchanged when it's off | `sprint/trace` | A+B merged | waiting |
+| C. Composer tab on the main page | `sprint/integration` | A+B merged | dispatched (from d9f2f85) |
+| T. Compose trace: an opt-in, pure observer in `Composer/core`; output unchanged when it's off | `sprint/trace` | A+B merged | dispatched (from d9f2f85) |
 | E2. Cosmos onset dust + choreography from the trace | `sprint/cosmos-dust` | T, E1 | waiting |
 | D. Merge everything, final suites, morning listen list | `composer-sprint` | all | waiting |
 
@@ -49,3 +49,5 @@ Parallel lanes: E1 runs beside A/B (it touches only Cosmos files and a new core 
 - 2026-10-22 night: Cosmos plan recorded; read-only survey + superrow probe dispatched (writes only to the planner's scratchpad).
 - 2026-10-22 night: Avery asked for the Cosmos build to start tonight too; plan widened to E1/T/E2 (table above).
 - Phase B merged. Open for Avery: should the lead vote on qualities in round 0 (more faithful, loses the 2× speed) or should that be a switch? Also the fallback names, and per-bar presence in the menus.
+- Phase A merged (additive conflicts in compose() options, lab readouts/render, controller header, lab tests); 46/0 suites. Open for Avery (drums): beat order on odd S (Partitions' order, or the long beat first); hats every slot or on beats only; should the bass vote in with/against; fills only on phrases of 4+ bars. Note: anchors are grid ticks, so strokes snap to the nearest onset in a swing-0.5 window.
+- C and T dispatched in parallel. C must not edit Composer/core; T edits only core, tests and docs.
