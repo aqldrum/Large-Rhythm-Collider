@@ -27,7 +27,7 @@ export const PRESETS = Object.freeze([
   { name: '768:769 — 1,536 onsets, 384 tones', layers: [768, 769, 0, 0], cycleSeconds: 8 },
   { name: '4099:4093:4091:4079 — 16,359 onsets, 4,177 tones', layers: [4099, 4093, 4091, 4079], cycleSeconds: 16 },
 ]);
-export const KNOBS = Object.freeze(['bars', 'slotsPerBar', 'frameCentsEachSide', 'modulation', 'anchors']);
+export const KNOBS = Object.freeze(['bars', 'slotsPerBar', 'frameCentsEachSide', 'modulation', 'anchors', 'settlePasses', 'presence']);
 export const AUTO_RECOMPOSE_MS = 300;
 /** the playback tempo's range, BPM */
 export const TEMPO_LIMITS = Object.freeze([30, 300]);

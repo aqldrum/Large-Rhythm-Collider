@@ -73,6 +73,8 @@ const KNOB_UI = [
   { name: 'frameCentsEachSide', label: 'Frame ±¢', make: () => el('input', { type: 'number', min: 0, max: 50, step: 0.5, placeholder: 'auto' }), read: (v) => (v === '' ? null : Number(v)) },
   { name: 'modulation', label: 'Modulation', make: () => el('select', {}, el('option', { value: '', textContent: 'auto' }), el('option', { value: 'on', textContent: 'on' }), el('option', { value: 'off', textContent: 'off' })), read: (v) => (v === '' ? null : v === 'on') },
   { name: 'anchors', label: 'Anchors', make: () => el('select', {}, ...['', 'partitioned', 'even'].map((v) => el('option', { value: v, textContent: v || 'auto' }))), read: (v) => (v === '' ? null : v) },
+  { name: 'settlePasses', label: 'Settle passes', make: () => el('select', { title: 'rounds of chords re-derived from the kept lead, then the lead re-mined over them, until the chords stop changing' }, ...['', '0', '1', '2', '3'].map((v) => el('option', { value: v, textContent: v || 'auto' }))), read: (v) => (v === '' ? null : Number(v)) },
+  { name: 'presence', label: 'Root presence', make: () => el('select', { title: "how the default root's presence is counted: its ±frame cluster, or its exact ratio alone" }, ...['', 'cluster', 'exact'].map((v) => el('option', { value: v, textContent: v || 'auto' }))), read: (v) => (v === '' ? null : v) },
 ];
 const chosenSpans = {};
 for (const k of KNOB_UI) {
@@ -106,7 +108,10 @@ function renderReadouts() {
     ['tones', s.stats.tones.toLocaleString()], ['table', k.table], ['composed in', `${fmt(S.lastMs, 0)} ms`], ['chords', s.chords.map((c) => c.name).join(' ')]];
   for (const [label, value] of items) out.append(el('span', {}, `${label} `, el('b', { textContent: value })));
   for (const kn of KNOB_UI) {
-    const over = S.knobs[kn.name] != null, v = kn.name === 'modulation' ? (k.modulation ? 'on' : 'off') : k[kn.name];
+    const over = S.knobs[kn.name] != null, asked = (what) => s.decisions.find((d) => d.what === what)?.value;
+    let v = kn.name === 'modulation' ? (k.modulation ? 'on' : 'off') : k[kn.name];
+    if (kn.name === 'settlePasses') { const st = s.stats.settle || {}; v = `${asked('settlePasses') ?? '–'} · ${st.rounds ?? 0} used${st.oscillated ? ', oscillated' : st.converged ? ', settled' : ', cap hit'}`; }
+    if (kn.name === 'presence') v = asked('presence') ?? 'cluster';
     chosenSpans[kn.name].textContent = over ? `asked: ${v}` : `chose ${v}`;
     chosenSpans[kn.name].className = `chosen${over ? ' over' : ''}`;
   }

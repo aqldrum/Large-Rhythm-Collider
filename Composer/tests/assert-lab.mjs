@@ -340,6 +340,14 @@ lab.setKnob('bars', 2);
 check('a knob change: back to Compose, the knob an override', lab.button() === 'Compose' && JSON.stringify(lab.overrides()) === '{"bars":2}');
 await lab.press();
 check('…and Compose honours it', lab.state.spec.knobs.bars === 2 && lab.button() === 'Perform');
+lab.setKnob('settlePasses', 0); lab.setKnob('presence', 'exact');
+await lab.press();
+{
+  const d = (w) => lab.state.spec.decisions.find((x) => x.what === w);
+  check('the Settle passes and Root presence knobs reach Compose as overrides', d('settlePasses')?.value === 0 && d('settlePasses')?.why === 'asked' && d('presence')?.value === 'exact' && lab.state.spec.stats.settle?.rounds === 0);
+}
+lab.setKnob('settlePasses', null); lab.setKnob('presence', null);
+await lab.press();
 lab.setTable('lean');
 await lab.compose();
 check(`the lean table runs where Compose defaults to it (${lab.state.lastMs.toFixed(0)} ms); quick enough to re-compose on a knob change`, lab.state.spec.knobs.table === 'lean' && lab.canAutoRecompose() === (lab.state.lastMs < 300));
