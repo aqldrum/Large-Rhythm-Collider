@@ -279,7 +279,7 @@ const tl = traceTimeline(spec.trace, { pace = 1, seconds = null, budgets = {} })
 
 ## For a renderer
 
-- **Main page (Linear Plot).** Walk `tl.steps`, and for each, light the onsets its events name:
+- **Main page (Linear Plot).** Built 2026-10-22 night: `page/trace-frames.js` (pure: a scene, then a frame at t) and `page/compose-animator.js` (the driver and painter); DESIGN_NOTES.md, "Compose animation on the main page". Walk `tl.steps`, and for each, light the onsets its events name:
   - root: the `samples` of each candidate in turn, then the pick
   - meter and cells: the downbeat `node` and the slot windows
   - line: the chosen line's notes, with its runners-up shown dimmer and then dropped

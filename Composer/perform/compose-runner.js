@@ -3,7 +3,8 @@
 // 2026-10-22). No DOM; it needs `Worker` only for the full table.
 //
 //   const runCompose = createComposeRunner();
-//   runCompose(layers, cycleSeconds, { seed, overrides, worker, progression }) → Promise<spec>
+//   runCompose(layers, cycleSeconds, { seed, overrides, worker, progression, trace }) → Promise<spec>   (trace: true →
+//     spec.trace, the compose trace, both ways)
 //     worker: true    the module worker (Composer/core/compose-worker.js), made on first use and kept
 //     worker: false   compose() itself, a tick later (so the page can say "Composing…" first)
 // A refusal is a spec with `refused: true`; only a thrown error (or the worker failing) rejects.
@@ -18,7 +19,7 @@ import { compose } from '../core/compose.js';
 export function createComposeRunner({ makeWorker = () => new Worker(new URL('../core/compose-worker.js', import.meta.url), { type: 'module' }), defer = (fn) => setTimeout(fn, 0) } = {}) {
   let worker = null, seq = 0;
   const pending = new Map();
-  function viaWorker(layers, cycleSeconds, { seed, overrides, progression }) {
+  function viaWorker(layers, cycleSeconds, { seed, overrides, progression, trace }) {
     if (!worker) {
       worker = makeWorker();
       worker.onmessage = (event) => {
@@ -30,9 +31,9 @@ export function createComposeRunner({ makeWorker = () => new Worker(new URL('../
       worker.onerror = (event) => { for (const p of pending.values()) p.reject(new Error(event.message || 'the Compose worker failed')); pending.clear(); worker = null; };
     }
     const id = ++seq;
-    return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); worker.postMessage({ id, layers, cycleSeconds, options: { seed, overrides, progression } }); });
+    return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); worker.postMessage({ id, layers, cycleSeconds, options: { seed, overrides, progression, ...(trace ? { trace: true } : {}) } }); });
   }
   return (layers, cycleSeconds, options = {}) => (options.worker
     ? viaWorker(layers, cycleSeconds, options)
-    : new Promise((resolve, reject) => defer(() => { try { resolve(compose(layers, cycleSeconds, { seed: options.seed, overrides: options.overrides, progression: options.progression })); } catch (err) { reject(err); } })));
+    : new Promise((resolve, reject) => defer(() => { try { resolve(compose(layers, cycleSeconds, { seed: options.seed, overrides: options.overrides, progression: options.progression, ...(options.trace ? { trace: true } : {}) })); } catch (err) { reject(err); } })));
 }

@@ -12,10 +12,43 @@
 //           per frame, so a 16k-onset row costs the same as 8:7:6:5.
 // While the main page animates its own lights (LRCVisuals.isAnimating: main playback), no snapshot is taken: the
 // Composer is stopped then (one thing sounds at a time), and every main frame redraws the plot anyway.
+//   scene   while Compose is animated (compose-animator.js), setScene(true): draw washes the plot and snapshots it with
+//           no lit node (the animation's base, even before there is a spec), and paint(fn) blits that base and lets
+//           fn draw the animation frame's few marks over it. setScene(false) and a redraw land on the lit nodes again.
 
 import { HIGHLIGHT_PARTS, playheadAt, playheadX, soundingAt } from './plot-highlights.js';
 
 export const OVERLAY_STYLE = Object.freeze({ wash: 'rgba(16, 16, 16, 0.62)', offAlpha: 0.25, ring: 3, glow: 6, playhead: 'rgba(255, 255, 255, 0.75)' });
+/** a lit dot's radius on a view */
+export const litRadius = (view) => Math.max(2, ((view && view.dotSize) || 4) * 0.9);
+
+/** one part's lit nodes as one path: dots, or squares for the drums (the selected part ringed); `indices` defaults to
+ *  all of the part's (an animation frame passes the ones landed so far) */
+export function drawLitPart(ctx, h, positions, r, ringed, indices = h.indices) {
+  ctx.save();
+  ctx.globalAlpha = h.enabled ? 1 : OVERLAY_STYLE.offAlpha;
+  ctx.fillStyle = h.color;
+  ctx.beginPath();
+  for (const i of indices) {
+    const p = positions[i];
+    if (!p) continue;
+    if (h.id === 'drums') ctx.rect(p.x - r, p.y - r, 2 * r, 2 * r);
+    else { ctx.moveTo(p.x + r, p.y); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); }
+  }
+  ctx.fill();
+  if (ringed) {
+    ctx.strokeStyle = h.color; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (const i of indices) { const p = positions[i]; if (!p) continue; ctx.moveTo(p.x + r + OVERLAY_STYLE.ring, p.y); ctx.arc(p.x, p.y, r + OVERLAY_STYLE.ring, 0, Math.PI * 2); }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+/** the order the parts are drawn in, the selected one on top */
+export function partOrder(selected) {
+  const ids = ['drums', 'inner', 'comp', 'bass', 'chords', 'lead'].filter((id) => HIGHLIGHT_PARTS.includes(id));
+  return selected && ids.includes(selected) ? [...ids.filter((id) => id !== selected), selected] : ids;
+}
 
 /**
  * createPlotOverlay({ getHighlights, getSelected, makeCanvas })
@@ -24,7 +57,7 @@ export const OVERLAY_STYLE = Object.freeze({ wash: 'rgba(16, 16, 16, 0.62)', off
  *   makeCanvas    () → a canvas for the snapshot (document.createElement('canvas') in the page)
  */
 export function createPlotOverlay({ getHighlights, getSelected = () => null, makeCanvas = () => (typeof document !== 'undefined' ? document.createElement('canvas') : null) } = {}) {
-  let view = null, ctxOf = null, snap = null, snapOk = false, lit = null;
+  let view = null, ctxOf = null, snap = null, snapOk = false, lit = null, scene = false;
 
   const washOver = (ctx, { width, height, button }) => {
     ctx.save();
@@ -35,42 +68,17 @@ export function createPlotOverlay({ getHighlights, getSelected = () => null, mak
     ctx.fill('evenodd');
     ctx.restore();
   };
-  const order = (selected) => {
-    const ids = ['drums', 'inner', 'comp', 'bass', 'chords', 'lead'].filter((id) => HIGHLIGHT_PARTS.includes(id));
-    return selected && ids.includes(selected) ? [...ids.filter((id) => id !== selected), selected] : ids;
-  };
-  /** one part's lit nodes as one path: dots, or squares for the drums */
-  const drawPart = (ctx, h, positions, r, ringed) => {
-    ctx.save();
-    ctx.globalAlpha = h.enabled ? 1 : OVERLAY_STYLE.offAlpha;
-    ctx.fillStyle = h.color;
-    ctx.beginPath();
-    for (const i of h.indices) {
-      const p = positions[i];
-      if (!p) continue;
-      if (h.id === 'drums') ctx.rect(p.x - r, p.y - r, 2 * r, 2 * r);
-      else { ctx.moveTo(p.x + r, p.y); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); }
-    }
-    ctx.fill();
-    if (ringed) {
-      ctx.strokeStyle = h.color; ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      for (const i of h.indices) { const p = positions[i]; if (!p) continue; ctx.moveTo(p.x + r + OVERLAY_STYLE.ring, p.y); ctx.arc(p.x, p.y, r + OVERLAY_STYLE.ring, 0, Math.PI * 2); }
-      ctx.stroke();
-    }
-    ctx.restore();
-  };
-
+  const order = partOrder;
   const api = {
     /** LRCVisuals' hook: called at the end of each Linear Plot draw. view: { positions, width, height, dotSize, canvas,
      *  button, animating } */
     draw(ctx, v) {
       view = v; ctxOf = ctx; snapOk = false;
       lit = getHighlights();
-      if (!lit) return;
+      if (!lit && !scene) return;
       washOver(ctx, v);
-      const selected = getSelected(), r = Math.max(2, (v.dotSize || 4) * 0.9);
-      for (const id of order(selected)) { const h = lit.parts[id]; if (h && h.indices.length) drawPart(ctx, h, v.positions, r, id === selected); }
+      const selected = getSelected(), r = litRadius(v);
+      if (!scene) for (const id of order(selected)) { const h = lit.parts[id]; if (h && h.indices.length) drawLitPart(ctx, h, v.positions, r, id === selected); }
       if (v.animating || !v.canvas) return;
       snap ??= makeCanvas();
       if (!snap) return;
@@ -89,7 +97,7 @@ export function createPlotOverlay({ getHighlights, getSelected = () => null, mak
       if (!at) return true;
       const ph = playheadAt(lit.plot, lit.phaseX, at.p), x = playheadX(view.positions, ph);
       if (x == null) return true;
-      const r = Math.max(2, (view.dotSize || 4) * 0.9);
+      const r = litRadius(view);
       ctx.save();
       ctx.strokeStyle = OVERLAY_STYLE.playhead; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(x, 20); ctx.lineTo(x, view.height - 20); ctx.stroke();
@@ -103,6 +111,17 @@ export function createPlotOverlay({ getHighlights, getSelected = () => null, mak
         ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(p.x, p.y, r + 1, 0, Math.PI * 2); ctx.fill();
       }
       ctx.restore();
+      return true;
+    },
+    /** the animation's base on (no lit node is drawn under it) or off; the caller redraws the plot */
+    setScene(on) { scene = !!on; },
+    get scene() { return scene; },
+    /** an animation frame: the base back in one blit, then fn(ctx, view) draws over it → whether it drew */
+    paint(fn) {
+      if (!snapOk || !view || !ctxOf) return false;
+      const ctx = ctxOf;
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(snap, 0, 0); ctx.restore();
+      fn(ctx, view);
       return true;
     },
     /** what the last draw lit (for the view and tests) */

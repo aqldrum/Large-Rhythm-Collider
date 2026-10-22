@@ -25,6 +25,9 @@
 //              button goes back to Compose at once (the main page's rhythm can change under a compose).
 //   hooks      beforePerform () → called as Perform starts (the main page stops its own playback there: one thing
 //              sounds at a time)
+//   trace      compose({ trace: true }) asks Compose for its trace (core/trace.js) and keeps it apart from the spec, in
+//              `state.trace` (null otherwise): the spec, the lanes and JSON export are the same with it or without it.
+//              The main page's tab animates Compose from it (page/compose-animator.js).
 
 import { compose, rearticulate, chooseMeter, PART_IDS } from '../core/compose.js';
 import { rootCandidates } from '../core/progression.js';
@@ -84,7 +87,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     table: 'full', spec: null, parts: {}, levels: { ...Object.fromEntries(PART_IDS.map((id) => [id, 0.8])), drums: 0.8 }, glideMs: 12, tempoBpm: null,
     drumOptions: { enabled: true, mode: 'backbeat', fills: true, kit: { ...DEFAULT_KIT } }, drums: null,
     status: 'idle', error: null, lastMs: null, dirty: true,
-    progression: [],
+    progression: [], trace: null,
   };
   const listeners = new Set();
   const changed = () => { for (const f of listeners) f(state); };
@@ -125,13 +128,18 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     /** may a knob change re-compose by itself? lean only, and only while it is quick */
     canAutoRecompose: () => state.table === 'lean' && state.lastMs != null && state.lastMs < AUTO_RECOMPOSE_MS,
 
-    async compose() {
+    /** opts { trace: true → also the compose trace, kept in state.trace } */
+    async compose({ trace = false } = {}) {
       const mine = ++run, t0 = clock();
       if (player?.playing) player.stop();
       state.status = 'composing'; state.error = null; changed();
       try {
-        const spec = await runCompose(state.input.layers, state.input.cycleSeconds, { seed: state.input.seed, overrides: overrides(), worker: state.table === 'full', progression: api.progressionInput() });
+        const options = { seed: state.input.seed, overrides: overrides(), worker: state.table === 'full', progression: api.progressionInput() };
+        if (trace) options.trace = true;
+        const answer = await runCompose(state.input.layers, state.input.cycleSeconds, options);
         if (mine !== run) return state.spec;   // a newer compose took over
+        let spec = answer;
+        if (answer && 'trace' in answer) { const { trace: tr, ...plain } = answer; spec = plain; state.trace = trace ? tr : null; } else state.trace = null;
         state.spec = spec; state.lastMs = clock() - t0; state.dirty = false;
         if (spec.refused) { state.parts = {}; state.drums = null; state.status = 'refused'; }
         else { state.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); state.drums = arrangeDrums(spec, state.drumOptions); state.status = 'ready'; state.tempoBpm = spec.knobs.tempoBpm; }

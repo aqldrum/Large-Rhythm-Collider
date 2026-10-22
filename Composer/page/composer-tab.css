@@ -89,3 +89,19 @@
 .ctab-prog select { max-width: 190px; }
 .ctab-chosen { font-size: 10px; color: #888; }
 .ctab-chosen.over { color: #ffb347; }
+
+/* the Compose animation (compose-animator.js): a caption above the lanes, the lanes filling in as the parts land */
+.ctab-left .ctab-go.skip { background: #ffb347; color: #000; }
+.ctab-caption { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; background: rgba(0, 255, 136, 0.05); border: 1px solid #2f5d45; border-radius: 4px; padding: 5px 8px; }
+.ctab-caption-label { color: #00ff88; font-weight: 600; }
+.ctab-caption-detail { color: #ccc; font-family: monospace; font-size: 11px; }
+.ctab-caption-beats { display: flex; flex-wrap: wrap; gap: 3px; }
+.ctab-beat { font-size: 9px; letter-spacing: .5px; color: #666; border: 1px solid #333; border-radius: 3px; padding: 0 4px; }
+.ctab-beat.past { color: #2f8f62; border-color: #2f5d45; }
+.ctab-beat.now { color: #000; background: #00ff88; border-color: #00ff88; }
+.ctab-left.ctab-animating .ctab-readouts, .ctab-left.ctab-animating .ctab-decisions { visibility: hidden; }
+.ctab-lane .ctab-bars { transition: opacity .25s ease-out; }
+.ctab-lane.ctab-anim-hidden .ctab-bars { opacity: .08; }
+.ctab-lane.ctab-anim-labels .ctab-tick { visibility: hidden; }
+.ctab-chord.ctab-anim-hot { color: #c56cf0; }
+.ctab-bar.ctab-anim-flash { background: rgba(255, 179, 71, 0.18); box-shadow: inset 0 0 0 1px #ffb347; }
