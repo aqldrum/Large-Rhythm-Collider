@@ -42,22 +42,25 @@ export const QUALITY_TIERS = {
     // Compose itself is flat in Θ (the Composer probe); what grows is the build and E2's dust, hence a tier key.
     // Low's 16,384 is the card's own audition ceiling (ROW_MAX_PLAYBACK_ONSETS).
     composeBudget: 16384,
+    // Compose dust (E2, 2026-10-22 night, proposed): the most onset-dust motes drawn a frame (engine/compose-choreo.js;
+    // the composition's notes first, then the trace's onsets, then the pool sampled evenly into what is left).
+    dustMax: 1500,
   },
   medium: {
     id: 'medium', label: 'Medium',
     poolCap: 2, spawn: 8, evict: 16, spawnMin: 4, dprCap: 1.5,
-    solveBacklog: 60, bloomMaxRange: 1000, maxFps: Infinity, rowPanning: 'equalpower', composeBudget: 65536,
+    solveBacklog: 60, bloomMaxRange: 1000, maxFps: Infinity, rowPanning: 'equalpower', composeBudget: 65536, dustMax: 3000,
   },
   high: {
     id: 'high', label: 'High',
     poolCap: 6, spawn: 10, evict: 20, spawnMin: 4, dprCap: 2,
     solveBacklog: 80, bloomMaxRange: Infinity,   // keep every rhythm
-    maxFps: Infinity, rowPanning: 'HRTF', composeBudget: 262144,
+    maxFps: Infinity, rowPanning: 'HRTF', composeBudget: 262144, dustMax: 6000,
   },
   ultra: {
     id: 'ultra', label: 'Ultra',
     poolCap: 8, spawn: 12, evict: 24, spawnMin: 5, dprCap: 2,
-    solveBacklog: 120, bloomMaxRange: Infinity, maxFps: Infinity, rowPanning: 'HRTF', composeBudget: 262144,
+    solveBacklog: 120, bloomMaxRange: Infinity, maxFps: Infinity, rowPanning: 'HRTF', composeBudget: 262144, dustMax: 10000,
   },
 };
 
