@@ -1,6 +1,6 @@
 # Composer: design notes (draft, 2026-10-21; updated 2026-10-22)
 
-Working notes from Avery's chat with Claude. Items marked **decided** are Avery's calls; everything else is a proposal or an open question. The 2026-10-21 sprint built phases 1–5 on branch `composer-prototype` (the "Phase" sections below), and Avery's first listening pass on 2026-10-22 is recorded under "First listening pass". `Composer/README.md` is the short way in: how to run it and where things are.
+Working notes from Avery's chat with Claude. Items marked **decided** are Avery's calls; everything else is a proposal or an open question. The 2026-10-21 sprint built phases 1–5 on branch `composer-prototype` (the "Phase" sections below), and Avery's first listening pass on 2026-10-22 is recorded under "First listening pass". The drums were built on the night of 2026-10-22 ("Drums"), on branch `sprint/drums`. `Composer/README.md` is the short way in: how to run it and where things are.
 
 ## Direction
 
@@ -451,6 +451,64 @@ Recorded:
 - **The inner voice** is fine for a first pass. More options later, e.g. a full arpeggiator.
 - **Drums** are the next step, in a new thread.
 
+## Drums (built 2026-10-22 night, sprint)
+
+`Composer/core/drums.js` and `Composer/core/drum-patterns.js`, checked by `Composer/tests/assert-drums.mjs`; the lab's Drums lane is checked in `assert-lab.mjs`. Avery's design for the sprint was single level (the brief); everything below is **proposed, not ruled**, except where it repeats the brief.
+
+**The call.** `arrangeDrums(spec, options)` reads only the spec: its input layers, knobs, timeline, `stats.grid` and parts. It never reads the row. A row's onsets are its layers' pulses (layer v strikes every grid / v ticks), so the onset nearest any place in the cycle is the nearest pulse of one of at most four layers. That makes arranging cost about 0.1 ms, even on the 16k row, so the lab re-arranges on the main thread with nothing re-composed. `compose()` ends with `spec.drums = arrangeDrums(spec, options.drums)`; `drums: false` leaves them out. The drums draw from a seeded generator of their own (`${seed}/drums`), so they never move one of Compose's draws, and every other field of the spec stays byte-identical whatever the drum mode (tested). `settle-baseline.mjs`' `normSpec` leaves the drums out, and the hashes didn't change.
+
+**`spec.drums`:** `{ version, enabled, mode, options, kit, beats, partition, bars: [{ bar, mode, fill, crash, why }], hits: [{ voice, bar, pos, slot, tick, time, velocity, strikes, snap }], decisions, stats }`.
+- Voices: kick, snare, hat, perc, cym. The kit is Audio/drums choices, `made:kick` etc. by default; `''` turns a voice off.
+- `pos` is the stroke's place in its bar, in slots. `time` counts from the downbeat and is computed exactly as compose.js times a note, so a stroke on a note's onset sounds with that note.
+- `snap` says how a stroke landed: `slot` (the nearest onset to its place), `wide` (found on the second look), `note` (a part's own onset) or `layer` (from the partition).
+
+**How it works:**
+- **Every stroke is an onset the row plays.** One correction to the brief: anchors are grid ticks, and only some of them are onsets. The downbeat is an onset (the phase is one of the root's onsets); the other anchors aren't, in general. So each stroke aims at a place in the bar and lands on the onset nearest it, within that place's window: half-way to the neighbouring places. For a whole slot, that's cells.js' swing-0.5 window, and the test checks each landing against cells.js' exact (BigInt) nearest node. If no onset is in the window, the stroke looks once more, a whole place either side (`wide`), and is otherwise left out (`silent`). On every preset and test row nothing needed the wider look and nothing went silent.
+- **The beats.** The bar's S slots are cut in 4 beats the way Partitions cuts a block (cells.js `partitionSizes`, the PartitionsBlocks port), so any S works: S = 5 gives slots 0 1 2 3, S = 6 gives 0 2 3 5, S = 7 and 8 give 0 2 4 6, S = 11 and 13 give 0 3 6 9. Under 4 slots a bar, the bar is cut in S·m sub-slots (m = ceil(4/S), the way cells.js subdivides a small grid), and a beat between anchors lands on a real onset inside its slot. For S = 3 the beats fall at slots 0, 1, 1.5 and 2.5; 8:7:6:5 plays them that way.
+- **backbeat (the default, from the brief).** Kick on beats 1 and 3 (the call on 3 was left to me), snare on 2 and 4, and a hat on every slot, with the beat slots a little louder. Bar 1's kick is the phase onset itself, at time 0.
+- **with.** The backbeat, plus a perc stroke on every slot where the lead or the comping strikes, on that note's own onset (the lead's when both strike). It's accented where both strike, or on a strong slot.
+- **against.** The backbeat, plus perc on the slots that both the lead and the comping leave empty, at most ⌊S/2⌋ a bar (at least 1). Off-beat slots come first, then the seed decides. This is the only mode that reads the seed.
+- **partition (single level, from the brief's sliding downbeat).** Partitions' grid mode cuts the cycle from tick 0; here the cycle starts at the composition's downbeat.
+  - **The layer** is one that strikes the downbeat (Avery's idea: phase × v is whole). If several do, the one whose pulses per bar are nearest S wins, then the slowest.
+  - **The blocks** are its v pulses, counted from the downbeat. That's grid mode at P = v, and each block starts on one of that layer's onsets.
+  - **What sounds** is Partitions' secondary pattern E(hits, v), turned so its first stroke is the downbeat (getSecondaryAllowedSet). The test runs `PartitionsDistribution.js` itself and matches it exactly.
+  - **How many:** hits = min(v, N·S), about one a slot, or N·hitsPerBar when asked. The line plays on the perc, over the backbeat.
+- **Curated patterns** (drum-patterns.js), written chunk-tunes style: `steps` per bar and an x per stroke (X for an accent), each step a fraction of the bar.
+  - chunk-tunes' six (rock = its backbeat, four, funk, soca, bossa, shuffle), kept stroke for stroke.
+  - New: halftime, son clave 3-2 and rumba clave 3-2 (two-bar patterns that restart at each phrase), and a phrase-end fill.
+  - A stroke at fraction f lands through the beats: beat ⌊4f⌋, then its share of that beat's sub-slots, rounded. Patterns therefore agree with the backbeat's beats on any S, and an uneven beat stretches its subdivisions.
+  - On 8 slots, rock is kick 0 4, snare 2 6, a hat on every slot. On 16 slots, funk keeps its sixteenths. On 3 slots, rock keeps four quarter strokes, on half slots.
+- **Fills, a pattern per section.** The last bar of each phrase of 4 bars or more (harmony.js `phrasesOf`) plays the fill over its second half, from beat 3: snare in eighths then sixteenths, getting louder, with a kick under it. A crash opens the bar after the fill, which is bar 1 when the fill is in the last bar.
+  - 41:42:43, 119:42:15:8 and 768:769 (4 × 8) fill bar 4; the 16k row (8 × 8) fills bars 4 and 8.
+  - 8:7:6:5 (2 × 3) and 19:17:16:15 (2 × 8) don't fill.
+  - `perBar: { bar: mode }` gives a bar its own mode.
+- **Velocities.** Kick 0.85, snare 0.75, hat 0.3, perc 0.5, cym 0.55; +0.12 on an accent, and +0.04 for each extra layer striking that onset, so the row's own accents carry over.
+
+**Lab.** A drums lane under the parts:
+- Lane controls: a mode select (the four modes, then each pattern by name), a fills toggle, on/off and level.
+- Lane display: a tick per stroke, one band per voice, with each bar's mode in its corner.
+- **Drum kit row:** a sound per voice (off, the made kit, or the site's `assets/audio` samples).
+- **Live changes:** any lane or kit change re-arranges from the spec while it plays, with nothing re-composed. A new Compose keeps the lane's options.
+- **Playback:** the player books strokes on the same clock map as the notes, so the loop, the phase and live Tempo all apply. Strokes go through Audio/drums into a `drums` bus. Made sounds play at the stroke's velocity. A sample plays at the velocity × that made channel's `sampleLevel` (chunk-tunes' balance), and the made sound stands in until the sample loads.
+- **Decisions and export:** the decisions list adds the drums' decisions and a row per bar (what it plays and why). JSON export carries the drums as they play.
+
+**The deferred two-level prime partition (not built).** As Avery described it:
+- **Level 1** lights a prime number of evenly spread lights over the cycle, from double to low triple digits.
+- **Level 2,** the bars × slots partition, chooses which lit lights stay on. It treats them as a new even grid, whatever their uneven timing, and that adds a distinct swing.
+
+The seam: `levelOneLights(grid, { source })` names the level-1 source and `selectLights(count, hits)` chooses among them. Source `'layer'` is today's single level. Source `'prime'` throws "deferred". Level 2 would be `selectLights(q, N·S)` over q prime lights, each landed on its nearest onset the way any stroke is.
+
+**Heard so far:** nothing. Avery's browser and listening pass is owed.
+
+**Open (for Avery):**
+1. **Kick on 3:** kept in the default backbeat, with snare on 2 and 4 and a hat every slot. Hats every slot, or only on the beats?
+2. **Partitions' beat order on odd S:** the block cut puts the long beat last on S = 5 (1 1 1 2) and first on S = 6 (2 1 2 1). Keep Partitions' order, or always put the long beat first?
+3. **The partition layer when several strike the downbeat:** the one with pulses per bar nearest S (then the slowest). Or always the slowest, or the root's own layer?
+4. **The partition's density:** min(v, N·S) hits is close to an even pulse on large layers (768:769 → E(32, 769); the 16k row → E(64, 4093)), and audibly uneven only on small ones (41:42:43 → E(32, 43)). Is that the swing you want from single level, or should hits per bar be a lab knob? It's in the API (`hitsPerBar`) but not in the lab yet.
+5. **Fills** only on phrases of 4 bars or more, so 2-bar loops never fill. Every phrase end, or every second?
+6. **with / against** read only the lead and the comping. Should the bass vote too?
+7. **The partition line on the perc, over the backbeat.** Should it take the hat's place instead?
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
@@ -495,7 +553,7 @@ Raised during the sprint:
 
 ## Next (after 2026-10-22)
 
-1. **Drums:** Partitions as the Perc part, with a pattern per section. Starts in a new thread.
+1. **Drums:** built 2026-10-22 night as a single level (see "Drums"); the listening pass and the two-level prime partition are next.
 2. **Comping as chords.**
 3. **Bass weighted to state the root** on strong slots.
 4. **Several loops of the same row,** each with a different decomposition, for form and development.
