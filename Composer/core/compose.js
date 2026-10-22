@@ -53,6 +53,7 @@ import { defaultRoot, toneIndexOf, classOfCents, clusterPresence, PRESENCE_MODES
 import { mineLines, downbeats, TABLES } from './lines.js';
 import { harmonize, phrasesOf, isStrongBeat, DEFAULT_SETTLE_PASSES, MAX_SETTLE_PASSES } from './harmony.js';
 import { getInstrument } from '../../Audio/voices/recipes.js';
+import { arrangeDrums } from './drums.js';
 
 export const COMPOSER_SPEC_VERSION = 'composer-spec-v1';
 export const BEATS_PER_BAR = 4;
@@ -147,10 +148,10 @@ export function rearticulate(part, { sound = part.sound, legato = part.legato, e
  *   options        { seed (default 1), overrides: { bars, slotsPerBar, anchors, phase, frameCentsEachSide, root,
  *                  modulation, foldOffsets, table, sounds: { part: id }, legato: { part: bool }, enabled: { part: bool },
  *                  baseHz, compLayer, presence ('cluster' | 'exact'), settlePasses (an integer 0..3) }, worker (true:
- *                  the full table unless asked) }
+ *                  the full table unless asked), drums (drums.js `arrangeDrums` options, or false: no `drums` in the spec) }
  * → the spec (see the head of this file and Composer/DESIGN_NOTES.md "Phase 4"), or a refusal
  */
-export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker = false } = {}) {
+export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker = false, drums = {} } = {}) {
   const input = { layers: [...layers], cycleSeconds, seed, overrides: JSON.parse(JSON.stringify(overrides ?? {})) };
   if (!(Number.isFinite(cycleSeconds) && cycleSeconds > 0)) fail(`cycleSeconds must be a positive number, not ${cycleSeconds}`);
   for (const k of Object.keys(overrides || {})) if (!OVERRIDES.includes(k)) fail(`no override "${k}" (overrides are ${OVERRIDES.join(', ')})`);
@@ -342,7 +343,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   const partList = [out('lead', parts.lead), out('chords', voices, { voice: true }), out('comp', parts.comp), out('bass', parts.bass), out('inner', parts.inner)];
 
   const counts = Object.fromEntries(partList.map((p) => [p.id, p.notes.length]));
-  return {
+  const spec = {
     version: COMPOSER_SPEC_VERSION, input,
     knobs: {
       bars: N, slotsPerBar: S, beatsPerBar: BEATS_PER_BAR, anchors, phase: [...phase], frameCentsEachSide: e, root: row.tones[rootTone], modulation, table,
@@ -363,4 +364,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
         exceptionsPerRound: [...h.settle.exceptionsPerRound], chosenRound: h.settle.chosenRound },
     },
   };
+  // ── drums (drums.js): from the spec alone, so the lab re-arranges them without composing again; `drums: false` leaves them out ──
+  if (drums !== false) spec.drums = arrangeDrums(spec, drums === true ? {} : drums);
+  return spec;
 }

@@ -10,11 +10,12 @@ import { defaultRoot } from '../core/frame.js';
 import { downbeats } from '../core/lines.js';
 
 export const sha = (x) => createHash('sha256').update(JSON.stringify(x)).digest('hex');
-/** a spec without what came after e3909e1: the settle stats, the presence and settlePasses decisions and overrides */
+/** a spec without what came after e3909e1: the settle stats, the presence and settlePasses decisions and overrides, the drums */
 export function normSpec(spec) {
   const s = JSON.parse(JSON.stringify(spec));
   delete s.input.overrides.settlePasses; delete s.input.overrides.presence;
   if (s.stats) delete s.stats.settle;
+  delete s.drums;   // the drums (2026-10-22 night) are a part of their own: they never move the others
   if (s.decisions) s.decisions = s.decisions.filter((d) => d.what !== 'settlePasses' && d.what !== 'presence');
   return s;
 }
