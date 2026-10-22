@@ -35,6 +35,12 @@ class PartitionsUI {
         this.userSampleUrls = new Map();
         this.isLayoutBuilt = false;
         this.needsRhythmReset = false;
+        // Composer tab (Composer/page/, 2026-10-22): which tab the window shows, and the Composer's two hosts
+        this.activeTab = 'partitions';
+        this.partitionsLeftOuter = null;
+        this.composerLeft = null;
+        this.composerInspector = null;
+        this.tabButtons = {};
         this.rhythmGeneratedHandler = () => this.handleRhythmGenerated();
         window.addEventListener('rhythmGenerated', this.rhythmGeneratedHandler);
 
@@ -90,6 +96,7 @@ class PartitionsUI {
         this.hidePlaybackDiv();
         this.hideVisualizationCanvas();
         this.setupEventListeners();
+        this.setActiveTab(this.activeTab); // Composer tab: reopen on the tab last used
         requestAnimationFrame(() => this.resyncPlaybackVisuals());
 
         console.log('🥁 Partitions view activated with live mirroring');
@@ -108,6 +115,9 @@ class PartitionsUI {
 
         // Remove event listeners
         this.removeEventListeners();
+
+        // Composer tab: leaving the window leaves the tab (its playback stops, its plot overlay goes off)
+        if (this.activeTab === 'composer' && window.lrcComposer) window.lrcComposer.hideTab();
 
         this.restoreLayerControls();
         this.restoreMidiOutControls();
@@ -326,7 +336,13 @@ class PartitionsUI {
             this.hide();
         });
 
-        titleBar.appendChild(title);
+        // Composer tab: a tab strip [Partitions | Composer] beside the title
+        const titleGroup = document.createElement('div');
+        titleGroup.style.cssText = 'display: flex; align-items: center;';
+        titleGroup.appendChild(title);
+        titleGroup.appendChild(this.createWindowTabs());
+
+        titleBar.appendChild(titleGroup);
         titleBar.appendChild(closeButton);
 
         // Left section (50% width) - Main Controls bar at top, then partition layers below
@@ -466,12 +482,23 @@ class PartitionsUI {
             </div>
         `;
 
+        // Composer tab: its two hosts, hidden until the tab is picked (filled by Composer/page/composer-tab.js).
+        // The mirrored plot (upper right) stays, shared by both tabs.
+        const composerLeft = document.createElement('div');
+        composerLeft.id = 'composer-tab-left';
+        composerLeft.style.display = 'none';
+        const composerInspector = document.createElement('div');
+        composerInspector.id = 'composer-tab-inspector';
+        composerInspector.style.display = 'none';
+
         // Assemble right section
         rightSection.appendChild(canvasContainer);
         rightSection.appendChild(lowerRightContainer);
+        rightSection.appendChild(composerInspector);
 
         // Assemble content container
         contentContainer.appendChild(leftSection);
+        contentContainer.appendChild(composerLeft);
         contentContainer.appendChild(rightSection);
 
         // Assemble main container
@@ -484,6 +511,9 @@ class PartitionsUI {
         this.mainControlsContainer = mainControlsContainer;
         this.lowerRightContainer = lowerRightContainer;
         this.titleElement = title;
+        this.partitionsLeftOuter = leftSection;
+        this.composerLeft = composerLeft;
+        this.composerInspector = composerInspector;
 
         // Initialize global controls in the main controls container
         if (window.partitionsGlobalControls) {
@@ -625,6 +655,10 @@ class PartitionsUI {
         this.midiOutSection = null;
         this.midiOutOriginalParent = null;
         this.midiOutOriginalNextSibling = null;
+        this.partitionsLeftOuter = null;
+        this.composerLeft = null;
+        this.composerInspector = null;
+        this.tabButtons = {};
         this.isLayoutBuilt = false;
 
         console.log('📐 Partitions layout hidden and references cleared');
@@ -912,7 +946,58 @@ class PartitionsUI {
             : rhythmInfo?.layers || [];
         const layersText = displayLayers.length > 0 ? displayLayers.join(':') : '';
 
-        this.titleElement.textContent = `Partitions ${layersText ? '- ' + layersText : ''}`;
+        const tabName = this.activeTab === 'composer' ? 'Composer' : 'Partitions';
+        this.titleElement.textContent = `${tabName} ${layersText ? '- ' + layersText : ''}`;
+    }
+
+    // ====================================
+    // COMPOSER TAB (Composer/page/, 2026-10-22)
+    // A tab strip in the title bar: Partitions (this window, unchanged) | Composer. The Composer tab swaps the left
+    // half and the lower right for its own two hosts; the mirrored Linear Plot (upper right) stays. The Composer
+    // itself is the module behind window.lrcComposer (Composer/page/composer-bridge.js).
+    // ====================================
+
+    createWindowTabs() {
+        const strip = document.createElement('div');
+        strip.className = 'lrc-window-tabs';
+        this.tabButtons = {};
+        [['partitions', 'Partitions'], ['composer', 'Composer']].forEach(([name, label]) => {
+            const button = document.createElement('button');
+            button.className = 'lrc-window-tab';
+            button.type = 'button';
+            button.textContent = label;
+            button.addEventListener('click', () => this.setActiveTab(name));
+            this.tabButtons[name] = button;
+            strip.appendChild(button);
+        });
+        return strip;
+    }
+
+    setActiveTab(name) {
+        const composer = name === 'composer' && !!this.composerLeft;
+        const leaving = this.activeTab === 'composer' && !composer;
+        this.activeTab = composer ? 'composer' : 'partitions';
+        Object.entries(this.tabButtons).forEach(([tab, button]) => button.classList.toggle('active', tab === this.activeTab));
+        if (this.partitionsLeftOuter) this.partitionsLeftOuter.style.display = composer ? 'none' : 'flex';
+        if (this.lowerRightContainer) this.lowerRightContainer.style.display = composer ? 'none' : 'flex';
+        if (this.composerLeft) this.composerLeft.style.display = composer ? '' : 'none';
+        if (this.composerInspector) this.composerInspector.style.display = composer ? '' : 'none';
+        this.updateTitle();
+        if (leaving && window.lrcComposer) window.lrcComposer.hideTab();
+        if (composer) this.showComposerTab();
+    }
+
+    showComposerTab() {
+        const composer = window.lrcComposer;
+        if (!composer) {
+            this.composerLeft.textContent = 'The Composer is loading…';
+            window.addEventListener('lrccomposerready', () => {
+                if (this.isActive && this.activeTab === 'composer') this.showComposerTab();
+            }, { once: true });
+            return;
+        }
+        composer.mountTab({ left: this.composerLeft, inspector: this.composerInspector });
+        composer.showTab();
     }
 
     // ====================================
