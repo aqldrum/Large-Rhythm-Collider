@@ -26,7 +26,19 @@ The planner keeps this file current after every phase. If the planner thread is 
 | B. Targeted progressions (core + lab) | `sprint/progression` | dispatched |
 | C. Composer tab on the main page | `sprint/integration` (after A+B merge) | waiting |
 | D. Final suites + morning listen list | `composer-sprint` | waiting |
+| S. Cosmos seam survey + superrow probe (read-only) | none; output in the planner's scratchpad `cosmos-survey/REPORT.md` | dispatched |
+
+## Next sprint: Cosmos composition mode (Avery, 2026-10-22)
+
+- **A shared compose trace first:** `compose()` emits a pure, untimed decision trace (roots picked and rejected, lead candidates, chord passes, settle rounds, drums). The main-page Compose animation and the Cosmos dust animation both render it.
+- **Clock takeover:** Cosmos's clock follows the speed knob, which targets onset density, not a tempo. A composition takes over the clock at its own tempo and hands it back to flight when it ends.
+- **The bed is silenced completely.** The player keeps flying; the composition stops when the grid drops out of LOD range. Idea: expand the black orb that masks the cosmos for a selected grid into a blank canvas for the animation.
+- **Compose on a Rhythm card:** that one rhythm only. Others may be hidden, and only its sequence animates.
+- **Compose on a Grid card:** a superrow of the selected nodes, up to a threshold. Huge grids use limited-cardinality windows rather than a refusal.
+- **Drums:** the Composer drums, copied as-is for v1.
+- **Proposed order:** probe → trace → superrow builder (pure, `Composer/core`) + Cosmos adapter → Compose mode (audio, clock, LOD exit) → onset dust on the WebGL layer, capped by quality tier → choreography from the trace.
 
 ## Log
 
 - 2026-10-22 night: sprint branch and phase worktrees created; A and B dispatched in parallel.
+- 2026-10-22 night: Cosmos plan recorded; read-only survey + superrow probe dispatched (writes only to the planner's scratchpad).
