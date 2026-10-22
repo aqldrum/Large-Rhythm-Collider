@@ -6,6 +6,7 @@
 //   lrcComposer.mountTab({ left, inspector })   fill the window's two hosts (again if the window was rebuilt)
 //   lrcComposer.showTab() / hideTab()           the tab shown or left (leaving it stops Composer playback)
 //   lrcComposer.isPlaying(), stop()
+//   lrcComposer.animator                        the Compose animation's driver (compose-animator.js), for a look
 // Everything the page provides goes through pageHost(window): the rhythm (LRCModule's layers, Playback's cycle), main
 // playback (stopped before the Composer performs; its start stops the Composer), and the Linear Plot (LRCVisuals).
 
@@ -36,9 +37,10 @@ export function pageHost(win) {
 }
 
 /** the bridge over a window (the page's, or a test's stub) */
-export function createComposerBridge(win, { runCompose = createComposeRunner(), createContext, timers } = {}) {
+export function createComposerBridge(win, { runCompose = createComposeRunner(), createContext, timers, clock, storage } = {}) {
   const tab = createTabController({ host: pageHost(win), runCompose, createContext, timers });
-  const view = createComposerTab({ tab, doc: win.document, visuals: () => win.lrcVisuals ?? null, raf: (f) => win.requestAnimationFrame(f) });
+  const store = storage !== undefined ? storage : (() => { try { return win.localStorage ?? null; } catch { return null; } })();
+  const view = createComposerTab({ tab, doc: win.document, visuals: () => win.lrcVisuals ?? null, raf: (f) => win.requestAnimationFrame(f), clock, storage: store });
   // a new rhythm on the page: Compose again (the tab also checks on every frame while shown, for the cycle)
   win.addEventListener('rhythmGenerated', () => tab.syncRhythm());
   win.addEventListener('vizTypeChanged', () => { if (view.shown) view.render(); });
@@ -52,6 +54,7 @@ export function createComposerBridge(win, { runCompose = createComposeRunner(), 
     stop: () => tab.core.stop(),
     controller: tab,
     overlay: view.overlay,
+    animator: view.animator,
   });
 }
 

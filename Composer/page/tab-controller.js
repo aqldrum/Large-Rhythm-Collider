@@ -12,6 +12,8 @@
 //              Drums, Tuning) follows it unless picked by hand.
 //   plot       highlights(plot) → plot-highlights.js' lit nodes of the spec as it plays now (memoized on the spec, the
 //              parts, the drums and the plot), or null when the spec isn't of the plotted rhythm.
+//   show work  view.showWork (on by default; the view keeps it in localStorage): the Compose button asks for the compose
+//              trace (state.trace) and the view animates it (compose-animator.js). Off, Compose is exactly as before.
 
 import { createComposerController, kitChoices as sharedKitChoices } from '../perform/composer-controller.js';
 import { highlightsOf, plotOf, HIGHLIGHT_PARTS } from './plot-highlights.js';
@@ -32,8 +34,8 @@ export const kitChoices = (voice) => sharedKitChoices(voice, PAGE_SAMPLES_BASE);
  */
 export function createTabController({ host = {}, runCompose, createContext, timers, clock } = {}) {
   const core = createComposerController({ runCompose, createContext, timers, clock, beforePerform: () => host.stopMain?.() });
-  const view = { open: false, selected: 'lead', section: SECTION_OF.lead, hasRhythm: false };
-  const listeners = new Set();
+  const view = { open: false, selected: 'lead', section: SECTION_OF.lead, hasRhythm: false, showWork: true };
+  const listeners = new Set(), mainListeners = new Set();
   const changed = () => { for (const f of listeners) f(core.state, view); };
   core.onChange(changed);
   let memo = { key: null, value: null };
@@ -60,10 +62,14 @@ export function createTabController({ host = {}, runCompose, createContext, time
     async press() {
       api.syncRhythm();
       if (!view.hasRhythm) return null;
+      if (core.button() === 'Compose') return core.compose({ trace: view.showWork });
       return core.press();
     },
-    /** the main page started playing: the Composer gives way */
-    mainStarted() { if (core.state.status === 'playing') core.stop(); },
+    /** "show the work": animate Compose from its trace, or not */
+    setShowWork(on) { const v = !!on; if (v === view.showWork) return; view.showWork = v; changed(); },
+    /** the main page started playing: the Composer gives way (and so does an animation of Compose) */
+    mainStarted() { if (core.state.status === 'playing') core.stop(); for (const f of [...mainListeners]) f(); },
+    onMainStarted(f) { mainListeners.add(f); return () => mainListeners.delete(f); },
 
     open() { view.open = true; api.syncRhythm(); changed(); },
     close() { view.open = false; core.stop(); changed(); },

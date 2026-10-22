@@ -10,31 +10,48 @@
 //
 // The upper right stays the Partitions window's mirror of the Linear Plot. While the tab is shown, the plot carries the
 // Composer's lit nodes (plot-overlay.js, through LRCVisuals.setComposerOverlay) and, during Perform, its playhead.
+//
+// Show the work (a header toggle, on by default, kept in localStorage): Compose is animated from its trace
+// (compose-animator.js, trace-frames.js). The plot shimmers while Compose runs, then plays the trace's steps over a
+// cached base, with a caption above the lanes and the lanes filling in as the parts land; it ends exactly on the lit
+// nodes. The Compose button says Skip meanwhile; a click in the tab or on the plot, or Esc, skips to the end; any change
+// (a knob, the rhythm, main playback, leaving the tab, the toggle) drops it. Off, Compose is exactly as before.
 
 import { soundChoices, drumModeChoices, DRUM_LAB_VOICES, TEMPO_LIMITS } from '../perform/composer-controller.js';
 import { KNOB_FIELDS, TABLE_FIELD, fieldValue, refusalText, readoutItems, knobChosen, decisionRows, rootGroups, strayRootOption, chordGot, progressionNote,
   barColumns, noteTitle, chordTitle, modulationLabel, drumBarLabel, drumHitTitle } from '../perform/readouts.js';
-import { PART_COLORS, PART_LABELS, HIGHLIGHT_PARTS } from './plot-highlights.js';
+import { PART_COLORS, PART_LABELS, HIGHLIGHT_PARTS, plotOf } from './plot-highlights.js';
 import { SECTIONS, SECTION_LABELS } from './tab-controller.js';
 import { createPlotOverlay } from './plot-overlay.js';
+import { createComposeAnimator, paintFrame, paintShimmer, readShowWork, writeShowWork } from './compose-animator.js';
 
 const KNOBS_OF = Object.freeze({ harmony: ['modulation', 'settlePasses', 'presence'], lines: ['bars', 'slotsPerBar', 'anchors'], tuning: ['frameCentsEachSide'] });
+/** the caption's names for the trace's beats */
+const BEAT_NAMES = Object.freeze({ row: 'row', root: 'root', meter: 'meter', cells: 'cells', progression: 'progression', line: 'lead', chords: 'chords', line2: 'lead again',
+  settle: 'settle', harmony: 'harmony', parts: 'parts', drums: 'drums', done: 'done' });
+const defaultStorage = () => { try { return globalThis.localStorage ?? null; } catch { return null; } };
 
 /**
- * createComposerTab({ tab, doc, visuals, raf, makeCanvas, download })
+ * createComposerTab({ tab, doc, visuals, raf, makeCanvas, download, clock, storage })
  *   tab       tab-controller.js
  *   doc       the document (the page's)
  *   visuals   () → window.lrcVisuals (the Linear Plot), or null
  *   raf       (fn) → requestAnimationFrame(fn)
- * → { mount({ left, inspector }), show(), hide(), render(), overlay, shown }
+ *   clock     () → ms (performance.now): the Compose animation's clock
+ *   storage   where "show the work" is kept (localStorage; any access is wrapped)
+ * → { mount({ left, inspector }), show(), hide(), render(), overlay, animator, shown }
  */
-export function createComposerTab({ tab, doc = globalThis.document, visuals = () => globalThis.window?.lrcVisuals ?? null, raf = (f) => globalThis.requestAnimationFrame(f), makeCanvas, download } = {}) {
+export function createComposerTab({ tab, doc = globalThis.document, visuals = () => globalThis.window?.lrcVisuals ?? null, raf = (f) => globalThis.requestAnimationFrame(f), makeCanvas, download, clock, storage = defaultStorage() } = {}) {
   const S = tab.state, core = tab.core;
   const el = (tag, props = {}, ...kids) => { const e = Object.assign(doc.createElement(tag), props); for (const k of kids) if (k != null) e.append(k); return e; };
   const plotted = () => { const v = visuals(); return v && v.compositeRhythm ? { compositeRhythm: v.compositeRhythm, grid: v.grid } : null; };
   const overlay = createPlotOverlay({ getHighlights: () => tab.highlights(plotted()), getSelected: () => tab.view.selected, makeCanvas });
   const sounds = soundChoices(), drumModes = drumModeChoices();
   let hosts = null, ui = null, shown = false, lastPlaying = false, playheadEl = null, firstBars = null;
+  // the Compose animation: the driver, what it lands on, the lanes it drives, the last frame shown
+  const anim = createComposeAnimator(clock ? { clock } : {});
+  let animFinal = null, laneEls = {}, laneKey = null, captionKey = null, lastFrame = null, plotEl = null;
+  tab.view.showWork = readShowWork(storage);
 
   const recomposeIfQuick = () => { if (core.canAutoRecompose()) core.compose(); };
   const field = (f, value) => {
@@ -52,7 +69,9 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const seed = el('input', { type: 'number', step: 1, className: 'ctab-seed', value: S.input.seed, title: 'the seed: the same seed, the same composition' });
     seed.addEventListener('change', () => core.setSeed(seed.value));
     const go = el('button', { className: 'ctab-go', textContent: 'Compose' });
-    go.addEventListener('click', () => tab.press());
+    go.addEventListener('click', pressGo);
+    const work = el('button', { className: 'ctab-toggle ctab-work', textContent: 'show the work', title: 'animate Compose: the root, the lead, the chords under it, the settling and the parts, on the Linear Plot' });
+    work.addEventListener('click', () => { const on = !tab.view.showWork; writeShowWork(storage, on); tab.setShowWork(on); });
     const json = el('button', { className: 'ctab-btn', textContent: 'JSON', title: 'download the spec as it plays now' });
     json.addEventListener('click', exportJSON);
     const tempo = el('input', { type: 'range', min: TEMPO_LIMITS[0], max: TEMPO_LIMITS[1], step: 1, className: 'ctab-tempo' });
@@ -66,18 +85,23 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     glide.addEventListener('input', () => { core.setGlide(glide.value); glideOut.textContent = `${S.glideMs} ms`; });
     const rhythm = el('span', { className: 'ctab-rhythm' }), status = el('span', { className: 'ctab-status' });
     const note = el('div', { className: 'ctab-note' }), refusal = el('div', { className: 'ctab-refusal' }), readouts = el('div', { className: 'ctab-readouts' });
+    const capLabel = el('b', { className: 'ctab-caption-label' }), capDetail = el('span', { className: 'ctab-caption-detail' }), capBeats = el('div', { className: 'ctab-caption-beats' });
+    const caption = el('div', { className: 'ctab-caption' }, el('div', { className: 'ctab-row' }, capLabel, capDetail), capBeats);
+    caption.style.display = 'none';
     playheadEl = el('div', { className: 'ctab-playhead' });
     const lanes = el('div', { className: 'ctab-lanes' }, playheadEl);
     const table = el('table', { className: 'ctab-decisions-table' });
     const decisions = el('details', { className: 'ctab-decisions' }, el('summary', { textContent: 'Decisions — what Compose chose, and why' }), table);
     left.replaceChildren(
       el('div', { className: 'ctab-head' },
-        el('div', { className: 'ctab-row' }, rhythm, el('label', { className: 'ctab-muted', textContent: 'Seed' }), seed, go, json, status),
+        el('div', { className: 'ctab-row' }, rhythm, el('label', { className: 'ctab-muted', textContent: 'Seed' }), seed, go, json, work, status),
         el('div', { className: 'ctab-row' }, el('label', { className: 'ctab-muted', textContent: 'Tempo', title: 'playback tempo: the composed cycle faster or slower, live (pitch unchanged)' }), tempo, tempoBpm, tempoReset,
           el('label', { className: 'ctab-muted', textContent: 'Glide' }), glide, glideOut)),
-      note, refusal, readouts,
+      note, refusal, caption, readouts,
       el('div', { className: 'ctab-scroll' }, lanes, decisions));
-    return { seed, go, json, tempo, tempoBpm, tempoReset, glide, glideOut, rhythm, status, note, refusal, readouts, lanes, table };
+    // a click anywhere in the tab skips the animation (the button and the toggle do their own thing)
+    left.addEventListener('click', (e) => { if (anim.status === 'playing' && !e.target?.closest?.('.ctab-go, .ctab-work')) skipAnimation(); });
+    return { seed, go, json, work, tempo, tempoBpm, tempoReset, glide, glideOut, rhythm, status, note, refusal, caption, capLabel, capDetail, capBeats, readouts, lanes, table };
   }
   function showTempo() {
     if (!ui) return;
@@ -101,9 +125,12 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     ui.rhythm.replaceChildren(el('b', { textContent: tab.view.hasRhythm ? S.input.layers.filter(Boolean).join(':') : '—' }), ` · ${S.input.cycleSeconds} s cycle`);
     ui.rhythm.title = "the main page's rhythm and Playback cycle: Compose reads them; changing either goes back to Compose";
     if (doc.activeElement !== ui.seed) ui.seed.value = S.input.seed;
-    ui.go.textContent = label;
-    ui.go.className = `ctab-go${label === 'Stop' ? ' stop' : ''}`;
-    ui.go.disabled = !tab.canPress();
+    const skipping = anim.status === 'playing';
+    ui.go.textContent = skipping ? 'Skip ▸' : label;
+    ui.go.className = `ctab-go${skipping ? ' skip' : label === 'Stop' ? ' stop' : ''}`;
+    ui.go.disabled = skipping ? false : !tab.canPress();
+    ui.go.title = skipping ? 'skip to the end (or click the plot, or press Esc)' : '';
+    ui.work.className = `ctab-toggle ctab-work${tab.view.showWork ? ' on' : ''}`;
     ui.status.textContent = S.status === 'error' ? `error: ${S.error}` : S.dirty && s ? 'changed — Compose again' : '';
     // the plot note: no rhythm yet, or a plot that isn't the Linear Plot
     const v = visuals(), notes = [];
@@ -124,7 +151,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
 
   function renderLanes() {
     const s = S.spec;
-    firstBars = null;
+    firstBars = null; laneEls = {}; laneKey = null;
     if (!s || s.refused) { ui.lanes.replaceChildren(playheadEl); return; }
     const { starts, lens, cols, barOf } = barColumns(s), mods = new Map(s.modulations.map((m) => [m.bar, m]));
     const head = (id, enabled, onToggle) => {
@@ -146,6 +173,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
         }
         return cell;
       });
+      laneEls[part.id] = { cells, chords: part.id === 'chords' ? cells.map((c) => c.querySelector('.ctab-chord')) : null };
       for (const n of part.notes) {
         const k = barOf(n.time), t = el('div', { className: 'ctab-tick', title: noteTitle(n) });
         t.style.left = `${(100 * (n.time - starts[k])) / lens[k]}%`;
@@ -155,7 +183,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       }
       bars.append(...cells);
       firstBars ??= bars;
-      return el('div', { className: `ctab-lane${part.enabled ? '' : ' off'}${tab.view.selected === part.id ? ' selected' : ''}` }, head(part.id, part.enabled, () => core.setPart(part.id, { enabled: !part.enabled })), bars);
+      laneEls[part.id].lane = el('div', { className: `ctab-lane${part.enabled ? '' : ' off'}${tab.view.selected === part.id ? ' selected' : ''}` }, head(part.id, part.enabled, () => core.setPart(part.id, { enabled: !part.enabled })), bars);
+      return laneEls[part.id].lane;
     });
     if (S.drums) {
       const d = S.drums, bars = el('div', { className: 'ctab-bars' });
@@ -167,10 +196,88 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
         cells[k].append(t);
       }
       bars.append(...cells);
-      rows.push(el('div', { className: `ctab-lane drums${d.enabled ? '' : ' off'}${tab.view.selected === 'drums' ? ' selected' : ''}` }, head('drums', d.enabled, () => core.setDrums({ enabled: !d.enabled })), bars));
+      laneEls.drums = { cells, chords: null, lane: el('div', { className: `ctab-lane drums${d.enabled ? '' : ' off'}${tab.view.selected === 'drums' ? ' selected' : ''}` }, head('drums', d.enabled, () => core.setDrums({ enabled: !d.enabled })), bars) };
+      rows.push(laneEls.drums.lane);
     }
     ui.lanes.replaceChildren(playheadEl, ...rows);
+    if (anim.status === 'playing' && lastFrame) applyFrame(lastFrame);
   }
+
+  // ── the Compose animation ──
+  /** the main button: Skip while animating; Compose starts the shimmer first when the work is shown */
+  function pressGo() {
+    if (anim.status === 'playing') { skipAnimation(); return; }
+    tab.syncRhythm();
+    if (tab.view.showWork && tab.canPress() && tab.button() === 'Compose') {
+      anim.wait(); overlay.setScene(true);
+      hosts?.left.classList?.add('ctab-animating');
+      showCaption('composing…', 'Compose is running: the steps play once its trace is back', null);
+    }
+    tab.press();
+  }
+  /** after a change: the awaited compose came back (start), or anything else happened (drop it) */
+  function syncAnimation() {
+    if (anim.status === 'waiting') {
+      if (S.status === 'composing') return;
+      if (S.status === 'ready' && !S.dirty && S.trace && tab.view.showWork) {
+        const p = plotted(), final = tab.highlights(p);
+        if (final && anim.start({ trace: S.trace, plot: plotOf(p || {}), final })) {
+          animFinal = final; buildBeats(anim.scene.timeline.groups);
+          const a = anim.tick();
+          if (a && a.kind === 'frame') applyFrame(a.frame);
+          return;
+        }
+      }
+      endAnimation(false);
+    } else if (anim.status === 'playing') endAnimation(false);
+  }
+  /** back to the ordinary tab: the overlay's own draw, the lanes as they are; redraw when no change is about to */
+  function endAnimation(redraw) {
+    anim.cancel();
+    overlay.setScene(false);
+    animFinal = null; lastFrame = null; laneKey = null; captionKey = null;
+    hosts?.left.classList?.remove('ctab-animating');
+    if (ui) ui.caption.style.display = 'none';
+    if (redraw) { render(); visuals()?.drawPlot?.(); }
+  }
+  function skipAnimation() { if (anim.skip()) endAnimation(true); }
+  const onKey = (e) => { if (e.key === 'Escape' && anim.status === 'playing') { e.preventDefault?.(); skipAnimation(); } };
+  const onPlotClick = () => { if (anim.status === 'playing') skipAnimation(); };
+  function buildBeats(groups) {
+    if (!ui) return;
+    ui.capBeats.replaceChildren(...groups.map((g) => el('span', { className: 'ctab-beat', textContent: g.group === 'settle' ? `settle ${g.round}` : BEAT_NAMES[g.group] ?? g.group })));
+  }
+  function showCaption(label, detail, groupIndex) {
+    if (!ui) return;
+    const key = `${label}|${detail}|${groupIndex}`;
+    if (key === captionKey) return;
+    captionKey = key;
+    ui.caption.style.display = '';
+    ui.capLabel.textContent = label;
+    ui.capDetail.textContent = detail || '';
+    Array.from(ui.capBeats.children).forEach((b, i) => { b.className = `ctab-beat${groupIndex == null ? '' : i < groupIndex ? ' past' : i === groupIndex ? ' now' : ''}`; });
+  }
+  /** a frame in the tab: the caption, and the lanes as far as the parts have landed */
+  function applyFrame(frame) {
+    lastFrame = frame;
+    showCaption(frame.label, frame.detail, frame.groupIndex);
+    const key = JSON.stringify(frame.lanes);
+    if (key === laneKey) return;
+    laneKey = key;
+    for (const [id, x] of Object.entries(laneEls)) {
+      const st = frame.lanes.show[id];
+      x.lane?.classList.toggle('ctab-anim-hidden', !st);
+      x.lane?.classList.toggle('ctab-anim-labels', st === 'labels');
+      if (x.chords) x.chords.forEach((c, k) => {
+        if (!c) return;
+        const own = S.spec?.chords?.[k]?.name ?? '';
+        c.textContent = st === 'shown' ? own : frame.lanes.chords[k] ?? '…';
+        c.classList.toggle('ctab-anim-hot', frame.lanes.hot === k);
+      });
+      x.cells.forEach((c, k) => c.classList.toggle('ctab-anim-flash', frame.lanes.flash.includes(k)));
+    }
+  }
+  tab.onMainStarted(() => { if (anim.status !== 'idle') endAnimation(true); });
 
   // ── the inspector ──
   function knobRow(names) {
@@ -281,6 +388,13 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const at = tab.playheadAt(), v = visuals();
     // the overlay's snapshot is of the Linear Plot: on any other plot type it is never blitted
     const onLinear = !!v && v.currentPlotType === 'linear';
+    const a = anim.tick();
+    if (a && a.kind === 'ended') endAnimation(true);
+    else if (a) {
+      const selected = tab.view.selected, final = animFinal;
+      if (onLinear) overlay.paint((ctx, view) => (a.kind === 'frame' ? paintFrame(ctx, view, a.frame, final, { selected }) : paintShimmer(ctx, view, a.phase)));
+      if (a.kind === 'frame') applyFrame(a.frame);
+    }
     if (at) {
       if (onLinear) overlay.frame(at);
       if (firstBars && playheadEl) {
@@ -299,12 +413,14 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
 
   tab.onChange(() => {
     if (!shown) return;
+    syncAnimation();
     render();
     visuals()?.drawPlot?.();   // the lit nodes follow the spec, the parts and the selection
   });
 
   return {
     overlay,
+    animator: anim,
     get shown() { return shown; },
     /** fill the two hosts (again if the window was rebuilt) */
     mount({ left, inspector }) {
@@ -322,11 +438,19 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       tab.open();
       render();
       visuals()?.setComposerOverlay?.(overlay);
-      if (!was) raf(frame);
+      if (!was) {
+        doc.addEventListener?.('keydown', onKey);
+        plotEl = doc.getElementById?.('partitions-mirror-canvas') ?? null;   // the plot as the window shows it
+        plotEl?.addEventListener?.('click', onPlotClick);
+        raf(frame);
+      }
     },
     hide() {
       if (!shown) return;
       shown = false;
+      endAnimation(false);
+      doc.removeEventListener?.('keydown', onKey);
+      plotEl?.removeEventListener?.('click', onPlotClick); plotEl = null;
       tab.close();
       if (playheadEl) playheadEl.style.display = 'none';
       lastPlaying = false;

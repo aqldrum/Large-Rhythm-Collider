@@ -73,7 +73,8 @@ win.lrcModule.currentRhythms = [8, 7, 6, 5];
 check('no rhythm generated yet → null', bridgeModule.pageHost({ lrcModule: { currentGrid: 0, currentCompositeRhythm: [] } }).readRhythm() === null);
 
 console.log('\n— the tab');
-const bridge = bridgeModule.createComposerBridge(win, { runCompose: async (l, T, o) => compose(l, T, o), createContext: () => makeCtx(), timers: { setInterval: () => 1, clearInterval: () => {} } });
+// "show the work" off (as stored): the tab as it was before the Compose animation (assert-page-animate.mjs drives it on)
+const bridge = bridgeModule.createComposerBridge(win, { runCompose: async (l, T, o) => compose(l, T, o), createContext: () => makeCtx(), timers: { setInterval: () => 1, clearInterval: () => {} }, storage: { getItem: () => '0', setItem() {} } });
 const left = doc.createElement('div'), inspector = doc.createElement('div');
 doc.body.append(left, inspector);
 bridge.mountTab({ left, inspector });
