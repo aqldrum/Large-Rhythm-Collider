@@ -212,6 +212,11 @@ let audioCtx = null, pannerNode = null, distGainNode = null, muteGainNode = null
 let bedGain = null, rowsGain = null, auditionGain = null;
 let leadFilter = null, leadReverbSend = null;   // lead round-off: one shared lowpass + a send into the shared reverb
 let masterVolume = null;          // VOLUME knob: master gain between muteGainNode and the safety limiter
+// ── COMPOSE MODE (E1, 2026-10-22): the flight's own gate and the composition's bus (see suspendFlight below) ──
+// flightGain sits between the three flight buses and muteGainNode — NOT the user's MUTE, which stays theirs.
+// compositionGain feeds muteGainNode directly, so a composition is behind MUTE, VOLUME and the limiter but not the gate.
+let flightGain = null, compositionGain = null;
+let flightHold = null;            // while a composition holds the transport: { onTick, saved: { gridTicks, leadTicks, ticksPerSec, leadTicksPerSec }, at }
 let lastVolume = MASTER_VOLUME_DEFAULT;   // persisted musical setting (readout + re-entry); node tracks it
 let lastSpace = SPACE_DEFAULT;    // persisted SPACE position; drives both reverb sends (see setSpace)
 let leadLiveSources = 0;          // REAL lead source nodes still rendering (incl. release tails) — the capacity cap
@@ -427,9 +432,15 @@ export function initAudio() {
   bedGain = audioCtx.createGain(); bedGain.gain.value = 1;        // cos(0·π/2) = 1; mix starts at 0 (bed)
   rowsGain = audioCtx.createGain(); rowsGain.gain.value = 0;      // sin(0·π/2) = 0
   auditionGain = audioCtx.createGain(); auditionGain.gain.value = 1;
-  bedGain.connect(muteGainNode);
-  rowsGain.connect(muteGainNode);
-  auditionGain.connect(muteGainNode);
+  // COMPOSE MODE (E1): the flight buses meet at flightGain first; the composition's bus joins after it.
+  flightGain = audioCtx.createGain(); flightGain.gain.value = 1;
+  compositionGain = audioCtx.createGain(); compositionGain.gain.value = COMPOSITION_LEVEL;
+  bedGain.connect(flightGain);
+  rowsGain.connect(flightGain);
+  auditionGain.connect(flightGain);
+  flightGain.connect(muteGainNode);
+  compositionGain.connect(muteGainNode);
+  flightHold = null;
   // Final safety rail for rare dense-grid/reverb summation. Click prevention belongs to the per-voice
   // envelopes; this catches only exceptional aggregate peaks after every Cosmos dry/wet path is summed.
   outputLimiter = audioCtx.createDynamicsCompressor();
@@ -554,6 +565,7 @@ export function setRowPanning(model) {
 
 export function setGridSpatialField(items) {
   if (!audioCtx || !gridRowPlayer) return;
+  if (flightHold) return;          // COMPOSE MODE (E1): membership waits; flight's next pass after resume re-sends it
   noteFieldStats(items);           // always — the glide scales to the field even in fixed-rate mode
   applyScaledRate();               // before setField: the boundary tick it stamps must use the new rate
   gridRowPlayer.setField(items || [], currentTicks());
@@ -1639,6 +1651,7 @@ export function currentSkyRoot() {
 // Pure read of the GRID clock — the unit row programs and the lead are scheduled in. 0 before the
 // transport starts. Rate-dependent by design: it is what makes a grid cycle scale with playback speed.
 export function currentTicks() {
+  if (flightHold) return flightHold.saved.gridTicks;   // COMPOSE MODE (E1): the grid clock is held (gravity sees no motion)
   return audioCtx && transportStart != null ? absoluteTicks(audioCtx.currentTime) : 0;
 }
 
@@ -1733,6 +1746,7 @@ export function debugSkyState() {
 // swap. Rotation is deliberately not one of them.
 export function setField(items) {
   if (!audioCtx) return;
+  if (flightHold) return;          // COMPOSE MODE (E1): the bed stays released; flight's next pass after resume re-voices it
   const now = audioCtx.currentTime;
   currentField = items;
   // Both engines stay warm at every mix position — bedGain controls audibility, not star presence.
@@ -1792,6 +1806,8 @@ export function setTickRate(rate, fromUser = false) {
     if (speedMode !== SPEED_MODES.ONSET) leadTicksPerSec = rate;
     return;
   }
+  // COMPOSE MODE (E1): held — the rate lands in the saved transport and takes effect at resume (the ticks are kept)
+  if (flightHold) { flightHold.saved.ticksPerSec = rate; if (speedMode !== SPEED_MODES.ONSET) setLeadTickRate(rate); return; }
   const now = audioCtx.currentTime;
   const ticksSoFar = absoluteTicks(now);
   ticksPerSec = rate;
@@ -1803,6 +1819,7 @@ function setLeadTickRate(rate) {
   const next = Number(rate);
   if (!(next > 0)) return;
   if (!audioCtx || leadTransportStart == null) { leadTicksPerSec = next; return; }
+  if (flightHold) { flightHold.saved.leadTicksPerSec = next; return; }   // COMPOSE MODE (E1): held until resume
   const now = audioCtx.currentTime;
   const ticksSoFar = absoluteLeadTicks(now);
   leadTicksPerSec = next;
@@ -1859,6 +1876,7 @@ export function stopAudio() {
   audioCtx = null; pannerNode = null; distGainNode = null; muteGainNode = null; outputLimiter = null; leadLiveSources = 0;
   leadVoices = null; leadLayerVoices = null;
   bedGain = null; rowsGain = null; auditionGain = null; masterVolume = null;
+  flightGain = null; compositionGain = null; flightHold = null;   // COMPOSE MODE (E1)
   bedBus = null; reverbConv = null; reverbWet = null; leadFilter = null; leadReverbSend = null;
   mix = 0; auditionListening = true; auditionPinned = false;
 
@@ -1942,6 +1960,9 @@ function schedulerTick() {
   if (lastSchedulerTickAt !== null) audioTelemetry.tick(wall - lastSchedulerTickAt);
   lastSchedulerTickAt = wall;
   const now = audioCtx.currentTime;
+  // COMPOSE MODE (E1): while a composition holds the transport, the pulse is ITS (the Composer player's tick) and
+  // no flight phase runs — no chord walk, bed, re-swell, row or lead booking, so nothing lights without sound.
+  if (flightHold) { guardPhase('composition', () => flightHold.onTick?.(now)); return; }
   guardPhase('skyWalk', () => stepSkyWalk(skySeconds(now)));   // the sky's own chord clock (no click gating)
   // Voice the bed against the CURRENT chord on the AUDIO clock, not the render frame. Membership moved behind a
   // change-gate (setField); cheap and idempotent (≤10 stars × ≤3 degrees) when field and chord are stable.
@@ -2028,4 +2049,74 @@ function releaseAllLeadVoices(when) {
   if (!leadVoices) return;
   for (const voice of [...leadVoices]) releaseLeadVoice(voice, when, 0.05);
   if (leadLayerVoices) leadLayerVoices.fill(null);
+}
+
+// ══ COMPOSE MODE (E1, 2026-10-22 night): suspend the flight, hand the pulse to a composition, hand it back ═══════════
+// A composition (Composer/, through Cosmos/audio/cosmos-composer-player.js) takes over the transport at its own tempo.
+// Rules (survey, Cosmos/docs/composition-survey-2026-10-22/REPORT.md §1–2): never ctx.suspend() — every epoch is a
+// currentTime delta; save the grid and lead positions and rates; while held, the time controls write the SAVED
+// transport (SPEED is inert for the composition and lands on flight at resume); on resume re-anchor both epochs at the
+// saved ticks (no deck jump-ahead), reset the chord walk's baseline (no immediate step), and resync the lead's pointer
+// (no burst of every missed note). The sky clock is never re-anchored (it is wall seconds).
+export const COMPOSITION_LEVEL = 0.8;            // the composition bus under MUTE/VOLUME (proposed, by ear later)
+export const FLIGHT_SILENCE_SECONDS = 0.05;      // flightGain to 0
+export const FLIGHT_RESTORE_SECONDS = 1.5;       // flightGain back to 1 (the bed's own swell is 1.5 s too)
+
+/** Silence and hold the flight: flightGain → 0, the lead and the bed released, MIDI out all-notes-off, the transport's
+ *  positions saved, and from the next pulse on `onTick(now)` runs INSTEAD of every flight phase. → true, or false
+ *  with no audio or a hold already on. The composition itself never goes to MIDI out (v1). */
+export function suspendFlight({ onTick = null } = {}) {
+  if (!audioCtx || flightHold || transportStart == null) return false;
+  const now = audioCtx.currentTime;
+  flightHold = { onTick, at: now, saved: { gridTicks: absoluteTicks(now), leadTicks: leadTransportStart == null ? 0 : absoluteLeadTicks(now), ticksPerSec, leadTicksPerSec } };
+  const g = flightGain.gain;
+  g.cancelScheduledValues(now); g.setValueAtTime(g.value, now); g.linearRampToValueAtTime(0, now + FLIGHT_SILENCE_SECONDS);
+  releaseAllLeadVoices(now);
+  leadOnsetLog = leadOnsetLog.filter(onset => onset.time <= now);   // booked-ahead onsets will not sound: never light them
+  currentField = [];
+  for (const [id, bs] of bedStars) { bedStars.delete(id); dropBedStar(bs, now); }
+  try { cosmosMidi?.allNotesOff(); } catch {}
+  return true;
+}
+
+/** Re-point the held pulse (the composition's player tick). */
+export function setFlightHoldTick(onTick) { if (flightHold) flightHold.onTick = onTick; }
+
+/** Hand the transport back to flight: re-anchor, reset the chord baseline, resync the lead, fade flightGain in. */
+export function resumeFlight({ fadeSeconds = FLIGHT_RESTORE_SECONDS } = {}) {
+  if (!audioCtx || !flightHold) return false;
+  const now = audioCtx.currentTime, saved = flightHold.saved;
+  flightHold = null;
+  ticksPerSec = saved.ticksPerSec; leadTicksPerSec = saved.leadTicksPerSec;
+  transportStart = now - saved.gridTicks / ticksPerSec;
+  if (leadTransportStart != null) leadTransportStart = now - saved.leadTicks / leadTicksPerSec;
+  resetHarmonyDecisionBaseline();
+  if (lead) resyncSchedulePointer();
+  const g = flightGain.gain, fade = Math.max(0, Number(fadeSeconds) || 0);
+  g.cancelScheduledValues(now); g.setValueAtTime(g.value, now);
+  if (fade > 0) g.linearRampToValueAtTime(1, now + fade); else g.setValueAtTime(1, now);
+  return true;
+}
+
+export function flightSuspended() { return !!flightHold; }
+
+/** Where a composition plays: Cosmos's own context and the composition bus (behind MUTE, VOLUME, the limiter). */
+export function compositionOutput() {
+  return audioCtx && compositionGain ? { ctx: audioCtx, destination: compositionGain } : null;
+}
+
+/** The composition bus level, 0..1 of COMPOSITION_LEVEL (the range fade as the player flies away), smoothed. */
+export function setCompositionLevel(level, timeConstant = 0.25) {
+  if (!audioCtx || !compositionGain) return;
+  const v = Math.max(0, Math.min(1, Number(level) || 0)) * COMPOSITION_LEVEL;
+  compositionGain.gain.setTargetAtTime(v, audioCtx.currentTime, timeConstant);
+}
+
+/** Read-only snapshot for tests and the overlay: the hold, the saved transport and the live epochs. */
+export function debugFlightHold() {
+  return {
+    held: !!flightHold, saved: flightHold ? { ...flightHold.saved } : null,
+    ticksPerSec, leadTicksPerSec, transportStart, leadTransportStart, bedStars: bedStars.size, leadVoices: leadVoices ? leadVoices.size : 0,
+    nodes: { flightGain, compositionGain, muteGainNode, bedGain, rowsGain, auditionGain },
+  };
 }
