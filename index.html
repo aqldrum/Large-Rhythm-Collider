@@ -7,6 +7,8 @@
     <meta name="description" content="Large Rhythm Collider is a browser-based engine for polyrhythm analysis, visualization, and tuning system exploration.">
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="Playback/AdvancedPlayback/progression-bar.css?v=8">
+    <!-- Composer tab in the Partitions window (Composer/page/) -->
+    <link rel="stylesheet" href="Composer/page/composer-tab.css?v=20261022">
 </head>
 <body>
     <!-- Black Canvas Background -->
@@ -463,7 +465,7 @@
     </script>
 
     <!-- Interface Core Modules -->
-    <script src="Core Interface/LRCModule.js"></script>
+    <script src="Core Interface/LRCModule.js?v=20261022"></script>
     <script src="Core Interface/LRCHudController.js"></script>
     <script src="Core Interface/ExpandedInfoView.js"></script>
     <script src="Playback/Partitions/PartitionsDistribution.js"></script>
@@ -473,7 +475,7 @@
     <script src="Playback/Partitions/TransposeUI.js"></script>
     <script src="Playback/Partitions/PartitionsGlobalControls.js"></script>
     <script src="Playback/Partitions/PartitionsPlayback.js?v=20261021"></script>
-    <script src="Playback/Partitions/PartitionsUI.js?v=20261021"></script>
+    <script src="Playback/Partitions/PartitionsUI.js?v=20261022"></script>
     <script src="Core Interface/LRCSearch.js?"></script>
     <script src="Core Interface/LRCInterconsonance.js"></script>
     <script src="Core Interface/LRCExport.js"></script>
@@ -482,7 +484,7 @@
     <script src="Core Interface/CollectionsUI.js"></script>
 
     <!-- Visualizations -->
-    <script src="Core Interface/LRCVisuals.js"></script>
+    <script src="Core Interface/LRCVisuals.js?v=20261022"></script>
     <script src="Visualizations/NodePopups.js"></script>
     <script src="Visualizations/NodeUI.js"></script>
     <script src="Visualizations/ReflectionsExport.js"></script>
@@ -587,6 +589,8 @@
         <script src="Playback/ToneRowPlayback.js?v=20261021"></script>
         <!-- Shared voice library (Audio/voices/) as window.lrcVoices: the layers' sounds -->
         <script type="module" src="Audio/lrc-voices-bridge.js?v=20261021"></script>
+        <!-- The Composer (Composer/) as window.lrcComposer: the Composer tab beside Partitions -->
+        <script type="module" src="Composer/page/composer-bridge.js?v=20261022"></script>
         <script src="Core Interface/AudioEffects.js?v=20241022"></script>
 
         <!-- Progression Solver (Quality Painting on the main page) -->

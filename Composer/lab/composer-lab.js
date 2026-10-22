@@ -1,32 +1,15 @@
-// composer-lab.js — the lab page's view: DOM in, DOM out, over lab-controller.js (all state and actions live there).
-// Compose runs in the module worker for the full table (Composer/core/compose-worker.js) and on the main thread for
-// the lean one; Perform plays the spec through Audio/voices (lab-player.js).
+// composer-lab.js — the lab page's view: DOM in, DOM out, over the shared controller (Composer/perform/: all state
+// and actions live there, and the main page's Composer tab uses the same ones). Compose runs in the module worker for
+// the full table and on the main thread for the lean one (perform/compose-runner.js); Perform plays the spec through
+// Audio/voices (perform/composer-player.js). What it says about a spec comes from perform/readouts.js.
 
-import { compose } from '../core/compose.js';
-import { createLabController, PRESETS, soundChoices, drumModeChoices, kitChoices, DRUM_LAB_VOICES } from './lab-controller.js';
+import { createComposerController, PRESETS, soundChoices, drumModeChoices, kitChoices, DRUM_LAB_VOICES } from '../perform/composer-controller.js';
+import { createComposeRunner } from '../perform/compose-runner.js';
+import { KNOB_FIELDS, TABLE_FIELD, refusalText, readoutItems, knobChosen, decisionRows, rootGroups, strayRootOption, chordGot, progressionNote,
+  barColumns, noteTitle, chordTitle, modulationLabel, drumBarLabel, drumHitTitle } from '../perform/readouts.js';
 
-// ── Compose: the worker for the full table, this thread for the lean one ──
-let worker = null, seq = 0;
-const pending = new Map();
-function viaWorker(layers, cycleSeconds, { seed, overrides, progression }) {
-  if (!worker) {
-    worker = new Worker(new URL('../core/compose-worker.js', import.meta.url), { type: 'module' });
-    worker.onmessage = (event) => {
-      const p = pending.get(event.data.id);
-      if (!p) return;
-      pending.delete(event.data.id);
-      if (event.data.ok) p.resolve(event.data.spec); else p.reject(new Error(event.data.error));
-    };
-    worker.onerror = (event) => { for (const p of pending.values()) p.reject(new Error(event.message || 'the Compose worker failed')); pending.clear(); worker = null; };
-  }
-  const id = ++seq;
-  return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); worker.postMessage({ id, layers, cycleSeconds, options: { seed, overrides, progression } }); });
-}
-const runCompose = (layers, cycleSeconds, options) => (options.worker
-  ? viaWorker(layers, cycleSeconds, options)
-  : new Promise((resolve) => setTimeout(() => resolve(compose(layers, cycleSeconds, { seed: options.seed, overrides: options.overrides, progression: options.progression })), 0)));
-
-const lab = createLabController({ runCompose });
+const runCompose = createComposeRunner();
+const lab = createComposerController({ runCompose });
 const $ = (id) => document.getElementById(id);
 const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); for (const k of kids) e.append(k); return e; };
 const S = lab.state;
@@ -67,88 +50,58 @@ $('export').addEventListener('click', () => {
 });
 
 // ── knobs ──
-const KNOB_UI = [
-  { name: 'bars', label: 'Bars', make: () => el('select', {}, ...['', '1', '2', '4', '8'].map((v) => el('option', { value: v, textContent: v || 'auto' }))), read: (v) => (v === '' ? null : Number(v)) },
-  { name: 'slotsPerBar', label: 'Slots / bar', make: () => el('input', { type: 'number', min: 2, max: 16, placeholder: 'auto' }), read: (v) => (v === '' ? null : Number(v)) },
-  { name: 'frameCentsEachSide', label: 'Frame ±¢', make: () => el('input', { type: 'number', min: 0, max: 50, step: 0.5, placeholder: 'auto' }), read: (v) => (v === '' ? null : Number(v)) },
-  { name: 'modulation', label: 'Modulation', make: () => el('select', {}, el('option', { value: '', textContent: 'auto' }), el('option', { value: 'on', textContent: 'on' }), el('option', { value: 'off', textContent: 'off' })), read: (v) => (v === '' ? null : v === 'on') },
-  { name: 'anchors', label: 'Anchors', make: () => el('select', {}, ...['', 'partitioned', 'even'].map((v) => el('option', { value: v, textContent: v || 'auto' }))), read: (v) => (v === '' ? null : v) },
-  { name: 'settlePasses', label: 'Settle passes', make: () => el('select', { title: 'rounds of chords re-derived from the kept lead, then the lead re-mined over them, until the chords stop changing' }, ...['', '0', '1', '2', '3'].map((v) => el('option', { value: v, textContent: v || 'auto' }))), read: (v) => (v === '' ? null : Number(v)) },
-  { name: 'presence', label: 'Root presence', make: () => el('select', { title: "how the default root's presence is counted: its ±frame cluster, or its exact ratio alone" }, ...['', 'cluster', 'exact'].map((v) => el('option', { value: v, textContent: v || 'auto' }))), read: (v) => (v === '' ? null : v) },
-];
+const field = (f) => (f.kind === 'select'
+  ? el('select', f.title ? { title: f.title } : {}, ...f.options.map(([value, label]) => el('option', { value, textContent: label })))
+  : el('input', { type: 'number', ...f.attrs }));
 const chosenSpans = {};
-for (const k of KNOB_UI) {
-  const input = k.make(), chosen = el('span', { className: 'chosen' });
+for (const k of KNOB_FIELDS) {
+  const input = field(k), chosen = el('span', { className: 'chosen' });
   input.addEventListener('change', () => { lab.setKnob(k.name, k.read(input.value)); if (lab.canAutoRecompose()) lab.compose(); });
   chosenSpans[k.name] = chosen;
   $('knobs').append(el('div', { className: 'knob' }, el('label', { textContent: k.label }), input, chosen));
 }
 {
-  const table = el('select', {}, el('option', { value: 'full', textContent: 'full (worker)' }), el('option', { value: 'lean', textContent: 'lean (main thread)' }));
+  const table = field(TABLE_FIELD);
   table.addEventListener('change', () => lab.setTable(table.value));
   chosenSpans.table = el('span', { className: 'chosen' });
-  $('knobs').append(el('div', { className: 'knob' }, el('label', { textContent: 'Table' }), table, chosenSpans.table));
+  $('knobs').append(el('div', { className: 'knob' }, el('label', { textContent: TABLE_FIELD.label }), table, chosenSpans.table));
 }
 
 // ── the progression editor: a root a bar (auto by default), from the row's ±frame clusters ──
 $('progTake').addEventListener('click', () => { if (lab.takeProgression() && lab.canAutoRecompose()) lab.compose(); });
 $('progClear').addEventListener('click', () => { lab.clearProgression(); if (lab.canAutoRecompose()) lab.compose(); });
-const MOST_HEARD = 8;
 function renderProgression() {
   const box = $('progression'), rc = lab.rootChoices(), roots = lab.progression(), s = S.spec;
   $('progTake').disabled = !s || s.refused;
   if (rc.refused) { box.replaceChildren(el('span', { className: 'note', textContent: 'no roots: this row is refused' })); return; }
-  const opt = (c) => el('option', { value: c.ratio, textContent: `${c.ratio} · ${c.name} · ${c.cents.toFixed(1)}¢ · ${c.presence}×`, title: `${c.members} tone${c.members === 1 ? '' : 's'} in its ±${rc.frameCentsEachSide}¢ cluster, heard ${c.presence} times (${(100 * c.share).toFixed(1)} %)${c.isRoot ? '; the base root' : ''}${c.offGrid ? '; off the grid: a retune' : ''}` });
-  const heard = [...rc.candidates].sort((a, b) => b.presence - a.presence).slice(0, MOST_HEARD);
+  const opt = (o) => el('option', { value: o.value, textContent: o.text, title: o.title });
+  const groups = rootGroups(rc);
   // the spec this editor's roots last reached: the chord each bar got
   const got = s && !s.refused && !S.dirty ? s.chords : null;
   box.replaceChildren(...roots.map((ratio, k) => {
     const sel = el('select', { title: `bar ${k + 1}: its chord's root` }, el('option', { value: '', textContent: 'auto' }),
-      el('optgroup', { label: 'most heard' }, ...heard.map(opt)), el('optgroup', { label: 'all, by pitch from the root' }, ...rc.candidates.map(opt)));
-    if (ratio && !rc.candidates.some((c) => c.ratio === ratio)) sel.prepend(el('option', { value: ratio, textContent: `${ratio} (a tone of the row, not a cluster's loudest)` }));
+      el('optgroup', { label: 'most heard' }, ...groups.heard.map(opt)), el('optgroup', { label: 'all, by pitch from the root' }, ...groups.all.map(opt)));
+    if (ratio && !rc.candidates.some((c) => c.ratio === ratio)) sel.prepend(opt(strayRootOption(ratio)));
     sel.value = ratio ?? '';
     sel.addEventListener('change', () => { lab.setProgressionRoot(k, sel.value || null); if (lab.canAutoRecompose()) lab.compose(); });
-    const c = got?.[k], chord = el('span', { className: `chosen${c?.targeted ? ' over' : ''}`, textContent: c ? `${c.targeted ? 'asked → ' : 'chose '}${c.name}${c.fallback ? ' (fallback)' : ''}` : '' });
+    const g = chordGot(got?.[k]), chord = el('span', { className: `chosen${g.over ? ' over' : ''}`, textContent: g.text });
     return el('div', { className: 'knob' }, el('label', { textContent: `Bar ${k + 1}` }), sel, chord);
   }));
-  const asked = roots.filter(Boolean).length;
-  $('progNote').textContent = asked ? `${asked} of ${roots.length} bars asked` : 'every bar auto: Compose leads with the melody';
+  $('progNote').textContent = progressionNote(roots);
 }
 
 // ── readouts, refusal, decisions ──
-const fmt = (v, d = 1) => (typeof v === 'number' ? v.toFixed(d) : String(v));
 function renderReadouts() {
   const s = S.spec, out = $('readouts');
   out.replaceChildren();
-  $('refusal').textContent = '';
-  if (!s) return;
-  if (s.refused) {
-    const d = s.detail;
-    $('refusal').textContent = s.reason === 'tooDense' ? `Too dense: ${d.onsets.toLocaleString()} onsets is over the ${d.gate.toLocaleString()}-onset gate.`
-      : s.reason === 'tooLarge' ? `Grid too large: ${d.grid} is past 2^53, which v1 does not support.`
-      : `Too few tones: ${d.tones} distinct tone${d.tones === 1 ? '' : 's'}; Compose needs at least ${d.min}.`;
-    return;
-  }
-  const k = s.knobs, items = [['tempo', `${fmt(k.tempoBpm)} BPM`], ['meter', `${k.bars} × ${k.slotsPerBar}`], ['root', k.root], ['baseHz', fmt(k.baseHz, 2)], ['onsets', s.stats.onsets.toLocaleString()],
-    ['tones', s.stats.tones.toLocaleString()], ['table', k.table], ['composed in', `${fmt(S.lastMs, 0)} ms`], ['chords', s.chords.map((c) => c.name).join(' ')],
-    ...(s.input.progression ? [['progression', `${s.chords.filter((c) => c.targeted).length}/${s.chords.length} targeted (${k.leader})${s.chords.some((c) => c.fallback) ? `, fallback on bar ${s.chords.filter((c) => c.fallback).map((c) => c.bar + 1).join(', ')}` : ''}`]] : []),
-    ...(S.drums ? [['drums', `${S.drums.mode}${S.drums.enabled ? '' : ' (off)'} · ${S.drums.stats.total} strokes`]] : [])];
-  for (const [label, value] of items) out.append(el('span', {}, `${label} `, el('b', { textContent: value })));
-  for (const kn of KNOB_UI) {
-    const over = S.knobs[kn.name] != null, asked = (what) => s.decisions.find((d) => d.what === what)?.value;
-    let v = kn.name === 'modulation' ? (k.modulation ? 'on' : 'off') : k[kn.name];
-    if (kn.name === 'settlePasses') { const st = s.stats.settle || {}; v = `${asked('settlePasses') ?? '–'} · ${st.rounds ?? 0} used${st.oscillated ? ', oscillated' : st.converged ? ', settled' : ', cap hit'}`; }
-    if (kn.name === 'presence') v = asked('presence') ?? 'cluster';
-    chosenSpans[kn.name].textContent = over ? `asked: ${v}` : `chose ${v}`;
-    chosenSpans[kn.name].className = `chosen${over ? ' over' : ''}`;
-  }
-  chosenSpans.table.textContent = `ran ${k.table}`;
+  $('refusal').textContent = refusalText(s);
+  if (!s || s.refused) return;
+  for (const [label, value] of readoutItems(s, { lastMs: S.lastMs, drums: S.drums })) out.append(el('span', {}, `${label} `, el('b', { textContent: value })));
+  const chosen = knobChosen(s, S.knobs);
+  for (const [name, c] of Object.entries(chosen)) { chosenSpans[name].textContent = c.text; chosenSpans[name].className = `chosen${c.over ? ' over' : ''}`; }
 }
 function renderDecisions() {
-  const t = $('decisionTable');
-  // the drums' own decisions (as they play now), then what each bar plays and why
-  const drums = S.drums ? [...S.drums.decisions, ...S.drums.bars.map((b) => ({ what: `drums.bar ${b.bar + 1}`, value: b.fill ? `${b.mode} + fill` : b.mode, why: b.why }))] : [];
-  t.replaceChildren(...[...(S.spec?.decisions || []), ...drums].map((d) => el('tr', {}, el('td', { textContent: d.what }), el('td', { textContent: JSON.stringify(d.value) }), el('td', { textContent: d.why }))));
+  $('decisionTable').replaceChildren(...decisionRows(S.spec, S.drums).map((d) => el('tr', {}, el('td', { textContent: d.what }), el('td', { textContent: d.value }), el('td', { textContent: d.why }))));
 }
 
 // ── lanes ──
@@ -157,10 +110,7 @@ let laneKey = null;
 function renderLanes() {
   const s = S.spec, lanes = $('lanes'), head = $('playhead');
   if (!s || s.refused) { lanes.replaceChildren(head); laneKey = null; return; }
-  const T = s.knobs.cycleSeconds, starts = s.timeline.barStarts, N = starts.length;
-  const lens = starts.map((t, i) => (i + 1 < N ? starts[i + 1] : T) - t);
-  const cols = lens.map((l) => `${l.toFixed(4)}fr`).join(' ');
-  const barOf = (time) => { let k = 0; while (k + 1 < N && starts[k + 1] <= time + 1e-9) k++; return k; };
+  const { starts, lens, cols, barOf } = barColumns(s), N = starts.length;
   const mods = new Map(s.modulations.map((m) => [m.bar, m]));
   const rows = lab.currentParts().map((part) => {
     const name = el('span', { className: 'name', textContent: part.id });
@@ -178,16 +128,16 @@ function renderLanes() {
       const cell = el('div', { className: 'bar' });
       if (part.id === 'chords') {
         const ch = s.chords[k];
-        cell.append(el('span', { className: `chord${ch.targeted ? ' targeted' : ''}${ch.fallback ? ' fallback' : ''}`, textContent: ch.name, title: `${ch.quality}, root ${ch.rootTone}${ch.targeted ? ', the root asked' : ''}${ch.fallback ? ` (fallback: ${ch.fallback})` : ''}` }));
+        cell.append(el('span', { className: `chord${ch.targeted ? ' targeted' : ''}${ch.fallback ? ' fallback' : ''}`, textContent: ch.name, title: chordTitle(ch) }));
         const m = mods.get(k);
-        if (m) cell.append(el('span', { className: 'mod', textContent: `↻ ${m.cents >= 0 ? '+' : ''}${m.cents.toFixed(1)}¢`, title: `retuned from here: ${m.rawCents.toFixed(1)}¢ from the base fundamental` }));
+        if (m) { const ml = modulationLabel(m); cell.append(el('span', { className: 'mod', textContent: ml.text, title: ml.title })); }
       }
       return cell;
     });
     const counts = new Array(N).fill(0);
     for (const n of part.notes) {
       const k = barOf(n.time); counts[k]++;
-      const tick = el('div', { className: 'tick', title: `${n.ratio} ×2^${n.octave} · ${n.hz.toFixed(1)} Hz · ${n.duration.toFixed(3)} s${n.retrigger ? '' : ' (glide)'}` });
+      const tick = el('div', { className: 'tick', title: noteTitle(n) });
       tick.style.left = `${(100 * (n.time - starts[k])) / lens[k]}%`;
       tick.style.opacity = n.retrigger ? 0.9 : 0.45;
       cells[k].append(tick);
@@ -215,9 +165,9 @@ function drumLane(s, starts, lens, cols, barOf) {
   level.addEventListener('input', () => lab.setLevel('drums', level.value));
   const bars = el('div', { className: 'bars' });
   bars.style.gridTemplateColumns = cols;
-  const cells = starts.map((_, k) => el('div', { className: 'bar' }, el('span', { className: 'dlabel', textContent: `${d.bars[k].mode}${d.bars[k].fill ? ' + fill' : ''}`, title: d.bars[k].why })));
+  const cells = starts.map((_, k) => el('div', { className: 'bar' }, el('span', { className: 'dlabel', textContent: drumBarLabel(d.bars[k]), title: d.bars[k].why })));
   for (const h of d.hits) {
-    const k = barOf(h.time), tick = el('div', { className: `dtick ${h.voice}`, title: `${h.voice} · bar ${h.bar + 1}, slot ${h.pos} · ${h.time.toFixed(3)} s · velocity ${h.velocity.toFixed(2)} · ${h.snap}` });
+    const k = barOf(h.time), tick = el('div', { className: `dtick ${h.voice}`, title: drumHitTitle(h) });
     tick.style.left = `${(100 * (h.time - starts[k])) / lens[k]}%`;
     cells[k].append(tick);
   }

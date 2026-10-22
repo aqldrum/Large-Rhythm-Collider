@@ -1,6 +1,6 @@
 # Composer
 
-Press Compose and the Composer decomposes one rhythm's own tone row into an arranged tune: a lead, chords, comping, a bass, an inner voice and drums. Every note is an onset the row already plays, at its own time and with its own ratio. Then press Perform. It's a prototype: it runs in a standalone lab page and isn't yet part of the main LRC page.
+Press Compose and the Composer decomposes one rhythm's own tone row into an arranged tune: a lead, chords, comping, a bass, an inner voice and drums. Every note is an onset the row already plays, at its own time and with its own ratio. Then press Perform. It's a prototype. It runs in a standalone lab page, and as a **Composer tab** beside Partitions on the main LRC page (built 2026-10-22 night; not yet seen in a browser).
 
 `DESIGN_NOTES.md` holds the decisions (Avery's calls are marked **decided**), the proposals, the measurements and the open questions. This file is the short way in.
 
@@ -12,7 +12,14 @@ Serve the repo root as a static site and open the lab:
 python3 -m http.server 8000
 ```
 
-Then go to `http://localhost:8000/Composer/lab/composer-lab.html`. The page needs http, not `file://`, because Compose runs in a module worker. It plays through the shared voice library in `Audio/voices/`. The page isn't linked from `index.html`.
+**On the main page:** open `http://localhost:8000/` and generate a rhythm. Double-click the Playback panel's header to open the Partitions window, then pick **Composer** in its title bar's tab strip.
+- Compose reads the page's rhythm and Playback cycle. Changing either turns the button back to Compose.
+- Perform stops main playback, and main playback stops the Composer: one thing sounds at a time.
+- The upper-right Linear Plot lights the Composer's notes, a colour a part, with a playhead during Perform.
+- Click a lane's name to inspect that part: its sound, legato and level, then Harmony (the progression editor), Lines, Drums (mode and kit) and Tuning.
+- The section "Composer tab on the main page" in `DESIGN_NOTES.md` has the details.
+
+**The lab:** go to `http://localhost:8000/Composer/lab/composer-lab.html`. The lab isn't linked from `index.html`. Both pages need http, not `file://`, because Compose runs in a module worker. Both play through the shared voice library in `Audio/voices/`.
 
 - **Inputs:** four layer numbers (blank or 0 means absent), the cycle in seconds, a seed, and presets from 8:7:6:5 up to a 16,359-onset row.
 - **Compose → Perform ⇄ Stop.** Change any input or knob and the button goes back to Compose.
@@ -55,11 +62,24 @@ Then go to `http://localhost:8000/Composer/lab/composer-lab.html`. The page need
 
 - **`core/`:** pure ES modules (no DOM, fetch or clock) that run in a page, a worker or Node. `compose-worker.js` wraps `compose()` for a module worker.
 - **`core/trace.js`:** the compose trace, `compose(..., { trace: true })` → `spec.trace`: every decision as ordered, untimed events pointing at the row's onsets, for the main-page and Cosmos animations; `traceTimeline()` paces it. `TRACE.md` is the contract.
-- **`lab/`:**
-  - `composer-lab.html` and `composer-lab.js`: the page and its view
-  - `lab-controller.js`: state, with no DOM
-  - `lab-player.js`: a lookahead scheduler, with no DOM
-- **`tests/`:** plain Node scripts with no runner. `assert-drums.mjs` checks the drums against the row and against Partitions' own Euclid. `assert-trace.mjs` checks the trace never steers the spec and every ref is a real onset. `rhythms.mjs` is the shared rhythm set; `settle-baseline.mjs` pins the output from before settling; `time-lines.mjs` is a timing table, not a check.
+- **`perform/`:** what the lab and the main page share, with no DOM:
+  - `composer-controller.js`: state and actions
+  - `composer-player.js`: a lookahead scheduler, with an optional destination, injectable timers and a public `tick()`
+  - `compose-runner.js`: the worker for the full table, the main thread for the lean one
+  - `readouts.js`: what a view says about a spec
+- **`lab/`:** `composer-lab.html` and `composer-lab.js`, the lab page and its view. `lab-controller.js` and `lab-player.js` re-export the shared modules under their old names.
+- **`page/`:** the main page's Composer tab:
+  - `plot-highlights.js`: the pure spec → per-part node highlights mapping, and the playhead's place on the plot
+  - `plot-overlay.js`: draws the highlights on the Linear Plot through `LRCVisuals.setComposerOverlay`
+  - `tab-controller.js`: the tab's state (no DOM)
+  - `composer-tab.js` and `composer-tab.css`: the view
+  - `composer-bridge.js`: `window.lrcComposer`, loaded by `index.html`. `PartitionsUI.js` calls it from its tab strip.
+- **`tests/`:** plain Node scripts with no runner.
+  - `assert-drums.mjs` checks the drums against the row and against Partitions' own Euclid.
+  - `assert-trace.mjs` checks that the trace never steers the spec and that every ref is a real onset.
+  - `assert-page-*.mjs` check the main page's tab. They use `dom-stub.mjs` (a small DOM) and `site-scripts.mjs` (the site's classic scripts in a vm).
+  - `rhythms.mjs` is the shared rhythm set, and `settle-baseline.mjs` pins the output from before settling.
+  - `time-lines.mjs` is a timing table, not a check.
 - **`probe/`:** the 2026-10-21 cost probe (`FINDINGS.md`), the source of the onset gate.
 
 ## Tests
@@ -70,7 +90,7 @@ Run every suite (the Composer's, the shared voices', Cosmos's and MIDI Out's):
 for t in Composer/tests/assert-*.mjs Cosmos/tests/assert-*.mjs Audio/tests/assert-*.mjs Playback/MIDIOut.test.mjs; do node "$t" >/dev/null 2>&1 || echo FAIL $t; done
 ```
 
-A clean run prints nothing; there were 47 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs` and `assert-trace.mjs` added. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
+A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
 
 ## Where it lives
 

@@ -242,7 +242,10 @@ class LRCModule {
         // Reset frequency tracking
         this.ratioFrequencies.clear();
         
-        const fundamental = Math.max(...spacesPlot);
+        // A loop, not Math.max(...spacesPlot): spreading a row-sized array overflows the stack past ~124k onsets
+        // (Composer sprint fix, 2026-10-22).
+        let fundamental = spacesPlot[0];
+        for (let i = 1; i < spacesPlot.length; i++) if (spacesPlot[i] > fundamental) fundamental = spacesPlot[i];
         const ratioMap = new Map();
         const spacesMapping = new Map(); // Maps fraction -> array of spaces plot indices
         
@@ -349,7 +352,9 @@ class LRCModule {
     generateToneRowData(spacesPlot, fundamentalFreq = 110) {
         if (!spacesPlot || spacesPlot.length === 0) return [];
         
-        const fundamental = Math.max(...spacesPlot); // Largest space as fundamental
+        // Largest space as fundamental; a loop, not a spread (stack overflow past ~124k onsets; 2026-10-22)
+        let fundamental = spacesPlot[0];
+        for (let i = 1; i < spacesPlot.length; i++) if (spacesPlot[i] > fundamental) fundamental = spacesPlot[i];
         const toneRowData = [];
         
         spacesPlot.forEach((space, index) => {

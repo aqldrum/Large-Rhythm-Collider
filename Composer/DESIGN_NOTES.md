@@ -297,6 +297,8 @@ The code is split in three:
 - `lab-player.js`: the scheduler and audio graph, no DOM.
 - `composer-lab.js`: a thin view over both.
 
+(2026-10-22 night: the controller and player moved to `Composer/perform/`, shared with the main page's Composer tab. See "Composer tab on the main page".)
+
 `Composer/tests/assert-lab.mjs` drives the controller and player against a recording mock AudioContext.
 
 How it works. Each choice here is **proposed, not ruled**:
@@ -572,6 +574,71 @@ The seam: `levelOneLights(grid, { source })` names the level-1 source and `selec
 
 **Open, for Avery:** nothing to rule yet. The pacing and caps are for whoever builds the first renderer to tune, against the Linear Plot and the Cosmos dust layer.
 
+## Composer tab on the main page (built 2026-10-22 night, sprint)
+
+Avery's layout (the brief): a **Composer tab beside the Partitions tab**, in the same window. Partitions stays as it was. The upper-right Linear Plot stays visible and shows the Composer's selections live. Everything below that isn't the brief is **proposed, not ruled**. Nothing here has been seen in a browser yet.
+
+**Open it.** Double-click the Playback panel's header, as for Partitions. The window's title bar now has a tab strip, **Partitions | Composer**. The Composer tab swaps the window's left half and lower right for its own. The mirrored plot (upper right) is shared by both tabs.
+
+**What was built:**
+- **Promoted, shared with the lab** (`Composer/perform/`). Both the lab and the tab use these; the lab's old module names re-export them.
+  - `composer-controller.js` (was `lab/lab-controller.js`). New: `setInput({ layers, cycleSeconds })` takes the rhythm from outside, and a `beforePerform` hook. A change while Compose runs now drops that answer and turns the button back to Compose; before, a late answer could land on the new input. `kitChoices(voice, base)` takes the samples' base path.
+  - `composer-player.js` (was `lab/lab-player.js`). New: an optional `destination` (default `ctx.destination`), at the planner's request for Cosmos. `timers` stays injectable and `tick()` public, so a host can drive the pulse itself. Both are tested in `assert-lab.mjs`.
+  - `compose-runner.js`: the worker for the full table, the main thread for the lean one (moved out of the lab's view).
+  - `readouts.js`: what a view says about a spec, as data. That covers the knob fields and what Compose chose, the readouts line, a refusal in plain words, the decisions rows, and the progression editor's and lanes' labels. Both views now say the same things the same way.
+- **The page** (`Composer/page/`):
+  - `plot-highlights.js`: **the seam.** It's a pure mapping from spec to per-part node highlights (`highlightsOf`), plus the playhead mapping (`playheadAt`, `playheadX`) and what sounds at a moment (`soundingAt`).
+    - Each note's and stroke's absolute `tick` is found among the plotted onsets by an exact binary search, so every lit index is a real dot of the rhythm on the plot. A spec of another rhythm maps to `null`.
+    - The playhead turns spec time into the onset at or before it, plus the way into its gap. The plot's x is by index, so it steps evenly from dot to dot.
+    - A later sprint can animate Compose from its trace by handing the overlay one highlight set per step.
+  - `plot-overlay.js`: draws them through **the draw hook**, `LRCVisuals.setComposerOverlay()`.
+    - At the end of each Linear Plot draw, the overlay washes the row dark, leaving the invert button clear. Then it draws a dot in each part's colour on each of its nodes (drum strokes as squares). The selected part goes on top with a ring; a part that's off is drawn faint. Finally it snapshots the canvas.
+    - During Perform, each animation frame blits the snapshot back, then draws the playhead line, a ring on the onset under it and a glow on each node that's sounding.
+    - No dot of the row is redrawn per frame, so a 16k-onset row costs the same as 8:7:6:5.
+    - With no overlay set, the Linear Plot draws exactly as before. The test checks this call for call against d9f2f85.
+  - `tab-controller.js`: the shared controller, plus the page's rhythm, the one-sound rule, the selection and the memoized lit nodes.
+  - `composer-tab.js` and `composer-tab.css`: the view.
+  - `composer-bridge.js`: `window.lrcComposer` and the `lrccomposerready` event, the way `lrc-voices-bridge.js` exposes the voices.
+- **Site edits, small and marked:**
+  - `index.html`: the bridge (a module) and the CSS.
+  - `PartitionsUI.js`: the tab strip, the two hosts, `setActiveTab` and `showComposerTab`. Leaving the window or the tab hides the Composer.
+  - `LRCVisuals.js`: the hook, plus loops for the plot's min and max.
+  - `LRCModule.js`: the `Math.max(...spacesPlot)` at line 245, and the same spread in `generateToneRowData`, are loops now. A 200k-onset plot works; the old code overflowed in Node.
+
+**Behaviour (the brief), and the calls made (proposed):**
+- **The rhythm.** Compose reads the current page rhythm: LRCModule's layers and Playback's cycle duration.
+  - A new rhythm (`rhythmGenerated`) or a new cycle (checked each frame while the tab is shown) stops Composer playback and turns the button back to Compose.
+  - New layers clear the progression (its ratios belonged to the old row); a new cycle keeps it.
+  - **Proposed:** a cycle change counts as a rhythm change.
+  - **Proposed:** a site layer of 1 is given to Compose as absent. A layer of 1 adds no onset of its own, and the site's readouts count only layers above 1.
+- **One sound at a time.** Perform first stops main playback, and Partitions plays only under main playback. Main playback starting stops the Composer.
+  - **Proposed:** leaving the Composer tab, or closing the window, stops it too, so the Composer only sounds while its lanes and plot are in view.
+- **No auto-compose on open (proposed).** The lab composes at once, but on the page a 16k row takes about 1.7 s in the worker. You press Compose.
+- **The plot.** The lit nodes show only on the Linear Plot. On another plot type, the tab shows a note and a "Show the Linear Plot" button; it doesn't switch the plot by itself (proposed), because switching plots stops main playback.
+  - Lit nodes for a spec made on the same rhythm stay lit after a knob change, until the next Compose; the lanes behave the same way.
+- **Part colours (proposed):** lead white, chords violet `#c56cf0`, comping pink `#ff9ff3`, bass blue `#54a0ff`, inner orange `#ff9f43`, drums red `#ff4757` (squares). They're chosen apart from the four layer colours. The **wash** dims the row to about 40% so the selections read on dense plots.
+- **Layout.** Each lane head is a part's name (click it to select the part) and an on/off toggle. Sound, legato and level live in the inspector, per the brief.
+  - Tempo and Glide sit in the header: they're global to Perform.
+  - The inspector opens on the section the part belongs to: chords → Harmony; lead, comping, bass and inner → Lines; drums → Drums. Any section can be picked by hand.
+  - Under Harmony: the progression editor, modulation, settle passes and root presence. Under Lines: bars, slots per bar, anchors, the table and glide. Under Drums: mode, fills, on/off, level and the kit. Under Tuning: the frame, the root, baseHz, and each bar's chord and offset.
+- **The window remembers the tab** it was last on while the page is open (no storage), and reopens there.
+- **Audio.** The Composer makes its own AudioContext on the first Perform and feeds its own limiter into the destination. It doesn't pass through the main page's master or effects (`AudioEffects.js`), and there's no MIDI out.
+
+**Tests** (Node, over a small DOM in `tests/dom-stub.mjs`, with the site's own classic scripts loaded in a vm by `tests/site-scripts.mjs`):
+- `assert-page-highlights.mjs` (94 checks): every lit index is the site's own onset at the note's tick, per part, on 8:7:6:5 up to the 16,359-onset row. It also covers the playhead mapping, what sounds when, and the overlay's drawing on a recording canvas.
+- `assert-page-tab.mjs` (34): the rhythm, cycle and layer changes, a change mid-compose, one sound at a time through an injected host, the progression and drums carried, the selection.
+- `assert-page-view.mjs` (38): the bridge's exports, and the tab end to end (Compose, lanes, Perform, frames, main taking over, the inspector, the Linear Plot note, a rhythm change, a refusal, hide). It also runs the lab on the shared modules.
+- `assert-page-site.mjs` (27): every path index.html references exists, and the module graph resolves. It also covers the LRCModule fix (with the old version overflowing), the LRCVisuals hook (identical with no overlay), and PartitionsUI's tab strip.
+
+**Open (for Avery):**
+1. **Playback across tabs.** Should the Composer keep playing when you switch to the Partitions tab, so you can look at its controls while listening? Built: it stops.
+2. **The wash.** Is dimming the row right, or should the row keep its layer colours under the lit nodes? And are the part colours readable?
+3. **Other plot types.** Should the lit nodes also show on the Wheel or Centrifuge, or is the Linear Plot enough?
+4. **The Composer's audio path.** Should it go through the page's master and effects (and MIDI out), or stay on its own graph as built?
+5. **Auto-compose on open** for small rows, as the lab does?
+6. **Zoom into a section** (decided as later): the lanes have one column a bar. The Linear Plot gesture (cmd/alt+scroll) is suspended while the window is open, as it is for Partitions.
+7. **Found, not fixed:** in Node, `LRCModule.calculateTotalLCM(...activeLayers)` returns NaN for fewer than four layers. `lcm(x, undefined)` is NaN, so a rhythm entered with blank layers (768:769 with C and D empty) gets a NaN grid. Entering 1 for an unused layer works. This is untested in a browser; worth a look as its own live-site fix.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
@@ -620,7 +687,7 @@ Raised during the sprint:
 2. **Comping as chords.**
 3. **Bass weighted to state the root** on strong slots.
 4. **Several loops of the same row,** each with a different decomposition, for form and development.
-5. **The Composer window** in the LRC: the layout above, with the lanes, mirror and inspector.
+5. **The Composer window** in the LRC: built 2026-10-22 night as a tab of the Partitions window ("Composer tab on the main page"); Avery's browser pass is next.
 6. **v2:** bass-led composition; a full arpeggiator for the inner voice.
-7. **Outside the Composer:** `Core Interface/LRCModule.js:245` spreads `Math.max(...spacesPlot)`, which overflowed the stack past ~124k onsets in Node (untested in a browser). This is a live-site risk, and a one-line fix.
+7. **Outside the Composer:** `Core Interface/LRCModule.js:245` spread `Math.max(...spacesPlot)`, which overflowed the stack past ~124k onsets in Node. Fixed 2026-10-22 night, with the same spreads in `generateToneRowData` and in LRCVisuals' plot.
 

@@ -1,0 +1,91 @@
+/* composer-tab.css — the Composer tab inside the Partitions window (Composer/page/composer-tab.js), in the window's
+   own look: #1a1a1a panels, #2a2a2a cells, #444 lines, #00ff88 accents. Every class is ctab-*; the tab strip in the
+   window's title bar is lrc-window-tab*. */
+
+/* the tab strip in the Partitions window's title bar */
+.lrc-window-tabs { display: flex; gap: 6px; margin-left: 16px; }
+.lrc-window-tab { background: rgba(40, 40, 40, 0.6); border: 1px solid #444; color: #ccc; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; letter-spacing: 1px; }
+.lrc-window-tab:hover { background: rgba(60, 60, 60, 0.8); color: #fff; }
+.lrc-window-tab.active { background: #00ff88; color: #000; border-color: #00ff88; }
+
+/* the two hosts */
+.ctab-left { width: 50%; display: flex; flex-direction: column; overflow: hidden; background: #1a1a1a; padding: 12px 16px; gap: 8px; box-sizing: border-box; color: #ccc; font-size: 12px; }
+.ctab-inspector { background: #2a2a2a; border: 1px solid #444; border-radius: 4px; padding: 10px; overflow: hidden; display: flex; flex-direction: column; gap: 6px; min-height: 0; color: #ccc; font-size: 12px; }
+
+.ctab-left input, .ctab-left select, .ctab-left button, .ctab-inspector input, .ctab-inspector select, .ctab-inspector button {
+  background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 3px 6px; font: inherit; font-size: 11px; }
+.ctab-left button, .ctab-inspector button { cursor: pointer; }
+.ctab-left button:hover, .ctab-inspector button:hover { border-color: #00ff88; }
+.ctab-left input[type=range], .ctab-inspector input[type=range] { padding: 0; accent-color: #00ff88; border: none; background: none; }
+
+.ctab-head { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; padding-bottom: 8px; border-bottom: 1px solid #333; }
+.ctab-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ctab-rhythm { color: #ccc; margin-right: 6px; }
+.ctab-rhythm b { color: #00ff88; font-weight: 600; letter-spacing: 1px; }
+.ctab-seed { width: 56px; }
+.ctab-num { width: 64px; }
+.ctab-num.changed { border-color: #ffb347 !important; color: #ffb347 !important; }
+.ctab-tempo { width: 110px; }
+.ctab-glide { width: 90px; }
+.ctab-muted { color: #888; font-size: 11px; }
+.ctab-status { color: #888; font-size: 11px; }
+.ctab-left .ctab-go { background: #00ff88; color: #000; font-weight: 700; border: none; padding: 5px 18px; min-width: 104px; font-size: 12px; }
+.ctab-left .ctab-go.stop { background: #ff4444; color: #fff; }
+.ctab-left .ctab-go:disabled { opacity: .55; cursor: default; }
+.ctab-btn { color: #00ff88 !important; }
+.ctab-toggle { padding: 1px 6px !important; font-size: 10px !important; }
+.ctab-toggle.on { border-color: #00ff88 !important; color: #00ff88 !important; }
+
+.ctab-note { color: #ccc; background: rgba(0, 255, 136, 0.06); border: 1px solid #2f5d45; border-radius: 4px; padding: 6px 8px; flex-shrink: 0; }
+.ctab-refusal { color: #ff4444; font-weight: 600; flex-shrink: 0; }
+.ctab-refusal:empty { display: none; }
+.ctab-readouts { display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: monospace; font-size: 11px; flex-shrink: 0; }
+.ctab-readouts b { color: #00ff88; font-weight: 400; }
+
+.ctab-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; }
+.ctab-lanes { display: grid; gap: 4px; position: relative; }
+.ctab-lane { display: grid; grid-template-columns: 112px 1fr; gap: 6px; align-items: stretch; }
+.ctab-lane-head { display: flex; gap: 4px; align-items: center; background: rgba(255, 255, 255, 0.03); border: 1px solid #333; border-radius: 4px; padding: 3px 4px; }
+.ctab-lane .ctab-lane-name { flex: 1; text-align: left; border: none !important; border-left: 3px solid #888 !important; border-radius: 2px !important; background: none !important; font-weight: 600; font-size: 12px !important; padding: 2px 6px !important; }
+.ctab-lane.selected .ctab-lane-head { border-color: #00ff88; background: rgba(0, 255, 136, 0.07); }
+.ctab-lane.off .ctab-bars { opacity: .3; }
+.ctab-bars { display: grid; gap: 2px; position: relative; }
+.ctab-bar { background: #2a2a2a; border-radius: 3px; position: relative; min-height: 26px; overflow: hidden; }
+.ctab-tick { position: absolute; top: 5px; bottom: 5px; width: 2px; }
+.ctab-chord { position: absolute; left: 5px; top: 5px; font-weight: 600; color: #fff; font-size: 11px; }
+.ctab-chord.targeted { color: #00ff88; }
+.ctab-chord.fallback { color: #ffb347; }
+.ctab-mod { position: absolute; right: 4px; top: 2px; font-size: 10px; color: #ffb347; }
+.ctab-dlabel { position: absolute; right: 4px; top: 2px; font-size: 9px; color: #888; }
+.ctab-dtick { position: absolute; width: 2px; height: 4px; }
+.ctab-dtick.kick { top: 3px; background: #ff6b6b; } .ctab-dtick.snare { top: 8px; background: #f9ca24; } .ctab-dtick.hat { top: 13px; background: #aaa; }
+.ctab-dtick.perc { top: 18px; background: #4ecdc4; } .ctab-dtick.cym { top: 23px; background: #fff; }
+.ctab-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; display: none; z-index: 2; }
+
+.ctab-decisions summary { cursor: pointer; color: #888; }
+.ctab-decisions-table { border-collapse: collapse; width: 100%; margin-top: 6px; font-size: 11px; }
+.ctab-decisions-table td { border-top: 1px solid #333; padding: 2px 5px; vertical-align: top; }
+.ctab-decisions-table td:first-child { color: #00ff88; white-space: nowrap; font-family: monospace; }
+.ctab-decisions-table td:nth-child(2) { font-family: monospace; white-space: nowrap; }
+
+/* the inspector */
+.ctab-insp-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex-shrink: 0; }
+.ctab-swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.ctab-insp-name { color: #fff; font-size: 13px; margin-right: 4px; }
+.ctab-insp-head select { max-width: 130px; }
+.ctab-level { width: 70px; }
+.ctab-insp-parts { display: flex; flex-wrap: wrap; gap: 4px; flex-shrink: 0; }
+.ctab-inspector .ctab-part-pick { font-size: 10px; padding: 1px 6px; border-left-width: 3px !important; }
+.ctab-inspector .ctab-part-pick.active { color: #00ff88; }
+.ctab-insp-tabs { display: flex; gap: 4px; border-bottom: 1px solid #444; padding-bottom: 6px; flex-shrink: 0; }
+.ctab-inspector .ctab-insp-tab { background: rgba(40, 40, 40, 0.6); color: #ccc; padding: 3px 10px; }
+.ctab-inspector .ctab-insp-tab.active { background: #00ff88; color: #000; border-color: #00ff88; }
+.ctab-insp-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 8px; }
+.ctab-sub { color: #00ff88; font-size: 12px; font-weight: 600; }
+.ctab-knobs { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+.ctab-knob { display: flex; flex-direction: column; gap: 2px; }
+.ctab-knob label { color: #aaa; font-size: 11px; }
+.ctab-knob input[type=number] { width: 64px; }
+.ctab-prog select { max-width: 190px; }
+.ctab-chosen { font-size: 10px; color: #888; }
+.ctab-chosen.over { color: #ffb347; }
