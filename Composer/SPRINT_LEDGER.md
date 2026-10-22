@@ -24,8 +24,8 @@ The planner keeps this file current after every phase. If the planner thread is 
 | --- | --- | --- | --- |
 | A. Drums (core + lab) | `sprint/drums` | none | MERGED (b8c2617..e9e8305, merge d9f2f85); 46/0 suites |
 | B. Targeted progressions (core + lab) | `sprint/progression` | none | MERGED (0d4c15c..fa6d814); 45/0 suites |
-| S. Cosmos seam survey + superrow probe (read-only) | none; output in the planner's scratchpad `cosmos-survey/REPORT.md` | none | dispatched |
-| E1. Cosmos Compose mode: Rhythm card + Grid card superrow, bed silenced, clock takeover/hand-back, LOD exit; new `Composer/core/superrow.js` | `sprint/cosmos-compose` | S (seam map, window definition) | waiting |
+| S. Cosmos seam survey + superrow probe (read-only) | none; report saved to the git-ignored `Cosmos/docs/composition-survey-2026-10-22/REPORT.md` | none | DONE |
+| E1. Cosmos Compose mode: Rhythm card + Grid card superrow, bed silenced, clock takeover/hand-back, LOD exit; new `Composer/core/superrow.js` | `sprint/cosmos-compose` | S (seam map, window definition) | dispatched (from 5c82db7) |
 | C. Composer tab on the main page | `sprint/integration` | A+B merged | dispatched (from d9f2f85) |
 | T. Compose trace: an opt-in, pure observer in `Composer/core`; output unchanged when it's off | `sprint/trace` | A+B merged | dispatched (from d9f2f85) |
 | E2. Cosmos onset dust + choreography from the trace | `sprint/cosmos-dust` | T, E1 | waiting |
@@ -51,3 +51,5 @@ Parallel lanes: E1 runs beside A/B (it touches only Cosmos files and a new core 
 - Phase B merged. Open for Avery: should the lead vote on qualities in round 0 (more faithful, loses the 2× speed) or should that be a switch? Also the fallback names, and per-bar presence in the menus.
 - Phase A merged (additive conflicts in compose() options, lab readouts/render, controller header, lab tests); 46/0 suites. Open for Avery (drums): beat order on odd S (Partitions' order, or the long beat first); hats every slot or on beats only; should the bass vote in with/against; fills only on phrases of 4+ bars. Note: anchors are grid ticks, so strokes snap to the nearest onset in a swing-0.5 window.
 - C and T dispatched in parallel. C must not edit Composer/core; T edits only core, tests and docs.
+- Survey done. Key facts: `cosmos-audio.js` is the one clock authority, with no suspend API; MIDI out sits behind no gain; superrow common grid = G < 2^24, so the 2^53 gate never fails; most cube grids pass whole; proposed budget Θ = 65,536 nodes as a tier key. E1 dispatched with the planner's proposed defaults (see its brief in the report when it lands). C was asked to give the player an optional `destination`, with injectable timers, for Cosmos reuse.
+- Merge notes: E1 may add ≤ 5 lines to `compose.js` (a prebuilt-row entry), which conflicts with T, and imports `Composer/lab/lab-player.js` from one adapter. Re-point that import after C merges.
