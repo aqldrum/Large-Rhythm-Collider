@@ -38,22 +38,26 @@ export const QUALITY_TIERS = {
     // Row-voice panning. 'HRTF' is true 3D (above/below, front/back) but runs a convolution per sounding star
     // on the audio thread — ~8× equal-power in a measured offline render. 'equalpower' keeps left/right.
     rowPanning: 'equalpower',
+    // Compose mode (E1, 2026-10-22, proposed): the Grid card's superrow budget Θ in nodes (Composer/core/superrow.js).
+    // Compose itself is flat in Θ (the Composer probe); what grows is the build and E2's dust, hence a tier key.
+    // Low's 16,384 is the card's own audition ceiling (ROW_MAX_PLAYBACK_ONSETS).
+    composeBudget: 16384,
   },
   medium: {
     id: 'medium', label: 'Medium',
     poolCap: 2, spawn: 8, evict: 16, spawnMin: 4, dprCap: 1.5,
-    solveBacklog: 60, bloomMaxRange: 1000, maxFps: Infinity, rowPanning: 'equalpower',
+    solveBacklog: 60, bloomMaxRange: 1000, maxFps: Infinity, rowPanning: 'equalpower', composeBudget: 65536,
   },
   high: {
     id: 'high', label: 'High',
     poolCap: 6, spawn: 10, evict: 20, spawnMin: 4, dprCap: 2,
     solveBacklog: 80, bloomMaxRange: Infinity,   // keep every rhythm
-    maxFps: Infinity, rowPanning: 'HRTF',
+    maxFps: Infinity, rowPanning: 'HRTF', composeBudget: 262144,
   },
   ultra: {
     id: 'ultra', label: 'Ultra',
     poolCap: 8, spawn: 12, evict: 24, spawnMin: 5, dprCap: 2,
-    solveBacklog: 120, bloomMaxRange: Infinity, maxFps: Infinity, rowPanning: 'HRTF',
+    solveBacklog: 120, bloomMaxRange: Infinity, maxFps: Infinity, rowPanning: 'HRTF', composeBudget: 262144,
   },
 };
 

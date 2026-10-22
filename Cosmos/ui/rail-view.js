@@ -106,7 +106,7 @@ function paintControl(name, value) {
     const pos = railParams.norm(name);                                   // [0,1] knob position
     knob.indicator.style.transform = `translateX(-50%) rotate(${pos * KNOB_SWEEP_DEG - KNOB_SWEEP_DEG / 2}deg)`;
     knob.dial.setAttribute('aria-valuenow', pos.toFixed(3));
-    knob.readout.textContent = formatReadout(railParams.spec(name), value);
+    knob.readout.textContent = knob.inert ? knob.inertReadout : formatReadout(railParams.spec(name), value);   // COMPOSE MODE (E1): a held knob reads as held
     return;
   }
   const btn = buttonEls.get(name);
@@ -179,6 +179,7 @@ function buildKnob(name) {
   const onMove = e => { if (dragging) railParams.setNorm(name, startPos + (startY - e.clientY) * KNOB_DRAG_PER_PX, { persist: false }); };   // live audio, no per-move localStorage write
   const onUp = () => { dragging = false; dial.classList.remove('active'); railParams.persistNow(); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };   // flush the drag's final value once
   dial.addEventListener('mousedown', e => {
+    if (knobEls.get(name)?.inert) return;   // COMPOSE MODE (E1): held
     e.preventDefault(); dragging = true; startY = e.clientY; startPos = railParams.norm(name);
     dial.classList.add('active'); document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
   });
@@ -188,6 +189,7 @@ function buildKnob(name) {
   // keydown and fly the ship. Only reached when the knob was focused by KEYBOARD: a mouse-focused knob hands
   // its focus back to the flight on the next key (flight-view.js bindControls, FOCUS HAND-BACK).
   dial.addEventListener('keydown', e => {
+    if (knobEls.get(name)?.inert) return;   // COMPOSE MODE (E1): held
     const step = e.shiftKey ? 0.002 : 0.02;
     const d = (e.key === 'ArrowUp' || e.key === 'ArrowRight') ? step : (e.key === 'ArrowDown' || e.key === 'ArrowLeft') ? -step : 0;
     if (!d) return;
@@ -357,6 +359,23 @@ export function applyRailToEngine() {
     ENGINE_SETTERS[name]?.(value);
     paintControl(name, value);
   }
+}
+
+// COMPOSE MODE (E1, 2026-10-22): a knob held inert while a composition owns the clock (SPEED: the composition keeps its
+// own tempo, and flight's value waits). Drag, keys and the reset gesture do nothing; the readout shows `readout` and
+// the knob dims. Inline style, so the stylesheet is untouched. Un-holding repaints it from railParams.
+export function setKnobInert(name, inert, { readout = 'HELD', title = '' } = {}) {
+  const knob = knobEls.get(name);
+  if (!knob) return false;
+  knob.inert = !!inert; knob.inertReadout = readout;
+  const wrap = knob.dial.parentElement;
+  wrap?.classList.toggle('rail-knob-inert', knob.inert);
+  if (wrap) { wrap.style.opacity = knob.inert ? '0.4' : ''; wrap.title = knob.inert ? title : ''; }
+  knob.dial.style.pointerEvents = knob.inert ? 'none' : '';
+  knob.dial.tabIndex = knob.inert ? -1 : 0;
+  knob.dial.setAttribute('aria-disabled', String(knob.inert));
+  paintControl(name, railParams.get(name));
+  return true;
 }
 
 // Cosmos-entry reset for UI/transient state. Persisted musical choices survive; face, HOLD, MUTE, and
