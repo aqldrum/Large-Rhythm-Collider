@@ -9,6 +9,9 @@
 //   parts      the spec's parts as they play now: a sound, legato or on/off change re-articulates the part from the
 //              spec with compose.js' own `rearticulate` (the decided legato rule), nothing re-mined; a level is the
 //              part's bus
+//   tempo      a playback tempo over the spec's own (TEMPO_LIMITS): the player scales the spec's times by
+//              factor = the spec's tempo / this one, live, nothing re-composed; a new Compose resets it to the new
+//              spec's tempo (proposed). The spec is never touched; JSON export adds a top-level `playback`.
 
 import { compose, rearticulate, PART_IDS } from '../core/compose.js';
 import { NOTE_INSTRUMENT_IDS, getInstrument } from '../../Audio/voices/recipes.js';
@@ -26,6 +29,8 @@ export const PRESETS = Object.freeze([
 ]);
 export const KNOBS = Object.freeze(['bars', 'slotsPerBar', 'frameCentsEachSide', 'modulation', 'anchors']);
 export const AUTO_RECOMPOSE_MS = 300;
+/** the playback tempo's range, BPM */
+export const TEMPO_LIMITS = Object.freeze([30, 300]);
 /** every sound a part can play: the note-role instruments of Audio/voices, in the catalog's order */
 export const soundChoices = () => NOTE_INSTRUMENT_IDS.map((id) => ({ id, label: getInstrument(id).label }));
 
@@ -44,7 +49,7 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
   const state = {
     input: { layers: [...PRESETS[0].layers], cycleSeconds: PRESETS[0].cycleSeconds, seed: 1 },
     knobs: Object.fromEntries(KNOBS.map((k) => [k, null])),
-    table: 'full', spec: null, parts: {}, levels: Object.fromEntries(PART_IDS.map((id) => [id, 0.8])), glideMs: 12,
+    table: 'full', spec: null, parts: {}, levels: Object.fromEntries(PART_IDS.map((id) => [id, 0.8])), glideMs: 12, tempoBpm: null,
     status: 'idle', error: null, lastMs: null, dirty: true,
   };
   const listeners = new Set();
@@ -76,7 +81,7 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
         if (mine !== run) return state.spec;   // a newer compose took over
         state.spec = spec; state.lastMs = clock() - t0; state.dirty = false;
         if (spec.refused) { state.parts = {}; state.status = 'refused'; }
-        else { state.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); state.status = 'ready'; }
+        else { state.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); state.status = 'ready'; state.tempoBpm = spec.knobs.tempoBpm; }
       } catch (err) {
         if (mine !== run) return state.spec;
         state.status = 'error'; state.error = String(err && err.message ? err.message : err);
@@ -102,7 +107,9 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
     currentParts: () => PART_IDS.map((id) => state.parts[id]).filter(Boolean),
     /** the spec with the parts as they play now: what JSON export downloads */
     currentSpec: () => (state.spec && !state.spec.refused ? { ...state.spec, parts: api.currentParts() } : state.spec),
-    exportJSON: () => JSON.stringify(api.currentSpec(), null, 2),
+    /** what JSON export downloads: the spec as it plays now, plus how it is played (never written into the spec) */
+    exportObject: () => (state.spec && !state.spec.refused ? { ...api.currentSpec(), playback: { tempoBpm: api.tempo(), factor: api.tempoFactor() } } : state.spec),
+    exportJSON: () => JSON.stringify(api.exportObject(), null, 2),
     setPart(id, { sound, legato, enabled } = {}) {
       const part = state.parts[id];
       if (!part) return;
@@ -111,6 +118,21 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
     },
     setLevel(id, value) { state.levels[id] = Number(value); player?.setLevel(id, state.levels[id]); },   // no re-render: a slider is mid-drag
     setGlide(ms) { state.glideMs = Math.max(0, Number(ms) || 0); player?.setGlide(state.glideMs / 1000); },   // portamento; no re-render
+    /** the spec's own tempo (null without a spec) */
+    specTempo: () => (state.spec && !state.spec.refused ? state.spec.knobs.tempoBpm : null),
+    /** the playback tempo, BPM (the spec's own until changed) */
+    tempo: () => (api.specTempo() == null ? null : state.tempoBpm ?? api.specTempo()),
+    /** what the player scales spec time by: the spec's tempo / the playback tempo */
+    tempoFactor: () => { const s = api.specTempo(), t = api.tempo(); return s && t ? s / t : 1; },
+    /** a playback tempo, clamped to TEMPO_LIMITS; live while playing (within the lookahead); no re-render */
+    setTempo(bpm) {
+      const v = Number(bpm);
+      if (!Number.isFinite(v) || v <= 0 || api.specTempo() == null) return;
+      state.tempoBpm = Math.min(TEMPO_LIMITS[1], Math.max(TEMPO_LIMITS[0], v));
+      player?.setTimeFactor(api.tempoFactor());
+    },
+    /** back to the spec's own tempo */
+    resetTempo() { if (api.specTempo() == null) return; state.tempoBpm = api.specTempo(); player?.setTimeFactor(1); },
 
     perform() {
       if (!state.spec || state.spec.refused) return;
@@ -119,6 +141,7 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
       player ??= createPlayer({ ctx, timers });
       for (const id of PART_IDS) player.setLevel(id, state.levels[id]);
       player.setGlide(state.glideMs / 1000);
+      player.setTimeFactor(api.tempoFactor());
       player.play(state.spec, api.currentParts);
       state.status = 'playing'; changed();
     },

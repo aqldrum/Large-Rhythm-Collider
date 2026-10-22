@@ -44,6 +44,19 @@ $('seed').addEventListener('change', (e) => lab.setSeed(e.target.value));
 const showGlide = () => { $('glide').value = lab.state.glideMs; $('glideOut').textContent = `${lab.state.glideMs} ms`; };
 $('glide').addEventListener('input', (e) => { lab.setGlide(e.target.value); showGlide(); });
 showGlide();
+// tempo: the playback BPM (the spec's own until changed; a new Compose resets it), live while playing
+const showTempo = () => {
+  const bpm = lab.tempo(), spec = lab.specTempo(), off = bpm == null;
+  for (const id of ['tempo', 'tempoBpm', 'tempoReset']) $(id).disabled = off;
+  if (off) { $('tempoBpm').value = ''; return; }
+  $('tempo').value = bpm;
+  if (document.activeElement !== $('tempoBpm')) $('tempoBpm').value = Number(bpm.toFixed(1));
+  $('tempoBpm').classList.toggle('changed', Math.abs(bpm - spec) > 1e-9);
+  $('tempoReset').title = `back to the tempo Compose chose (${spec.toFixed(1)} BPM)`;
+};
+$('tempo').addEventListener('input', (e) => { lab.setTempo(e.target.value); showTempo(); });
+$('tempoBpm').addEventListener('change', (e) => { lab.setTempo(e.target.value); e.target.blur(); showTempo(); });
+$('tempoReset').addEventListener('click', () => { lab.resetTempo(); showTempo(); });
 $('preset').append(el('option', { value: '', textContent: 'Presets…' }), ...PRESETS.map((p, i) => el('option', { value: String(i), textContent: p.name })));
 $('preset').addEventListener('change', (e) => { if (e.target.value !== '') { lab.loadPreset(Number(e.target.value)); syncInputs(); e.target.value = ''; } });
 $('go').addEventListener('click', () => lab.press());
@@ -173,6 +186,7 @@ function render() {
   $('go').disabled = label === 'Composing…';
   $('status').textContent = S.status === 'error' ? `error: ${S.error}` : S.dirty && S.spec ? 'changed — Compose again' : '';
   renderReadouts(); renderDecisions(); renderLanes();
+  showTempo();
 }
 lab.onChange(render);
 render();

@@ -19,6 +19,8 @@
   input, select, button { background: var(--cell); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: inherit; }
   input[type=number] { width: 68px; }
   input.layer { width: 64px; text-align: center; }
+  #tempo { width: 120px; accent-color: var(--accent); }
+  #tempoBpm.changed { border-color: var(--warn); color: var(--warn); }
   button { cursor: pointer; }
   button:hover { border-color: var(--accent); }
   #go { background: var(--accent); color: #000; font-weight: 700; border: none; padding: 7px 22px; min-width: 120px; }
@@ -64,6 +66,7 @@
   <label>Cycle s</label><input id="cycle" type="number" min="0.5" step="0.5">
   <label>Seed</label><input id="seed" type="number" step="1">
   <label title="portamento: how long a held (legato) voice slides to its next note">Glide</label><input id="glide" type="range" min="0" max="500" step="1"><span id="glideOut" class="note"></span>
+  <label title="playback tempo: plays the composed cycle faster or slower, live, without composing again (pitch unchanged)">Tempo</label><input id="tempo" type="range" min="30" max="300" step="1"><input id="tempoBpm" type="number" min="30" max="300" step="0.1" title="BPM"><button id="tempoReset" class="toggle" title="back to the tempo Compose chose">reset</button>
   <select id="preset"></select>
   <button id="go">Compose</button>
   <button id="export" title="download the spec as JSON">JSON</button>
