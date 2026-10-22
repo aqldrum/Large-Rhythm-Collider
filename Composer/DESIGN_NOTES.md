@@ -1,6 +1,6 @@
 # Composer: design notes (draft, 2026-10-21; updated 2026-10-22)
 
-Working notes from Avery's chat with Claude. Items marked **decided** are Avery's calls; everything else is a proposal or an open question. The 2026-10-21 sprint built phases 1–5 on branch `composer-prototype` (the "Phase" sections below), and Avery's first listening pass on 2026-10-22 is recorded under "First listening pass". The drums were built on the night of 2026-10-22 ("Drums"), on branch `sprint/drums`. `Composer/README.md` is the short way in: how to run it and where things are.
+Working notes from Avery's chat with Claude. Items marked **decided** are Avery's calls; everything else is a proposal or an open question. The 2026-10-21 sprint built phases 1–5 on branch `composer-prototype` (the "Phase" sections below), and Avery's first listening pass on 2026-10-22 is recorded under "First listening pass". The drums were built on the night of 2026-10-22 ("Drums"), on branch `sprint/drums`. The compose trace, the shared source for animating Compose, was built the same night ("Compose trace"), on branch `sprint/trace`. `Composer/README.md` is the short way in: how to run it and where things are.
 
 ## Direction
 
@@ -542,6 +542,35 @@ The seam: `levelOneLights(grid, { source })` names the level-1 source and `selec
 5. **Fills** only on phrases of 4 bars or more, so 2-bar loops never fill. Every phrase end, or every second?
 6. **with / against** read only the lead and the comping. Should the bass vote too?
 7. **The partition line on the perc, over the backbeat.** Should it take the hat's place instead?
+
+## Compose trace (built 2026-10-22 night, sprint)
+
+**Asked (Avery, 2026-10-22):** animate Compose in two places, so people can see what happens under the hood. On the main page's Linear Plot, at a brisk but readable pace: how the root is chosen, how a lead line is chosen, the chords under it, the lead re-chosen and tested as the chords go back and forth, and the percussion coming in. In Cosmos: a rhythm's onsets drift up as dust, then are selected from and rebuilt into the composition. Both are renderers of one shared trace; this phase built the trace, not the renderers.
+
+**Built.** `Composer/core/trace.js` (pure, like the rest of `core/`), with its contract in `Composer/TRACE.md`, checked by `Composer/tests/assert-trace.mjs` (19 checks).
+
+- **Opt-in.** `compose(layers, T, { trace: true })` adds `spec.trace`. Off, the default, the spec is byte-identical to before; the e3909e1 baseline holds with the trace off, and on once the trace is taken off. On, the spec without `trace` is byte-identical to off on 89 composes (seeds, overrides, progressions, every drum mode, the full table): the trace observes and never steers. It never draws from the seed.
+- **How it hooks in.** A recorder made by `createTrace(row)` is handed down the pipeline. The steps call `rec?.x(...)`, which a null recorder skips, arguments and all. Hooks:
+  - `compose.js`: one call per step (row, root, meter, phase, cells, progression, harmony, bass bar, inner phrase, parts, drums)
+  - `harmony.js`: `harmonize` takes `trace`; it reports each lead mining (its ranked lines), each derivation's chords and each settle round
+  - `chooseChord` and `chooseChordOnRoot`: an optional `observe` callback sees every (root, quality) they rank, and, on a pinned bar, every quality rejected as unsupported
+  - `frame.js`: gains `rankRoots`, `defaultRoot`'s own ranking spelled out (a shared `rootRanking`, so the two can't drift; its first is `defaultRoot`'s pick on every test row)
+- **Content.** Ordered, untimed events (`row`, `root`, `meter`, `phase`, `cells`, `progression`, `lead`, `chord`, `settle`, `harmony`, `part`, `drums`, `done`). Onsets are referred to by row index. A `nodes` table spells each referenced onset (tick, ratio, cents, layers, strikes), so a renderer can place it without the row. Lines are referred to by id and held once in a `lines` table. Each lead event carries the chosen line and up to 3 runners-up with their costs; each chord event the top 6 (root, quality) candidates with their scores, the pick, any retune and, on a pinned bar, the fallback and the unsupported qualities.
+- **The worker** passes `options.trace` through; the trace is plain JSON and survives the structured clone.
+- **Pacing.** `traceTimeline(trace, { pace, seconds, budgets })` groups the events into beats (row, root, meter, cells, progression, line, chords, line2, settle 1..n, harmony, parts, drums, done) with relative starts and durations. It's pure (no clock), compressible, and about 6–8 s at pace 1.
+
+**Measured** on the 16,359-onset row (8 × 8):
+- **Size:** 109 KB of JSON lean (45 events, 323 onsets, 30 lines) and 96 KB full.
+- **Time:** compose 660 ms off, 664 ms on (+0.7 %); full 1,722 vs 1,724 ms.
+- **Trace off against the core from before the trace (d9f2f85):** unchanged, medians of 662 vs 655 ms lean and 1,753 vs 1,732 ms full.
+
+**Proposed, not ruled:**
+1. **The caps:** 8 root candidates with 12 sampled onsets each, 3 runner-up lines, 6 chord candidates, 256 notes a part and 512 drum hits. Raising them is cheap.
+2. **The chord candidates** are the top 6 overall. That can be several qualities over one root; a per-root best might read better on the plot.
+3. **The timeline budgets** (`TIMELINE_SECONDS`): chords and line about 0.9 s each, a settle round 0.45 s, and changed bars weighted twice unchanged ones.
+4. **Where the trace lives:** `spec.trace`, so the worker needs no second channel. A JSON export that shouldn't carry it takes it off.
+
+**Open, for Avery:** nothing to rule yet. The pacing and caps are for whoever builds the first renderer to tune, against the Linear Plot and the Cosmos dust layer.
 
 ## Layout (agreed earlier, 2026-10-21)
 

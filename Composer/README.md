@@ -54,11 +54,12 @@ Then go to `http://localhost:8000/Composer/lab/composer-lab.html`. The page need
 ## Files
 
 - **`core/`:** pure ES modules (no DOM, fetch or clock) that run in a page, a worker or Node. `compose-worker.js` wraps `compose()` for a module worker.
+- **`core/trace.js`:** the compose trace, `compose(..., { trace: true })` → `spec.trace`: every decision as ordered, untimed events pointing at the row's onsets, for the main-page and Cosmos animations; `traceTimeline()` paces it. `TRACE.md` is the contract.
 - **`lab/`:**
   - `composer-lab.html` and `composer-lab.js`: the page and its view
   - `lab-controller.js`: state, with no DOM
   - `lab-player.js`: a lookahead scheduler, with no DOM
-- **`tests/`:** plain Node scripts with no runner. `assert-drums.mjs` checks the drums against the row and against Partitions' own Euclid. `rhythms.mjs` is the shared rhythm set; `settle-baseline.mjs` pins the output from before settling; `time-lines.mjs` is a timing table, not a check.
+- **`tests/`:** plain Node scripts with no runner. `assert-drums.mjs` checks the drums against the row and against Partitions' own Euclid. `assert-trace.mjs` checks the trace never steers the spec and every ref is a real onset. `rhythms.mjs` is the shared rhythm set; `settle-baseline.mjs` pins the output from before settling; `time-lines.mjs` is a timing table, not a check.
 - **`probe/`:** the 2026-10-21 cost probe (`FINDINGS.md`), the source of the onset gate.
 
 ## Tests
@@ -69,7 +70,7 @@ Run every suite (the Composer's, the shared voices', Cosmos's and MIDI Out's):
 for t in Composer/tests/assert-*.mjs Cosmos/tests/assert-*.mjs Audio/tests/assert-*.mjs Playback/MIDIOut.test.mjs; do node "$t" >/dev/null 2>&1 || echo FAIL $t; done
 ```
 
-A clean run prints nothing; there were 45 suites as of the night of 2026-10-22, with `assert-drums.mjs` added. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
+A clean run prints nothing; there were 47 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs` and `assert-trace.mjs` added. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
 
 ## Where it lives
 
