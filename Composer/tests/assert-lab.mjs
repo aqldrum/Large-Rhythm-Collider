@@ -16,17 +16,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createLabController, PRESETS, soundChoices, readLayers } from '../lab/lab-controller.js';
-import { chainsOf, createPlayer } from '../lab/lab-player.js';
+import { createLabController, PRESETS, soundChoices, readLayers } from '../perform/composer-controller.js';
+import { chainsOf, createPlayer } from '../perform/composer-player.js';
 import { planVoice } from '../../Audio/voices/plan.js';
 import { createInstrumentVoice } from '../../Audio/voices/voice.js';
 import { getRecipe } from '../../Audio/voices/recipes.js';
 import { compose, rearticulate, PART_IDS } from '../core/compose.js';
 import { arrangeDrums, DEFAULT_KIT } from '../core/drums.js';
 import * as drumLibrary from '../../Audio/drums/index.js';
-import { drumModeChoices, kitChoices } from '../lab/lab-controller.js';
+import { drumModeChoices, kitChoices } from '../perform/composer-controller.js';
+import * as labShim from '../lab/lab-controller.js';
+import * as playerShim from '../lab/lab-player.js';
 
-const HERE = path.dirname(fileURLToPath(import.meta.url)), LAB = path.resolve(HERE, '..', 'lab');
+const HERE = path.dirname(fileURLToPath(import.meta.url)), LAB = path.resolve(HERE, '..', 'lab'), PERFORM = path.resolve(HERE, '..', 'perform');
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };
 const near = (a, b, e = 1e-6) => Math.abs(a - b) <= e;
@@ -463,11 +465,34 @@ console.log('\n— drums');
   check('Stop: no stroke is booked after it, and the made strokes still sounding are stopped', strokes.length === count && pctx.nodes.filter((n) => (n.kind === 'osc' || n.kind === 'noise') && n.started != null && n.started > at - 0.3).every((n) => n.stopped.some((t) => t <= at + 0.06) || n.stopped.some((t) => t <= at)));
 }
 
+console.log('\n— a host\'s graph and pulse (the shared player, for Cosmos next)');
+{
+  const hctx = makeCtx(), hostIn = hctx.createGain();   // a host's own input (Cosmos: its gate)
+  const hspec = compose([8, 7, 6, 5], 4, { seed: 1 });
+  const hp = createPlayer({ ctx: hctx, destination: hostIn, timers: {} });
+  check('destination: the limiter feeds the host\'s node, not ctx.destination', hp.limiter.outs.includes(hostIn) && !hp.limiter.outs.includes(hctx.destination));
+  const dp = createPlayer({ ctx: makeCtx(), timers: {} });
+  check('without one, the limiter feeds ctx.destination (unchanged)', dp.limiter.outs.length === 1 && dp.limiter.outs[0].kind === 'destination');
+  let intervals = 0;
+  const counting = { setInterval: () => { intervals++; return 7; }, clearInterval: () => {} };
+  const ip = createPlayer({ ctx: makeCtx(), timers: counting });
+  ip.play(hspec); ip.stop();
+  check('injected timers: play() starts its pulse with the host\'s setInterval', intervals === 1);
+  hp.play(hspec);
+  const before = hctx.nodes.filter((n) => n.kind === 'osc').length;
+  for (let t = 0; t <= 4.2; t += 0.05) { hctx.currentTime = t; hp.tick(); }
+  const after = hctx.nodes.filter((n) => n.kind === 'osc').length;
+  check(`timers {} starts no pulse; the host drives the public tick() and the cycle is booked (${after - before} oscillators)`, typeof hp.tick === 'function' && after > before && hp.playing);
+  hp.stop();
+}
+
 console.log('\n— serving');
 const page = fs.readFileSync(path.join(LAB, 'composer-lab.html'), 'utf8'), view = fs.readFileSync(path.join(LAB, 'composer-lab.js'), 'utf8');
-const imports = [...[page, view, fs.readFileSync(path.join(LAB, 'lab-controller.js'), 'utf8'), fs.readFileSync(path.join(LAB, 'lab-player.js'), 'utf8')].join('\n').matchAll(/(?:from\s+|src=)['"]([^'"]+)['"]/g)].map((m) => m[1]);
+const shared = ['composer-controller.js', 'composer-player.js', 'compose-runner.js', 'readouts.js'].map((f) => fs.readFileSync(path.join(PERFORM, f), 'utf8'));
+const imports = [...[page, view, fs.readFileSync(path.join(LAB, 'lab-controller.js'), 'utf8'), fs.readFileSync(path.join(LAB, 'lab-player.js'), 'utf8'), ...shared].join('\n').matchAll(/(?:from\s+|src=)['"]([^'"]+)['"]/g)].map((m) => m[1]);
 check(`only relative imports (${imports.length})`, imports.length >= 6 && imports.every((x) => x.startsWith('./') || x.startsWith('../')), imports.join(' '));
-check('the worker is made with new URL(…, import.meta.url), as a module', /new Worker\(new URL\('\.\.\/core\/compose-worker\.js', import\.meta\.url\), \{ type: 'module' \}\)/.test(view));
+check('the worker is made with new URL(…, import.meta.url), as a module (perform/compose-runner.js, which the lab uses)', /new Worker\(new URL\('\.\.\/core\/compose-worker\.js', import\.meta\.url\), \{ type: 'module' \}\)/.test(shared[2]) && /createComposeRunner\(\)/.test(view));
+check('the lab\'s old module names still re-export the shared ones', labShim.createLabController === createLabController && playerShim.createPlayer === createPlayer);
 check('not linked from index.html', !fs.readFileSync(path.resolve(HERE, '..', '..', 'index.html'), 'utf8').includes('composer-lab'));
 
 console.log(`\n${PASS ? 'PASS' : 'FAIL'} — ${checks} checks`);
