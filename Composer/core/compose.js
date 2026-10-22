@@ -172,7 +172,8 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   const ov = overrides || {}, T = cycleSeconds;
 
   const refusal = (r) => (trace ? { ...r, trace: refusedTrace(r, { cycleSeconds }) } : r);
-  const row = buildRow(layers, { gate: ONSET_GATE });
+  // PREBUILT ROW (Cosmos Compose, E1): options.row, a row built elsewhere (superrow.js), stands in for buildRow(layers)
+  const row = arguments[2]?.row ?? buildRow(layers, { gate: ONSET_GATE });
   if (!isRow(row)) return refusal({ version: COMPOSER_SPEC_VERSION, input, refused: true, reason: row.tooDense ? 'tooDense' : 'tooLarge', detail: row });
   const few = toneGate(row, MIN_TONES);
   if (few) return refusal({ version: COMPOSER_SPEC_VERSION, input, refused: true, reason: 'tooFewTones', detail: few });

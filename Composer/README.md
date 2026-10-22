@@ -60,7 +60,7 @@ python3 -m http.server 8000
 
 ## Files
 
-- **`core/`:** pure ES modules (no DOM, fetch or clock) that run in a page, a worker or Node. `compose-worker.js` wraps `compose()` for a module worker.
+- **`core/`:** pure ES modules (no DOM, fetch or clock) that run in a page, a worker or Node. `compose-worker.js` wraps `compose()` for a module worker. `superrow.js` lays many rhythms of one grid on one row for Cosmos's Grid-card Compose, and `superrow-worker.js` builds and composes one off the main thread ("Cosmos Compose mode" in `DESIGN_NOTES.md`).
 - **`core/trace.js`:** the compose trace, `compose(..., { trace: true })` → `spec.trace`: every decision as ordered, untimed events pointing at the row's onsets, for the main-page and Cosmos animations; `traceTimeline()` paces it. `TRACE.md` is the contract.
 - **`perform/`:** what the lab and the main page share, with no DOM:
   - `composer-controller.js`: state and actions

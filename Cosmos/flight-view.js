@@ -54,6 +54,11 @@ import { chordLabel } from './ui/chord-label.js';
 // path as of M4 — parked for a future main-page "auto-progression" feature, NOT imported here anymore.
 // Sky Root handoff (Cosmos/docs/SKY_ROOT_HANDOFF_2026-07-22.md): anchor-independent root solve, Feature B.
 import { poolFromTones, rootCompetitionTones } from './audio/sky-root.js';
+// COMPOSE MODE (E1, 2026-10-22): the Rhythm/Grid card's Compose — state machine, Composer workers, player + clock takeover.
+import { createComposeMode, composeButtonView, composeBudgetFor, latticeDistances, latticeTarget, targetKey, COMPOSE_STATES } from './engine/cosmos-compose.js';
+import { createComposeClient } from './engine/compose-worker-client.js';
+import { createCosmosComposerPlayer } from './audio/cosmos-composer-player.js';
+import { setKnobInert } from './ui/rail-view.js';
 
 const STAR_SCALE = 4, NEAR = 5;
 // ══ FLIGHT / LOD KNOBS ═══════════════════════════════════════════════════════════════════════
@@ -136,7 +141,7 @@ function applyQuality(id) {
     // the range cull is applied on shard-receive, so a threshold change only takes on ALREADY-open blooms
     // if they re-fetch: drop their caches + growth state and the next tick re-blooms them at the new range.
     if (q.bloomMaxRange !== prevRange) {
-      for (const g of bloomed) { bloomCache.delete(g); const z = cosmos.zones.get(g); if (z) delete z._bloom; }
+      for (const g of bloomed) { bloomCache.delete(g); const z = cosmos.zones.get(g); if (z) delete z._bloom; composeMode.gridGone(g, 'quality reset'); }   // COMPOSE MODE (E1)
     }
   }
   if (cv && ctx) resize();   // re-clamp the backing store to the new DPR cap
@@ -918,12 +923,102 @@ function pumpBlooms() {
     if (bloomInFlight >= FOCUS_FETCH_CONC) break;
     const e = bloomCache.get(g); if (!e) continue;
     while (bloomInFlight < FOCUS_FETCH_CONC && e.next < e.plan.length) {
-      const A = e.plan[e.next++]; bloomInFlight++;
+      const A = e.plan[e.next++]; bloomInFlight++; e.pending = (e.pending || 0) + 1;   // per-bloom in-flight: Compose waits for 0 (E1)
       pool.dispatch({ op: 'bloomShard', grid: g, A })
-        .then(r => { bloomInFlight--; if (r && r.systems) { const maxRange = currentQuality().bloomMaxRange; for (const s of r.systems) { if (bloomRange(s) > maxRange) continue; e.systems.push(s); if (s.c < e.cmin) e.cmin = s.c; if (s.c > e.cmax) e.cmax = s.c; } } })
-        .catch(() => { bloomInFlight--; });
+        .then(r => { bloomInFlight--; e.pending--; if (r && r.systems) { const maxRange = currentQuality().bloomMaxRange; for (const s of r.systems) { if (bloomRange(s) > maxRange) continue; e.systems.push(s); if (s.c < e.cmin) e.cmin = s.c; if (s.c > e.cmax) e.cmax = s.c; } } })
+        .catch(() => { bloomInFlight--; e.pending--; });
     }
   }
+}
+
+// ══ COMPOSE MODE (E1, 2026-10-22 night) ══════════════════════════════════════════════════════════════════════════
+// The card's COMPOSE button: a Rhythm card composes its rhythm; a Grid card (a bloomed grid) composes a superrow of its
+// rhythms nearest the focus, inside the cardinality band, up to the tier's budget (Composer/core/superrow.js). The
+// state machine (engine/cosmos-compose.js) owns the lifecycle; the player (audio/cosmos-composer-player.js) owns the
+// silence and the clock takeover. Every path that removes the composed grid or closes the card calls composeMode.
+// stop/gridGone, so a composition never outlives what it composed. E2 hangs the dust on composeMode.on(...).
+let composeClient = null;                 // per session: the Composer's workers (made in ensureFlight, ended in stopFlight)
+const lastNodeByGrid = new Map();         // grid → the lattice index of the last rhythm node clicked in its bloom (the focus)
+let composeBtnEl = null, currentCardMode = 'empty', cardGrid = null;
+const composePlayer = createCosmosComposerPlayer();
+const composeMode = createComposeMode({
+  composer: {
+    rhythm: (...a) => composeClient.rhythm(...a),
+    superrow: (...a) => composeClient.superrow(...a),
+    cancel: () => composeClient?.cancel(),
+  },
+  performer: composePlayer,
+  gather: composeGather,
+  now: () => performance.now(),
+  budget: () => composeBudgetFor(currentQuality()),
+});
+/** the Compose mode, for E2 and the console (state, info(), on(type, fn)) */
+export function cosmosComposeMode() { return composeMode; }
+composeMode.on('state', () => renderComposeControl());
+composeMode.on('gathering', () => renderComposeControl());
+composeMode.on('perform', ({ spec }) => {
+  setKnobInert('speed', true, { readout: `${Math.round(spec.knobs.tempoBpm)} BPM`, title: 'SPEED is held while a composition plays: it keeps its own tempo' });
+  refreshComposeCard();
+});
+composeMode.on('stop', () => { setKnobInert('speed', false); markFieldDirty(); refreshComposeCard(); });
+composeMode.on('refused', () => refreshComposeCard());
+function refreshComposeCard() { updateRhythmActionState(); if (selected && selected.kind === 'star' && currentCardMode === 'grid') showDetail(selected); }   // the Listen button comes back too
+
+// Grid targets: ready once the bloom has streamed every shard and none is in flight.
+function composeGather(target) {
+  const e = bloomCache.get(target.grid);
+  if (e === undefined) return { ready: false, progress: { shardsDone: 0, shardsTotal: null, rhythms: 0 } };
+  if (e === null) return { empty: true };
+  const progress = { shardsDone: e.next - (e.pending || 0), shardsTotal: e.plan.length, rhythms: e.systems.length };
+  return { ready: e.next >= e.plan.length && !(e.pending > 0), progress, snapshot: () => composeSnapshot(target, e) };
+}
+// The window's inputs, fixed at press time (target.band, target.eye, target.focusIndex): the rhythms inside the band
+// and each one's distance from the focus — the clicked node of this bloom, else the eye — in the bloom's own lattice.
+function composeSnapshot(target, e) {
+  const rscale = Math.min(BLOOM_R, BLOOM_MAX_R / (1 + cardExtent(Math.max(1, e.cmax - e.cmin))));
+  const lattice = { cmin: e.cmin, rscale, extent: cardExtent, golden: GOLDEN };
+  const f = target.focusIndex;
+  const eye = f != null && f < e.systems.length ? latticeTarget(f, e.systems.length, e.systems[f].c, lattice) : target.eye || [0, 0, 0];
+  const dist = latticeDistances(e.systems, { ...lattice, eye });
+  const band = target.band, idx = [];
+  for (let i = 0; i < e.systems.length; i++) { const c = e.systems[i].c; if (!band || (c >= band[0] && c <= band[1])) idx.push(i); }
+  return { rhythms: idx.map(i => e.systems[i].layers), dist: Float64Array.from(idx, i => dist[i]), keys: idx.map(i => e.systems[i].key) };
+}
+// What this card offers to compose: its rhythm, or its bloomed grid.
+function composeHere() {
+  if (currentCardMode === 'rhythm' && inspectedNode?.layers) return { kind: 'rhythm', grid: inspectedNode.grid, key: inspectedNode.key, layers: inspectedNode.layers };
+  if (currentCardMode === 'grid' && cardGrid != null && bloomed.has(cardGrid) && bloomCache.get(cardGrid) !== null) return { kind: 'grid', grid: cardGrid };
+  return null;
+}
+function renderComposeControl() {
+  if (!composeBtnEl) return;
+  const v = composeButtonView(composeMode.info(), composeHere());
+  composeBtnEl.hidden = !v.visible; composeBtnEl.textContent = v.label; composeBtnEl.disabled = v.disabled;
+  composeBtnEl.classList.toggle('loaded', v.active);
+  composeBtnEl.title = v.title; composeBtnEl.setAttribute('aria-label', v.title || 'Compose');
+  composeBtnEl.setAttribute('aria-pressed', String(v.active));
+  if (listenBtnEl && composeMode.active) listenBtnEl.disabled = true;   // no audition while a composition holds the clock
+}
+function onComposePress() {
+  const here = composeHere(), info = composeMode.info();
+  if (composeMode.active && (!here || targetKey(here) !== targetKey(info.target))) { composeMode.stop('stop'); return; }   // the button reads STOP
+  if (!here) return;
+  stopRhythmAudition();   // the card's own audition yields to the composition (the flight silence releases it too)
+  if (here.kind === 'rhythm') { composeMode.press(here); return; }
+  const z = cosmos?.zones.get(here.grid), rp = z ? renderPosCam(z, cam.anchor, cam.off) : [0, 0, 0];
+  composeMode.press({ ...here, eye: [-rp[0], -rp[1], -rp[2]], focusIndex: lastNodeByGrid.get(here.grid) ?? null,
+    band: cosmos?.focusGrid === here.grid ? [cardLo, cardHi] : null });
+}
+// The Grid card's line about the composition: gathering progress, the barometer, or why it refused.
+function composeNoteFor(grid) {
+  const info = composeMode.info();
+  let text = '';
+  if (composeMode.concerns(grid)) {
+    if (info.state === COMPOSE_STATES.GATHERING) text = `gathering the bloom… ${info.progress ? `${info.progress.shardsDone} of ${info.progress.shardsTotal ?? '?'} shards · ${(info.progress.rhythms || 0).toLocaleString()} rhythms` : ''}`;
+    else if (info.state === COMPOSE_STATES.COMPOSING) text = 'composing…';
+    else if (info.state === COMPOSE_STATES.PERFORMING) text = `${info.barometer ? info.barometer.text : ''}${info.tempoBpm ? ` · ${Math.round(info.tempoBpm)} BPM` : ''}`;
+  } else if (info.notice && info.notice.target?.grid === grid && info.notice.target.kind === 'grid') text = `didn't compose: ${info.notice.text}`;
+  return text ? `<p class="lrc-mode-note">Compose · ${inspectorEscape(text)}</p>` : '';
 }
 
 // Agent bloom: the real "bloom a grid" a ship performs — plan it, then pull one shard's tuning systems from
@@ -1023,6 +1118,15 @@ export function ensureFlight(canvas, hudEl) {
     metricDensityEl = document.getElementById('lrc-metric-density'); structureListEl = document.getElementById('lrc-structure-list');
     connectionsEl = document.getElementById('lrc-connections'); listenBtnEl = document.getElementById('lrc-listen-btn');
     loadBtnEl = document.getElementById('lrc-load-btn');
+    // COMPOSE MODE (E1): the card's COMPOSE button sits after LOAD, made here so index.html is untouched.
+    composeBtnEl = document.getElementById('lrc-compose-btn');
+    if (!composeBtnEl && loadBtnEl) {
+      composeBtnEl = document.createElement('button');
+      composeBtnEl.id = 'lrc-compose-btn'; composeBtnEl.type = 'button'; composeBtnEl.className = 'lrc-head-action lrc-load-action';
+      composeBtnEl.textContent = 'COMPOSE'; composeBtnEl.hidden = true;
+      loadBtnEl.after(composeBtnEl);
+    }
+    if (composeBtnEl) composeBtnEl.addEventListener('click', onComposePress);
     scaleCountEl = document.getElementById('lrc-scale-count'); scaleFundamentalEl = document.getElementById('lrc-scale-fundamental');
     scaleTableBodyEl = document.getElementById('lrc-scale-table-body'); scaleLightEl = document.getElementById('lrc-scale-light-toggle');
     audioLabEl = document.getElementById('lrc-audio-lab');
@@ -1039,6 +1143,7 @@ export function ensureFlight(canvas, hudEl) {
       const open = lrcDivEl.classList.toggle('open');
       lrcPanelToggleEl.setAttribute('aria-expanded', String(open));
       if (!open) stopRhythmAudition();   // a folded card is silent; unfolding waits for Listen
+      if (!open) composeMode.stop('card folded');   // COMPOSE MODE (E1): …and so is its composition
     });
     if (cockpitPlotKeyEl) cockpitPlotKeyEl.addEventListener('click', e => {
       const button = e.target.closest?.('[data-plot-layer]');
@@ -1130,6 +1235,7 @@ export function ensureFlight(canvas, hudEl) {
   rootSolvePending = false;
   rowCompiler = new ProgramWorkerPool(new URL('./workers/cull2-program-worker.js?v=1', import.meta.url), { size: ROW_COMPILE_WORKERS });
   rowGeneration = 0; rowSelectionKey = ''; rowActiveIds = new Set(); rowPrewarmIds = new Set();
+  composeClient = createComposeClient(); lastNodeByGrid.clear();   // COMPOSE MODE (E1): the Composer's workers, per session
   fieldMembershipDirty = true; fieldMembershipAt = -Infinity;   // a fresh session always does a full pass first
   bedMembershipAt = -Infinity; bedRootKey = -1;
   settleSinceSecond = null; lastRootResolveSecond = -Infinity; rootGeographyEpoch = 0; rootPolicyWasSettled = false;
@@ -1170,7 +1276,7 @@ export function ensureFlight(canvas, hudEl) {
   // membership events even when the camera itself has not moved (the frontier streams in on its own).
   const zoneHooks = {
     onZoneAdded: grid => { webZoneAdded.push(grid); gravitySyncDirty = true; markFieldDirty(); },
-    onZoneRemoved: grid => { webZoneRemoved.push(grid); gravitySyncDirty = true; markFieldDirty(); },
+    onZoneRemoved: grid => { webZoneRemoved.push(grid); gravitySyncDirty = true; markFieldDirty(); composeMode.gridGone(grid, 'evicted'); },
   };
   if (placement === 'hilbert') {
     // 3D-proximity frontier: spawn/evict by cell distance; grids rest at their own cells (no puffs).
@@ -1234,6 +1340,7 @@ export function ensureFlight(canvas, hudEl) {
 export function stopFlight() {
   if (!started && !pool) return;
   started = false;
+  composeMode.stop('exit'); composeClient?.terminate(); composeClient = null;   // COMPOSE MODE (E1): first, while the graph and zones stand
   if (pool) { pool.terminate(); pool = null; }   // kill workers, timers, and queued jobs — no lingering solve
   if (rowCompiler) { rowCompiler.terminate(); rowCompiler = null; }
   if (rootCompiler) { rootCompiler.terminate(); rootCompiler = null; }
@@ -1537,6 +1644,8 @@ function setCardMode(mode, accent = '') {
   const rhythmActions = mode === 'rhythm';
   if (listenBtnEl) listenBtnEl.hidden = !rhythmActions;
   if (loadBtnEl) loadBtnEl.hidden = !rhythmActions;
+  currentCardMode = mode; if (mode !== 'grid') cardGrid = null;   // COMPOSE MODE (E1)
+  renderComposeControl();
 }
 
 // A definition list styled like the inspector's Structure block — the shared metric primitive for GRID and
@@ -1563,6 +1672,7 @@ function showDetail(sel) {
 // child of this section; updateFilterUI shows it when a bloom is focused.
 function renderGridView(sel) {
   if (!gridBodyEl) return;
+  cardGrid = sel.grid;   // COMPOSE MODE (E1): before setCardMode, which paints the Compose button
   setCardMode('grid');
   setCardSub(`grid ${sel.grid.toLocaleString()}`);
   const z = cosmos.zones.get(sel.grid), fi = factorInfo(sel.grid);
@@ -1591,7 +1701,7 @@ function renderGridView(sel) {
     ['Primes · divisors', `${fi.primes} · ${fi.divisors}`],
     ...(placement !== 'hilbert' ? [['District sun', sun]] : []),
     ['State', state],
-  ]);
+  ]) + composeNoteFor(sel.grid);   // COMPOSE MODE (E1): gathering progress / the barometer
   openCockpit();
 }
 
@@ -1725,6 +1835,7 @@ const cockpitLayerFlags = () => ['A', 'B', 'C', 'D'].map(layer => cockpitVisible
 function resetRhythmInspector() {
   inspectedNode = null; rhythmInspectorModel = null;
   stopRhythmAudition();
+  composeMode.stop('card closed');   // COMPOSE MODE (E1): closing the card ends its composition
   resetCockpitScaleHighlights(); cockpitScaleRows.clear();
   if (scaleTableBodyEl) scaleTableBodyEl.replaceChildren();
   if (scaleCountEl) scaleCountEl.textContent = '— Pitches';
@@ -1743,7 +1854,7 @@ function updateRhythmActionState() {
   const listening = listeningTo(inspectedNode);
   if (listenBtnEl) {
     listenBtnEl.classList.toggle('active', listening);
-    listenBtnEl.disabled = !inspectedNode || tooDense;
+    listenBtnEl.disabled = !inspectedNode || tooDense || composeMode.active;   // COMPOSE MODE (E1): no audition under a composition
     listenBtnEl.setAttribute('aria-pressed', String(listening));
     listenBtnEl.setAttribute('aria-label', tooDense ? 'Selected rhythm is too dense to audition' : `${listening ? 'Stop listening to' : 'Listen to'} selected rhythm`);
     listenBtnEl.title = tooDense ? 'Too dense to audition' : (listening ? 'Stop listening' : 'Listen');
@@ -1756,10 +1867,11 @@ function updateRhythmActionState() {
     loadBtnEl.setAttribute('aria-label', loaded ? 'Selected rhythm loaded into LRC' : 'Load selected rhythm into LRC');
     loadBtnEl.title = loaded ? 'Loaded into LRC' : 'Load into LRC';
   }
+  renderComposeControl();   // COMPOSE MODE (E1)
 }
 
 function setRhythmAudition(node) {
-  if (!node?.layers) return;
+  if (!node?.layers || composeMode.active) return;   // COMPOSE MODE (E1): a click does not audition under a composition
   const model = modelForRhythmNode(node);
   if (!model) { setLead(null); leadVoice = null; updateRhythmActionState(); return; }   // too dense to build/audition
   resetCockpitScaleHighlights();
@@ -2684,9 +2796,14 @@ function loop() {
 
   // bloom bookkeeping: drop any bloomed star that flew out of the world; keep the rest streaming their FULL
   // clouds (runtime priority-solves the most-recent click via setFocus; we stream all of them here).
-  for (const g of bloomed) if (!cosmos.zones.has(g)) { bloomed.delete(g); gravitySyncDirty = true; if (cosmos.focusGrid === g) cosmos.setFocus(null); }
+  for (const g of bloomed) if (!cosmos.zones.has(g)) { bloomed.delete(g); gravitySyncDirty = true; if (cosmos.focusGrid === g) cosmos.setFocus(null); composeMode.gridGone(g, 'bloom dropped'); }
   for (const g of bloomed) ensureFocusBloom(cosmos.zones.get(g));
   pumpBlooms();
+  // COMPOSE MODE (E1): the composition's range (cells from its grid; stops a cell inside the evict shell) and gathering
+  if (composeMode.active) {
+    const cg = composeMode.target.grid;
+    composeMode.frame({ distance: cosmos.zones.has(cg) ? cosmos.cellDist(cg, cosmos.cam) : Infinity, evictRadius: cosmos.evictRadius, at: now });
+  }
   updateFilterUI();
 
   // undeformed world positions (bloom centres come from these — a bloom shouldn't move itself)
@@ -3318,6 +3435,7 @@ function bindControls() {
         cosmos.setFocus(g); ensureFocusBloom(gz); selected = hover;
       }
     } else if (hover && hover.kind === 'node') {
+      lastNodeByGrid.set(hover.grid, +String(hover.id).split(':')[1]);   // COMPOSE MODE (E1): this bloom's window focus
       cosmos.setFocus(hover.grid); selected = hover;   // focus the bloom you're interacting with (the filter targets it)
       setRhythmAudition(hover);   // preserve the existing click-to-hear behavior; the inspector can stop/restart it explicitly
       openCockpit();              // M4: no per-star song solve — the global sky chord tints it (cosmos-audio.js)
@@ -3332,6 +3450,7 @@ function bindControls() {
   });
   // Esc peels back one layer at a time: cancel a Web ride, else close an open card, else leave Cosmos.
   closeCardOnEscape = () => {
+    if (composeMode.active) { composeMode.stop('escape'); return true; }   // COMPOSE MODE (E1): Esc peels the composition first
     if (!selected && !leadVoice && !lrcDivEl?.classList.contains('open')) return false;
     selected = null;
     webRenderer?.select(bloomWebId);
@@ -3344,6 +3463,7 @@ function bindControls() {
     const g = hover && hover.grid;
     if (g != null && bloomed.has(g)) {
       bloomed.delete(g);
+      composeMode.gridGone(g, 'collapsed');   // COMPOSE MODE (E1)
       gravitySyncDirty = true;
       const z = cosmos.zones.get(g); if (z) delete z._bloom;
       if (cosmos.focusGrid === g) cosmos.setFocus(null);
