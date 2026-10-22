@@ -4,6 +4,8 @@
 //   • per-part legato: on, a note holds to the part's (a chord voice's) next note; off, its slot or the gap if shorter;
 //     a struck sound in legato retriggers on every note, a held one only on its first
 //   • overrides, one by one; each gate's refusal; the tempo inside 90–130 BPM whenever a bar count allows it
+//   • the root by its ±frame cluster and the phase from where the cluster sounds; settling (settlePasses 0 byte-identical
+//     to e3909e1, the override, the stats, every note still an onset of the row)
 //   • the module worker, through a fake worker scope
 //   • timing: Compose lean on the three rows of phase 2 (target under 1 s), and full
 //   node Composer/tests/assert-compose.mjs
@@ -11,6 +13,7 @@ import { buildRow } from '../core/row.js';
 import { buildCells } from '../core/cells.js';
 import { classOfCents, defaultRoot } from '../core/frame.js';
 import { downbeats } from '../core/lines.js';
+import { composeCases, normSpec, sha, COMPOSE_HASHES } from './settle-baseline.mjs';
 import { compose, chooseMeter, articulate, isStruck, seededRandom, PART_IDS, SOUND_PAIRS, TEMPO_RANGE, BAR_CHOICES, BEATS_PER_BAR, LEAD_TARGET_HZ, COMPOSER_SPEC_VERSION } from '../core/compose.js';
 
 let PASS = true, checks = 0;
@@ -82,7 +85,7 @@ console.log('\n— determinism and real onsets');
   const pitches = s1.parts[0].notes.map((n) => { const [a, b] = n.ratio.split('/').map(Number); return 1200 * Math.log2(a / b) + 1200 * n.octave; }).sort((a, b) => a - b), m = pitches.length >> 1;
   const mid = s1.knobs.baseHz * 2 ** ((pitches.length % 2 ? pitches[m] : (pitches[m - 1] + pitches[m]) / 2) / 1200);
   check(`the base fundamental puts the lead's median pitch at √(440·660) ≈ ${mid.toFixed(1)} Hz (before any bar's retune)`, near(mid, LEAD_TARGET_HZ, 1e-9));
-  check('every decision Compose made is listed with a why', ['frameCentsEachSide', 'root', 'bars', 'slotsPerBar', 'tempoBpm', 'anchors', 'phase', 'modulation', 'table', 'leader', 'compLayer', 'baseHz', ...PART_IDS.flatMap((p) => [`legato.${p}`, `sound.${p}`, `enabled.${p}`])].every((w) => s1.decisions.some((d) => d.what === w)));
+  check('every decision Compose made is listed with a why', ['frameCentsEachSide', 'presence', 'settlePasses', 'root', 'bars', 'slotsPerBar', 'tempoBpm', 'anchors', 'phase', 'modulation', 'table', 'leader', 'compLayer', 'baseHz', ...PART_IDS.flatMap((p) => [`legato.${p}`, `sound.${p}`, `enabled.${p}`])].every((w) => s1.decisions.some((d) => d.what === w)));
   check('the sounds are each part\'s proposed pair, and real Audio/voices note instruments', s1.parts.every((p) => SOUND_PAIRS[p.id].includes(p.sound) && typeof isStruck(p.sound) === 'boolean'));
 }
 
@@ -165,6 +168,49 @@ console.log('\n— tempo');
   const s = compose([8, 7, 6, 5], 4);
   check('…and Compose says so in its decisions', s.decisions.find((d) => d.what === 'slotsPerBar').why.includes('under 3'));
   check('seededRandom: one seed, one stream; another seed, another', (() => { const a = seededRandom(5), b = seededRandom(5), c = seededRandom(6); const x = [a(), a()], y = [b(), b()], z = [c(), c()]; return x.join() === y.join() && x.join() !== z.join(); })());
+}
+
+console.log('\n— the root\'s cluster, and settling');
+{
+  let bad = '', n = 0;
+  for (const [name, run] of composeCases(compose)) { n++; if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) { bad = name; break; } }
+  check(`settlePasses 0 with presence 'exact' reproduces e3909e1's specs byte for byte (${n} specs: 10 rows × 2 seeds, 2 on the full table, 1 with modulation off)`, !bad && n === Object.keys(COMPOSE_HASHES).length, bad);
+  const L = [4099, 4093, 4091, 4079], T = 16;
+  const cl = compose(L, T), ex = compose(L, T, { overrides: { presence: 'exact' } }), why = (s, w) => s.decisions.find((d) => d.what === w);
+  check(`4099:4093:4091:4079: the cluster rule roots on ${cl.knobs.root} (${why(cl, 'root').why.match(/heard \d+ times, its cluster \d+/)?.[0]}), the exact rule on ${ex.knobs.root}`,
+    cl.knobs.root === '4093/2048' && ex.knobs.root === '4093/2304' && why(ex, 'presence').why === 'asked' && why(cl, 'presence').value === 'cluster' && !audit(cl) && !audit(ex));
+  // a root heard twice in a cluster heard 428 times: its own onsets give 2 downbeats, its cluster 3
+  const rare = { root: '4093/2324', settlePasses: 0 };
+  const a = compose(L, T, { overrides: rare }), b = compose(L, T, { overrides: { ...rare, presence: 'exact' } });
+  check(`a root heard twice (4093/2324): the phase is one of its cluster\'s first 3 downbeats ("${why(a, 'phase').why.slice(0, 32)}…"); on its own onsets only 2`, /of the root's first 3 /.test(why(a, 'phase').why) && /cluster/.test(why(a, 'phase').why) && /of the root's first 2 /.test(why(b, 'phase').why) && !audit(a));
+  check('presence must be cluster or exact', throws(() => compose([8, 7, 6, 5], 4, { overrides: { presence: 'loud' } }), /presence must be/));
+
+  // settling: the override, its decision and stats
+  const one = (sp) => compose([768, 784], 8, { overrides: sp == null ? {} : { settlePasses: sp } });
+  const d = one(null), s0 = one(0), s1 = one(1);
+  check(`the default settles: up to ${d.decisions.find((x) => x.what === 'settlePasses').value} rounds; 768:784 runs ${d.stats.settle.rounds} (changed [${d.stats.settle.changedBarsPerRound}]), ${d.stats.settle.converged ? 'converged' : 'not converged'}`,
+    why(d, 'settlePasses').value === 3 && why(d, 'settlePasses').why !== 'asked' && d.stats.settle.rounds >= 1 && d.stats.settle.rounds <= 3);
+  check('the override: settlePasses 0 and 1 are asked, and run 0 and at most 1 rounds', why(s0, 'settlePasses').why === 'asked' && s0.stats.settle.rounds === 0 && s0.stats.settle.chosenRound === 0
+    && why(s1, 'settlePasses').why === 'asked' && why(s1, 'settlePasses').value === 1 && s1.stats.settle.rounds <= 1 && s1.input.overrides.settlePasses === 1);
+  check('stats.settle: rounds, converged, oscillated, changed bars per round, exceptions per round, the round kept', ['rounds', 'converged', 'oscillated', 'changedBarsPerRound', 'exceptionsPerRound', 'chosenRound'].every((x) => x in d.stats.settle)
+    && d.stats.settle.changedBarsPerRound.length === d.stats.settle.rounds && d.stats.exceptions === d.stats.settle.exceptionsPerRound[d.stats.settle.chosenRound]);
+  check('settlePasses outside 0..3 or not an integer throws', [4, -1, 0.5, 'x'].every((x) => throws(() => compose([8, 7, 6, 5], 4, { overrides: { settlePasses: x } }), /settlePasses/)));
+  // every part is built from the final chords: the chords and comping sound them (audit), and settling changed some
+  let moved = 0, specs = 0; bad = '';
+  for (const [layers, T2] of [...CASES, [[2048, 2049], 8], [[41, 42, 43], 8], [[1597, 987, 610, 377], 8]]) for (const sp of [1, 3]) {
+    const spec = compose(layers, T2, { overrides: { settlePasses: sp } });
+    if (spec.refused) continue;
+    specs++;
+    if (spec.stats.settle.changedBarsPerRound[0] > 0) {
+      moved++;
+      const before = compose(layers, T2, { overrides: { settlePasses: 0 } });
+      if (JSON.stringify(before.chords) === JSON.stringify(spec.chords)) bad = `${layers}: chords unmoved`;
+    }
+    const broke = audit(spec);
+    if (broke) { bad = `${layers} settle ${sp}: ${broke}`; break; }
+    if (JSON.stringify(spec) !== JSON.stringify(compose(layers, T2, { overrides: { settlePasses: sp } }))) { bad = `${layers} settle ${sp}: not deterministic`; break; }
+  }
+  check(`${specs} settled specs (caps 1 and 3), ${moved} with chords moved: every note an onset by its formula, chords and comping on the final chords, deterministic`, !bad && moved > 0, bad);
 }
 
 console.log('\n— the module worker, in a fake worker scope');

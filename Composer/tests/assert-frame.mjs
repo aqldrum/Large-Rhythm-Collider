@@ -2,6 +2,9 @@
 //   • 8:7:6:5 by hand: every tone's class, deviation and core/fringe at ±15¢ and ±30¢
 //   • edges on a made-up row: the halfway tone goes up, ±frame is inclusive, the circle wraps at 1200¢
 //   • the sweep (`frameOnsetsByRoot`) against a frame built on every root, and `defaultRoot` against a brute argmax
+//     (`presence: 'exact'`, the phase 3 rule, giving its old picks)
+//   • cluster presence (decided, Avery): counts by hand on a made-up row, the wrap at 0/1200, the representatives, the
+//     rungs; the sweep against every pair; `defaultRoot` against a brute argmax; downbeats from the root's cluster
 //   • the class report: every tone once, its counts, its order, and cheap on a 16k-onset row with 4,177 tones
 //   • chunk-lines' frame of 25¢ total on the same edge holds the same tones as ±12.5¢ here (read-only, skipped if absent)
 //   node Composer/tests/assert-frame.mjs
@@ -9,7 +12,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { buildRow } from '../core/row.js';
-import { frameAt, frameOf, frameOnsetsByRoot, defaultRoot, rootPresence, classReport, toneIndexOf, DEFAULT_FRAME_CENTS_EACH_SIDE } from '../core/frame.js';
+import { frameAt, frameOf, frameOnsetsByRoot, defaultRoot, rootPresence, classReport, toneIndexOf, clusterPresence, clusterOf, inCluster, classOfCents, PRESENCE_MODES, DEFAULT_FRAME_CENTS_EACH_SIDE } from '../core/frame.js';
+import { downbeats } from '../core/lines.js';
 import { RHYTHMS, OVERWORLD_RUNTIME } from './rhythms.mjs';
 
 let PASS = true, checks = 0;
@@ -87,15 +91,92 @@ console.log('\n— the sweep and the default root');
     const most = Math.max(...row.toneCount), half = all.filter((t) => row.toneCount[t] >= Math.max(2, Math.ceil(most / 2)));
     if (!heard.length) fellBack++;
     const best = pickFrom(heard.length ? heard : half.length ? half : all);
-    if (defaultRoot(row) !== best || rootPresence(row) !== need) bad = `${layers}: ${row.tones[defaultRoot(row)]} vs ${row.tones[best]}`;
+    const got = defaultRoot(row, 15, { presence: 'exact' });
+    if (got !== best || rootPresence(row) !== need) bad = `${layers}: ${row.tones[got]} vs ${row.tones[best]}`;
   }
-  check(`defaultRoot: of the tones heard max(2, 1% of onsets) times, the most onsets in its frame, then the most heard, then 1/1, then the lowest (${fellBack} rhythms drop to half the most heard)`, !bad, bad);
+  check(`defaultRoot, presence 'exact' (the phase 3 rule): of the tones heard max(2, 1% of onsets) times, the most onsets in its frame, then the most heard, then 1/1, then the lowest (${fellBack} rhythms drop to half the most heard)`, !bad, bad);
+  // the old picks, as phase 2/3 recorded them
+  const old = { '4099:4093:4091:4079': '4093/2304', '768:784': '3/2', '768:769': '3/2', '2048:2049': '16/15' };
+  check('presence \'exact\' gives the phase 3 picks (4093/2304, 3/2, 3/2, 16/15)', Object.entries(old).every(([l, want]) => { const row = buildRow(l.split(':').map(Number)); return row.tones[defaultRoot(row, 15, { presence: 'exact' })] === want; }));
   const r = buildRow([8, 7, 6, 5]);
   check('frameOf: a root given is kept; none given takes the default', frameOf(r, '3/2').rootFraction === '3/2' && frameOf(r).root === defaultRoot(r));
   const big = buildRow([4099, 4093, 4091, 4079]);
   const t0 = performance.now(), br = defaultRoot(big), t1 = performance.now();
-  check(`a tone-rich row with no tone at 1%: the root is heard ${big.toneCount[br]} times (the most heard: 24), not twice`, big.toneCount[br] >= 12);
-  check(`defaultRoot on 4,177 tones in ${(t1 - t0).toFixed(1)} ms (one sweep, not tones²)`, t1 - t0 < 100);
+  check(`a tone-rich row with no tone at 1%: the root ${big.tones[br]} is heard ${big.toneCount[br]} times (the most heard: 24), its cluster ${clusterPresence(big).presence[br]}`, big.toneCount[br] >= 12 && clusterPresence(big).presence[br] >= rootPresence(big));
+  check(`defaultRoot on 4,177 tones in ${(t1 - t0).toFixed(1)} ms (two sweeps, not tones²)`, t1 - t0 < 100);
+  check('an unknown presence throws', throws(() => defaultRoot(r, 15, { presence: 'loud' }), /presence must be/) && PRESENCE_MODES.join() === 'cluster,exact');
+}
+
+console.log('\n— cluster presence (decided, Avery: the ±frame cluster neighbourhood)');
+{
+  // by hand, ±15: a cluster across the wrap (1190, 1195, 0, 10), a pair (600, 612) tied on onsets, two loners
+  const fake = (cents, counts, n, strikes = null) => ({ n, tones: cents.map((_, i) => `t${i}`), toneCents: Float64Array.from(cents), toneCount: Uint32Array.from(counts),
+    ...(strikes ? { tone: Uint32Array.from(strikes.flatMap((_, t) => Array(counts[t]).fill(t))), strikes: Uint8Array.from(strikes.flatMap((x, t) => Array(counts[t]).fill(x))) } : {}) });
+  const row = fake([0, 10, 1195, 1190, 600, 612, 640, 300], [3, 2, 4, 1, 5, 5, 1, 1], 22);
+  const c = clusterPresence(row, 15);
+  check('by hand: 0¢ hears 0, 10, 1195 and 1190 (10); 10¢ reaches 1195 at exactly −15 but not 1190 (9); 1195¢ reaches 10 across the wrap (10); 1190¢ not 10 (8)',
+    [...c.presence].join() === '10,9,10,8,10,10,1,1', [...c.presence].join());
+  check('…cluster sizes 4, 3, 4, 3, 2, 2, 1, 1', [...c.size].join() === '4,3,4,3,2,2,1,1', [...c.size].join());
+  check('representatives: 1195¢ (the loudest of the wrap cluster), 600¢ (tied on onsets with 612¢, no strikes: the lower index), and the loners',
+    [...c.representative].join() === '0,0,1,0,1,0,1,1', [...c.representative].join());
+  const struck = fake([0, 10, 1195, 1190, 600, 612, 640, 300], [3, 2, 4, 1, 5, 5, 1, 1], 22, [1, 1, 1, 1, 1, 2, 1, 1]);
+  check('…with strikes, the tie goes to the more struck (612¢)', [...clusterPresence(struck, 15).representative].join() === '0,0,1,0,0,1,1,1');
+  check('clusterOf and inCluster by hand (0¢: 0, 1, 2, 3; 10¢ and 1190¢ apart)', clusterOf(row, 0, 15).join() === '0,1,2,3' && !inCluster(row, 1, 3, 15) && inCluster(row, 1, 2, 15));
+  // the rungs: X at 50¢ holds the widest frame (every 100¢ step's tone) but every tone is alone in its cluster; Z and
+  // Z' (0, 5¢) are one cluster heard twice
+  const steps = [50, 150, 250, 350, 450, 550, 650, 750];
+  const rung = fake([0, 5, ...steps], [1, 1, ...steps.map(() => 1)], 10);
+  check('rung 1 (max(2, 1%)): only the cluster heard twice qualifies — 0¢, though 50¢\'s frame holds 8 onsets to its 2', defaultRoot(rung, 15) === 0 && frameOnsetsByRoot(rung, 15)[2] === 8);
+  check('…the exact rule finds no tone heard twice and falls through to every tone: 50¢', defaultRoot(rung, 15, { presence: 'exact' }) === 2);
+  const r2 = { ...rung, n: 1000 };   // 1% is 10: nothing reaches it; half the largest cluster (2) is 1, so 2
+  check('rung 2 (half the largest cluster, at least 2): 0¢ again with 1% out of reach', defaultRoot(r2, 15) === 0 && rootPresence(r2) === 10);
+  const lone = fake(steps, steps.map(() => 1), 1000);
+  check('rung 3 (any representative): every cluster heard once; the frame ties, so the lowest cents (50¢)', defaultRoot(lone, 15) === 0);
+  check('…ties on the frame go to cluster presence before the root\'s own onsets', (() => {
+    // every frame holds all four tones (8 onsets): 0¢ alone heard 3 times, 600¢ and 608¢ a cluster heard 4 times
+    const t = fake([0, 300, 600, 608], [3, 1, 2, 2], 8);
+    return defaultRoot(t, 15) === 2 && defaultRoot(t, 15, { presence: 'exact' }) === 0;
+  })());
+
+  // the sweep against every pair, and the root against a brute argmax, on the 52 rhythms and the made-up rows
+  let bad = '';
+  const brute = (row, e) => {
+    const T = row.tones.length, presence = [], rep = [], strikes = new Float64Array(T);
+    if (row.tone) for (let i = 0; i < row.n; i++) strikes[row.tone[i]] += row.strikes[i];
+    const louder = (a, b) => row.toneCount[a] > row.toneCount[b] || (row.toneCount[a] === row.toneCount[b] && (strikes[a] > strikes[b] || (strikes[a] === strikes[b] && a < b)));
+    const near = (t, u) => { const k = classOfCents(row.toneCents[u] - row.toneCents[t]); return k.pc === 0 && Math.abs(k.dev) <= e + 1e-9; };
+    for (let t = 0; t < T; t++) { let p = 0, r = 1; for (let u = 0; u < T; u++) if (near(t, u)) { p += row.toneCount[u]; if (u !== t && louder(u, t)) r = 0; } presence.push(p); rep.push(r); }
+    return { presence, rep };
+  };
+  const rows = [...RHYTHMS.map((l) => buildRow(l)), row, struck, rung, lone, fake([0, 1199.999, 600, 650, 549.999], [1, 2, 3, 4, 5], 15)];
+  for (const r of rows) for (const e of [0, 5, 12.5, 15, 30, 49.9, 50]) {
+    const sweep = clusterPresence(r, e), b = brute(r, e);
+    if ([...sweep.presence].join() !== b.presence.join() || [...sweep.representative].join() !== b.rep.join()) { bad = `${r.tones.length} tones at ±${e}`; break; }
+  }
+  check(`the sweep (presence and representatives) equals every pair by classOfCents (52 rhythms + 5 made up × 7 knobs, 50¢ halfway included)`, !bad, bad);
+  bad = '';
+  let unlike = 0;
+  for (const layers of RHYTHMS) {
+    const r = buildRow(layers), b = brute(r, 15), held = frameOnsetsByRoot(r, 15);
+    const pool = r.tones.map((_, t) => t).filter((t) => b.rep[t]), most = Math.max(...pool.map((t) => b.presence[t]));
+    const key = (x) => [held[x], b.presence[x], r.toneCount[x], r.tones[x] === '1/1' ? 1 : 0, -r.toneCents[x]];
+    const pickFrom = (list) => list.reduce((best, t) => { const a = key(t), k = key(best); for (let i = 0; i < 5; i++) { if (a[i] > k[i]) return t; if (a[i] < k[i]) return best; } return best; });
+    let want = null;
+    for (const need of [rootPresence(r), Math.max(2, Math.ceil(most / 2)), 0]) { const list = pool.filter((t) => b.presence[t] >= need); if (list.length) { want = pickFrom(list); break; } }
+    if (defaultRoot(r) !== want) { bad = `${layers}: ${r.tones[defaultRoot(r)]} vs ${r.tones[want]}`; break; }
+    if (want !== defaultRoot(r, 15, { presence: 'exact' })) unlike++;
+  }
+  check(`defaultRoot (cluster): of the representatives whose cluster reaches the rung, the most onsets in its frame, then the cluster, then its own, then 1/1, then the lowest (52 rhythms; ${unlike} pick another root than 'exact')`, !bad, bad);
+  const huge = buildRow([700001, 300007]), t0 = performance.now(); clusterPresence(huge, 15); const t1 = performance.now();
+  check(`the sweep on 150,004 tones (1,000,007 onsets) in ${(t1 - t0).toFixed(0)} ms (tones log tones, and one walk for the strikes)`, t1 - t0 < 1500);
+
+  // downbeats from the root's cluster: a tone heard twice in a cluster heard often still finds its downbeats
+  const big = buildRow([4099, 4093, 4091, 4079]), t = big.tones.indexOf('4093/2324'), members = new Set(clusterOf(big, t, 15));
+  const exact = downbeats(big, 64, 6, t, { anchors: 'partitioned' }), cl = downbeats(big, 64, 6, t, { anchors: 'partitioned', cluster: 15 });
+  const tickOf = (p) => (p[0] * big.grid) / p[1], nodeAt = (tick) => { let lo = 0, hi = big.n - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (big.tick[m] < tick) lo = m + 1; else hi = m; } return lo; };
+  check(`4093/2324 (heard ${big.toneCount[t]} times, its cluster ${clusterPresence(big).presence[t]}): ${exact.length} of 6 downbeats on its own, ${cl.length} of 6 from its cluster`, exact.length === 2 && cl.length === 6);
+  check('…the first where the tone itself first sounds, every one an onset of its cluster', tickOf(cl[0]) === big.tick[big.toneFirst[t]] && cl.every((p) => members.has(big.tone[nodeAt(tickOf(p))])));
+  check('…and no cluster asked gives the old downbeats', JSON.stringify(downbeats(big, 64, 6, t, { anchors: 'partitioned', cluster: null })) === JSON.stringify(exact));
 }
 
 console.log('\n— the class report');

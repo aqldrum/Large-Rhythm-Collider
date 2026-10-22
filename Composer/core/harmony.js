@@ -34,8 +34,10 @@
 //               the grid are candidates, and a bar with none keeps its best root flagged `offGrid`.
 //   second pass the lead is mined again over the chords (a bar a chord, each in its own frame, the parent scale the
 //               union of the chords' classes), and per phrase the cheaper per note under the harmony weights is kept.
-//               The chords stay those of the first lead; a strong note of the kept lead off its chord is counted as an
-//               exception on the chord.
+//   settling    (`settlePasses`, 0..3, default 3; Avery asked for it, the rules proposed, not ruled) the chords are
+//               derived again from the kept lead, and the lead mined again over them, until the chords settle, repeat
+//               an earlier round's (the best round of the cycle is kept) or the cap. 0 keeps the chords of the first
+//               lead. A strong note of the kept lead off its chord is counted as an exception on the chord.
 
 import { toneGate, MIN_TONES } from './row.js';
 import { frameAt, frameOf, classOfCents, DEFAULT_FRAME_CENTS_EACH_SIDE } from './frame.js';
@@ -193,24 +195,89 @@ function costOn(lattice, line, rules) {
   return cost / picks.length;
 }
 
+/** extra rounds of lead ↔ chords after the first derivation: at most this many (proposed, not ruled; Avery asked for settling) */
+export const DEFAULT_SETTLE_PASSES = 3;
+export const MAX_SETTLE_PASSES = 3;
+
+/** the strong notes of a bar of S slots in a lead (passing tones left out): the downbeat and middle, else the first */
+function strongNotesOf(notes, bar, S) {
+  const inBar = notes.filter((n) => n.bar === bar && !n.outside);
+  let strong = inBar.filter((n) => isStrongBeat(n.beat, S));
+  if (!strong.length && inBar.length) strong = [inBar[0]];
+  return { inBar, strong };
+}
+/** what makes two derivations' chords the same: per bar, the root tone, the quality and the (sounding) offset */
+const chordKey = (chords) => chords.map((c) => `${c.rootTone}|${c.quality}|${c.rawOffsetCents}`);
+
+/**
+ * The settling loop on its own (pure; harmonize's rounds, testable on made-up states):
+ *   start    round 0's state: { chords, exceptions, cost, ... }
+ *   cap      the most rounds after it
+ *   derive   (state) → the chords the state's lead implies
+ *   key      (chords) → a string per bar: two derivations are the same when every bar's is
+ *   advance  (chords, state, round) → the next state, over those chords
+ * Round i derives chords from state i − 1. The same chords as state i − 1's: converged, stop. The same as an earlier
+ * state j's: oscillated, stop, and keep the state of the cycle j..i − 1 with the fewest exceptions, then the lower cost,
+ * then the earlier. Otherwise advance; at the cap, keep the last state.
+ * → { states, rounds: [{ round, changedBars, repeats? }], converged, oscillated, cycle: [state index] | null, chosen }
+ */
+export function settleRounds(start, cap, { derive, key, advance }) {
+  const states = [start], keys = [key(start.chords).join('\u0000')], rounds = [];
+  let chosen = 0, converged = false, oscillated = false, cycle = null;
+  for (let i = 1; i <= cap; i++) {
+    const prev = states[i - 1], chords = derive(prev), k = key(chords), prevK = key(prev.chords);
+    const changedBars = k.flatMap((x, b) => (x !== prevK[b] ? [b] : []));
+    if (!changedBars.length) { rounds.push({ round: i, changedBars }); converged = true; break; }
+    const repeats = keys.indexOf(k.join('\u0000'));
+    if (repeats >= 0) {
+      rounds.push({ round: i, changedBars, repeats });
+      oscillated = true; cycle = [];
+      for (let j = repeats; j < i; j++) cycle.push(j);
+      chosen = cycle.reduce((a, b) => (states[b].exceptions < states[a].exceptions || (states[b].exceptions === states[a].exceptions && states[b].cost < states[a].cost - EPS) ? b : a));
+      break;
+    }
+    states.push(advance(chords, prev, i)); keys.push(k.join('\u0000'));
+    rounds.push({ round: i, changedBars });
+    chosen = i;
+  }
+  return { states, rounds, converged, oscillated, cycle, chosen };
+}
+
 /**
  * Harmony from melody over the cycle's cells.
  *   opts = { root (a tone, default the frame's default root), frameCentsEachSide (15), modulation (true), foldOffsets (true),
- *            table ('full' | 'lean'), referenceName ('C': the base root's name, for chord names), minTones }
- * → { version, root, frameCentsEachSide, modulation, table, lead, chords, targets, modulations, passes, exceptions }
+ *            table ('full' | 'lean'), referenceName ('C': the base root's name, for chord names), minTones,
+ *            settlePasses (0..3, default 3: extra rounds of chords ↔ lead, below) }
+ * → { version, root, frameCentsEachSide, modulation, table, lead, chords, targets, modulations, passes, exceptions, settle }
  *   | { tooFewTones, tones, min }
- *   lead     { phrases: [line], notes: [note], kept: ['first' | 'second' per phrase] }
+ *   lead     { phrases: [line], notes: [note], kept: ['first' | 'second' | 'round1'.. per phrase: the pass its line is from] }
  *   chord    { bar, name, quality, kind, intervals, pcs, rootPc (named), gridPcs, gridRootPc (sounding grid), rootTone,
  *              rootFraction, rootCents, rootNode, offsetCents (named), rawOffsetCents, fundamentalRatio,
- *              strong (the kept lead's strong classes, on the grid), exceptions, support, offGrid, frame }
+ *              firstPass (violations and held against the lead it was derived from), strong (the kept lead's strong
+ *              classes, on the grid), exceptions, support, offGrid, frame }
  *   modulations [{ bar, cents (named), rawCents, fundamentalRatio }]   from that bar on, relative to the base fundamental
- *   passes   { phrases: [{ from, bars, first: { id, perNote }, second: { id, perNote } | null, kept }], secondWins }
+ *   passes   { phrases: [{ from, bars, first: { id, perNote, perNoteUnderHarmony }, second: { id, perNote } | null, kept }],
+ *              secondWins, rounds: [{ round, changedBars: [bar], newerKept, phrases: [{ from, bars,
+ *              current: { id, line, perNoteUnderHarmony } | null, newer: { id, perNote } | null, kept: 'current' | 'newer' }],
+ *              repeats? (the round whose chords this one reproduced) }] }
+ *   settle   { cap, rounds, converged, oscillated, cycle: [round] | null, chosenRound, changedBarsPerRound,
+ *              exceptionsPerRound, leadCostPerRound (per note, each round's kept lead on its own targets) }
+ *
+ * Settling (proposed, not ruled; Avery asked for it): round 0 is the first derivation (chords from the rooted lead, the
+ * lead again over them, the cheaper per note per phrase kept). Each round i ≥ 1 re-derives every chord from the lead
+ * round i − 1 kept, by the same rules (the modulation offset walked from bar 1 again), rebuilds the targets, mines the
+ * lead over them and keeps, per phrase, the cheaper per note of that line and the kept one re-scored on the new
+ * targets. It stops when a round's chords equal the round before's (converged), at `settlePasses` rounds, or when a
+ * round's chords repeat an earlier round's (oscillated): then the round of the cycle with the fewest exceptions, then
+ * the cheaper lead per note, then the earlier, is kept. Exceptions are counted at the end, the kept lead against the
+ * kept chords.
  */
 export function harmonize(row, cells, opts = {}) {
-  const { root = null, frameCentsEachSide: e = DEFAULT_FRAME_CENTS_EACH_SIDE, modulation = true, table = 'full', referenceName = 'C', minTones = MIN_TONES, foldOffsets = true } = opts;
+  const { root = null, frameCentsEachSide: e = DEFAULT_FRAME_CENTS_EACH_SIDE, modulation = true, table = 'full', referenceName = 'C', minTones = MIN_TONES, foldOffsets = true, settlePasses = DEFAULT_SETTLE_PASSES } = opts;
   const refused = toneGate(row, minTones);
   if (refused) return refused;
   if (!TABLES.includes(table)) fail(`table must be one of ${TABLES.join(', ')}`);
+  if (!(Number.isInteger(settlePasses) && settlePasses >= 0 && settlePasses <= MAX_SETTLE_PASSES)) fail(`settlePasses must be an integer 0..${MAX_SETTLE_PASSES}, not ${JSON.stringify(settlePasses)}`);
   const refPc = PC_NAMES.indexOf(referenceName);
   if (refPc < 0) fail(`no note ${referenceName}`);
   const base = frameOf(row, root, e), S = cells.slotsPerBar, phrases = phrasesOf(cells);
@@ -218,78 +285,108 @@ export function harmonize(row, cells, opts = {}) {
   // 1. the lead, rooted, no harmony
   const firstLines = phrases.map(({ from, bars }) => mineLines(row, cells, base, { from, bars, types: ['lead'], table }).lines[0] ?? null);
   const leadNotesOf = (lines) => lines.flatMap((l) => (l ? l.notes : []));
-  const firstNotes = leadNotesOf(firstLines);
 
-  // 2. a chord a bar
-  const material = barMaterial(row, cells), gridBase = base.rootCents, chords = [], modulations = [];
-  let offset = 0, prevPcs = null;
-  for (let k = 0; k < cells.bars; k++) {
-    const tones = [...material[k].values()];
-    const inBar = firstNotes.filter((n) => n.bar === k && !n.outside);
-    let strong = inBar.filter((n) => isStrongBeat(n.beat, S));
-    if (!strong.length && inBar.length) strong = [inBar[0]];
-    const lead = inBar.map((n) => ({ cents: n.cents, strong: strong.includes(n) }));
-    const pick = chooseChord(tones, lead, { eachSide: e, gridBase, offset, modulation, prevPcs, foldOffsets });
-    if (!pick) { chords.push(null); continue; }
-    if (pick.modulate) modulations.push({ bar: k, cents: pick.named.offset, rawCents: pick.offset, fundamentalRatio: 2 ** (pick.offset / 1200) });
-    offset = pick.offset; prevPcs = pick.pcs;
-    const r = pick.root;
-    chords.push({
-      bar: k, name: `${PC_NAMES[mod(pick.named.rootPc + refPc, 12)]}${pick.quality.suffix}`, quality: pick.quality.id, kind: pick.quality.kind,
-      intervals: pick.intervals, pcs: pick.named.pcs, rootPc: pick.named.rootPc, gridPcs: pick.pcs, gridRootPc: pick.rootPc, rootTone: r.tone, rootFraction: row.tones[r.tone], rootCents: r.cents, rootNode: r.node,
-      offsetCents: pick.named.offset, rawOffsetCents: offset, fundamentalRatio: 2 ** (offset / 1200), firstPass: { violations: pick.violations, held: pick.held }, support: pick.support, offGrid: pick.offGrid, frame: frameAt(row, r.tone, e),
-    });
-  }
-  // a bar the windows left empty takes the chord before it (or after, for the first)
-  for (let k = 0; k < chords.length; k++) if (!chords[k]) {
-    const near = chords.slice(0, k).reverse().find(Boolean) ?? chords.slice(k + 1).find(Boolean);
-    if (!near) fail('no bar of the cycle holds a tone');
-    chords[k] = { ...near, bar: k, empty: true };
-  }
-
-  // 3. targets: a bar a chord, read in its own frame; the parent scale is the union of the chords' classes on the grid
-  const scale = [...new Set(chords.flatMap((c) => c.gridPcs))].sort((a, b) => a - b);   // on the sounding grid: the names may fold
-  const targets = {
-    scale,
-    bars: chords.map((c) => ({ name: c.name, root: 0, chord: [...c.intervals], tone: c.rootFraction, anchor: c.rootCents, scale: scale.map((p) => mod(p - c.gridRootPc, 12)).sort((a, b) => a - b) })),
+  // 2. a chord a bar, from a lead: the offset walked from bar 1
+  const material = barMaterial(row, cells), gridBase = base.rootCents;
+  const chordsFrom = (leadNotes) => {
+    const chords = [], modulations = [];
+    let offset = 0, prevPcs = null;
+    for (let k = 0; k < cells.bars; k++) {
+      const tones = [...material[k].values()];
+      const { inBar, strong } = strongNotesOf(leadNotes, k, S);
+      const lead = inBar.map((n) => ({ cents: n.cents, strong: strong.includes(n) }));
+      const pick = chooseChord(tones, lead, { eachSide: e, gridBase, offset, modulation, prevPcs, foldOffsets });
+      if (!pick) { chords.push(null); continue; }
+      if (pick.modulate) modulations.push({ bar: k, cents: pick.named.offset, rawCents: pick.offset, fundamentalRatio: 2 ** (pick.offset / 1200) });
+      offset = pick.offset; prevPcs = pick.pcs;
+      const r = pick.root;
+      chords.push({
+        bar: k, name: `${PC_NAMES[mod(pick.named.rootPc + refPc, 12)]}${pick.quality.suffix}`, quality: pick.quality.id, kind: pick.quality.kind,
+        intervals: pick.intervals, pcs: pick.named.pcs, rootPc: pick.named.rootPc, gridPcs: pick.pcs, gridRootPc: pick.rootPc, rootTone: r.tone, rootFraction: row.tones[r.tone], rootCents: r.cents, rootNode: r.node,
+        offsetCents: pick.named.offset, rawOffsetCents: offset, fundamentalRatio: 2 ** (offset / 1200), firstPass: { violations: pick.violations, held: pick.held }, support: pick.support, offGrid: pick.offGrid, frame: frameAt(row, r.tone, e),
+      });
+    }
+    // a bar the windows left empty takes the chord before it (or after, for the first)
+    for (let k = 0; k < chords.length; k++) if (!chords[k]) {
+      const near = chords.slice(0, k).reverse().find(Boolean) ?? chords.slice(k + 1).find(Boolean);
+      if (!near) fail('no bar of the cycle holds a tone');
+      chords[k] = { ...near, bar: k, empty: true };
+    }
+    return { chords, modulations };
   };
 
-  // 4. the lead again over the chords; per phrase the cheaper per note under the harmony weights
-  const passes = { phrases: [], secondWins: 0 }, kept = [], keptLines = [];
-  phrases.forEach(({ from, bars }, i) => {
-    const frames = chords.slice(from, from + bars).map((c) => c.frame), sub = { scale, bars: targets.bars.slice(from, from + bars) };
-    const second = mineLines(row, cells, frames, { from, bars, types: ['lead'], table, targets: sub }).lines[0] ?? null;
-    const first = firstLines[i];
-    let firstUnder = Infinity;
-    if (first) {
-      const lattice = buildLattice(row, cells, frames, { from, bars, low: first.low, width: LINE_TYPES[0].width });
-      firstUnder = costOn(lattice, first, rulesOfLine(first, sub, first.low, HARMONY_WEIGHTS));
-    }
-    const useSecond = second && !(firstUnder <= second.perNote + EPS);
-    kept.push(useSecond ? 'second' : 'first'); keptLines.push(useSecond ? second : first);
-    if (useSecond) passes.secondWins++;
-    passes.phrases.push({ from, bars, first: first ? { id: first.id, perNote: first.perNote, perNoteUnderHarmony: firstUnder } : null, second: second ? { id: second.id, perNote: second.perNote } : null, kept: kept[i] });
-  });
-  const notes = leadNotesOf(keptLines);
+  // 3. targets: a bar a chord, read in its own frame; the parent scale is the union of the chords' classes on the grid
+  const targetsOf = (chords) => {
+    const scale = [...new Set(chords.flatMap((c) => c.gridPcs))].sort((a, b) => a - b);   // on the sounding grid: the names may fold
+    return { scale, bars: chords.map((c) => ({ name: c.name, root: 0, chord: [...c.intervals], tone: c.rootFraction, anchor: c.rootCents, scale: scale.map((p) => mod(p - c.gridRootPc, 12)).sort((a, b) => a - b) })) };
+  };
 
-  // 5. each chord against the kept lead: its strong notes off the chord are counted, not hidden
-  let exceptions = 0;
-  for (const c of chords) {
-    const inBar = notes.filter((n) => n.bar === c.bar && !n.outside);
-    let strong = inBar.filter((n) => isStrongBeat(n.beat, S));
-    if (!strong.length && inBar.length) strong = [inBar[0]];
-    c.strong = []; c.exceptions = [];
-    for (const n of strong) {
-      const { pc, dev } = classOfCents(n.cents - c.rootCents), held = Math.abs(dev) <= e + EPS && c.intervals.includes(pc);
-      const onGrid = mod(c.rootPc + pc, 12);   // named
-      c.strong.push(onGrid);
-      if (!held) c.exceptions.push({ slot: n.slot, node: n.node, fraction: n.fraction, pc: onGrid, dev: Math.abs(dev) <= e + EPS ? dev : null });
+  // 4. the lead again over the chords; per phrase the cheaper per note under the harmony weights, the line held so far
+  //    re-scored on the new targets
+  const leadOver = (chords, targets, held, heldTags, tag) => {
+    const lines = [], tags = [], info = [];
+    let newerWins = 0, cost = 0, count = 0;
+    phrases.forEach(({ from, bars }, i) => {
+      const frames = chords.slice(from, from + bars).map((c) => c.frame), sub = { scale: targets.scale, bars: targets.bars.slice(from, from + bars) };
+      const newer = mineLines(row, cells, frames, { from, bars, types: ['lead'], table, targets: sub }).lines[0] ?? null;
+      const cur = held[i];
+      let under = Infinity;
+      if (cur) {
+        const lattice = buildLattice(row, cells, frames, { from, bars, low: cur.low, width: LINE_TYPES[0].width });
+        under = costOn(lattice, cur, rulesOfLine(cur, sub, cur.low, HARMONY_WEIGHTS));
+      }
+      const useNewer = newer && !(under <= newer.perNote + EPS), kept = useNewer ? newer : cur;
+      lines.push(kept); tags.push(useNewer ? tag : heldTags[i]);
+      if (useNewer) newerWins++;
+      if (kept) { cost += (useNewer ? newer.perNote : under) * kept.notes.length; count += kept.notes.length; }
+      info.push({ from, bars, cur, curTag: heldTags[i], under, newer, useNewer });
+    });
+    return { lines, tags, info, newerWins, perNote: count ? cost / count : 0 };
+  };
+
+  // 5. a lead's strong notes against chords: those off their chord are exceptions (written onto the chords when kept)
+  const exceptionsOf = (chords, notes, write = false) => {
+    let total = 0;
+    for (const c of chords) {
+      const { strong } = strongNotesOf(notes, c.bar, S), mine = [], strongPcs = [];
+      for (const n of strong) {
+        const { pc, dev } = classOfCents(n.cents - c.rootCents), held = Math.abs(dev) <= e + EPS && c.intervals.includes(pc);
+        const onGrid = mod(c.rootPc + pc, 12);   // named
+        strongPcs.push(onGrid);
+        if (!held) mine.push({ slot: n.slot, node: n.node, fraction: n.fraction, pc: onGrid, dev: Math.abs(dev) <= e + EPS ? dev : null });
+      }
+      if (write) { c.strong = strongPcs; c.exceptions = mine; }
+      total += mine.length;
     }
-    exceptions += c.exceptions.length;
+    return total;
+  };
+
+  // round 0: the chords of the rooted lead, and the lead over them
+  const firstTags = phrases.map(() => 'first');
+  const d0 = chordsFrom(leadNotesOf(firstLines)), t0 = targetsOf(d0.chords), l0 = leadOver(d0.chords, t0, firstLines, firstTags, 'second');
+  const passes = { phrases: l0.info.map((x) => ({ from: x.from, bars: x.bars, first: x.cur ? { id: x.cur.id, perNote: x.cur.perNote, perNoteUnderHarmony: x.under } : null, second: x.newer ? { id: x.newer.id, perNote: x.newer.perNote } : null, kept: x.useNewer ? 'second' : 'first' })),
+    secondWins: l0.newerWins, rounds: [] };
+  const stateOf = (d, targets, l, info = null) => ({ chords: d.chords, modulations: d.modulations, targets, lines: l.lines, tags: l.tags, cost: l.perNote, exceptions: exceptionsOf(d.chords, leadNotesOf(l.lines)), info, newerWins: l.newerWins });
+
+  // rounds 1..settlePasses: the chords from the kept lead, until they settle, repeat, or the cap
+  const run = settleRounds(stateOf(d0, t0, l0), settlePasses, {
+    derive: (state) => chordsFrom(leadNotesOf(state.lines)),
+    key: (x) => chordKey(Array.isArray(x) ? x : x.chords),
+    advance: (d, prev, i) => { const targets = targetsOf(d.chords), l = leadOver(d.chords, targets, prev.lines, prev.tags, `round${i}`); return stateOf(d, targets, l, l.info); },
+  });
+  for (const r of run.rounds) {
+    const st = !('repeats' in r) && r.changedBars.length ? run.states[r.round] : null;
+    passes.rounds.push({ round: r.round, changedBars: r.changedBars, newerKept: st ? st.newerWins : 0,
+      phrases: st ? st.info.map((x) => ({ from: x.from, bars: x.bars, current: x.cur ? { id: x.cur.id, line: x.curTag, perNoteUnderHarmony: x.under } : null, newer: x.newer ? { id: x.newer.id, perNote: x.newer.perNote } : null, kept: x.useNewer ? 'newer' : 'current' })) : [],
+      ...('repeats' in r ? { repeats: r.repeats } : {}) });
   }
+  const final = run.states[run.chosen], notes = leadNotesOf(final.lines);
+  const exceptions = exceptionsOf(final.chords, notes, true);
 
   return {
     version: COMPOSER_HARMONY_VERSION, root: base.rootFraction, frameCentsEachSide: e, modulation, table,
-    lead: { phrases: keptLines, notes, kept }, chords, targets, modulations, passes, exceptions,
+    lead: { phrases: final.lines, notes, kept: final.tags }, chords: final.chords, targets: final.targets, modulations: final.modulations, passes, exceptions,
+    settle: { cap: settlePasses, rounds: run.rounds.length, converged: run.converged, oscillated: run.oscillated, cycle: run.cycle, chosenRound: run.chosen,
+      changedBarsPerRound: run.rounds.map((r) => r.changedBars.length), exceptionsPerRound: run.states.map((x) => x.exceptions), leadCostPerRound: run.states.map((x) => x.cost) },
   };
 }

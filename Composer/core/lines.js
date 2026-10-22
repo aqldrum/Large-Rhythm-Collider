@@ -42,6 +42,7 @@
 //                (slot, candidate, notes so far, what the last move left: a leap's direction or a run on one pitch).
 
 import { toneGate, MIN_TONES } from './row.js';
+import { clusterOf } from './frame.js';
 
 export const COMPOSER_LINES_VERSION = 'composer-lines-v1';
 export const DEFAULT_WEIGHTS = Object.freeze({ accent: 1, support: 0.15, outside: 0.3, chord: 1, contour: 1, gap: 0.5, interval: 1, recovery: 1, close: 1, avoid: 0 });
@@ -121,12 +122,17 @@ function heaviestFirst(row) {
 /**
  * Phases ([num, den] of the cycle) to cut P slots from, at most `count` (chunk-lines `downbeats`, for phase 4 to pick
  * the cycle's phase from). With a tone: where it first sounds, then the heaviest onsets where it sounds; without: the
- * row's heaviest onsets. With even anchors, two phases a whole number of slots apart cut the same slots, so only the
- * first in this order is kept.
+ * row's heaviest onsets. With `cluster` (a number of cents each side) the tone sounds wherever a tone of its ±cluster
+ * neighbourhood does (frame.js `clusterOf`: its class, within ±cluster of it): where the tone itself first sounds,
+ * then the heaviest onsets of its cluster — so a root heard only a few times, in a cluster heard often, still finds
+ * its downbeats. With even anchors, two phases a whole number of slots apart cut the same slots, so only the first in
+ * this order is kept.
  */
-export function downbeats(row, P, count = 6, tone = null, { anchors = 'even' } = {}) {
+export function downbeats(row, P, count = 6, tone = null, { anchors = 'even', cluster = null } = {}) {
   const order = heaviestFirst(row), out = [], seen = new Set(), t = tone == null ? -1 : typeof tone === 'string' ? row.tones.indexOf(tone) : tone;
   if (tone != null && t < 0) fail(`${tone} is not a tone of the row`);
+  let member = null;
+  if (t >= 0 && cluster != null) { member = new Uint8Array(row.tones.length); for (const u of clusterOf(row, t, cluster)) member[u] = 1; }
   const G = BigInt(row.grid), PB = BigInt(P);
   const take = (i) => {
     const tick = row.tick[i];
@@ -139,7 +145,7 @@ export function downbeats(row, P, count = 6, tone = null, { anchors = 'even' } =
     return out.length >= count;
   };
   if (t >= 0 && take(row.toneFirst[t])) return out;
-  for (let k = 0; k < order.length; k++) { const i = order[k]; if ((t < 0 || row.tone[i] === t) && take(i)) break; }
+  for (let k = 0; k < order.length; k++) { const i = order[k]; if ((t < 0 || (member ? member[row.tone[i]] : row.tone[i] === t)) && take(i)) break; }
   return out;
 }
 

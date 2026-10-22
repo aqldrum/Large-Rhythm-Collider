@@ -131,6 +131,7 @@ Choices made without a ruling. Each is **proposed, not ruled**:
     - 768:769: 3/2, heard 20 times
     - 2048:2049: 16/15, heard 16 times
     - All four now give the full 6 of 6 downbeats at 2×8 and at 4×8.
+  - **Superseded 2026-10-22: presence is measured by the root's ±frame cluster (decided, Avery).** See "Cluster presence and settling" below. The rule above stays reachable as `presence: 'exact'`.
 - **The class report** gives, for each class, its core and fringe ratios with fraction, cents, deviation and onsets, most-heard first. It reads only per-tone counts: O(tones) plus a sort per class, under 2 ms at 4,177 tones.
 - **A line is mined on a span of the cycle's cells** (`from`, `bars`), not on a cut of its own. Compose fixes one phase and one meter for the cycle (phase 4), so every part reads the same slots and every note is an onset at its own time. chunk-lines' per-line downbeat search becomes the `downbeats` helper, for whoever picks the cycle's phase. Its `partitions` / 'auto' cut search isn't ported: the cells fix S.
 - **Fringe tones are chunk-lines' outside tones** (Sprint default 2): only on a weak slot, followed within a step (250¢) by a tone inside the frame, never last.
@@ -191,7 +192,7 @@ Timing (ms, one downbeat; lean / full):
 | 768:769 | 20 / 66 | 106 / 373 | 200 / 687 |
 
 **Open, for Avery.**
-- **Chords follow the first lead.** The planner keeps this (proposed, not ruled); it's Avery's call. The exceptions above count where the two leads disagree.
+- **Chords follow the first lead.** The planner kept this (proposed, not ruled). Avery has since asked for settle passes, the chords re-derived from the kept lead until they settle: see "Cluster presence and settling" below. `settlePasses: 0` is the behaviour described here.
 - **Offsets fold into [−50, +50)¢, as a pure relabel** (planner, phase 5; proposed, not ruled; this corrects the phase 4 entry).
   - The fold never moves a pitch. Each modulation's snap and its `fundamentalRatio` are exactly as unfolded.
   - When the cumulative offset leaves [−50, +50)¢, the grid that names the classes shifts by whole classes instead. Chords' `rootPc`, `pcs` and names, and the reported `offsetCents` and `cents`, change; nothing else does.
@@ -237,7 +238,8 @@ Timing (ms, one downbeat; lean / full):
 - `hz` = baseHz × ratio × 2^octave × the bar's `fundamentalRatio`
 - `time` counts seconds from the phase (bar 1's downbeat). The cycle loops, so a note in bar 1's first window that falls just before the downbeat sounds at the end of the cycle.
 - `decisions`: `[{ what, value, why }]`, one per choice: frame, root, bars, slots, tempo, anchors, phase, modulation, table, leader, comping layer, and sound, legato and enabled for each part, plus baseHz.
-- `stats`: onsets, tones, grid, onsets per slot, notes per part, lead phrases, second-pass wins, exceptions, chord voices per bar, bass bars opened on the root, inner notes on lead slots, the comping layer and its score.
+- `stats`: onsets, tones, grid, onsets per slot, notes per part, lead phrases, second-pass wins, exceptions, chord voices per bar, bass bars opened on the root, inner notes on lead slots, the comping layer and its score; since 2026-10-22 also `settle` (see "Cluster presence and settling").
+- Since 2026-10-22 `decisions` also lists `presence` and `settlePasses`, and both are overrides.
 
 How it works. Each choice here is **proposed, not ruled** unless marked decided:
 
@@ -322,6 +324,111 @@ How it works. Each choice here is **proposed, not ruled**:
   - Stop fades every live voice over 30 ms and books nothing more.
   - A white playhead moves across the lanes.
 
+## Cluster presence and settling (built 2026-10-22, branch `composer-settle`)
+
+Two changes to the core: `Composer/core/frame.js`, `lines.js`, `harmony.js` and `compose.js`, checked by `assert-frame.mjs`, `assert-harmony.mjs` and `assert-compose.mjs`. `Composer/tests/settle-baseline.mjs` holds sha256 hashes of e3909e1's output on 119 fixed cases (23 Compose specs, 96 harmonizations), so the "nothing moved" claims below are tested byte for byte.
+
+### The root's presence by its ±frame cluster (decided, Avery)
+
+Avery: "the ±frame cluster neighborhood is the right call, at least for rhythms at this level of complexity."
+
+- **The measure (decided).** A tone's presence is the onsets of every tone in its ±frameCentsEachSide cluster: its own class, octave-equivalent, within ±e of it (`inCluster`, the same test as chooseChord's `near`). `clusterPresence(row, e)` computes it for every tone in one sweep over the tones sorted by cents mod 1200, unrolled three laps so the window wraps at 0/1200, O(tones log tones). At e = 50 the tone exactly 50¢ above belongs to the next class, as `classOfCents` has it. The sweep takes 39 ms on 150,004 tones, and it is checked against every pair on the 52 test rhythms at 7 knobs.
+- **The candidates (proposed).** The candidates are the cluster representatives: a tone that is the loudest tone of its own cluster, by onsets, then strikes, then the lower index. This is how chooseChord picks a bar's candidate roots. The sweep finds them with a monotone deque, in the same pass.
+- **The rungs (proposed, as asked).** The rungs are the old ones, applied to cluster presence:
+  1. a cluster heard max(2, 1% of the onsets) times;
+  2. else, half the largest representative's cluster, at least 2;
+  3. else, any representative.
+
+  Among the candidates, the frame's total onsets wins. Ties go to cluster presence, then the root's own onsets, then 1/1, then the lowest cents.
+- **Downbeats (proposed).** `downbeats(row, P, count, tone, { cluster: e })` takes the root's cluster. It tries the root's own first onset first, then the heaviest onsets of any tone in its cluster. Compose passes `cluster: e`, so a root heard only a few times still gets its downbeats.
+- **The old rule stays as `presence: 'exact'`.** It is an option on `defaultRoot` and a Compose override. Compose with `presence: 'exact', settlePasses: 0` reproduces e3909e1's specs byte for byte, once the new fields are taken out.
+
+What it picks, old (`exact`) against new (`cluster`). Frame is the onsets the root's ±15¢ frame holds. Downbeats are those found out of those asked: 6 asked with even anchors at 4 × 8, and 3 asked with partitioned anchors at Compose's own meter.
+
+| row | rule | root | heard | cluster | frame | downbeats, even 4×8 | downbeats, Compose's |
+|---|---|---|--:|--:|--:|--:|--:|
+| 4099:4093:4091:4079 (16 s, 8×8) | exact | 4093/2304 | 18 | 416 | 5,169 | 6/6 | 3/3 |
+| | cluster | 4093/2048 | 24 | 455 | 5,153 | 6/6 | 3/3 |
+| 768:784 (8 s, 4×8) | both | 3/2 | 192 | 192 | 864 | 6/6 | 3/3 |
+| 768:769 (8 s, 4×8) | both | 3/2 | 20 | 48 | 496 | 6/6 | 3/3 |
+| 2048:2049 (8 s, 4×8) | both | 16/15 | 16 | 140 | 1,266 | 6/6 | 3/3 |
+| 41:42:43 (8 s, 4×8) | exact | 41/37 | 2 | 8 | 70 | 2/6 | 2/3 |
+| | cluster | 41/22 | 2 | 2 | 70 | 2/6 | 2/3 |
+| 1597:987:610:377 (8 s, 4×8) | both | 372099/204416 | 16 | 88 | 1,134 | 6/6 | 3/3 |
+
+- **Four of the six rows keep their root.** 1597:987:610:377 keeps its root, but its phase moves (42/377 to 34/1597), because downbeats 2 and 3 now come from the cluster's heaviest onsets.
+- **On 4099:4093:4091:4079 the root becomes the most-heard ratio,** 4093/2048, heard 24 times. The old root, 4093/2304, isn't a representative: a louder tone sits within ±15¢ of it. The new root costs Compose more: about 520 ms lean against 340 ms, and 1.7 s full against 1.1 s, with settlePasses 0. Its frame is 16 onsets smaller.
+- **Flag for Avery: 41:42:43.** On this row (124 onsets, 41 tones) the 1% rung is 2, so nearly every representative qualifies and the frame decides. The new root, 41/22, is alone in its cluster and heard twice, so Compose still finds only 2 of 3 downbeats. The old root, 41/37, had the same frame (70 onsets) but was not a representative. Ruling the rungs (rather than the measure) would change this. One option: let cluster presence break ties before the frame.
+- **Where it differs.** On the 52 test rhythms, 5 pick a different root than `exact`. A tone heard twice in a cluster heard 428 times (4093/2324) finds 2 of 6 downbeats on its own onsets and 6 of 6 from its cluster.
+
+### Settle passes: lead ↔ chords until the chords settle (requested by Avery; the rules proposed, not ruled)
+
+Today's pipeline is round 0. Chords come from the rooted lead, the lead is mined again over them, and per phrase the cheaper per note is kept.
+
+**`settlePasses`** (`harmonize` option and Compose override, an integer 0–3, default 3) adds up to that many rounds. Each round i ≥ 1:
+
+1. Re-derives every bar's chord from the lead round i − 1 kept, by the same `chooseChord` rules: strong notes, held notes, support, the voice-leading tie-break. The modulation offset is walked from bar 1 again.
+2. Rebuilds the targets.
+3. Mines the lead over them, and keeps per phrase the cheaper per note of that line and the kept one, re-scored on the new targets. This is the same `costOn` comparison as round 0's.
+
+When the loop stops (all proposed):
+- **Converged.** A round's chords equal the round before's: the same root tone, quality and sounding offset in every bar. The round before is kept, and nothing is re-mined.
+- **The cap.** After `settlePasses` rounds, the last round is kept.
+- **Oscillated.** A round's chords equal an earlier round's. The loop stops and keeps the round of the cycle with the fewest strong-note exceptions, then the lower lead cost per note, then the earlier round.
+
+The pure loop is exported as `settleRounds` and tested on made-up states, because no real oscillation turned up (below).
+
+Exceptions are counted at the end: the final kept lead against the final chords. Compose builds every other part from the final chords and targets.
+
+Recorded:
+- **In the spec.** `stats.settle: { rounds, converged, oscillated, changedBarsPerRound, exceptionsPerRound, chosenRound }`, and a `settlePasses` decision.
+- **In harmonize's result.**
+  - `settle`: the same fields, plus the cap, the cycle and the lead cost per round.
+  - `passes.rounds`: per round, `changedBars` (the bar indices), `newerKept`, and per phrase which line was kept.
+  - `lead.kept` tags each phrase's line with the pass it came from: `first`, `second` or `round1`–`round3`.
+- **`settlePasses: 0` is e3909e1 byte for byte** on 96 harmonizations and 23 specs (with `presence: 'exact'` in Compose).
+
+**Measured.** 12 rows × 4 meters (2×8, 4×8, 8×8, 4×6), partitioned anchors, the cluster root, modulation on, cap 3. The rows are 8:7:6:5, 11:9:7:5, 19:17:16:15, 119:42:15:8, 768:784, 768:769, 504:234:520:297, 2048:2049, 97:103:37, 41:42:43, 1597:987:610:377 and 4099:4093:4091:4079.
+
+| | lean | full |
+|---|--:|--:|
+| runs | 48 | 48 |
+| converged | 47 | 47 |
+| hit the cap | 1 (1597:987:610:377 4×8: 3, 1, 1 bars) | 1 (97:103:37 4×6: 1, 3, 2) |
+| oscillated | 0 | 0 |
+| rounds used: 1 / 2 / 3 (1 = the first re-derivation already agrees) | 27 / 14 / 7 | 21 / 20 / 7 |
+| round 1: runs with chords changed, bars changed | 21 of 48, 37 bars | 27 of 48, 42 bars |
+| round 2 | 7 of 21, 8 bars | 7 of 27, 11 bars |
+| round 3 | 1 of 7, 1 bar | 1 of 7, 2 bars |
+| newer lead kept: round 1 / 2 / 3 | 14 of 28 / 3 of 7 / 1 of 1 phrases | 18 of 32 / 5 of 8 / 1 of 1 |
+| strong-note exceptions, before → after | 1 → 1 | 0 → 0 |
+
+- **A wider search.** 860 harmonizations: the 52 test rhythms and 7 more, × 5 meters × 2 anchor modes × modulation on and off, lean.
+  - No oscillation, and 10 hit the cap.
+  - Exceptions went from 6 to 2: 4 runs fewer, none more. 11:9:7:5 at 3×5 goes from 1 to 0, and it is a test case.
+- **The lead's cost per note isn't monotone across rounds.** For example, 1597:987:610:377 4×8 goes 0.523 → 0.508 → 0.488 → 0.513. Each round is priced on its own targets, so settling is a fixed-point search, not a descent.
+- **A pre-existing oddity, not new.** On 11:9:7:5 8×8 one phrase keeps a round-0 line whose re-score is Infinity, because no line was mined over the chords. It only matters to the oscillation tie-break.
+
+**Timing.** Node, this machine, Compose end to end, median of 3–5 runs, ms.
+
+| row | meter | table | settlePasses 0 | 1 | 3 | rounds at 3 (bars changed) |
+|---|---|---|--:|--:|--:|---|
+| 4099:4093:4091:4079, 16 s | 8×8 | lean | 518 | 660 | 658 | 2 (5, 0) |
+| | | full | 1,712 | 1,740 | 1,770 | 1 (0) |
+| 768:784, 8 s | 4×8 | lean | 264 | 323 | 322 | 2 (1, 0) |
+| | | full | 1,017 | 1,320 | 1,323 | 2 (1, 0) |
+| 768:769, 8 s | 4×8 | lean | 116 | 114 | 114 | 1 (0) |
+| | | full | 408 | 408 | 407 | 1 (0) |
+| 4099:4093:4091:4079, `presence: 'exact'` | 8×8 | lean | 331 | 438 | 440 | 2 (2, 0) |
+| | | full | 1,021 | 1,433 | 1,424 | 2 (1, 0) |
+
+- **A round that re-mines costs about one more lead pass:**
+  - lean: +59 ms (768:784), +107 ms (4099:4093:4091:4079, exact root) and +142 ms (cluster root);
+  - full: +303 ms (768:784) and +412 ms (4099:4093:4091:4079, exact root).
+- **A round that only confirms costs 0–30 ms.** It re-derives the chords and mines nothing.
+- **That's close to the expected +70–100 ms lean and +200–350 ms full per round,** a little over on the 16k row.
+- **Lean stays under 1 s everywhere.** The 16k row is the slowest at about 0.66–0.72 s with the default cap.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
@@ -352,8 +459,8 @@ The six questions from 2026-10-21. The sprint built a proposal for each; each st
 
 Raised during the sprint:
 
-7. **Default root.** A root must be heard at least max(2, 1% of onsets) times, falling back to half the most-heard tone's count. Is that the right sense of "the root is present"?
-8. **Chords follow the first lead, not the kept one.** The second pass's lead was kept in 86% of phrases, and 6 of 814 strong notes end up off their chord.
+7. **Default root.** ~~Is "heard max(2, 1% of onsets) times" the right sense of "the root is present"?~~ Ruled 2026-10-22: presence by the ±frame cluster (decided). The rungs and the frame-onsets tie-break on top of it are still proposed.
+8. **Chords follow the first lead, not the kept one.** Avery asked for settle passes (built 2026-10-22, default 3 rounds). The cap, the stopping rule and the oscillation pick are proposed, not ruled.
 9. **Rare colours.** maj7 is the most common chord (25%), and mMaj7 and aug appear on tone-rich rows. Hear them first, then rule.
 10. **Folding modulation offsets** into [−50, +50)¢ as a pure relabel. Do the folded names read right?
 11. **Grids past 2^53** are refused for v1 (four coprime layers near 10,000 already pass it). Lift with BigInt or two-part positions?
