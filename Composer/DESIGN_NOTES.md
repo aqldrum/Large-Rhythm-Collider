@@ -543,6 +543,46 @@ The seam: `levelOneLights(grid, { source })` names the level-1 source and `selec
 6. **with / against** read only the lead and the comping. Should the bass vote too?
 7. **The partition line on the perc, over the backbeat.** Should it take the hat's place instead?
 
+## Cosmos Compose mode (built 2026-10-22 night, sprint)
+
+Cosmos's Rhythm and Grid cards gained a COMPOSE button (phase E1: audio and logic; the dust and the choreography are E2). The cross-project calls are here; the Cosmos side is in `Cosmos/engine/cosmos-compose.js`'s header, and the seam survey is the git-ignored `Cosmos/docs/composition-survey-2026-10-22/REPORT.md`.
+
+**Decided (Avery, 2026-10-22).**
+- A Rhythm card composes its one rhythm. A Grid card (a bloomed grid) composes a **superrow** of the grid's rhythms up to a budget; a huge grid composes a window of itself, never a refusal. "Fitted of visible" is the barometer.
+- The ambient bed is silenced completely while a composition plays, and restored after.
+- The composition takes over Cosmos's clock (which SPEED drives as an onset density) at its own tempo, and hands it back when it ends.
+- The player keeps flying; the composition stops when the player leaves and the grid falls out of range.
+- The drums are the Composer's, as they are.
+
+**The superrow (`core/superrow.js`; proposed).**
+- Every rhythm of a Cosmos bloom has lcm = G, so the superrow lives on G's own ticks: no LCM problem, and G < 2^24 is far under the 2^53 gate.
+- A node is a distinct (tick, tone) pair, each onset keeping its own rhythm's tone (chunk-super-row's rule). Strikes are summed and saturated at 255; octave is the lowest merged.
+- `layers` are the pulses: the 4 commonest layer values of the admitted rhythms, `owners` where each strikes. Comping and the drums' partition light read these.
+- A one-rhythm superrow is that rhythm's row, field for field, and composes to the identical spec, drums included (`tests/assert-superrow.mjs`).
+- **compose() takes a prebuilt row:** `compose(layers, T, { row })`, read as `arguments[2]?.row` in place of `buildRow(layers)`. That is two lines in `compose.js`, marked; the signature line is untouched, to keep the merge with the trace clean. Pass `row.layers` as `layers` so the spec's input and the drums read the pulses.
+- **The window** is a fill over the caller's order. Cosmos orders the rhythms inside the card's cardinality band nearest the focus: the last node clicked in that bloom, else the eye at press time, fixed at press.
+  - It skips a rhythm over the gate alone, or over the budget alone (a rhythm's own onsets are distinct ticks).
+  - It counts a candidate's room exactly, by its NEW (tick, tone) pairs only, so a rhythm whose onsets are already nodes is free.
+  - The budgets: Θ nodes (Cosmos's tier key `composeBudget`, 16k / 65k / 262k / 262k), Σ ≤ 2^21 source onsets, and the gate (1,048,576) as the ceiling.
+  - A work cap (2^23 onsets examined) bounds monster grids; what it doesn't reach is `unreached`.
+- Node → (rhythm, onset) members go back as CSR arrays, the dust E2 needs.
+- `superrow-worker.js` builds and composes in one module worker. On the survey's grids, the whole job takes 0.5–2.4 s at every budget, monsters included: 166,320 at Θ 65k is 51 rhythms in 0.9 s, and 7,920 composes whole in 2 s.
+
+**Tempo (proposed).** Both kinds choose their own cycle: `cycleSecondsForTempo(n)` picks N bars of the 8, 4, 2, 1 the row holds without going sparse, at T = 240·N / 110. Compose's `chooseMeter` then lands exactly on N bars at 110 BPM and never halves N. It is never T = n / rate (for a superrow, that would put the tempo near 1 BPM). While a composition plays, Cosmos's SPEED knob is held (it dims and reads the composition's BPM). A value set meanwhile waits for flight.
+
+**The player.** `Composer/lab/lab-player.js` is imported by exactly one Cosmos file, `Cosmos/audio/cosmos-composer-player.js`, so Phase C's move is a one-line re-point.
+- The player runs with `timers: {}`; its `tick()` is called by Cosmos's worker-driven transport pulse, with Cosmos's 250 ms horizon.
+- Until the player takes a `destination` option, a small context wrapper (`wrapContext`) routes its limiter into Cosmos's composition bus.
+- The composition does not go to MIDI out in v1.
+
+**Open (for Avery).**
+1. **Superrow strikes.** Summed strikes pin comping's accent (0.1 × (strikes − 1)) at velocity 1 on a wide superrow. `strikes: 'log2'` is built as the alternative; the default stays `'sum'`.
+2. **The duplicate rule.** Should the same tone at the same tick from two rhythms stay one node (built), or two?
+3. **The focus.** Is it the last node clicked in the bloom, else the eye (built)? Or the bloom's centre?
+4. **The stop radius.** It is one cell inside the tier's evict shell after a 400 ms dwell, faded over the 2 cells before (Low: fades from 7 cells, stops at 9 of 10).
+5. **The seed.** It is fixed at 1, so the same target gives the same composition. Should a second press reseed?
+6. **A five-layer rhythm** can't be composed (the row reads at most 4 layers). Blooms don't make them today.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
