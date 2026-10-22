@@ -28,9 +28,9 @@ The planner keeps this file current after every phase. If the planner thread is 
 | E1. Cosmos Compose mode: Rhythm card + Grid card superrow, bed silenced, clock takeover/hand-back, LOD exit; new `Composer/core/superrow.js` | `sprint/cosmos-compose` | S (seam map, window definition) | MERGED (628ba99..82896ca, merge 18bfb41); 53/0 |
 | C. Composer tab on the main page | `sprint/integration` | A+B merged | MERGED (81cf5ff..93c04d9, merge d4feda7); 51/0 suites |
 | T. Compose trace: an opt-in, pure observer in `Composer/core`; output unchanged when it's off | `sprint/trace` | A+B merged | MERGED (bc812ae..e964c66, merge e99cbcc); 47/0 suites |
-| E2. Cosmos onset dust + choreography from the trace | `sprint/cosmos-dust` | T, E1 | dispatched (from fdbb9ea) |
+| E2. Cosmos onset dust + choreography from the trace | `sprint/cosmos-dust` | T, E1 | MERGED (ea94c94..5e1cb42, merge a3ea023); 55/0 |
 | M. Compose animation on the main page, from the trace (stretch) | `sprint/animate` | C, T | MERGED (fd884f2..081c2e1, merge fdbb9ea); 54/0 |
-| D. Merge everything, final suites, morning listen list | `composer-sprint` | all | waiting |
+| D. Merge everything, final suites, morning listen list | `composer-sprint` | all | DONE (below) |
 
 Parallel lanes: E1 runs beside A/B (it touches only Cosmos files and a new core module). C runs beside T (main-page files vs. `Composer/core`). The trace waits for A+B because all three would edit `compose.js`. Stretch, if time allows: animate the main-page Compose from the trace.
 
@@ -62,3 +62,84 @@ Parallel lanes: E1 runs beside A/B (it touches only Cosmos files and a new core 
 - E1 merged. compose() keeps the prebuilt-row entry beside the trace's refusal wrapper. The planner re-pointed the Cosmos adapter to `Composer/perform/composer-player.js` with `destination` (the wrapContext proxy is removed; its test updated). E1's calls for Avery: T = 240·N/110 (exactly 110 BPM); seed fixed at 1; stop at evict − 1 cell after a 400 ms dwell; Esc order ride → composition → card → exit; summed strikes pin the comping velocity (a `log2` option is built); one node per (tick, tone)?; does a second press reseed?
 - M merged (docs conflict only); 54/0. "Show the work" toggle, on by default; ~7.5 s; Skip/Esc/click skip. Open: any click in the tab skips (too eager?); only the Compose button animates.
 - E2 dispatched (the last build phase). After it: D (final merge, suites, morning list).
+- E2 merged cleanly; 55/0 suites; every changed JS file passes `node --check`. Sprint complete: 45 commits on composer-sprint past composer-prototype, 60 files, +9,026/−512.
+
+## Morning handoff (for Avery)
+
+**State:** everything is on `composer-sprint` (worktree `.claude/worktrees/composer-sprint`). Nothing is on `main`, nothing is pushed. Verified in Node only (55 suites); no browser has seen any of it.
+
+**Serve:** from the composer-sprint worktree root, `python3 -m http.server 8000`, then open `http://localhost:8000/` (main page and Cosmos) or `/Composer/lab/composer-lab.html` (the lab).
+
+### 1. Lab (drums + targeted progressions)
+- 41:42:43, default: a steady kick/snare backbeat, hats every slot, slightly row-humanized (each stroke on a real onset). Bar 4 fills; a crash when it loops.
+- Same row, Drums mode `partition`: an uneven perc line from layer 43 (E(32, 43)), starting on the downbeat. It should be the most distinctive mode.
+- 119:42:15:8: `son` and `rumba` (claves alternating 3 then 2 across bars). Compare `with` and `against`; change the Seed and `against` reshuffles.
+- Live: change the mode or kit while playing (it lands within about 150 ms, with no re-compose); Tempo keeps the drums locked; pick `snare1.wav`.
+- Progression:
+  - Compose → "take from last compose" → Compose again: the same roots, some qualities change, and the lead follows the chords.
+  - Set bar 1 to 21/11: a ↻ retune, and every part shifts together.
+  - 8:7:6:5 with bar 2 = 15/8: an amber fallback (root alone).
+  - 16k row with all 8 bars pinned: noticeably faster.
+
+### 2. Main page: the Composer tab and its animation
+- Generate 8:7:6:5 → double-click the Playback header → the title bar reads **Partitions | Composer** (Partitions unchanged) → Composer.
+- Compose with "show the work" on: a shimmer, then about 7.5 s:
+  - root candidates pulse, and the winner turns green;
+  - bar lines sweep in, and the downbeat bursts;
+  - lead runners-up fade as the white line draws in;
+  - chord names flick through per bar;
+  - amber settle flashes;
+  - the parts cascade in, and the drums drop in.
+
+  It should land exactly on the lit view, with no jump. Skip, Esc or a click jumps to the end.
+- Perform: main playback stops, a playhead sweeps the plot, and the sounding nodes glow. Starting main playback stops the Composer.
+- Drums lane → the inspector shows mode and kit. Chords → Harmony → a root on bar 1.
+- Rhythm change while performing: generate 41:42:43:**1**. Leaving layer D blank hits the NaN bug below. Expected: playback stops and the button returns to Compose.
+- Large row 4099:4093:4091:4079 with a 16 s cycle: about 2 s to compose, then a smooth Perform. Watch the frame rate and memory.
+- 7:1:1:1 is refused with "Too few tones". Closing the window while performing goes silent and restores the plot.
+- The lab still works exactly as before.
+
+### 3. Cosmos: Compose mode + onset dust
+- **Rhythm card** (a node in a small grid like 840) → COMPOSE:
+  - the bed, rows and audition go silent;
+  - the orb swells slightly while composing;
+  - the dust streams out of the node and the screen goes black;
+  - the selection plays in about 3 s;
+  - then a clock face plays: a hand at the playhead, and each note flashes **in sync with what you hear** (check this);
+  - SPEED dims to "110 BPM".
+
+  Also try a rhythm too big for Listen: Compose should still work.
+- **Grid card** (7,920 whole; 27,720 for a windowed superrow): GATHERING… → COMPOSING… → STOP. The card shows "1,197 of 24,615 rhythms · 110 BPM". The dust streams from many nodes into one pool.
+- **Exit by flying away:**
+  - the veil, dust and music thin over the last 2 cells and stop about a cell before the grid would vanish;
+  - the bed swells back over 1.5 s with NO burst of notes and no chord jump;
+  - SPEED returns;
+  - stars, Web, constellations, clouds and clicking all come back.
+- **Exit by Esc:** skip → stop composition → close card → leave Cosmos. Folding the card, collapsing the bloom or changing the tier also stops it, with the same restore.
+- **Perf:** frame time at a full veil (the hidden layers are skipped, so it should beat normal flight), on Ultra, and on Low (1,500 motes at 30 fps).
+
+### 4. Calls waiting on you (all marked "proposed" in DESIGN_NOTES)
+- **Progressions:** should the lead vote on qualities in round 0 (more faithful, loses the 2× speed), or should that be a switch? What should fallback chords be called? Show per-bar presence in the root menus?
+- **Drums:** on odd S, Partitions' beat order or the long beat first? Hats every slot or on beats only? Should the bass vote in with/against? Fills only on phrases of 4+ bars?
+- **Trace:** chord candidates as the top 6 overall, or the best per root?
+- **Tab:**
+  - keep playing across tabs?
+  - the dark wash and the part colours;
+  - lit nodes on other plot types?
+  - audio path: its own AudioContext (as built), or the page master/effects/MIDI?
+  - auto-compose for small rows?
+  - should any click in the tab skip the animation?
+- **Cosmos:**
+  - should the seed stay fixed or reseed on a second press?
+  - the stop radius;
+  - one node per (tick, tone)?
+  - summed strikes pin the comping velocity (`log2` is built);
+  - a full veil means flying blind until the fade, so hold it at about 0.85?
+  - the clock-face form and parallax;
+  - what a click should do under a full veil;
+  - audio starts at once with a 3 s selection (about 30 ms per root candidate). Hold the audio for a longer show?
+- **Live-site bug (already on main, not fixed):** `LRCModule.calculateTotalLCM(...activeLayers)` returns NaN with fewer than 4 layers (`lcm(x, undefined)`). Seen in Node; confirm it in the browser.
+- **Deploy:** `Composer/` isn't on main, so Cosmos Compose can't go live until composer-sprint merges. Path: composer-prototype → composer-sprint → main.
+
+### 5. Housekeeping
+The merged sprint worktrees can be pruned once you've reviewed: sprint-drums, sprint-progression, sprint-integration, sprint-trace, sprint-cosmos-compose, sprint-animate, sprint-cosmos-dust. The older ones too: composer-settle, composer-probe, feat-shared-voices, cool-agnesi, shared-voices-1a/1b. The git-ignored Cosmos work notes and the survey are in `Cosmos/docs/` in the composer-sprint worktree.
