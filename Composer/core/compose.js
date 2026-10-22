@@ -17,7 +17,9 @@
 //              Avery; `presence: 'exact'` for the phase 3 rule), and the phase from where that cluster sounds.
 //   modulation on (Sprint default 3); harmony.js' fold relabels the classes so a reported offset stays in [−50, +50)¢,
 //              never moving a pitch (`foldOffsets`, on unless asked).
-//   leader     the lead (harmony follows melody, Sprint default 4); v1 is lead-led only.
+//   leader     the lead (harmony follows melody, Sprint default 4), unless a progression is given: then
+//              'progression' (every bar's root asked) or 'mixed' (progression.js: the asked roots kept, the quality
+//              from the bar's own tones, the rest solved as always).
 //   settle     `settlePasses` (0..3, default 3; Avery asked for it, the rules proposed): harmony.js derives the chords
 //              again from the kept lead and mines the lead again over them until the chords settle; every part below
 //              is built from the final chords and targets.
@@ -53,6 +55,7 @@ import { defaultRoot, toneIndexOf, classOfCents, clusterPresence, PRESENCE_MODES
 import { mineLines, downbeats, TABLES } from './lines.js';
 import { harmonize, phrasesOf, isStrongBeat, DEFAULT_SETTLE_PASSES, MAX_SETTLE_PASSES } from './harmony.js';
 import { getInstrument } from '../../Audio/voices/recipes.js';
+import { readProgression, harmonyPins, describeProgression } from './progression.js';
 
 export const COMPOSER_SPEC_VERSION = 'composer-spec-v1';
 export const BEATS_PER_BAR = 4;
@@ -147,11 +150,15 @@ export function rearticulate(part, { sound = part.sound, legato = part.legato, e
  *   options        { seed (default 1), overrides: { bars, slotsPerBar, anchors, phase, frameCentsEachSide, root,
  *                  modulation, foldOffsets, table, sounds: { part: id }, legato: { part: bool }, enabled: { part: bool },
  *                  baseHz, compLayer, presence ('cluster' | 'exact'), settlePasses (an integer 0..3) }, worker (true:
- *                  the full table unless asked) }
+ *                  the full table unless asked), progression ([a ratio of the row | null] a bar: progression.js;
+ *                  absent or all null: lead-led, exactly as without it) }
  * → the spec (see the head of this file and Composer/DESIGN_NOTES.md "Phase 4"), or a refusal
  */
-export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker = false } = {}) {
+export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker = false, progression = null } = {}) {
   const input = { layers: [...layers], cycleSeconds, seed, overrides: JSON.parse(JSON.stringify(overrides ?? {})) };
+  // ── a targeted progression (progression.js): recorded in the input only when it asks for a root ──
+  if (progression != null && !Array.isArray(progression)) fail(`progression must be a list, one root a bar (a ratio or null)`);
+  if (progression && progression.some((x) => x != null && x !== '' && x !== 'auto')) input.progression = JSON.parse(JSON.stringify(progression));
   if (!(Number.isFinite(cycleSeconds) && cycleSeconds > 0)) fail(`cycleSeconds must be a positive number, not ${cycleSeconds}`);
   for (const k of Object.keys(overrides || {})) if (!OVERRIDES.includes(k)) fail(`no override "${k}" (overrides are ${OVERRIDES.join(', ')})`);
   const ov = overrides || {}, T = cycleSeconds;
@@ -191,7 +198,12 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   const modulation = decide('modulation', ov.modulation ?? true, ov.modulation != null ? 'asked' : 'on by default (Sprint default 3): a jump at a bar where a root is off the grid');
   const table = decide('table', ov.table ?? (worker ? 'full' : 'lean'), ov.table ? 'asked' : worker ? 'in a worker: the full table' : 'on the main thread: the lean table (the cost probe)');
   if (!TABLES.includes(table)) fail(`table must be one of ${TABLES.join(', ')}`);
-  decide('leader', 'lead', 'v1 is lead-led: the lead is mined first and the chords follow it');
+  // ── a targeted progression: the asked roots per bar, read against the row and the bars ──
+  const prog = input.progression ? readProgression(input.progression, row, meter.bars) : null, targeted = !!prog?.targeted;
+  const leader = !targeted ? 'lead' : prog.roots.every((r) => r != null) ? 'progression' : 'mixed';
+  decide('leader', leader, leader === 'lead' ? 'v1 is lead-led: the lead is mined first and the chords follow it'
+    : leader === 'progression' ? 'a progression asked a root for every bar: the chords first, from those roots, and the lead over them'
+    : 'a progression asked roots for some bars: those kept, the rest of the chords following the lead');
 
   // ── harmony and the lead ──
   const foldOffsets = ov.foldOffsets ?? true;
@@ -199,7 +211,8 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   const settlePasses = decide('settlePasses', ov.settlePasses ?? DEFAULT_SETTLE_PASSES, ov.settlePasses != null ? 'asked'
     : `up to ${DEFAULT_SETTLE_PASSES} more rounds of chords from the kept lead and the lead over them, until the chords settle or repeat (asked for by Avery; the cap and the stopping rules proposed, not ruled)`);
   if (!(Number.isInteger(settlePasses) && settlePasses >= 0 && settlePasses <= MAX_SETTLE_PASSES)) fail(`settlePasses must be an integer 0..${MAX_SETTLE_PASSES}`);
-  const h = harmonize(row, cells, { root: rootTone, frameCentsEachSide: e, modulation, table, foldOffsets, settlePasses });
+  const h = harmonize(row, cells, { root: rootTone, frameCentsEachSide: e, modulation, table, foldOffsets, settlePasses, ...(targeted ? { progression: harmonyPins(prog) } : {}) });
+  if (prog) { const d = targeted ? describeProgression(prog, h.chords, row) : { value: prog.roots.map(() => 'auto'), why: `no root of the progression could be used, so every bar is auto: ${prog.notes.join('; ')}` }; decide('progression', d.value, d.why); }
   const S = cells.slotsPerBar, N = cells.bars, phaseX = phase[0] / phase[1];
   const timeOf = (tick) => mod(tick / row.grid - phaseX, 1) * T;
   const ratioOf = (bar) => h.chords[bar].fundamentalRatio;   // the sounding retune: a folded name never moves it
@@ -346,10 +359,11 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     version: COMPOSER_SPEC_VERSION, input,
     knobs: {
       bars: N, slotsPerBar: S, beatsPerBar: BEATS_PER_BAR, anchors, phase: [...phase], frameCentsEachSide: e, root: row.tones[rootTone], modulation, table,
-      tempoBpm: meter.tempoBpm, leader: 'lead', baseHz, cycleSeconds: T,
+      tempoBpm: meter.tempoBpm, leader, baseHz, cycleSeconds: T,
     },
     chords: h.chords.map((c) => ({ bar: c.bar, name: c.name, quality: c.quality, intervals: [...c.intervals], pcs: [...c.pcs], rootPc: c.rootPc, rootTone: c.rootFraction, rootNode: c.rootNode,
-      offsetCents: c.offsetCents, rawOffsetCents: c.rawOffsetCents, fundamentalRatio: ratioOf(c.bar), offGrid: !!c.offGrid, exceptions: c.exceptions.length, empty: !!c.empty })),
+      offsetCents: c.offsetCents, rawOffsetCents: c.rawOffsetCents, fundamentalRatio: ratioOf(c.bar), offGrid: !!c.offGrid, exceptions: c.exceptions.length, empty: !!c.empty,
+      ...(targeted ? { targeted: prog.roots[c.bar] != null, fallback: prog.roots[c.bar] != null ? c.fallback ?? null : null } : {}) })),
     modulations: h.modulations.map((m) => ({ ...m })),
     timeline: { slotStarts: starts.map((x) => x * T), barStarts: starts.filter((_, j) => j % S === 0).map((x) => x * T) },
     parts: partList,
