@@ -287,7 +287,7 @@ const tl = traceTimeline(spec.trace, { pace = 1, seconds = null, budgets = {} })
   - settle: the `changedBars`, and the lead that changed with them
   - parts: each part's notes
   - drums: the hits
-- **Cosmos (onset dust).** Every onset the trace names is in `trace.nodes`, with its tick, ratio and layers. That's the set of motes worth raising. A part's notes and the drum hits are where they settle into the composition.
+- **Cosmos (onset dust).** Every onset the trace names is in `trace.nodes`, with its tick, ratio and layers. That's the set of motes worth raising. A part's notes and the drum hits are where they settle into the composition. Built 2026-10-22 night: `Cosmos/engine/compose-choreo.js` (pure: a scene, then a frame at t, on a clock face of the cycle) and `Cosmos/ui/compose-dust.js` (the painter); DESIGN_NOTES.md, "Cosmos onset dust and choreography".
 - **The trace is untimed.** Don't read meaning into event spacing. Use `traceTimeline`, or your own pacing over `groups`.
 - **Ids are stable.** The same line in two events has the same `id` (the line table holds it once). The same onset is the same `node` everywhere.
 

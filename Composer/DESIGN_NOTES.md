@@ -746,6 +746,87 @@ Cosmos's Rhythm and Grid cards gained a COMPOSE button (phase E1: audio and logi
 5. **Skip on any click in the tab** may be too eager. Esc and the Skip button might be enough.
 6. **Auto-recompose** (lean table, a knob change) doesn't animate. Should it, maybe faster?
 
+## Cosmos onset dust and choreography (built 2026-10-22 night, sprint)
+
+**Asked (Avery, 2026-10-22):** Cosmos blooms a grid into its rhythms, but has never bloomed a rhythm into its onsets. In Compose mode those onsets appear as tiny cosmic dust, a pool; the pool is selected from, and the composition is rebuilt from it. Then the dust stays in sync with the composition as it plays: it shows what's under the hood, "a treat for playing with the system". The black orb could expand into a blank canvas for it. On a Rhythm card only that rhythm's dust animates; on a Grid card many rhythms feed one superrow pool. The player keeps flying, and the composition stops out of range (E1). Everything below that isn't the brief is **proposed, not ruled**. Nothing here has been seen in a browser yet.
+
+**The picture is the music: a clock face of the cycle.** It sits in a unit disc around the composing grid.
+- A mote's **angle** is its onset's place in the cycle, tick / grid, clockwise. Once the phase is chosen, 12 o'clock is the downbeat.
+- Its **radius** is its tone: the cents within the octave, from 1/1 at 0.30 to 2/1 at 0.92. Each tone is a ring, and time runs along the spokes.
+- Its **height** is its register: z = the note's octave. The painter scales by 1 / (1 − 0.12·z), so the lead sits just outside its tone ring and the bass inside it.
+- The drums sit on their own ring outside the face: kick 1.00, snare 1.05, perc 1.08, hat 1.11, cymbal 1.15.
+
+**The motes.** There are three populations, drawn in this order:
+- **Grains (the pool).** The onsets the composition was made from, sampled evenly and jittered off their exact place, like a nebula.
+  - On a Rhythm card they are its row's onsets, sampled in the worker (up to 10,000).
+  - On a Grid card they are the superrow's **source** onsets: every (rhythm, onset) that merged into a node. A node gets dust in proportion to the rhythms striking there.
+- **Keys.** Every onset the compose trace names, at its exact place. These are what the selection lights.
+- **Voices (the composition).** One per spec note (part, node, chord voice) and one per drum stroke, in the part's colour. They use the main page's colours (`PART_COLORS`).
+
+**The phases.**
+1. **Bloom-out** (0.9 s). The grains and keys stream out of their rhythm's node in the bloom and into the pool. On a Rhythm card that's the one node; on a Grid card it's every admitted rhythm's node. The start positions come from the draw loop's own lattice, seen on the view plane.
+2. **Selection.** The trace's timeline, using the page's beat budgets with the dust's own stress (`DUST_BUDGETS`), fitted to 3 s:
+   - the row: a hand sweeps the pool;
+   - the root: the candidates' sampled onsets pulse in turn, weakest first; the rejects grey out and the winner holds in green;
+   - the meter: the bar spokes ring in;
+   - the phase: the downbeat candidates flash, then **the whole face turns until the chosen downbeat is at 12 o'clock**;
+   - the cells: the slots tick in on the rim;
+   - the lead: the runners-up are faint filaments through their notes, and the chosen line draws in white;
+   - the chords: per bar, the bar's arc tints, the candidates flick on their roots, and the pick's root and chord tones light;
+   - the settle rounds: changed bars flash amber, and a converged round flashes green once;
+   - the parts: each part's voices rise, in time order, from their onset's place to their register, in their colour;
+   - the drums: the strokes drop onto the drum ring, bar by bar.
+3. **Performance.** The voices sit on the face, with a hand at the audio playhead and faint bar spokes. The lead and bass are drawn as faint filaments through their notes in time order. Each booked note (`onNote`, ~250 ms ahead) flashes its own voice when the audio clock reaches its `when`, so the flash lands where the hand is. The grains drift as a faint halo in three slow bands.
+4. **Dissolve** (0.8 s) on any stop. The director then clears.
+
+**Timing (proposed): the audio starts at once.** E1 performs on 'composed', and the selection is compressed to 3 s (`SELECTION_SECONDS`). Notes flash the dust from the first one, including during the selection, where the voice sits before it lands. A click on the canvas, or Esc, during the bloom-out or the selection skips to the performance. The alternative, holding the audio until the selection ends, would delay E1's perform and keep the flight bed playing meanwhile. It's not built.
+
+**The veil.**
+- While the worker composes, the orb's veil swells to 0.35.
+- From 'composed', it rises to 1 over 0.6 s, times E1's range `level`. It's full at level 1 and thins as you fly away, so leaving reads as the composition dissolving.
+- It goes down with the dissolve.
+- The face starts on the bloom's own disc (its projected centre and radius) and moves to the canvas centre as the veil rises: the orb becomes the canvas.
+- **Under a full veil the loop skips what it hides** (a cull, not paint-over): the cube walls, the Web frame, the connectors, the constellations, the ships, the stars (draw and pick), the blots and every bloom cloud (draw and pick). The ship in chase view stays: it's you.
+- A canvas click under a full veil does nothing, so it can't close the card.
+- Below full, the composing grid's nodes give way (`dustNodeDim`). The chosen rhythm (or the admitted rhythms) fade more slowly than the rest, so on a Rhythm card you see only its rhythm's dust leave (proposed: dim, not hide). Other blooms fade with the veil.
+
+**Caps (proposed).**
+- **Motes a frame,** by the tier key `dustMax`: 1,500 / 3,000 / 6,000 / 10,000 (Low → Ultra). Voices come first, then keys, then grains sampled evenly into the room left.
+- **Fixed per frame:** 160 sprite glows, 96 flashes, 12 filaments, 96 lines and 24 arcs.
+- **Deterministic:** the jitter is a hash of the mote, never `Math.random`.
+
+**Drawing.**
+- The cosmos-perf lesson holds: there is no gradient per mote.
+- Motes are batched: one `Path2D` per (colour, 1/16 alpha band, 0.5 px size bucket), with squares under 2.2 px and arcs above. They're added with `'lighter'`. 10,000 motes take about 16 fills.
+- Glows are a `drawImage` of a sprite baked once per (colour, size bucket, DPR).
+- It's DPR-aware: no mote is under one device pixel.
+
+**Measured** (Node, M4 Max). The scene was grid 27,720: 451 rhythms → 141,542 superrow nodes, with a pool of 2,097,094 source onsets.
+- At Ultra the scene has 10,000 motes: 236 voices, 337 keys and 9,427 grains. It builds in 8 ms, once.
+- `frameAt` takes 0.29 ms in the bloom-out, 0.12 ms in the selection and 0.17 ms in the performance.
+- The painter's JS (its batching, on a stub canvas) takes 0.37 ms a frame. The raster cost needs Avery's browser.
+
+**Code.**
+- `Cosmos/engine/compose-choreo.js`: **pure**. `buildDustScene`, `frameAt` (a struct-of-arrays frame), `createDustDirector` (the lifecycle from E1's events, on injected times) and `dustNodeDim`.
+- `Cosmos/ui/compose-dust.js`: the painter and `dustView`.
+- **Small edits:**
+  - `flight-view.js`: the `COMPOSE DUST (E2)` blocks.
+  - `cosmos-compose.js`: `trace` and `dust` options. The trace and dust are taken off the spec before it plays and ride on 'composed'. Off, E1 is exactly as it was.
+  - `compose-worker-client.js`: `rhythm()` carries `dust`.
+  - `compose-worker.js`: `options.dust` → `sampleRowDust`. The row is built once and handed to compose; the spec is unchanged.
+  - `superrow-worker.js`: the reply gains `toneCents` and `octave`.
+  - `cosmos-quality.js`: `dustMax`.
+- **Tests:** `Cosmos/tests/assert-compose-dust.mjs` (75 checks). `assert-superrow.mjs` checks the new reply fields and the superrow's trace; `assert-cosmos-quality.mjs` checks that `composeBudget` and `dustMax` are non-decreasing.
+
+**Open (for Avery).**
+1. **Audio at once, with a 3 s selection,** or hold the audio for a slower selection (6–8 s, as on the main page)? At 3 s the root's candidates get about 30 ms each.
+2. **The full veil for the whole composition.** You fly blind until the fade's last 2 cells. Should the veil hold somewhat below full (say 0.85), so the cosmos glimmers through?
+3. **The face:** a clock with tone rings. Or the bars in a ring around the star? Or the face fixed in 3D space, instead of a screen-facing canvas?
+4. **On a Rhythm card, dim or hide** the other nodes of its bloom (built: dim, until the full veil hides them)?
+5. **A click under the full veil** does nothing. Should it skip, stop, or pick through?
+6. **The grains:** jittered off their place (a nebula), or exact?
+7. **Parallax:** the face is screen-facing. A small parallax with the camera's turn would make flying feel more present.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

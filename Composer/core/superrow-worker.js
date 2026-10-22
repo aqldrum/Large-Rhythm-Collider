@@ -5,8 +5,11 @@
 //   worker.postMessage({ id, grid, layersFlat (Uint32Array, 4 a rhythm, 0 = absent), dist (Float64Array | null: the
 //                        near-focus order's distances, one a rhythm), budget, sourceBudget, bpm, options })
 //   ← { id, ok: true, spec, window, superrow }  |  { id, ok: true, refused: { reason: 'empty' }, window }  |  { id, ok: false, error }
-//     superrow = { grid, n, tick (Float64Array), tone (Uint32Array), tones, layers, sources: { start, rhythm, onset } }
-//     (typed arrays transferred). `rhythm` indexes the rhythms as posted; spec notes' `node` indexes tick/tone.
+//     superrow = { grid, n, tick (Float64Array), tone (Uint32Array), tones, toneCents (Float64Array, a tone each),
+//     octave (Uint8Array, a node each), layers, sources: { start, rhythm, onset } } (typed arrays transferred).
+//     `rhythm` indexes the rhythms as posted; spec notes' `node` indexes tick/tone. toneCents and octave are for
+//     Cosmos's onset dust (E2): a node's place on the dust's clock face.
+//   options.trace: true sends the compose trace in spec.trace (Composer/TRACE.md), as compose-worker.js does.
 //
 // options are compose()'s ({ seed, overrides, drums, … }); the table is the full one (worker: true) unless asked.
 
@@ -23,8 +26,8 @@ export function answerSuperrow(data) {
     if (!built.row) return { message: { id, ok: true, refused: { reason: 'empty' }, window: built.window }, transfer: [] };
     const row = built.row, cycleSeconds = cycleSecondsForTempo(row.n, bpm ? { bpm } : {});
     const spec = compose(row.layers, cycleSeconds, { ...options, worker: true, row });
-    const superrow = { grid: row.grid, n: row.n, tick: row.tick, tone: row.tone, tones: row.tones, layers: row.layers, sources: built.sources };
-    const transfer = [row.tick.buffer, row.tone.buffer, ...(built.sources ? [built.sources.start.buffer, built.sources.rhythm.buffer, built.sources.onset.buffer] : [])];
+    const superrow = { grid: row.grid, n: row.n, tick: row.tick, tone: row.tone, tones: row.tones, toneCents: row.toneCents, octave: row.octave, layers: row.layers, sources: built.sources };
+    const transfer = [row.tick.buffer, row.tone.buffer, row.toneCents.buffer, row.octave.buffer, ...(built.sources ? [built.sources.start.buffer, built.sources.rhythm.buffer, built.sources.onset.buffer] : [])];
     return { message: { id, ok: true, spec, window: built.window, superrow }, transfer };
   } catch (err) {
     return { message: { id, ok: false, error: String(err && err.message ? err.message : err) }, transfer: [] };
