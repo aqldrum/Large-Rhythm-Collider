@@ -75,6 +75,9 @@ class LRCVisuals {
             interactionsSuspended: false
         };
 
+        // Composer tab overlay (Composer/page/plot-overlay.js): null — and drawn nowhere — unless the Composer tab is open
+        this.composerOverlay = null;
+
         // Initialize
         this.setupCanvas();
         this.setupEventListeners();
@@ -82,6 +85,10 @@ class LRCVisuals {
         this.initializeNodePopupSystem(); // Initialize node popups
         console.log('LRC Visuals initialized');
     }
+
+    // Row-sized min/max as loops: Math.max(...spacesPlot) overflows the stack past ~124k onsets (2026-10-22).
+    static maxOf(list) { let m = list[0]; for (let i = 1; i < list.length; i++) if (list[i] > m) m = list[i]; return m; }
+    static minOf(list) { let m = list[0]; for (let i = 1; i < list.length; i++) if (list[i] < m) m = list[i]; return m; }
 
     // ====================================
     // SETUP AND INITIALIZATION
@@ -721,8 +728,8 @@ class LRCVisuals {
             this.spacesPlot.length || 0,
             this.compositeRhythm.length || 0
         );
-        const minSpace = this.spacesPlot.length > 0 ? Math.min(...this.spacesPlot) : 0;
-        const maxSpace = this.spacesPlot.length > 0 ? Math.max(...this.spacesPlot) : 0;
+        const minSpace = this.spacesPlot.length > 0 ? LRCVisuals.minOf(this.spacesPlot) : 0;
+        const maxSpace = this.spacesPlot.length > 0 ? LRCVisuals.maxOf(this.spacesPlot) : 0;
         const spaceRange = Math.max(1, maxSpace - minSpace);
 
         // Keep baseline zoom-out anchored to full view.
@@ -818,7 +825,7 @@ class LRCVisuals {
         const { padding, plotWidth, plotHeight } = this.getLinearPlotMetrics(width, height);
         this.clampLinearViewPan(plotWidth, plotHeight);
         
-        const maxValue = Math.max(...this.spacesPlot);
+        const maxValue = LRCVisuals.maxOf(this.spacesPlot);
         const spacing = plotWidth / (this.spacesPlot.length - 1);
         
         // Draw dots - maintain all positions for timing, but make some transparent
@@ -869,6 +876,34 @@ class LRCVisuals {
         
         // Draw Y-axis inversion toggle button (only for linear plot)
         this.drawInvertToggleButton(width, height);
+
+        // Composer tab: its lit nodes over the plot (a no-op unless the Composer tab is open)
+        this.drawComposerOverlay(width, height);
+    }
+
+    // ====================================
+    // COMPOSER TAB OVERLAY HOOK (Composer sprint, 2026-10-22)
+    // The Composer tab (Composer/page/) sets an overlay while it is open and clears it when it closes. The overlay
+    // draws the Composer's lit nodes (a layer per part) over the Linear Plot from this.allDotPositions, and its
+    // playhead during Perform. With no overlay set, nothing here runs and the plot is drawn exactly as before.
+    // ====================================
+
+    drawComposerOverlay(width, height) {
+        const overlay = this.composerOverlay;
+        if (!overlay || typeof overlay.draw !== 'function') return;
+        try {
+            overlay.draw(this.ctx, {
+                positions: this.allDotPositions, width, height, dotSize: this.calculateDotSize(),
+                canvas: this.canvas, button: this.toggleButtonBounds, animating: this.isAnimating
+            });
+        } catch (error) {
+            console.warn('Composer overlay failed:', error);
+        }
+    }
+
+    setComposerOverlay(overlay) {
+        this.composerOverlay = overlay || null;
+        if (this.spacesPlot.length > 0) this.drawPlot();
     }
 
     drawCircularPlot() {
@@ -876,7 +911,7 @@ class LRCVisuals {
         const centerY = this.canvas.height / 2;
         const maxRadius = Math.min(centerX, centerY) - 40;
         
-        const maxValue = Math.max(...this.spacesPlot);
+        const maxValue = LRCVisuals.maxOf(this.spacesPlot);
         const angleStep = (Math.PI * 2) / this.spacesPlot.length;
         
         // Draw center circle
