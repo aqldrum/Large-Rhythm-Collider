@@ -38,6 +38,10 @@
 //               derived again from the kept lead, and the lead mined again over them, until the chords settle, repeat
 //               an earlier round's (the best round of the cycle is kept) or the cap. 0 keeps the chords of the first
 //               lead. A strong note of the kept lead off its chord is counted as an exception on the chord.
+//   targeted    (`progression: { roots, choose }`, from progression.js `harmonyPins`; built 2026-10-22 night, proposed)
+//               a bar with a pinned root tone takes its chord from `choose` (chooseChordOnRoot) in every derivation,
+//               so the settle rounds re-derive its quality and never its root; a phrase whose bars are all pinned
+//               skips the first, unharmonized lead. No progression: everything above, unchanged.
 
 import { toneGate, MIN_TONES } from './row.js';
 import { frameAt, frameOf, classOfCents, DEFAULT_FRAME_CENTS_EACH_SIDE } from './frame.js';
@@ -273,7 +277,7 @@ export function settleRounds(start, cap, { derive, key, advance }) {
  * kept chords.
  */
 export function harmonize(row, cells, opts = {}) {
-  const { root = null, frameCentsEachSide: e = DEFAULT_FRAME_CENTS_EACH_SIDE, modulation = true, table = 'full', referenceName = 'C', minTones = MIN_TONES, foldOffsets = true, settlePasses = DEFAULT_SETTLE_PASSES } = opts;
+  const { root = null, frameCentsEachSide: e = DEFAULT_FRAME_CENTS_EACH_SIDE, modulation = true, table = 'full', referenceName = 'C', minTones = MIN_TONES, foldOffsets = true, settlePasses = DEFAULT_SETTLE_PASSES, progression = null } = opts;
   const refused = toneGate(row, minTones);
   if (refused) return refused;
   if (!TABLES.includes(table)) fail(`table must be one of ${TABLES.join(', ')}`);
@@ -281,9 +285,13 @@ export function harmonize(row, cells, opts = {}) {
   const refPc = PC_NAMES.indexOf(referenceName);
   if (refPc < 0) fail(`no note ${referenceName}`);
   const base = frameOf(row, root, e), S = cells.slotsPerBar, phrases = phrasesOf(cells);
+  // a targeted progression (progression.js): a pinned root tone per bar, or null for a bar derived as below
+  const pins = progression ? progression.roots : null;
+  if (pins && (pins.length !== cells.bars || typeof progression.choose !== 'function')) fail(`a progression is { roots: [tone | null] × ${cells.bars} bars, choose }`);
+  const allPinned = (from, bars) => !!pins && pins.slice(from, from + bars).every((t) => t != null);
 
-  // 1. the lead, rooted, no harmony
-  const firstLines = phrases.map(({ from, bars }) => mineLines(row, cells, base, { from, bars, types: ['lead'], table }).lines[0] ?? null);
+  // 1. the lead, rooted, no harmony (not for a phrase whose every bar is pinned)
+  const firstLines = phrases.map(({ from, bars }) => (allPinned(from, bars) ? null : mineLines(row, cells, base, { from, bars, types: ['lead'], table }).lines[0] ?? null));
   const leadNotesOf = (lines) => lines.flatMap((l) => (l ? l.notes : []));
 
   // 2. a chord a bar, from a lead: the offset walked from bar 1
@@ -295,7 +303,8 @@ export function harmonize(row, cells, opts = {}) {
       const tones = [...material[k].values()];
       const { inBar, strong } = strongNotesOf(leadNotes, k, S);
       const lead = inBar.map((n) => ({ cents: n.cents, strong: strong.includes(n) }));
-      const pick = chooseChord(tones, lead, { eachSide: e, gridBase, offset, modulation, prevPcs, foldOffsets });
+      const pin = pins ? pins[k] : null, how = { eachSide: e, gridBase, offset, modulation, prevPcs, foldOffsets };
+      const pick = pin != null ? progression.choose(tones, lead, { tone: pin, cents: row.toneCents[pin] }, how) : chooseChord(tones, lead, how);
       if (!pick) { chords.push(null); continue; }
       if (pick.modulate) modulations.push({ bar: k, cents: pick.named.offset, rawCents: pick.offset, fundamentalRatio: 2 ** (pick.offset / 1200) });
       offset = pick.offset; prevPcs = pick.pcs;
@@ -304,6 +313,7 @@ export function harmonize(row, cells, opts = {}) {
         bar: k, name: `${PC_NAMES[mod(pick.named.rootPc + refPc, 12)]}${pick.quality.suffix}`, quality: pick.quality.id, kind: pick.quality.kind,
         intervals: pick.intervals, pcs: pick.named.pcs, rootPc: pick.named.rootPc, gridPcs: pick.pcs, gridRootPc: pick.rootPc, rootTone: r.tone, rootFraction: row.tones[r.tone], rootCents: r.cents, rootNode: r.node,
         offsetCents: pick.named.offset, rawOffsetCents: offset, fundamentalRatio: 2 ** (offset / 1200), firstPass: { violations: pick.violations, held: pick.held }, support: pick.support, offGrid: pick.offGrid, frame: frameAt(row, r.tone, e),
+        ...(pin != null ? { targeted: true, fallback: pick.fallback, sounded: pick.sounded, missing: pick.missing } : {}),
       });
     }
     // a bar the windows left empty takes the chord before it (or after, for the first)

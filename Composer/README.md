@@ -17,6 +17,7 @@ Then go to `http://localhost:8000/Composer/lab/composer-lab.html`. The page need
 - **Inputs:** four layer numbers (blank or 0 means absent), the cycle in seconds, a seed, and presets from 8:7:6:5 up to a 16,359-onset row.
 - **Compose → Perform ⇄ Stop.** Change any input or knob and the button goes back to Compose.
 - **Knobs:** bars, slots per bar, frame ±¢, modulation, anchors, settle passes, root presence, and the table (full in the worker, lean on the main thread). Each one shows what Compose chose, or "asked" when you've overridden it.
+- **Progression:** a root a bar from the row's own tones (its ±frame clusters, by ratio, note name, cents and presence), or auto. Compose keeps each asked root, finds the quality the bar's tones support, and mines everything under it. "Take from last compose" copies the roots the last compose chose; "clear" sets every bar back to auto.
 - **Live, without re-composing:** each part's sound, legato, on/off and level, plus Glide (portamento) and Tempo.
 - **Readouts and export:** tempo, meter, root, chords and the decisions list (what Compose chose and why). JSON export gives the spec plus `playback`.
 
@@ -40,6 +41,8 @@ Then go to `http://localhost:8000/Composer/lab/composer-lab.html`. The page need
    - bass: mined bar by bar from the root
    - inner voice: in the lead's gaps
 7. **Articulation:** legato per part, sounds, and baseHz (the lead's median pitch sits at about 539 Hz).
+
+**Targeted progressions** (`progression.js`, `compose(..., { progression: [ratio | null, ...] })`): the bars given a root skip steps 3–4's lead-led choice. Their chord keeps the asked root, and its quality is the best one the bar's own tones support (all its classes but at most one sounding). If none is supported, it falls back to a dyad or the root alone, and says so. The lead is mined over these chords, and the settle passes re-derive only the quality. Auto bars are found as above, and an off-grid root retunes, as in step 4. With no progression, or all auto, Compose is unchanged.
 
 ## Files
 

@@ -12,8 +12,14 @@
 //   tempo      a playback tempo over the spec's own (TEMPO_LIMITS): the player scales the spec's times by
 //              factor = the spec's tempo / this one, live, nothing re-composed; a new Compose resets it to the new
 //              spec's tempo (proposed). The spec is never touched; JSON export adds a top-level `playback`.
+//   progression one root a bar, or null (auto), from `rootChoices()` (progression.js' rootCandidates, on this thread:
+//              one row build and a sweep); as many bars as Compose will use (the bars knob, else compose.js'
+//              chooseMeter). Compose sends it only when a bar is pinned, so all auto is today's Compose exactly.
+//              "Take from last compose" seeds it with the spec's roots; Clear empties it; new layers clear it (the
+//              ratios belong to the old row). The spec's `input.progression` is what JSON export carries.
 
-import { compose, rearticulate, PART_IDS } from '../core/compose.js';
+import { compose, rearticulate, chooseMeter, PART_IDS } from '../core/compose.js';
+import { rootCandidates } from '../core/progression.js';
 import { NOTE_INSTRUMENT_IDS, getInstrument } from '../../Audio/voices/recipes.js';
 import { createPlayer } from './lab-player.js';
 
@@ -51,10 +57,11 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
     knobs: Object.fromEntries(KNOBS.map((k) => [k, null])),
     table: 'full', spec: null, parts: {}, levels: Object.fromEntries(PART_IDS.map((id) => [id, 0.8])), glideMs: 12, tempoBpm: null,
     status: 'idle', error: null, lastMs: null, dirty: true,
+    progression: [],
   };
   const listeners = new Set();
   const changed = () => { for (const f of listeners) f(state); };
-  let ctx = null, player = null, run = 0;
+  let ctx = null, player = null, run = 0, choices = null, choicesKey = null;
 
   const overrides = () => { const o = {}; for (const k of KNOBS) if (state.knobs[k] != null) o[k] = state.knobs[k]; return o; };
   const touch = () => { if (player?.playing) player.stop(); state.dirty = true; if (state.status === 'playing') state.status = state.spec && !state.spec.refused ? 'ready' : 'idle'; changed(); };
@@ -62,12 +69,12 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
   const api = {
     state,
     onChange(f) { listeners.add(f); return () => listeners.delete(f); },
-    setLayers(values) { state.input.layers = readLayers(values); touch(); },
+    setLayers(values) { state.input.layers = readLayers(values); state.progression = []; touch(); },
     setCycle(seconds) { const v = Number(seconds); if (v > 0) state.input.cycleSeconds = v; touch(); },
     setSeed(seed) { state.input.seed = Number.isFinite(Number(seed)) ? Number(seed) : String(seed); touch(); },
     setKnob(name, value) { if (!KNOBS.includes(name)) throw new Error(`lab: no knob ${name}`); state.knobs[name] = value === '' || value === undefined ? null : value; touch(); },
     setTable(table) { if (table !== 'full' && table !== 'lean') throw new Error(`lab: no table ${table}`); state.table = table; touch(); },
-    loadPreset(i) { const p = PRESETS[i]; state.input.layers = [...p.layers]; state.input.cycleSeconds = p.cycleSeconds; touch(); },
+    loadPreset(i) { const p = PRESETS[i]; state.input.layers = [...p.layers]; state.input.cycleSeconds = p.cycleSeconds; state.progression = []; touch(); },
     overrides,
     /** may a knob change re-compose by itself? lean only, and only while it is quick */
     canAutoRecompose: () => state.table === 'lean' && state.lastMs != null && state.lastMs < AUTO_RECOMPOSE_MS,
@@ -77,7 +84,7 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
       if (player?.playing) player.stop();
       state.status = 'composing'; state.error = null; changed();
       try {
-        const spec = await runCompose(state.input.layers, state.input.cycleSeconds, { seed: state.input.seed, overrides: overrides(), worker: state.table === 'full' });
+        const spec = await runCompose(state.input.layers, state.input.cycleSeconds, { seed: state.input.seed, overrides: overrides(), worker: state.table === 'full', progression: api.progressionInput() });
         if (mine !== run) return state.spec;   // a newer compose took over
         state.spec = spec; state.lastMs = clock() - t0; state.dirty = false;
         if (spec.refused) { state.parts = {}; state.status = 'refused'; }
@@ -147,6 +154,41 @@ export function createLabController({ runCompose = async (l, T, o) => compose(l,
     },
     stop() { player?.stop(); if (state.status === 'playing') state.status = 'ready'; changed(); },
     playhead: () => player?.playhead() ?? null,
+
+    // ── the progression editor (targeted progressions, progression.js) ──
+    /** the roots a bar may ask for: the row's ±frame clusters, named from the root Compose would pick (memoized) */
+    rootChoices() {
+      const opts = { frameCentsEachSide: state.knobs.frameCentsEachSide ?? undefined, presence: state.knobs.presence ?? undefined };
+      const key = JSON.stringify([state.input.layers, opts]);
+      if (choicesKey !== key) {
+        choicesKey = key;
+        try { choices = rootCandidates(state.input.layers, opts); } catch (err) { choices = { refused: true, reason: String(err && err.message ? err.message : err), candidates: [] }; }
+      }
+      return choices;
+    },
+    /** how many bars the editor shows: the bars knob, else what Compose's meter will choose (0 for a refused row) */
+    progressionBars() {
+      if (state.knobs.bars != null) return state.knobs.bars;
+      const rc = api.rootChoices();
+      return rc.refused ? 0 : chooseMeter(rc.onsets, state.input.cycleSeconds, { slotsPerBar: state.knobs.slotsPerBar ?? null }).bars;
+    },
+    /** the editor's roots, one a bar (null: auto), cut or padded to progressionBars() */
+    progression: () => Array.from({ length: api.progressionBars() }, (_, k) => state.progression[k] ?? null),
+    /** what Compose is sent: the editor's roots, or null when every bar is auto */
+    progressionInput: () => { const p = api.progression(); return p.some((x) => x != null) ? p : null; },
+    setProgressionRoot(bar, ratio) {
+      if (!(Number.isInteger(bar) && bar >= 0)) throw new Error(`lab: no bar ${bar}`);
+      const p = [...state.progression]; while (p.length <= bar) p.push(null);
+      p[bar] = ratio === '' || ratio === 'auto' || ratio == null ? null : String(ratio);
+      state.progression = p; touch();
+    },
+    clearProgression() { state.progression = []; touch(); },
+    /** seed the editor with the roots the last compose chose → whether there was one to take */
+    takeProgression() {
+      if (!state.spec || state.spec.refused) return false;
+      state.progression = state.spec.chords.map((c) => c.rootTone); touch();
+      return true;
+    },
     get player() { return player; },
     get context() { return ctx; },
   };

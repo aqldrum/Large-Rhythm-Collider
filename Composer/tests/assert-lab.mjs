@@ -358,6 +358,37 @@ lab.setLayers([1048576, 3]);
 await lab.press();
 check('tooDense too', lab.state.spec.reason === 'tooDense');
 
+console.log('\n— the progression editor (targeted progressions)');
+{
+  const plab = createLabController({ createContext: () => makeCtx(), timers });
+  plab.loadPreset(PRESETS.findIndex((p) => p.layers.join() === '8,7,6,5'));
+  const rc = plab.rootChoices(), N = plab.progressionBars();
+  check(`root choices before any compose: ${rc.candidates.length} clusters of 8:7:6:5, the root first; ${N} bars, as Compose's meter`, rc.candidates.length >= 3 && rc.candidates[0].isRoot && N === compose([8, 7, 6, 5], 4).knobs.bars);
+  check('every bar auto by default, and nothing sent to Compose', plab.progression().length === N && plab.progression().every((x) => x === null) && plab.progressionInput() === null);
+  await plab.press();
+  const auto = plab.state.spec;
+  check('an all-auto compose is Compose without a progression', JSON.stringify(auto) === JSON.stringify(compose([8, 7, 6, 5], 4, { seed: 1, worker: true })) && !auto.input.progression);
+  plab.setProgressionRoot(0, rc.candidates[1].ratio);
+  check('a pick sends the whole list, auto bars null; the button goes back to Compose', plab.button() === 'Compose' && plab.progressionInput().length === N && plab.progressionInput()[0] === rc.candidates[1].ratio && plab.progressionInput().slice(1).every((x) => x === null));
+  await plab.press();
+  const t = plab.state.spec;
+  check(`Compose honours it: bar 1 on ${rc.candidates[1].ratio} (${t.chords[0].name}), marked targeted; the decisions say so`, t.chords[0].rootTone === rc.candidates[1].ratio && t.chords[0].targeted && t.decisions.some((d) => d.what === 'progression' && d.value[0].startsWith(rc.candidates[1].ratio)));
+  check('JSON export carries the progression input', JSON.parse(plab.exportJSON()).input.progression[0] === rc.candidates[1].ratio);
+  plab.clearProgression(); await plab.press();
+  check('clear: every bar auto again, the spec lead-led', plab.progressionInput() === null && plab.state.spec.knobs.leader === 'lead');
+  check('take from last compose: the spec\'s roots, one a bar', plab.takeProgression() && plab.progression().join() === plab.state.spec.chords.map((c) => c.rootTone).join());
+  const roots = plab.progression().join();
+  await plab.press();
+  check('…and composed again, the same roots come back', plab.state.spec.chords.map((c) => c.rootTone).join() === roots && plab.state.spec.knobs.leader === 'progression');
+  plab.setKnob('bars', 4);
+  check('the bars knob resizes the editor (padded with auto)', plab.progression().length === 4 && plab.progression().slice(N).every((x) => x === null));
+  plab.setKnob('bars', null);
+  plab.setLayers([19, 17, 16, 15]);
+  check('new layers clear it (the ratios belonged to the old row)', plab.progressionInput() === null);
+  plab.setLayers([3, 2]);
+  check('a refused row offers no roots and no bars', plab.rootChoices().refused && plab.progressionBars() === 0);
+}
+
 console.log('\n— serving');
 const page = fs.readFileSync(path.join(LAB, 'composer-lab.html'), 'utf8'), view = fs.readFileSync(path.join(LAB, 'composer-lab.js'), 'utf8');
 const imports = [...[page, view, fs.readFileSync(path.join(LAB, 'lab-controller.js'), 'utf8'), fs.readFileSync(path.join(LAB, 'lab-player.js'), 'utf8')].join('\n').matchAll(/(?:from\s+|src=)['"]([^'"]+)['"]/g)].map((m) => m[1]);
