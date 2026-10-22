@@ -16,6 +16,7 @@ python3 -m http.server 8000
 - Compose reads the page's rhythm and Playback cycle. Changing either turns the button back to Compose.
 - Perform stops main playback, and main playback stops the Composer: one thing sounds at a time.
 - The upper-right Linear Plot lights the Composer's notes, a colour a part, with a playhead during Perform.
+- With **show the work** on (the default), Compose is animated on the plot: the root chosen, the lead line, the chords under it, the settling and the parts landing. Click, or press Esc, to skip.
 - Click a lane's name to inspect that part: its sound, legato and level, then Harmony (the progression editor), Lines, Drums (mode and kit) and Tuning.
 - The section "Composer tab on the main page" in `DESIGN_NOTES.md` has the details.
 
@@ -74,9 +75,11 @@ python3 -m http.server 8000
   - `tab-controller.js`: the tab's state (no DOM)
   - `composer-tab.js` and `composer-tab.css`: the view
   - `composer-bridge.js`: `window.lrcComposer`, loaded by `index.html`. `PartitionsUI.js` calls it from its tab strip.
+  - `trace-frames.js` and `compose-animator.js`: Compose animated on the Linear Plot from its trace ("show the work", on by default). `trace-frames.js` is the pure trace + time → frame mapping; `compose-animator.js` is the driver and the painter.
 - **`tests/`:** plain Node scripts with no runner.
   - `assert-drums.mjs` checks the drums against the row and against Partitions' own Euclid.
   - `assert-trace.mjs` checks that the trace never steers the spec and that every ref is a real onset.
+  - `assert-page-animate.mjs` checks the Compose animation: its frames land exactly on the lit nodes, draw only real onsets, stay bounded on the 16k row, and skip and cancel cleanly.
   - `assert-page-*.mjs` check the main page's tab. They use `dom-stub.mjs` (a small DOM) and `site-scripts.mjs` (the site's classic scripts in a vm).
   - `rhythms.mjs` is the shared rhythm set, and `settle-baseline.mjs` pins the output from before settling.
   - `time-lines.mjs` is a timing table, not a check.

@@ -1,6 +1,6 @@
 # Composer: design notes (draft, 2026-10-21; updated 2026-10-22)
 
-Working notes from Avery's chat with Claude. Items marked **decided** are Avery's calls; everything else is a proposal or an open question. The 2026-10-21 sprint built phases 1–5 on branch `composer-prototype` (the "Phase" sections below), and Avery's first listening pass on 2026-10-22 is recorded under "First listening pass". The drums were built on the night of 2026-10-22 ("Drums"), on branch `sprint/drums`. The compose trace, the shared source for animating Compose, was built the same night ("Compose trace"), on branch `sprint/trace`. `Composer/README.md` is the short way in: how to run it and where things are.
+Working notes from Avery's chat with Claude. Items marked **decided** are Avery's calls; everything else is a proposal or an open question. The 2026-10-21 sprint built phases 1–5 on branch `composer-prototype` (the "Phase" sections below), and Avery's first listening pass on 2026-10-22 is recorded under "First listening pass". The drums were built on the night of 2026-10-22 ("Drums"), on branch `sprint/drums`. The compose trace, the shared source for animating Compose, was built the same night ("Compose trace"), on branch `sprint/trace`, and Compose animated from it on the main page ("Compose animation on the main page"), on branch `sprint/animate`. `Composer/README.md` is the short way in: how to run it and where things are.
 
 ## Direction
 
@@ -638,6 +638,73 @@ Avery's layout (the brief): a **Composer tab beside the Partitions tab**, in the
 5. **Auto-compose on open** for small rows, as the lab does?
 6. **Zoom into a section** (decided as later): the lanes have one column a bar. The Linear Plot gesture (cmd/alt+scroll) is suspended while the window is open, as it is for Partitions.
 7. **Found, not fixed:** in Node, `LRCModule.calculateTotalLCM(...activeLayers)` returns NaN for fewer than four layers. `lcm(x, undefined)` is NaN, so a rhythm entered with blank layers (768:769 with C and D empty) gets a NaN grid. Entering 1 for an unused layer works. This is untested in a browser; worth a look as its own live-site fix.
+
+## Compose animation on the main page (built 2026-10-22 night, sprint)
+
+**Asked (Avery, 2026-10-22):** animate what the Compose button does, even if it makes Compose a little slower. Show how the root is chosen, how a lead line is chosen, how chords are chosen under it, how the lead is re-chosen and tested as the chords go back and forth, and how the percussion comes in. Brisk but readable. Everything below that isn't the brief is **proposed, not ruled**. Nothing here has been seen in a browser yet.
+
+**How it runs.** With **show the work** on (a toggle in the tab's header, on by default):
+1. Compose asks for its trace (`{ trace: true }`, through the worker). While it runs, the plot washes dark and a soft band sweeps it with "composing…" in the corner. No step is shown before the trace is back (proposed: compose first, then animate; the simplest honest order).
+2. The trace plays on the Linear Plot and in the tab, paced by `traceTimeline` with the page's own beat budgets (`ANIMATION_BUDGETS`), fitted into 4–7.5 s. Measured: 7.45 s on 8:7:6:5 and 41:42:43; 7.5 s on the 16k row, fitted down from 8.0 s.
+3. It ends exactly on the lit nodes the tab already draws, and the plot goes back to the overlay's ordinary draw. Perform then works as before.
+
+**What each beat shows** (`page/trace-frames.js`):
+- **Row:** a scan line sweeps the plot.
+- **Root:** the candidates pulse in turn, weakest first, each on its sampled onsets, sized by presence. The caption names each ratio and how often its ±frame cluster is heard. The rejects turn grey and fade; the winner holds in the accent green, with a burst.
+- **Meter and phase:** the bar lines sweep in; the downbeat candidates flash in turn and the chosen downbeat bursts.
+- **Cells:** the slot anchors tick in, each with a bracket under the plot spanning its window.
+- **Lead:** the runners-up are drawn as faint lines through their onsets, then fade; the chosen line draws in white, note by note. It stays on the plot until the lead part lands.
+- **Chords:** a bar at a time, the bar tints violet. Its candidates flick through on their root onsets and in the chords lane, weakest first. Then the pick's root rings and its chord tones light: the bar's trace onsets whose class from the root is one of the chord's intervals, within the frame (harmony.js' own test).
+- **Lead again and settle rounds:** the held line pulses while a new one is tested against it. If the held line wins, it brightens. If it loses, it turns amber and fades while the new line draws in. A settle round flashes its changed bars in amber, in the lanes too; a converged round glows green once.
+- **Parts:** each part's notes cascade in, in time order and in its colour, each with a small pop. Its lane fades in as it starts.
+- **Drums:** the strokes drop into place bar by bar, as squares.
+
+**The tab meanwhile.**
+- A caption above the lanes shows the step and a line of detail (for example "the held line costs 0.6398 vs a new one at 0.3985 → the new line wins"). Under it, a strip of beats lights up as they pass.
+- The lanes wait, faint, until their part lands. The readouts and decisions are hidden until the end (proposed, so the answer isn't given away).
+- The Compose button says **Skip ▸**.
+
+**Skip and cancel.**
+- **Skip:** the Skip button, a click anywhere in the tab, a click on the plot (the window's mirror canvas) or Esc jumps to the end.
+- **Cancel:** any change drops the animation, with no stale draw: a knob, the seed, a selection, a part toggle, the rhythm, main playback starting (even while Compose is still running), leaving the tab, or turning show the work off. A change of knob or seed then shows the spec's lit nodes as before a change, and the button goes back to Compose. A new rhythm lights nothing.
+
+**Show the work off** is the tab exactly as it was: Compose asks for no trace, there's no shimmer or caption, and the spec lands at once. The setting is kept in `localStorage` (`lrc.composer.showWork`, `'0'` or `'1'`). Every access is wrapped, so a storage that throws (a private window) reads as on.
+
+**Only the Compose button animates (proposed).** A lean-table auto-recompose after a knob change doesn't.
+
+**Performance.**
+- The overlay keeps its snapshot/blit approach. While animating, the overlay's draw washes the plot and snapshots it with no lit node (the base). Each animation frame is one blit of that base plus what the frame names.
+- Frames are bounded by the trace (its 323 onsets on the 16k row) plus the final lit nodes, never the row.
+- Measured on the 16,359-onset row: at most 309 nodes a frame and at most 412 canvas marks and segments, against 16,359 onsets. Building the scene takes about 0.5 ms and a frame about 0.006 ms.
+- The trace itself adds under 1 % to Compose (TRACE.md).
+
+**Code.**
+- `page/trace-frames.js`: **pure.** `buildScene({ trace, plot, final })` reads the trace once against the plot: every trace `node` is found among the plotted onsets by its tick, and the bars, slot windows and chord tones are found too. `frameAt(scene, t)` gives the draw state at t: marks on onsets, polylines through onsets, rules, bar bands, slot brackets, the row's sweep line, the parts landed so far and the lanes' state. At t ≥ the end it gives exactly the final lit nodes. Cosmos's dust renderer could follow the same pattern: build a scene, then ask it for frames.
+- `page/compose-animator.js`: the driver (idle → waiting → playing → idle, on an injected clock: `wait`, `start`, `skip`, `cancel`, `tick`), the painter (`paintFrame`, `paintShimmer`), and the setting's storage.
+- **Small edits:**
+  - `plot-overlay.js`: `setScene` and `paint`. `drawLitPart`, `partOrder` and `litRadius` are now exported, so the painted last frame draws dots exactly as the overlay does.
+  - `tab-controller.js`: `view.showWork` and `setShowWork`; Compose asks for the trace when it's on; `onMainStarted`.
+  - `composer-tab.js`: the toggle, the caption, Skip, the wiring.
+  - `composer-tab.css`: the caption and the lanes' states.
+  - `composer-bridge.js`: passes `clock` and `storage`, and exposes `animator`.
+  - `perform/composer-controller.js`: `compose({ trace })` keeps the trace apart from the spec, in `state.trace`, so the spec, the lanes and JSON export are the same either way.
+  - `perform/compose-runner.js`: forwards `trace`, both ways.
+- **Tests:** `tests/assert-page-animate.mjs` (144 checks).
+  - The frames run forward, the parts only gain nodes, and the last frame is exactly the tab's lit nodes, on 7 cases from 8:7:6:5 to the 16k row. Those include re-arranged drums and a pinned progression.
+  - Every node a frame draws is a plotted onset that the trace or the lit nodes name.
+  - Each beat's story is there.
+  - Per-frame counts stay bounded on the 16k row.
+  - The painted last frame matches the overlay's own draw, dot for dot.
+  - End to end in the tab: skip, cancel on each change (with no draw after), the toggle off as before, and storage.
+  - `assert-page-view.mjs` now runs with the setting off (stored `'0'`): it's the tab as it was.
+
+**Open (for Avery):**
+1. **The pace.** About 7.5 s, fitted. Is that brisk enough, or should a small row run shorter than a big one? On the 16k row the chords get about 0.13 s a bar (2 flicks), and the unchanged bars of a settle round only blink.
+2. **Hiding the readouts** until the end, or keeping them visible throughout?
+3. **The colours.** The root and the selections are in the window's accent green, the candidates pale grey, a change amber, and the chords in their part's violet.
+4. **Chord tones** are lit only among the onsets the trace names in that bar (its slots' nearest onsets, the lead's notes, the root samples), not every onset of the bar. That keeps a frame bounded on the 16k row. Light every onset of the bar's chord classes instead?
+5. **Skip on any click in the tab** may be too eager. Esc and the Skip button might be enough.
+6. **Auto-recompose** (lean table, a knob change) doesn't animate. Should it, maybe faster?
 
 ## Layout (agreed earlier, 2026-10-21)
 
