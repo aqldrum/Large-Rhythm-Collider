@@ -23,7 +23,7 @@ The planner keeps this file current after every phase. If the planner thread is 
 | Phase | Branch | Depends on | Status |
 | --- | --- | --- | --- |
 | A. Drums (core + lab) | `sprint/drums` | none | dispatched |
-| B. Targeted progressions (core + lab) | `sprint/progression` | none | dispatched |
+| B. Targeted progressions (core + lab) | `sprint/progression` | none | MERGED (0d4c15c..fa6d814); 45/0 suites |
 | S. Cosmos seam survey + superrow probe (read-only) | none; output in the planner's scratchpad `cosmos-survey/REPORT.md` | none | dispatched |
 | E1. Cosmos Compose mode: Rhythm card + Grid card superrow, bed silenced, clock takeover/hand-back, LOD exit; new `Composer/core/superrow.js` | `sprint/cosmos-compose` | S (seam map, window definition) | waiting |
 | C. Composer tab on the main page | `sprint/integration` | A+B merged | waiting |
@@ -48,3 +48,4 @@ Parallel lanes: E1 runs beside A/B (it touches only Cosmos files and a new core 
 - 2026-10-22 night: sprint branch and phase worktrees created; A and B dispatched in parallel.
 - 2026-10-22 night: Cosmos plan recorded; read-only survey + superrow probe dispatched (writes only to the planner's scratchpad).
 - 2026-10-22 night: Avery asked for the Cosmos build to start tonight too; plan widened to E1/T/E2 (table above).
+- Phase B merged. Open for Avery: should the lead vote on qualities in round 0 (more faithful, loses the 2× speed) or should that be a switch? Also the fallback names, and per-bar presence in the menus.
