@@ -59,6 +59,10 @@ import { createComposeMode, composeButtonView, composeBudgetFor, latticeDistance
 import { createComposeClient } from './engine/compose-worker-client.js';
 import { createCosmosComposerPlayer } from './audio/cosmos-composer-player.js';
 import { setKnobInert } from './ui/rail-view.js';
+// COMPOSE DUST (E2, 2026-10-22 night): the composition's onsets as dust on the orb's canvas — the choreography (pure) and its painter.
+import { createDustDirector, dustCaps, dustNodeDim, DUST_POOL_MAX } from './engine/compose-choreo.js';
+import { createDustRenderer, dustView } from './ui/compose-dust.js';
+import { compositionOutput } from './audio/cosmos-audio.js';
 
 const STAR_SCALE = 4, NEAR = 5;
 // ══ FLIGHT / LOD KNOBS ═══════════════════════════════════════════════════════════════════════
@@ -951,6 +955,7 @@ const composeMode = createComposeMode({
   gather: composeGather,
   now: () => performance.now(),
   budget: () => composeBudgetFor(currentQuality()),
+  trace: true, dust: DUST_POOL_MAX,   // COMPOSE DUST (E2): the trace and the rhythm's sampled onsets, taken off the spec before it plays
 });
 /** the Compose mode, for E2 and the console (state, info(), on(type, fn)) */
 export function cosmosComposeMode() { return composeMode; }
@@ -962,6 +967,47 @@ composeMode.on('perform', ({ spec }) => {
 });
 composeMode.on('stop', () => { setKnobInert('speed', false); markFieldDirty(); refreshComposeCard(); });
 composeMode.on('refused', () => refreshComposeCard());
+// ══ COMPOSE DUST (E2, 2026-10-22 night) ═══════════════════════════════════════════════════════════════════════════
+// The director (engine/compose-choreo.js) turns the Compose mode's events into a frame a flight frame; the renderer
+// (ui/compose-dust.js) paints it on the orb's veil, which expands into the canvas while the composition plays and follows
+// the range level as the player flies away. Under a full veil the loop skips every layer the veil hides. Idle: nothing.
+const composeDust = createDustDirector({ caps: () => dustCaps(currentQuality()) });
+const dustRenderer = createDustRenderer();
+let dustBasis = null, dustCovering = false;   // the last frame's view basis (the dust's origins) · the veil covered everything
+const wallSeconds = () => performance.now() / 1000;
+const dustAudioNow = () => { const o = compositionOutput(); return o ? o.ctx.currentTime : null; };
+composeMode.on('composing', e => composeDust.composing(e, wallSeconds()));
+composeMode.on('composed', e => composeDust.composed({ ...e, origins: dustOrigins(e) }, wallSeconds()));
+composeMode.on('perform', e => composeDust.perform(e));
+composeMode.on('note', e => composeDust.note(e));
+composeMode.on('level', e => composeDust.level(e));
+composeMode.on('stop', e => composeDust.stop(e, wallSeconds()));
+composeMode.on('refused', e => composeDust.stop(e, wallSeconds()));
+// Where each source rhythm's dust starts: its node's place in the bloom (the draw loop's lattice), seen on the view's
+// plane through the bloom's centre, in units of its outer radius — so the dust leaves the very nodes it came from.
+function dustOrigins(e) {
+  const t = e.target, data = t ? bloomCache.get(t.grid) : null, basis = dustBasis;
+  if (!t || !data || !data.systems?.length || !basis) return null;
+  const rscale = Math.min(BLOOM_R, BLOOM_MAX_R / (1 + cardExtent(Math.max(1, data.cmax - data.cmin))));
+  const lattice = { cmin: data.cmin, rscale, extent: cardExtent, golden: GOLDEN }, N = data.systems.length;
+  const cmaxVis = t.grid === cosmos?.focusGrid ? Math.min(data.cmax, cardHi) : data.cmax;
+  const outerR = rscale * (1 + cardExtent(Math.max(0, cmaxVis - data.cmin))) || 1;
+  const onPlane = (pi, out, at) => {
+    const p = latticeTarget(pi, N, data.systems[pi].c, lattice), { r, u, d } = basis;
+    out[at] = (p[0] * r[0] + p[1] * r[1] + p[2] * r[2]) / outerR; out[at + 1] = (p[0] * u[0] + p[1] * u[1] + p[2] * u[2]) / outerR;
+    out[at + 2] = -(p[0] * d[0] + p[1] * d[1] + p[2] * d[2]) / outerR * 2;   // nearer the eye → out in front (z up)
+  };
+  if (t.kind === 'rhythm') {
+    const pi = inspectedNode?.key === t.key && inspectedNode.id ? +String(inspectedNode.id).split(':')[1] : lastNodeByGrid.get(t.grid);
+    if (!(pi >= 0 && pi < N)) return null;
+    const out = new Float32Array(3); onPlane(pi, out, 0); return out;
+  }
+  const sr = e.superrow, pis = sr?.pis, picked = e.window?.picked;
+  if (!pis || !picked) return null;
+  const out = new Float32Array(pis.length * 3);
+  for (const r of picked) if (pis[r] < N) onPlane(pis[r], out, 3 * r);
+  return out;
+}
 function refreshComposeCard() { updateRhythmActionState(); if (selected && selected.kind === 'star' && currentCardMode === 'grid') showDetail(selected); }   // the Listen button comes back too
 
 // Grid targets: ready once the bloom has streamed every shard and none is in flight.
@@ -982,7 +1028,7 @@ function composeSnapshot(target, e) {
   const dist = latticeDistances(e.systems, { ...lattice, eye });
   const band = target.band, idx = [];
   for (let i = 0; i < e.systems.length; i++) { const c = e.systems[i].c; if (!band || (c >= band[0] && c <= band[1])) idx.push(i); }
-  return { rhythms: idx.map(i => e.systems[i].layers), dist: Float64Array.from(idx, i => dist[i]), keys: idx.map(i => e.systems[i].key) };
+  return { rhythms: idx.map(i => e.systems[i].layers), dist: Float64Array.from(idx, i => dist[i]), keys: idx.map(i => e.systems[i].key), pis: idx };   // pis: COMPOSE DUST (E2) origins
 }
 // What this card offers to compose: its rhythm, or its bloomed grid.
 function composeHere() {
@@ -1341,6 +1387,7 @@ export function stopFlight() {
   if (!started && !pool) return;
   started = false;
   composeMode.stop('exit'); composeClient?.terminate(); composeClient = null;   // COMPOSE MODE (E1): first, while the graph and zones stand
+  composeDust.clear(); dustRenderer.reset(); dustCovering = false;   // COMPOSE DUST (E2): no dissolve outlives the flight
   if (pool) { pool.terminate(); pool = null; }   // kill workers, timers, and queued jobs — no lingering solve
   if (rowCompiler) { rowCompiler.terminate(); rowCompiler = null; }
   if (rootCompiler) { rootCompiler.terminate(); rootCompiler = null; }
@@ -2784,8 +2831,14 @@ function loop() {
     : null;
   const { shipView, renderView } = composeViewFrames({ shipBasis: basis, pose, fog: viewT, focal, cx, cy, near: NEAR });
   shipBoost += ((keys[' '] ? 1 : 0) - shipBoost) * (1 - Math.exp(-dt * 6));
-  drawHilbertBoundaryWalls(renderView);
-  webRenderer?.frame({
+  // COMPOSE DUST (E2): this frame's dust and veil. Under a FULL veil every layer it hides is skipped, not painted over:
+  // the walls, the Web frame, connectors, constellations, ships, the stars (draw and pick), the blots and the clouds.
+  dustBasis = renderView.basis;
+  const dust = composeDust.active ? composeDust.frame(now / 1000, dustAudioNow()) : null;
+  const dustFull = !!dust && dust.full;
+  dustCovering = dustFull;
+  if (!dustFull) drawHilbertBoundaryWalls(renderView);
+  if (!dustFull) webRenderer?.frame({
     now, anchor: cam.anchor, off: [...cam.off], d: renderView.basis.d, r: renderView.basis.r, u: renderView.basis.u,
     eye: renderView.eye, near: NEAR, fogBlend: renderView.fog,
     mouseX, mouseY, cx, cy, focal, fogNear: FOG_NEAR, fogFar: FOG_FAR, tailFrac: webTailFrac,
@@ -3065,7 +3118,7 @@ function loop() {
 
   // connectors (behind stars), faded by depth — spine only. In the cube there's no district reorg,
   // so a connector would just be a random thread across space; the Hilbert layout carries structure.
-  if (placement !== 'hilbert') {
+  if (placement !== 'hilbert' && !dustFull) {   // COMPOSE DUST (E2): hidden under a full veil
     ctx.lineWidth = 1;
     for (const { z, s } of proj.values()) {
       if (z.parentGrid === z.grid) continue;
@@ -3080,7 +3133,7 @@ function loop() {
   // `placed`, NOT `proj`: `placed` is camera-relative world position including bloom-bubble deformation,
   // so a line stays welded to its star through flight and through a bloom (a bloomed grid is simply a
   // vertex at its bloom centre), and the renderer can clip at the near plane for notes sounding behind us.
-  if (constellation.options.enabled) {
+  if (constellation.options.enabled && !dustFull) {   // COMPOSE DUST (E2): hidden under a full veil
     const feed = gridRowReachedAttacks(constellationCursor);
     const gap = constellationCursor === null ? Infinity : feed.now - constellationCursor;
     const positionOf = grid => placed.get(grid) || null;   // camera-relative world, bloom deformation included
@@ -3114,7 +3167,7 @@ function loop() {
       detuneCents: gridRowDetuneCents(), now: feed.now, drawIn: constellation.options.drawIn,
     });
   }
-  drawAgents(renderView);   // Collider-Battle ships (over the web, under the picking rings)
+  if (!dustFull) drawAgents(renderView);   // Collider-Battle ships (over the web, under the picking rings) · COMPOSE DUST (E2): hidden under a full veil
   // ── picking: as we draw, note the star/node nearest the cursor and the pinned selection's live pos ──
   const havePtr = mouseX >= 0;
   let pickNode = null, pickNodeD2 = NODE_HIT * NODE_HIT;
@@ -3124,7 +3177,7 @@ function loop() {
   // stars, painter's order (far first). A blooming star dissolves into its point cloud (dot alpha ↓).
   const rowActivity = new Map(gridRowVisualState().map(activity => [activity.id, activity]));
   const auraDetuneCents = gridRowDetuneCents();   // one global read/frame: shifts every orb's hue together on a modulation
-  const order = [...proj.values()].sort((a, b) => b.s.z - a.s.z);
+  const order = dustFull ? [] : [...proj.values()].sort((a, b) => b.s.z - a.s.z);   // COMPOSE DUST (E2): no star draw or pick under a full veil
   // Core-dot batching. The frontier is mostly a few FIXED colours (unlit dust, unsolvable grey, monster red);
   // only solved stars carry the continuous starColor. Bucket each core by exact colour + a fine fog-alpha band
   // (1/48 ≈ sub-perceptual) so ~1500 per-dot fills collapse to a few dozen. Colour is never quantised — the
@@ -3202,10 +3255,11 @@ function loop() {
 
   // inside a bloom's shell: veil everything painted so far (background stars, walls, constellation lines, the
   // Web canvas beneath) — the inside face of the orb. Only the bloom clouds, drawn next, sit in front of it.
-  if (veil > 0) { ctx.globalAlpha = veil; ctx.fillStyle = 'rgb(5,7,11)'; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
+  const veilA = dust ? Math.max(veil, dust.veil) : veil;   // COMPOSE DUST (E2): the orb's veil expands into the composition's canvas
+  if (veilA > 0) { ctx.globalAlpha = veilA; ctx.fillStyle = 'rgb(5,7,11)'; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
   // black-hole disks: a soft dark sphere behind each bloom (drawn over the culled background, under the
   // cloud) so the bloom reads as a focal object floating in a clearing — no background noise bleeding through.
-  for (const bl of blots) {
+  for (const bl of dustFull ? [] : blots) {   // COMPOSE DUST (E2): hidden under a full veil
     const fog = fogAt(bl.f); if (fog <= 0) continue;
     const g = ctx.createRadialGradient(bl.x, bl.y, 0, bl.x, bl.y, bl.r);
     g.addColorStop(0, 'rgba(5,7,11,0.96)'); g.addColorStop(0.72, 'rgba(5,7,11,0.9)'); g.addColorStop(1, 'transparent');
@@ -3224,7 +3278,7 @@ function loop() {
   // Web travel owns its own immutable curve. While it is active, even an already-open bloom stays
   // visually lightweight: no rhythm-level fan-out is constructed for a grid the camera merely passes.
   const bloomWeb = !returnRide && bloomWebId ? activeWebs.get(bloomWebId) : null;
-  for (const g of bloomed) {
+  for (const g of dustFull ? [] : bloomed) {   // COMPOSE DUST (E2): no cloud draw or pick under a full veil
     const data = bloomCache.get(g), z = cosmos.zones.get(g), rpC = rpOf.get(g);
     if (!data || !data.systems.length || !z || !rpC) continue;
     // Centre world-relative position (deformed like everything else). We render PER NODE and do NOT gate on the
@@ -3261,7 +3315,8 @@ function loop() {
       const sp = renderView.project(nrp); if (!sp) continue;             // per-node near cull
       let fog = fogAt(sp.f); if (fog <= 0) continue;                      // per-node fog (far side of a big bloom fades)
       if (shells.length) { fog *= shellVisibility(nrp, g); if (fog <= 0) continue; }   // another bloom's shell hides it
-      const rv = Math.min(1, (now - p.bt) / BLOOM_RV_MS), a0 = fog * rv;   // per-node birth ease
+      const dim = dust ? dustNodeDim(dust, g, p.key) : 1; if (dim <= 0.004) continue;   // COMPOSE DUST (E2): the cloud gives way to the dust
+      const rv = Math.min(1, (now - p.bt) / BLOOM_RV_MS), a0 = fog * rv * dim;   // per-node birth ease
       const r = Math.max(0.4, Math.min(2.6 * focal / sp.z, 6)) * (0.5 + 0.5 * rv);
       renderedNodes.push({ p, pi, sp, fog, rv, a0, r });
     }
@@ -3329,6 +3384,13 @@ function loop() {
       if (selected && selected.kind === 'node' && selected.id === nid) selPos = { x: sp.x, y: sp.y, r };
       if (havePtr) { const dx = sp.x - mouseX, dy = sp.y - mouseY, d2 = dx * dx + dy * dy; if (d2 < pickNodeD2) { pickNodeD2 = d2; pickNode = { kind: 'node', id: nid, grid: g, c: p.c, dense: p.dense, layers: p.layers, fund: p.fund, rs: p.rs, key: p.key, charted: p.charted, x: sp.x, y: sp.y, r }; } }
     }
+  }
+  // COMPOSE DUST (E2): the dust, over the veil and the clouds, under the ship. The face sits on the bloom's own disc and
+  // moves to the canvas centre as the veil rises (the orb becoming the canvas). Idle: no call at all.
+  if (dust && dust.frame) {
+    const cp = proj.get(dust.grid), bb = bubbleOf.get(dust.grid);
+    const centre = cp && cp.s.z > NEAR ? { x: cp.s.x, y: cp.s.y } : null, radius = cp && bb ? bb.outerR * focal / cp.s.z : null;
+    dustRenderer.draw(ctx, dust.frame, dustView({ W, H, cx, cy, centre, radius, veil: dust.veil, dpr: renderScale }));
   }
   // ── the player's ship (chase view only): after the stars, auras, cores and bloom clouds, before the picking
   // rings and the HUD. It sits exactly where the first-person camera is and fades in with the V blend, so it
@@ -3427,6 +3489,8 @@ function bindControls() {
   cv.addEventListener('pointerup', e => {
     down = false;
     if (e.button !== 0 || dragged) return;   // left-click only — right-click is handled by contextmenu (collapse)
+    if (composeDust.skippable(performance.now() / 1000)) { composeDust.skip(performance.now() / 1000); return; }   // COMPOSE DUST (E2): a click skips the selection
+    if (dustCovering) return;   // COMPOSE DUST (E2): under a full veil there is nothing to pick (and a click must not close the card)
     if (hover && hover.kind === 'star') {
       const g = hover.grid, gz = cosmos.zones.get(g);
       if (gz && (gz.unsolvable || gz.monster)) { selected = hover; }   // frontier dust / monster → inspect only (monster has a SOLVE ANYWAY button)
@@ -3515,7 +3579,7 @@ function bindControls() {
     const own = heldControl();
     if (own && keyboardFocused(own) && (k === ' ' || k === 'enter' || k.startsWith('arrow') || own.tagName === 'SELECT')) return;
     const firstPress = !keys[k]; keys[k] = true;
-    if (firstPress && k === 'escape') { if (returnRide) cancelWebReturn(); else if (!closeCardOnEscape()) window.exitCosmos(); e.preventDefault(); }
+    if (firstPress && k === 'escape') { if (returnRide) cancelWebReturn(); else if (composeDust.skippable(performance.now() / 1000)) composeDust.skip(performance.now() / 1000); else if (!closeCardOnEscape()) window.exitCosmos(); e.preventDefault(); }   // COMPOSE DUST (E2): Esc skips the selection first
     if (firstPress && /^[0-9]$/.test(k)) { toggleSlot(k === '0' ? 9 : +k - 1); if (selected) showDetail(selected); }   // 1-9,0 → hide/show web slots
     if (firstPress && k === 'm') toggleMute();   // M → mute cosmos-audio (transport keeps ticking, only output is silenced)
     // V → chase view: pull back behind and above the ship, and back to the cockpit. Cube only (setViewMode
