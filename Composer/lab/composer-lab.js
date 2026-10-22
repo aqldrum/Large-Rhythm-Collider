@@ -3,7 +3,7 @@
 // the lean one; Perform plays the spec through Audio/voices (lab-player.js).
 
 import { compose } from '../core/compose.js';
-import { createLabController, PRESETS, soundChoices } from './lab-controller.js';
+import { createLabController, PRESETS, soundChoices, drumModeChoices, kitChoices, DRUM_LAB_VOICES } from './lab-controller.js';
 
 // ── Compose: the worker for the full table, this thread for the lean one ──
 let worker = null, seq = 0;
@@ -131,7 +131,8 @@ function renderReadouts() {
   }
   const k = s.knobs, items = [['tempo', `${fmt(k.tempoBpm)} BPM`], ['meter', `${k.bars} × ${k.slotsPerBar}`], ['root', k.root], ['baseHz', fmt(k.baseHz, 2)], ['onsets', s.stats.onsets.toLocaleString()],
     ['tones', s.stats.tones.toLocaleString()], ['table', k.table], ['composed in', `${fmt(S.lastMs, 0)} ms`], ['chords', s.chords.map((c) => c.name).join(' ')],
-    ...(s.input.progression ? [['progression', `${s.chords.filter((c) => c.targeted).length}/${s.chords.length} targeted (${k.leader})${s.chords.some((c) => c.fallback) ? `, fallback on bar ${s.chords.filter((c) => c.fallback).map((c) => c.bar + 1).join(', ')}` : ''}`]] : [])];
+    ...(s.input.progression ? [['progression', `${s.chords.filter((c) => c.targeted).length}/${s.chords.length} targeted (${k.leader})${s.chords.some((c) => c.fallback) ? `, fallback on bar ${s.chords.filter((c) => c.fallback).map((c) => c.bar + 1).join(', ')}` : ''}`]] : []),
+    ...(S.drums ? [['drums', `${S.drums.mode}${S.drums.enabled ? '' : ' (off)'} · ${S.drums.stats.total} strokes`]] : [])];
   for (const [label, value] of items) out.append(el('span', {}, `${label} `, el('b', { textContent: value })));
   for (const kn of KNOB_UI) {
     const over = S.knobs[kn.name] != null, asked = (what) => s.decisions.find((d) => d.what === what)?.value;
@@ -145,7 +146,9 @@ function renderReadouts() {
 }
 function renderDecisions() {
   const t = $('decisionTable');
-  t.replaceChildren(...(S.spec?.decisions || []).map((d) => el('tr', {}, el('td', { textContent: d.what }), el('td', { textContent: JSON.stringify(d.value) }), el('td', { textContent: d.why }))));
+  // the drums' own decisions (as they play now), then what each bar plays and why
+  const drums = S.drums ? [...S.drums.decisions, ...S.drums.bars.map((b) => ({ what: `drums.bar ${b.bar + 1}`, value: b.fill ? `${b.mode} + fill` : b.mode, why: b.why }))] : [];
+  t.replaceChildren(...[...(S.spec?.decisions || []), ...drums].map((d) => el('tr', {}, el('td', { textContent: d.what }), el('td', { textContent: JSON.stringify(d.value) }), el('td', { textContent: d.why }))));
 }
 
 // ── lanes ──
@@ -193,8 +196,41 @@ function renderLanes() {
     bars.append(...cells);
     return el('div', { className: `lane${part.enabled ? '' : ' off'}` }, el('div', { className: 'head' }, name, sound, legato, on, level), bars);
   });
+  if (S.drums) rows.push(drumLane(s, starts, lens, cols, barOf));
   lanes.replaceChildren(head, ...rows);
   laneKey = rows.length ? rows[0].querySelector('.bars') : null;
+}
+
+// ── the drums lane and kit: a change re-arranges the drums from the spec (lab.setDrums), nothing re-composed ──
+const drumModes = drumModeChoices();
+function drumLane(s, starts, lens, cols, barOf) {
+  const d = S.drums, o = S.drumOptions;
+  const mode = el('select', { title: 'the drum mode, or a curated pattern' }, ...drumModes.map((m) => el('option', { value: m.id, textContent: m.label, selected: m.id === o.mode })));
+  mode.addEventListener('change', () => lab.setDrums({ mode: mode.value }));
+  const fills = el('button', { className: `toggle${o.fills ? ' on' : ''}`, textContent: 'fills', title: 'on: the last bar of each phrase of 4 bars or more fills from beat 3, and a crash opens the next' });
+  fills.addEventListener('click', () => lab.setDrums({ fills: !o.fills }));
+  const on = el('button', { className: `toggle${d.enabled ? ' on' : ''}`, textContent: d.enabled ? 'on' : 'off' });
+  on.addEventListener('click', () => lab.setDrums({ enabled: !d.enabled }));
+  const level = el('input', { type: 'range', min: 0, max: 1, step: 0.01, value: S.levels.drums, title: 'level' });
+  level.addEventListener('input', () => lab.setLevel('drums', level.value));
+  const bars = el('div', { className: 'bars' });
+  bars.style.gridTemplateColumns = cols;
+  const cells = starts.map((_, k) => el('div', { className: 'bar' }, el('span', { className: 'dlabel', textContent: `${d.bars[k].mode}${d.bars[k].fill ? ' + fill' : ''}`, title: d.bars[k].why })));
+  for (const h of d.hits) {
+    const k = barOf(h.time), tick = el('div', { className: `dtick ${h.voice}`, title: `${h.voice} · bar ${h.bar + 1}, slot ${h.pos} · ${h.time.toFixed(3)} s · velocity ${h.velocity.toFixed(2)} · ${h.snap}` });
+    tick.style.left = `${(100 * (h.time - starts[k])) / lens[k]}%`;
+    cells[k].append(tick);
+  }
+  bars.append(...cells);
+  return el('div', { className: `lane${d.enabled ? '' : ' off'}` }, el('div', { className: 'head' }, el('span', { className: 'name', textContent: 'drums' }), mode, fills, on, level), bars);
+}
+function renderKit() {
+  const box = $('drumKit'), kit = S.drumOptions.kit;
+  box.replaceChildren(el('label', { textContent: 'Drum kit' }), ...DRUM_LAB_VOICES.map((v) => {
+    const sel = el('select', {}, ...kitChoices(v).map((c) => el('option', { value: c.value, textContent: c.label, selected: c.value === kit[v] })));
+    sel.addEventListener('change', () => lab.setDrums({ kit: { [v]: sel.value } }));
+    return el('span', { className: 'knob' }, el('label', { textContent: v }), sel);
+  }));
 }
 
 // ── the playhead ──
@@ -217,7 +253,7 @@ function render() {
   $('go').className = label === 'Stop' ? 'stop' : '';
   $('go').disabled = label === 'Composing…';
   $('status').textContent = S.status === 'error' ? `error: ${S.error}` : S.dirty && S.spec ? 'changed — Compose again' : '';
-  renderReadouts(); renderDecisions(); renderLanes(); renderProgression();
+  renderReadouts(); renderDecisions(); renderLanes(); renderProgression(); renderKit();
   showTempo();
 }
 lab.onChange(render);

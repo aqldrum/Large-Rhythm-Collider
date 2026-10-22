@@ -1,6 +1,6 @@
 # Composer
 
-Press Compose and the Composer decomposes one rhythm's own tone row into an arranged tune: a lead, chords, comping, a bass and an inner voice. Every note is an onset the row already plays, at its own time and with its own ratio. Then press Perform. It's a prototype: it runs in a standalone lab page and isn't yet part of the main LRC page.
+Press Compose and the Composer decomposes one rhythm's own tone row into an arranged tune: a lead, chords, comping, a bass, an inner voice and drums. Every note is an onset the row already plays, at its own time and with its own ratio. Then press Perform. It's a prototype: it runs in a standalone lab page and isn't yet part of the main LRC page.
 
 `DESIGN_NOTES.md` holds the decisions (Avery's calls are marked **decided**), the proposals, the measurements and the open questions. This file is the short way in.
 
@@ -19,7 +19,8 @@ Then go to `http://localhost:8000/Composer/lab/composer-lab.html`. The page need
 - **Knobs:** bars, slots per bar, frame ±¢, modulation, anchors, settle passes, root presence, and the table (full in the worker, lean on the main thread). Each one shows what Compose chose, or "asked" when you've overridden it.
 - **Progression:** a root a bar from the row's own tones (its ±frame clusters, by ratio, note name, cents and presence), or auto. Compose keeps each asked root, finds the quality the bar's tones support, and mines everything under it. "Take from last compose" copies the roots the last compose chose; "clear" sets every bar back to auto.
 - **Live, without re-composing:** each part's sound, legato, on/off and level, plus Glide (portamento) and Tempo.
-- **Readouts and export:** tempo, meter, root, chords and the decisions list (what Compose chose and why). JSON export gives the spec plus `playback`.
+- **Drums lane:** the mode or curated pattern, fills, on/off, level, and a Drum kit row with a sound per voice (the made kit, or the site's samples). Any change re-arranges the drums from the spec, live.
+- **Readouts and export:** tempo, meter, root, chords, drums and the decisions list (what Compose chose and why, and what each drum bar plays). JSON export gives the spec, with the drums as they play, plus `playback`.
 
 ## How Compose works
 
@@ -41,6 +42,12 @@ Then go to `http://localhost:8000/Composer/lab/composer-lab.html`. The page need
    - bass: mined bar by bar from the root
    - inner voice: in the lead's gaps
 7. **Articulation:** legato per part, sounds, and baseHz (the lead's median pitch sits at about 539 Hz).
+8. **Drums** (`drums.js`, `drum-patterns.js`): `arrangeDrums(spec)`, from the spec alone, so it can run again without composing:
+   - every stroke lands on an onset the row plays
+   - the bar's 4 beats are Partitions' cut of its S slots
+   - the default is a backbeat: kick on 1 and 3, snare on 2 and 4, a hat every slot
+   - other modes: perc *with* or *against* the lead and comping, a *partition* line from the layer that strikes the downbeat, or a curated pattern (rock, half-time, four on the floor, funk, soca, bossa, shuffle, son and rumba clave)
+   - fills at phrase ends
 
 **Targeted progressions** (`progression.js`, `compose(..., { progression: [ratio | null, ...] })`): the bars given a root skip steps 3–4's lead-led choice. Their chord keeps the asked root, and its quality is the best one the bar's own tones support (all its classes but at most one sounding). If none is supported, it falls back to a dyad or the root alone, and says so. The lead is mined over these chords, and the settle passes re-derive only the quality. Auto bars are found as above, and an off-grid root retunes, as in step 4. With no progression, or all auto, Compose is unchanged.
 
@@ -51,7 +58,7 @@ Then go to `http://localhost:8000/Composer/lab/composer-lab.html`. The page need
   - `composer-lab.html` and `composer-lab.js`: the page and its view
   - `lab-controller.js`: state, with no DOM
   - `lab-player.js`: a lookahead scheduler, with no DOM
-- **`tests/`:** plain Node scripts with no runner. `rhythms.mjs` is the shared rhythm set; `settle-baseline.mjs` pins the output from before settling; `time-lines.mjs` is a timing table, not a check.
+- **`tests/`:** plain Node scripts with no runner. `assert-drums.mjs` checks the drums against the row and against Partitions' own Euclid. `rhythms.mjs` is the shared rhythm set; `settle-baseline.mjs` pins the output from before settling; `time-lines.mjs` is a timing table, not a check.
 - **`probe/`:** the 2026-10-21 cost probe (`FINDINGS.md`), the source of the onset gate.
 
 ## Tests
@@ -62,8 +69,8 @@ Run every suite (the Composer's, the shared voices', Cosmos's and MIDI Out's):
 for t in Composer/tests/assert-*.mjs Cosmos/tests/assert-*.mjs Audio/tests/assert-*.mjs Playback/MIDIOut.test.mjs; do node "$t" >/dev/null 2>&1 || echo FAIL $t; done
 ```
 
-A clean run prints nothing; there were 44 suites as of 2026-10-22. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
+A clean run prints nothing; there were 45 suites as of the night of 2026-10-22, with `assert-drums.mjs` added. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
 
 ## Where it lives
 
-The branch is `composer-prototype`, cut from `feat/shared-voices`, which holds the shared voice library and Partitions on `Audio/drums`. Neither branch is on `main` yet. The next step is the drums ("Next" in `DESIGN_NOTES.md`).
+The branch is `composer-prototype`, cut from `feat/shared-voices`, which holds the shared voice library and Partitions on `Audio/drums`. Neither branch is on `main` yet. The drums were built on `sprint/drums` ("Drums" in `DESIGN_NOTES.md`), and their listening pass is next.

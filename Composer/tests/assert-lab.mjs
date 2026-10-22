@@ -8,6 +8,9 @@
 //   • live tempo: a change mid-cycle rescales what is booked after it (starts, glides, a held voice's release, a lone
 //     note's length, the loop) by spec tempo / chosen tempo, from where the booking had reached; the playhead is
 //     continuous; pitch and glide seconds are not scaled; reset, the range, a new Compose; JSON export's `playback`
+//   • drums: the lane's state (mode, fills, on/off, kit, level) re-arranges from the spec with drums.js, nothing
+//     re-composed, live while playing; every stroke booked at its spec time on the clock map (loop, live tempo) through
+//     Audio/drums on the drums bus; a voice off is silent; a sample stands in with the made sound until it loads
 //   • the page imports only relative paths, and makes its worker with new URL(…, import.meta.url)
 //   node Composer/tests/assert-lab.mjs
 import fs from 'node:fs';
@@ -19,6 +22,9 @@ import { planVoice } from '../../Audio/voices/plan.js';
 import { createInstrumentVoice } from '../../Audio/voices/voice.js';
 import { getRecipe } from '../../Audio/voices/recipes.js';
 import { compose, rearticulate, PART_IDS } from '../core/compose.js';
+import { arrangeDrums, DEFAULT_KIT } from '../core/drums.js';
+import * as drumLibrary from '../../Audio/drums/index.js';
+import { drumModeChoices, kitChoices } from '../lab/lab-controller.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), LAB = path.resolve(HERE, '..', 'lab');
 let PASS = true, checks = 0;
@@ -387,6 +393,74 @@ console.log('\n— the progression editor (targeted progressions)');
   check('new layers clear it (the ratios belonged to the old row)', plab.progressionInput() === null);
   plab.setLayers([3, 2]);
   check('a refused row offers no roots and no bars', plab.rootChoices().refused && plab.progressionBars() === 0);
+}
+
+console.log('\n— drums');
+{
+  const dctx = makeCtx(), dlab = createLabController({ createContext: () => dctx, timers });
+  await dlab.press();
+  const dspec = dlab.state.spec;
+  check(`after Compose the drums are the spec's own (${dlab.state.drums.mode}, ${dlab.state.drums.stats.total} strokes), and JSON export carries them`,
+    JSON.stringify(dlab.state.drums) === JSON.stringify(dspec.drums) && JSON.parse(dlab.exportJSON()).drums.stats.total === dspec.drums.stats.total);
+  check(`the lane offers every mode and pattern (${drumModeChoices().length}) and a kit a voice: off, the made kit, the site's samples`,
+    drumModeChoices().some((m) => m.id === 'partition') && drumModeChoices().some((m) => m.id === 'son') && kitChoices('kick').some((c) => c.value === 'made:kick') && kitChoices('kick')[0].value === '' && kitChoices('snare').some((c) => c.value.endsWith('/assets/audio/snare1.wav')));
+  dlab.perform();
+  const dp = dlab.player, D0 = dp.loopStart, DT = dspec.knobs.cycleSeconds;
+  check('the drums play on a bus of their own, into the master', dp.buses.drums && dp.buses.drums.outs.includes(dp.master));
+  dlab.setDrums({ mode: 'partition', fills: false });
+  const live = dlab.state.drums;
+  check('a mode change while playing re-arranges from the spec, nothing re-composed, still playing', dlab.state.spec === dspec && dp.playing && dlab.button() === 'Stop' && live.mode === 'partition'
+    && JSON.stringify(live) === JSON.stringify(arrangeDrums(dspec, { mode: 'partition', fills: false, enabled: true, kit: DEFAULT_KIT })) && JSON.parse(dlab.exportJSON()).drums.mode === 'partition');
+  dlab.setLevel('drums', 0.4);
+  check('the drums level rides the drums bus', dp.buses.drums.gain.calls.some((c) => c[0] === 'setTargetAtTime' && c[1] === 0.4));
+  dlab.setDrums({ enabled: false });
+  check('drums off: the arrangement stays, unplayed', dlab.state.drums.enabled === false && dlab.state.drums.hits.length === live.hits.length);
+  dlab.setDrums({ enabled: true });
+  dlab.stop();
+  dlab.setSeed(4); await dlab.press();
+  check('a new Compose re-arranges the drums with the lane\'s options', dlab.state.drums.mode === 'partition' && JSON.stringify(dlab.state.drums) === JSON.stringify(arrangeDrums(dlab.state.spec, dlab.state.drumOptions)));
+
+  // the player alone, its drum library wrapped: every stroke at its spec time, a voice off, a sample, a tempo change
+  const pctx = makeCtx(), pspec = compose([41, 42, 43, 0], 8, { seed: 1, worker: true }), PT = pspec.knobs.cycleSeconds;
+  const strokes = [], loads = [];
+  let resolveLoad;
+  const wrapped = {
+    ...drumLibrary,
+    playMadeDrum: (id, o) => { strokes.push({ id, at: o.at, peak: o.peak, out: o.out }); return drumLibrary.playMadeDrum(id, o); },
+    playSample: (o) => { strokes.push({ id: 'sample', at: o.at, peak: o.peak, out: o.out }); return { end: o.at + 0.1, stop() {}, onEnded() {} }; },
+    loadSample: (c, url) => { loads.push(url); return new Promise((r) => { resolveLoad = r; }); },
+  };
+  let drums = arrangeDrums(pspec, { kit: { hat: '', snare: '../../assets/audio/snare1.wav' } });
+  const pp = createPlayer({ ctx: pctx, drums: wrapped, timers: {} });
+  pp.play(pspec, () => pspec.parts, () => drums);
+  const P0 = pp.loopStart, pstep = () => { pctx.currentTime += 0.025; pp.tick(); };
+  while (pctx.currentTime < P0 + 0.5 * PT) pstep();
+  const firstHalf = drums.hits.filter((h) => h.voice !== 'hat' && h.time < 0.5 * PT - 0.2);
+  const madeOf = { kick: 'kick', snare: 'snare', perc: 'perc', cym: 'cym' };
+  let miss = '';
+  for (const h of firstHalf) if (!strokes.some((x) => x.id === madeOf[h.voice] && Math.abs(x.at - (P0 + h.time)) < 1e-9 && Math.abs(x.peak - h.velocity) < 1e-12 && x.out === pp.buses.drums)) miss ||= `${h.voice} at ${h.time.toFixed(3)}`;
+  check(`every stroke starts at its spec time, at its velocity, on the drums bus (${firstHalf.length}); the snare's sample stands in with the made snare while it loads`, !miss && firstHalf.length > 5, miss);
+  check('a voice set off (the hat) is never struck; the sample is loaded once', !strokes.some((x) => x.id === 'hihat') && loads.length === 1 && loads[0].endsWith('snare1.wav'));
+  resolveLoad({ duration: 0.3 }); await new Promise((r) => setTimeout(r, 0));
+  const B1 = pp.booked, S1 = B1 - P0, F = 1.25;
+  pp.setTimeFactor(F);
+  drums = arrangeDrums(pspec, { kit: { hat: '', snare: '../../assets/audio/snare1.wav' } });
+  while (pctx.currentTime < B1 + (PT - S1 + 0.6 * PT) * F) pstep();
+  const clock = (S) => (S < S1 ? P0 + S : B1 + (S - S1) * F);
+  let tmiss = '', later = 0, sampled = 0;
+  for (const c of [0, 1]) for (const h of drums.hits) {
+    const S = c * PT + h.time;
+    if (S < S1 + 0.01 || S > PT + 0.5 * PT || h.voice === 'hat') continue;
+    later++;
+    const want = h.voice === 'snare' ? 'sample' : madeOf[h.voice], x = strokes.find((y) => y.id === want && Math.abs(y.at - clock(S)) < 1e-9);
+    if (!x) tmiss ||= `${h.voice} cycle ${c} at ${h.time.toFixed(3)} not at ${clock(S).toFixed(4)}`;
+    else if (want === 'sample') { sampled++; if (Math.abs(x.peak - h.velocity * drumLibrary.MADE_DRUMS.snare.sampleLevel) > 1e-12) tmiss ||= `snare sample peak ${x.peak}`; }
+  }
+  check(`after a tempo change the strokes follow it, into the next loop (${later}); the loaded sample plays at velocity × the made snare's sampleLevel (${sampled})`, !tmiss && later > 10 && sampled > 0, tmiss);
+  const count = strokes.length, at = pctx.currentTime;
+  pp.stop();
+  for (let i = 0; i < 20; i++) pstep();
+  check('Stop: no stroke is booked after it, and the made strokes still sounding are stopped', strokes.length === count && pctx.nodes.filter((n) => (n.kind === 'osc' || n.kind === 'noise') && n.started != null && n.started > at - 0.3).every((n) => n.stopped.some((t) => t <= at + 0.06) || n.stopped.some((t) => t <= at)));
 }
 
 console.log('\n— serving');
