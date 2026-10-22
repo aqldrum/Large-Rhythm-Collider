@@ -8,7 +8,7 @@ import { createLabController, PRESETS, soundChoices } from './lab-controller.js'
 // ── Compose: the worker for the full table, this thread for the lean one ──
 let worker = null, seq = 0;
 const pending = new Map();
-function viaWorker(layers, cycleSeconds, { seed, overrides }) {
+function viaWorker(layers, cycleSeconds, { seed, overrides, progression }) {
   if (!worker) {
     worker = new Worker(new URL('../core/compose-worker.js', import.meta.url), { type: 'module' });
     worker.onmessage = (event) => {
@@ -20,11 +20,11 @@ function viaWorker(layers, cycleSeconds, { seed, overrides }) {
     worker.onerror = (event) => { for (const p of pending.values()) p.reject(new Error(event.message || 'the Compose worker failed')); pending.clear(); worker = null; };
   }
   const id = ++seq;
-  return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); worker.postMessage({ id, layers, cycleSeconds, options: { seed, overrides } }); });
+  return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); worker.postMessage({ id, layers, cycleSeconds, options: { seed, overrides, progression } }); });
 }
 const runCompose = (layers, cycleSeconds, options) => (options.worker
   ? viaWorker(layers, cycleSeconds, options)
-  : new Promise((resolve) => setTimeout(() => resolve(compose(layers, cycleSeconds, { seed: options.seed, overrides: options.overrides })), 0)));
+  : new Promise((resolve) => setTimeout(() => resolve(compose(layers, cycleSeconds, { seed: options.seed, overrides: options.overrides, progression: options.progression })), 0)));
 
 const lab = createLabController({ runCompose });
 const $ = (id) => document.getElementById(id);
@@ -90,6 +90,31 @@ for (const k of KNOB_UI) {
   $('knobs').append(el('div', { className: 'knob' }, el('label', { textContent: 'Table' }), table, chosenSpans.table));
 }
 
+// ── the progression editor: a root a bar (auto by default), from the row's ±frame clusters ──
+$('progTake').addEventListener('click', () => { if (lab.takeProgression() && lab.canAutoRecompose()) lab.compose(); });
+$('progClear').addEventListener('click', () => { lab.clearProgression(); if (lab.canAutoRecompose()) lab.compose(); });
+const MOST_HEARD = 8;
+function renderProgression() {
+  const box = $('progression'), rc = lab.rootChoices(), roots = lab.progression(), s = S.spec;
+  $('progTake').disabled = !s || s.refused;
+  if (rc.refused) { box.replaceChildren(el('span', { className: 'note', textContent: 'no roots: this row is refused' })); return; }
+  const opt = (c) => el('option', { value: c.ratio, textContent: `${c.ratio} · ${c.name} · ${c.cents.toFixed(1)}¢ · ${c.presence}×`, title: `${c.members} tone${c.members === 1 ? '' : 's'} in its ±${rc.frameCentsEachSide}¢ cluster, heard ${c.presence} times (${(100 * c.share).toFixed(1)} %)${c.isRoot ? '; the base root' : ''}${c.offGrid ? '; off the grid: a retune' : ''}` });
+  const heard = [...rc.candidates].sort((a, b) => b.presence - a.presence).slice(0, MOST_HEARD);
+  // the spec this editor's roots last reached: the chord each bar got
+  const got = s && !s.refused && !S.dirty ? s.chords : null;
+  box.replaceChildren(...roots.map((ratio, k) => {
+    const sel = el('select', { title: `bar ${k + 1}: its chord's root` }, el('option', { value: '', textContent: 'auto' }),
+      el('optgroup', { label: 'most heard' }, ...heard.map(opt)), el('optgroup', { label: 'all, by pitch from the root' }, ...rc.candidates.map(opt)));
+    if (ratio && !rc.candidates.some((c) => c.ratio === ratio)) sel.prepend(el('option', { value: ratio, textContent: `${ratio} (a tone of the row, not a cluster's loudest)` }));
+    sel.value = ratio ?? '';
+    sel.addEventListener('change', () => { lab.setProgressionRoot(k, sel.value || null); if (lab.canAutoRecompose()) lab.compose(); });
+    const c = got?.[k], chord = el('span', { className: `chosen${c?.targeted ? ' over' : ''}`, textContent: c ? `${c.targeted ? 'asked → ' : 'chose '}${c.name}${c.fallback ? ' (fallback)' : ''}` : '' });
+    return el('div', { className: 'knob' }, el('label', { textContent: `Bar ${k + 1}` }), sel, chord);
+  }));
+  const asked = roots.filter(Boolean).length;
+  $('progNote').textContent = asked ? `${asked} of ${roots.length} bars asked` : 'every bar auto: Compose leads with the melody';
+}
+
 // ── readouts, refusal, decisions ──
 const fmt = (v, d = 1) => (typeof v === 'number' ? v.toFixed(d) : String(v));
 function renderReadouts() {
@@ -105,7 +130,8 @@ function renderReadouts() {
     return;
   }
   const k = s.knobs, items = [['tempo', `${fmt(k.tempoBpm)} BPM`], ['meter', `${k.bars} × ${k.slotsPerBar}`], ['root', k.root], ['baseHz', fmt(k.baseHz, 2)], ['onsets', s.stats.onsets.toLocaleString()],
-    ['tones', s.stats.tones.toLocaleString()], ['table', k.table], ['composed in', `${fmt(S.lastMs, 0)} ms`], ['chords', s.chords.map((c) => c.name).join(' ')]];
+    ['tones', s.stats.tones.toLocaleString()], ['table', k.table], ['composed in', `${fmt(S.lastMs, 0)} ms`], ['chords', s.chords.map((c) => c.name).join(' ')],
+    ...(s.input.progression ? [['progression', `${s.chords.filter((c) => c.targeted).length}/${s.chords.length} targeted (${k.leader})${s.chords.some((c) => c.fallback) ? `, fallback on bar ${s.chords.filter((c) => c.fallback).map((c) => c.bar + 1).join(', ')}` : ''}`]] : [])];
   for (const [label, value] of items) out.append(el('span', {}, `${label} `, el('b', { textContent: value })));
   for (const kn of KNOB_UI) {
     const over = S.knobs[kn.name] != null, asked = (what) => s.decisions.find((d) => d.what === what)?.value;
@@ -148,7 +174,8 @@ function renderLanes() {
     const cells = starts.map((_, k) => {
       const cell = el('div', { className: 'bar' });
       if (part.id === 'chords') {
-        cell.append(el('span', { className: 'chord', textContent: s.chords[k].name, title: `${s.chords[k].quality}, root ${s.chords[k].rootTone}` }));
+        const ch = s.chords[k];
+        cell.append(el('span', { className: `chord${ch.targeted ? ' targeted' : ''}${ch.fallback ? ' fallback' : ''}`, textContent: ch.name, title: `${ch.quality}, root ${ch.rootTone}${ch.targeted ? ', the root asked' : ''}${ch.fallback ? ` (fallback: ${ch.fallback})` : ''}` }));
         const m = mods.get(k);
         if (m) cell.append(el('span', { className: 'mod', textContent: `↻ ${m.cents >= 0 ? '+' : ''}${m.cents.toFixed(1)}¢`, title: `retuned from here: ${m.rawCents.toFixed(1)}¢ from the base fundamental` }));
       }
@@ -190,7 +217,7 @@ function render() {
   $('go').className = label === 'Stop' ? 'stop' : '';
   $('go').disabled = label === 'Composing…';
   $('status').textContent = S.status === 'error' ? `error: ${S.error}` : S.dirty && S.spec ? 'changed — Compose again' : '';
-  renderReadouts(); renderDecisions(); renderLanes();
+  renderReadouts(); renderDecisions(); renderLanes(); renderProgression();
   showTempo();
 }
 lab.onChange(render);

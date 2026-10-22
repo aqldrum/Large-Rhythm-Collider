@@ -49,6 +49,9 @@
   .bar .chord { position: absolute; left: 6px; top: 6px; font-weight: 600; }
   .bar .mod { position: absolute; right: 4px; top: 3px; font-size: 10px; color: var(--warn); }
   .lane.off .bars { opacity: .3; }
+  .bar .chord.targeted { color: var(--accent); }
+  .bar .chord.fallback { color: var(--warn); }
+  #progression select { max-width: 220px; }
   #playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; display: none; }
   details summary { cursor: pointer; color: var(--muted); }
   table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 12px; }
@@ -76,6 +79,11 @@
   <section>
     <h2>Knobs — blank or auto leaves the choice to Compose</h2>
     <div class="row" id="knobs"></div>
+  </section>
+  <section>
+    <h2>Progression — a root a bar from the row's own tones; auto leaves the bar to Compose</h2>
+    <div class="row" id="progression"></div>
+    <div class="row" style="margin-top: 8px"><button id="progTake" title="fill every bar with the root the last compose chose">take from last compose</button><button id="progClear" title="every bar back to auto">clear</button><span id="progNote" class="note"></span></div>
   </section>
   <section>
     <div class="readouts" id="readouts"></div>
