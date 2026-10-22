@@ -13,10 +13,14 @@
 //   anchors    partitioned (DESIGN_NOTES: "it starts with partitioned anchors").
 //   phase      one of the root's first three downbeats, by the seed. Times count from that phase — bar 1's downbeat —
 //              and the cycle loops, so a note in bar 1's first window that falls just before it sounds at the cycle's end.
-//   frame      ±15¢ (decided); the root: frame.js `defaultRoot`.
+//   frame      ±15¢ (decided); the root: frame.js `defaultRoot`, its presence measured by its ±frame cluster (decided,
+//              Avery; `presence: 'exact'` for the phase 3 rule), and the phase from where that cluster sounds.
 //   modulation on (Sprint default 3); harmony.js' fold relabels the classes so a reported offset stays in [−50, +50)¢,
 //              never moving a pitch (`foldOffsets`, on unless asked).
 //   leader     the lead (harmony follows melody, Sprint default 4); v1 is lead-led only.
+//   settle     `settlePasses` (0..3, default 3; Avery asked for it, the rules proposed): harmony.js derives the chords
+//              again from the kept lead and mines the lead again over them until the chords settle; every part below
+//              is built from the final chords and targets.
 //   parts      lead (harmonize's), chords, comping, bass, one inner voice:
 //                chords   each bar's chord, a voice a chord class (root first, then up): the bar's onset of that class,
 //                         inside the bar's frame, with the most strikes (then the earliest); stacked close from an octave
@@ -45,9 +49,9 @@
 
 import { buildRow, toneGate, isRow, ONSET_GATE, MIN_TONES } from './row.js';
 import { buildCells, ANCHOR_MODES } from './cells.js';
-import { defaultRoot, toneIndexOf, classOfCents, DEFAULT_FRAME_CENTS_EACH_SIDE } from './frame.js';
+import { defaultRoot, toneIndexOf, classOfCents, clusterPresence, PRESENCE_MODES, DEFAULT_FRAME_CENTS_EACH_SIDE } from './frame.js';
 import { mineLines, downbeats, TABLES } from './lines.js';
-import { harmonize, phrasesOf, isStrongBeat } from './harmony.js';
+import { harmonize, phrasesOf, isStrongBeat, DEFAULT_SETTLE_PASSES, MAX_SETTLE_PASSES } from './harmony.js';
 import { getInstrument } from '../../Audio/voices/recipes.js';
 
 export const COMPOSER_SPEC_VERSION = 'composer-spec-v1';
@@ -62,7 +66,7 @@ export const VELOCITY = Object.freeze({ lead: 0.8, chords: 0.45, comp: 0.55, bas
 export const LEAD_TARGET_HZ = Math.sqrt(440 * 660);
 const REGISTER = Object.freeze({ inner: -1200, bass: -2400, chords: -1200 });
 const COMP_SHARE = Object.freeze([0.25, 0.5]);
-const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer']);
+const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses']);
 
 const EPS = 1e-9;
 const mod = (v, n) => ((v % n) + n) % n;
@@ -141,8 +145,9 @@ export function rearticulate(part, { sound = part.sound, legato = part.legato, e
  *   layers         the rhythm, [a, b, c, d] as the LRC names them
  *   cycleSeconds   how long one cycle lasts
  *   options        { seed (default 1), overrides: { bars, slotsPerBar, anchors, phase, frameCentsEachSide, root,
- *                  modulation, table, sounds: { part: id }, legato: { part: bool }, enabled: { part: bool }, baseHz,
- *                  compLayer }, worker (true: the full table unless asked) }
+ *                  modulation, foldOffsets, table, sounds: { part: id }, legato: { part: bool }, enabled: { part: bool },
+ *                  baseHz, compLayer, presence ('cluster' | 'exact'), settlePasses (an integer 0..3) }, worker (true:
+ *                  the full table unless asked) }
  * → the spec (see the head of this file and Composer/DESIGN_NOTES.md "Phase 4"), or a refusal
  */
 export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker = false } = {}) {
@@ -161,8 +166,13 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
 
   // ── knobs ──
   const e = decide('frameCentsEachSide', ov.frameCentsEachSide ?? DEFAULT_FRAME_CENTS_EACH_SIDE, ov.frameCentsEachSide != null ? 'asked' : 'the default (decided): ±15¢, as the Progression Solver');
-  const rootTone = ov.root != null ? toneIndexOf(row, ov.root) : defaultRoot(row, e);
-  decide('root', row.tones[rootTone], ov.root != null ? 'asked' : `the tone heard at least max(2, 1%) of the onsets (or half the most heard) whose ±${e}¢ frame holds the most onsets; heard ${row.toneCount[rootTone]} times`);
+  const presence = decide('presence', ov.presence ?? 'cluster', ov.presence != null ? 'asked' : `a root is heard as its ±${e}¢ cluster: every tone of its class within ±${e}¢ of it (decided, Avery)`);
+  if (!PRESENCE_MODES.includes(presence)) fail(`presence must be one of ${PRESENCE_MODES.join(', ')}`);
+  const rootTone = ov.root != null ? toneIndexOf(row, ov.root) : defaultRoot(row, e, { presence });
+  const heardAs = presence === 'cluster' ? clusterPresence(row, e).presence[rootTone] : null;
+  decide('root', row.tones[rootTone], ov.root != null ? 'asked' : presence === 'exact'
+    ? `the tone heard at least max(2, 1%) of the onsets (or half the most heard) whose ±${e}¢ frame holds the most onsets; heard ${row.toneCount[rootTone]} times`
+    : `the loudest tone of its ±${e}¢ cluster, the cluster heard at least max(2, 1%) of the onsets (or half the largest cluster), whose ±${e}¢ frame holds the most onsets; heard ${row.toneCount[rootTone]} times, its cluster ${heardAs}`);
   const meter = chooseMeter(row.n, T, { bars: ov.bars ?? null, slotsPerBar: ov.slotsPerBar ?? null });
   decide('bars', meter.bars, ov.bars != null ? 'asked' : meter.notes.filter((x) => /bar|BPM/.test(x) && !/slot/.test(x)).join('; '));
   decide('slotsPerBar', meter.slotsPerBar, ov.slotsPerBar != null ? 'asked' : meter.notes.filter((x) => /slot|onsets/.test(x)).join('; '));
@@ -173,9 +183,9 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   let phase;
   if (ov.phase) { phase = ov.phase; decide('phase', phase, 'asked'); }
   else {
-    const beats = downbeats(row, P, 3, rootTone, { anchors }), at = Math.floor(rng() * beats.length);
+    const beats = downbeats(row, P, 3, rootTone, { anchors, cluster: presence === 'cluster' ? e : null }), at = Math.floor(rng() * beats.length);
     phase = beats[at];
-    decide('phase', phase, `downbeat ${at + 1} of the root's first ${beats.length} (where it first sounds, then its heaviest onsets), by the seed`);
+    decide('phase', phase, `downbeat ${at + 1} of the root's first ${beats.length} (where it first sounds, then ${presence === 'cluster' ? `the heaviest onsets of its ±${e}¢ cluster` : 'its heaviest onsets'}), by the seed`);
   }
   const cells = buildCells(row, { bars: meter.bars, slotsPerBar: meter.slotsPerBar, anchors, phase });
   const modulation = decide('modulation', ov.modulation ?? true, ov.modulation != null ? 'asked' : 'on by default (Sprint default 3): a jump at a bar where a root is off the grid');
@@ -186,7 +196,10 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   // ── harmony and the lead ──
   const foldOffsets = ov.foldOffsets ?? true;
   if (ov.foldOffsets != null) decide('foldOffsets', foldOffsets, 'asked');
-  const h = harmonize(row, cells, { root: rootTone, frameCentsEachSide: e, modulation, table, foldOffsets });
+  const settlePasses = decide('settlePasses', ov.settlePasses ?? DEFAULT_SETTLE_PASSES, ov.settlePasses != null ? 'asked'
+    : `up to ${DEFAULT_SETTLE_PASSES} more rounds of chords from the kept lead and the lead over them, until the chords settle or repeat (asked for by Avery; the cap and the stopping rules proposed, not ruled)`);
+  if (!(Number.isInteger(settlePasses) && settlePasses >= 0 && settlePasses <= MAX_SETTLE_PASSES)) fail(`settlePasses must be an integer 0..${MAX_SETTLE_PASSES}`);
+  const h = harmonize(row, cells, { root: rootTone, frameCentsEachSide: e, modulation, table, foldOffsets, settlePasses });
   const S = cells.slotsPerBar, N = cells.bars, phaseX = phase[0] / phase[1];
   const timeOf = (tick) => mod(tick / row.grid - phaseX, 1) * T;
   const ratioOf = (bar) => h.chords[bar].fundamentalRatio;   // the sounding retune: a folded name never moves it
@@ -346,6 +359,8 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
       leadPhrases: h.passes.phrases.length, secondPassWins: h.passes.secondWins, exceptions: h.exceptions,
       chordVoices: voices.reduce((n, v) => n + (v ? v.length : 0), 0) / N, bassRooted: `${bassRooted}/${N}`, innerOnLeadSlots: innerOnLead,
       compLayer: { layer: 'ABCD'[comp.layer], value: comp.value, score: comp.score },
+      settle: { rounds: h.settle.rounds, converged: h.settle.converged, oscillated: h.settle.oscillated, changedBarsPerRound: [...h.settle.changedBarsPerRound],
+        exceptionsPerRound: [...h.settle.exceptionsPerRound], chosenRound: h.settle.chosenRound },
     },
   };
 }

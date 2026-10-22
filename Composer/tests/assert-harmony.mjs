@@ -6,6 +6,9 @@
 //   • on real rows: every chord holds its bar's strong lead classes or counts the exception; every root tone is an
 //     onset in its bar; the frames are centred on the roots; the modulations follow the rule; `modulation: false`
 //     never retunes; every lead note is an onset in its window; deterministic
+//   • settling: settlePasses 0 byte-identical to e3909e1 (settle-baseline.mjs); the pure loop on made-up states
+//     (convergence, the cap, an oscillation and its pick); on real rows the cap honoured, convergence stopping early,
+//     the exceptions measured on the final chords, every note an onset, deterministic
 //   • lean and full timing on the three rows of phase 2
 //   node Composer/tests/assert-harmony.mjs
 import path from 'node:path';
@@ -15,7 +18,8 @@ import { buildRow } from '../core/row.js';
 import { buildCells } from '../core/cells.js';
 import { defaultRoot, classOfCents } from '../core/frame.js';
 import { downbeats } from '../core/lines.js';
-import { harmonize, chooseChord, modulationStep, voiceLeading, phrasesOf, isStrongBeat, CHORD_QUALITIES, PC_NAMES, COMPOSER_HARMONY_VERSION } from '../core/harmony.js';
+import { harmonize, chooseChord, modulationStep, voiceLeading, phrasesOf, isStrongBeat, settleRounds, CHORD_QUALITIES, PC_NAMES, COMPOSER_HARMONY_VERSION, DEFAULT_SETTLE_PASSES, MAX_SETTLE_PASSES } from '../core/harmony.js';
+import { harmonyCases, normHarmony, sha, HARMONY_HASHES } from './settle-baseline.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url)), ROOT = path.resolve(HERE, '..', '..');
 const require = createRequire(import.meta.url);
@@ -168,6 +172,103 @@ console.log('\n— on real rows');
   check('tooFewTones refused', harmonize(r3, buildCells(r3, { bars: 1, slotsPerBar: 4 })).tooFewTones === true);
   const given = harmonize(buildRow([8, 7, 6, 5]), buildCells(buildRow([8, 7, 6, 5]), { bars: 2, slotsPerBar: 8 }), { root: '3/2', referenceName: 'G' });
   check('a given root and reference name: rooted on 3/2, named from G', given.root === '3/2' && given.chords.every((c) => /^[A-G]/.test(c.name)));
+}
+
+console.log('\n— settling: chords ↔ lead');
+{
+  // 0 is e3909e1, byte for byte
+  let bad = '', n = 0;
+  for (const [name, run] of harmonyCases(harmonize)) { n++; if (sha(normHarmony(run())) !== HARMONY_HASHES[name]) { bad = name; break; } }
+  check(`settlePasses 0 reproduces e3909e1 byte for byte on ${n} harmonizations (6 rows × 4 meters × 2 anchor modes × modulation on and off)`, !bad && n === Object.keys(HARMONY_HASHES).length, bad);
+  check(`the default is ${DEFAULT_SETTLE_PASSES} rounds, at most ${MAX_SETTLE_PASSES}`, DEFAULT_SETTLE_PASSES === 3 && MAX_SETTLE_PASSES === 3);
+
+  // the pure loop on made-up states: a state's chords are a string a bar; derive reads the next from a table
+  const fakeRun = (next, cap, score = {}) => settleRounds({ chords: next.start, exceptions: score[next.start.join()]?.[0] ?? 0, cost: score[next.start.join()]?.[1] ?? 1, name: 's0' }, cap, {
+    derive: (st) => next[st.chords.join()], key: (c) => c,
+    advance: (c, prev, i) => ({ chords: c, exceptions: score[c.join()]?.[0] ?? 0, cost: score[c.join()]?.[1] ?? 1, name: `s${i}` }),
+  });
+  const chain = { start: ['A', 'B'], 'A,B': ['A', 'C'], 'A,C': ['D', 'C'], 'D,C': ['D', 'C'] };
+  const c3 = fakeRun(chain, 3);
+  check('made up, converging: A B → A C → D C → D C stops at round 3 on no change, keeping round 2', c3.converged && !c3.oscillated && c3.rounds.length === 3 && c3.chosen === 2 && c3.rounds.map((r) => r.changedBars.join('')).join('|') === '1|0|', JSON.stringify(c3.rounds));
+  const c1 = fakeRun(chain, 1);
+  check('…the cap: at 1 round it stops after one change, keeping round 1, not converged', !c1.converged && c1.rounds.length === 1 && c1.chosen === 1 && c1.states.length === 2);
+  const c0 = fakeRun(chain, 0);
+  check('…at 0 nothing runs: round 0 kept', c0.rounds.length === 0 && c0.chosen === 0 && !c0.converged);
+  const early = fakeRun({ start: ['A'], A: ['A'] }, 3);
+  check('…a first derivation that holds converges at round 1, nothing re-mined', early.converged && early.rounds.length === 1 && early.states.length === 1 && early.chosen === 0);
+  const cyc = { start: ['A'], A: ['B'], B: ['C'], C: ['B'] };
+  const osc = fakeRun(cyc, 3, { B: [2, 0.5], C: [1, 0.9] });
+  check('made up, oscillating: A → B → C → B is a cycle of rounds 1 and 2; the one with fewer exceptions (C, round 2) is kept', osc.oscillated && !osc.converged && osc.cycle.join() === '1,2' && osc.chosen === 2 && osc.rounds[2].repeats === 1 && osc.states.length === 3, JSON.stringify({ cycle: osc.cycle, chosen: osc.chosen }));
+  check('…on equal exceptions the cheaper lead per note (B), then the earlier', fakeRun(cyc, 3, { B: [1, 0.5], C: [1, 0.9] }).chosen === 1 && fakeRun(cyc, 3, { B: [1, 0.5], C: [1, 0.5] }).chosen === 1);
+  check('…a 2-cycle back to round 0 (A → B → A) keeps the better of 0 and 1', (() => { const r = fakeRun({ start: ['A'], A: ['B'], B: ['A'] }, 3, { A: [3, 1], B: [1, 1] }); return r.oscillated && r.cycle.join() === '0,1' && r.chosen === 1; })());
+
+  // real rows
+  bad = '';
+  let runs = 0, converged = 0, early0 = 0, capped = 0, changedRuns = 0, exBefore = 0, exAfter = 0, notes = 0;
+  const rows = [[19, 17, 16, 15], [119, 42, 15, 8], [768, 769], [504, 234, 520, 297], [2048, 2049], [97, 103, 37], [41, 42, 43], [1597, 987, 610, 377], [11, 9, 7, 5]];
+  for (const layers of rows) for (const [bars, S] of [[2, 8], [4, 8], [8, 8], [4, 6], [3, 5]]) {
+    const row = buildRow(layers), root = defaultRoot(row);
+    const cells = buildCells(row, { bars, slotsPerBar: S, anchors: 'partitioned', phase: downbeats(row, bars * S, 1, root, { anchors: 'partitioned', cluster: 15 })[0] });
+    const h = harmonize(row, cells, { root, table: 'lean' }), st = h.settle, where = `${layers} ${bars}×${S}`;
+    runs++;
+    if (st.cap !== 3 || st.rounds > st.cap || st.rounds !== h.passes.rounds.length || st.changedBarsPerRound.length !== st.rounds) { bad = `${where}: rounds ${st.rounds} of ${st.cap}`; break; }
+    if (st.converged) { converged++; if (st.rounds < st.cap) early0++; if (st.changedBarsPerRound.at(-1) !== 0 || st.chosenRound !== st.rounds - 1) { bad = `${where}: converged without a quiet round`; break; } }
+    else if (!st.oscillated) { capped++; if (st.rounds !== st.cap || st.chosenRound !== st.cap || st.changedBarsPerRound.some((x) => !x)) { bad = `${where}: neither converged nor capped`; break; } }
+    if (st.changedBarsPerRound[0] > 0) changedRuns++;
+    // the passes: each round's changed bars, the phrases that kept the newer lead, the lead's tags
+    for (const r of h.passes.rounds) if (r.changedBars.length !== st.changedBarsPerRound[r.round - 1] || r.newerKept !== r.phrases.filter((x) => x.kept === 'newer').length) bad = `${where}: round ${r.round}'s passes`;
+    if (!h.lead.kept.every((k) => ['first', 'second', 'round1', 'round2', 'round3'].includes(k)) || h.lead.kept.some((k) => k.startsWith('round') && Number(k.slice(5)) > st.chosenRound)) bad = `${where}: lead tags ${h.lead.kept}`;
+    // the exceptions: the final lead against the final chords
+    let ex = 0;
+    for (const c of h.chords) {
+      let strong = h.lead.notes.filter((n) => n.bar === c.bar && !n.outside && isStrongBeat(n.beat, S));
+      if (!strong.length) strong = h.lead.notes.filter((n) => n.bar === c.bar && !n.outside).slice(0, 1);
+      ex += strong.filter((n) => { const k = classOfCents(n.cents - c.rootCents); return !(Math.abs(k.dev) <= 15 + 1e-9 && c.intervals.includes(k.pc)); }).length;
+    }
+    if (ex !== h.exceptions || ex !== st.exceptionsPerRound[st.chosenRound]) { bad = `${where}: ${ex} exceptions on the final chords, ${h.exceptions} counted`; break; }
+    exBefore += st.exceptionsPerRound[0]; exAfter += h.exceptions;
+    // every note an onset in its window; every root an onset in its bar
+    for (const n of h.lead.notes) { notes++; if (row.tone[n.node] !== n.tone || cells.slotOfNode[n.node] !== n.cell) bad = `${where}: lead note ${n.node}`; }
+    for (const c of h.chords) if (row.tone[c.rootNode] !== c.rootTone || cells.slots[cells.slotOfNode[c.rootNode]].bar !== c.bar) bad = `${where}: root of bar ${c.bar}`;
+    if (bad) break;
+  }
+  check(`${runs} harmonizations settled (lean, partitioned): ${converged} converged (${early0} before the cap), ${capped} at the cap; rounds and passes agree; the lead tags its rounds`, !bad && converged > 0, bad);
+  check(`the exceptions are the final lead against the final chords (${exBefore} before settling, ${exAfter} after), and ${notes} lead notes are onsets in their windows`, !bad);
+  check(`settling moved chords in ${changedRuns} of ${runs}`, changedRuns > 0);
+
+  // the cap, on a row that is still moving at round 3 (1597:987:610:377 at 4 × 8)
+  {
+    const row = buildRow([1597, 987, 610, 377]), root = defaultRoot(row);
+    const cells = buildCells(row, { bars: 4, slotsPerBar: 8, anchors: 'partitioned', phase: downbeats(row, 32, 1, root, { anchors: 'partitioned', cluster: 15 })[0] });
+    const by = [0, 1, 2, 3].map((k) => harmonize(row, cells, { root, table: 'lean', settlePasses: k }));
+    check(`the cap honoured: 1597:987:610:377 at 4 × 8 changes [${by[3].settle.changedBarsPerRound}] bars; at caps 0–3 it runs ${by.map((h) => h.settle.rounds).join(', ')} rounds and keeps round ${by.map((h) => h.settle.chosenRound).join(', ')}`,
+      by.every((h, k) => h.settle.rounds === k && h.settle.chosenRound === k && !h.settle.converged));
+    check('…each cap\'s run is the next one\'s up to its cap: the same rounds, the same exceptions, round by round', by.every((h, k) => k === 0 || JSON.stringify(by[k - 1].settle.exceptionsPerRound) === JSON.stringify(h.settle.exceptionsPerRound.slice(0, k))
+      && JSON.stringify(by[k - 1].passes.rounds) === JSON.stringify(h.passes.rounds.slice(0, k - 1))));
+  }
+  // convergence stops early: 768:769 at 8 × 8 settles at round 2; a cap past it changes nothing
+  {
+    const row = buildRow([768, 769]), root = defaultRoot(row);
+    const cells = buildCells(row, { bars: 8, slotsPerBar: 8, anchors: 'partitioned', phase: downbeats(row, 64, 1, root, { anchors: 'partitioned', cluster: 15 })[0] });
+    const [h0, h1, h2, h3] = [0, 1, 2, 3].map((k) => harmonize(row, cells, { root, table: 'lean', settlePasses: k }));
+    const music = (h) => JSON.stringify([h.chords, h.lead, h.targets, h.modulations, h.exceptions]);
+    check(`convergence: 768:769 at 8 × 8 changes [${h3.settle.changedBarsPerRound}] bars and stops at round ${h3.settle.rounds} of 3, keeping round ${h3.settle.chosenRound}`, h3.settle.converged && h3.settle.rounds === 2 && h3.settle.chosenRound === 1 && h3.settle.changedBarsPerRound[0] > 0);
+    check('…caps 1, 2 and 3 make the same music; cap 0 does not', music(h1) === music(h2) && music(h2) === music(h3) && music(h0) !== music(h1) && h2.settle.converged && !h1.settle.converged);
+    check('…the chords changed are those of the bars it names', h3.passes.rounds[0].changedBars.every((k) => `${h0.chords[k].rootTone}${h0.chords[k].quality}${h0.chords[k].rawOffsetCents}` !== `${h3.chords[k].rootTone}${h3.chords[k].quality}${h3.chords[k].rawOffsetCents}`)
+      && h0.chords.every((c, k) => h3.passes.rounds[0].changedBars.includes(k) || (c.rootTone === h3.chords[k].rootTone && c.quality === h3.chords[k].quality && c.rawOffsetCents === h3.chords[k].rawOffsetCents)));
+    const a = harmonize(row, cells, { root, table: 'full' }), b = harmonize(row, cells, { root, table: 'full' });
+    check(`deterministic with settling on (the full table twice: ${a.settle.rounds} rounds, changed [${a.settle.changedBarsPerRound}])`, JSON.stringify(a) === JSON.stringify(b));
+  }
+  // the final exceptions are the final chords': 11:9:7:5 at 3 × 5 has 1 at round 0 and 0 once settled
+  {
+    const row = buildRow([11, 9, 7, 5]), root = defaultRoot(row);
+    const cells = buildCells(row, { bars: 3, slotsPerBar: 5, anchors: 'even', phase: downbeats(row, 15, 1, root, { anchors: 'even', cluster: 15 })[0] });
+    const h0 = harmonize(row, cells, { root, table: 'lean', settlePasses: 0 }), h = harmonize(row, cells, { root, table: 'lean' });
+    check(`11:9:7:5 at 3 × 5: ${h0.exceptions} exception before settling, ${h.exceptions} after (rounds [${h.settle.exceptionsPerRound}]), counted on the chords kept`,
+      h0.exceptions === 1 && h.exceptions === 0 && h.settle.exceptionsPerRound.join() === '1,0' && h.chords.every((c) => c.exceptions.length === 0));
+  }
+  const row = buildRow([8, 7, 6, 5]), cells = buildCells(row, { bars: 2, slotsPerBar: 8 });
+  check('settlePasses outside 0..3 or not an integer throws', [4, -1, 1.5, '2', null].every((x) => { try { harmonize(row, cells, { settlePasses: x }); return false; } catch (err) { return /settlePasses/.test(err.message); } }));
 }
 
 console.log('\n— timing (lean and full, one downbeat, the rows of phase 2)');
