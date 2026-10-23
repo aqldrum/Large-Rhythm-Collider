@@ -16,6 +16,11 @@
 // cached base, with a caption above the lanes and the lanes filling in as the parts land; it ends exactly on the lit
 // nodes. The Compose button says Skip meanwhile; a click in the tab or on the plot, or Esc, skips to the end; any change
 // (a knob, the rhythm, main playback, leaving the tab, the toggle) drops it. Off, Compose is exactly as before.
+//
+// Sprint 2: the tab is a view of the page's composition store. Its state is the store's current entry (read live:
+// `tab.state` changes object when the rhythm does). The bridge hands it the page's one overlay and the overlay seat
+// (the Composition lens shares both), so the lit nodes stay on the plot when the tab hides under the lens. A level
+// moved elsewhere (the Playback panel's part strips) moves the inspector's slider too.
 
 import { soundChoices, drumModeChoices, DRUM_LAB_VOICES, TEMPO_LIMITS } from '../perform/composer-controller.js';
 import { KNOB_FIELDS, TABLE_FIELD, fieldValue, refusalText, readoutItems, knobChosen, decisionRows, rootGroups, strayRootOption, chordGot, progressionNote,
@@ -41,11 +46,16 @@ const defaultStorage = () => { try { return globalThis.localStorage ?? null; } c
  *   storage   where "show the work" is kept (localStorage; any access is wrapped)
  * → { mount({ left, inspector }), show(), hide(), render(), overlay, animator, shown }
  */
-export function createComposerTab({ tab, doc = globalThis.document, visuals = () => globalThis.window?.lrcVisuals ?? null, raf = (f) => globalThis.requestAnimationFrame(f), makeCanvas, download, clock, storage = defaultStorage() } = {}) {
-  const S = tab.state, core = tab.core;
+export function createComposerTab({ tab, doc = globalThis.document, visuals = () => globalThis.window?.lrcVisuals ?? null, raf = (f) => globalThis.requestAnimationFrame(f), makeCanvas, download, clock, storage = defaultStorage(), overlay: sharedOverlay = null, seat = null } = {}) {
+  const core = tab.core;
   const el = (tag, props = {}, ...kids) => { const e = Object.assign(doc.createElement(tag), props); for (const k of kids) if (k != null) e.append(k); return e; };
   const plotted = () => { const v = visuals(); return v && v.compositeRhythm ? { compositeRhythm: v.compositeRhythm, grid: v.grid } : null; };
-  const overlay = createPlotOverlay({ getHighlights: () => tab.highlights(plotted()), getSelected: () => tab.view.selected, makeCanvas });
+  const overlay = sharedOverlay ?? createPlotOverlay({ getHighlights: () => tab.highlights(plotted()), getSelected: () => tab.view.selected, makeCanvas });
+  // the overlay on the plot: through the page's seat when there is one (the lens shares it), else set directly
+  const claimPlot = () => (seat ? seat.claim('tab') : visuals()?.setComposerOverlay?.(overlay));
+  const releasePlot = () => (seat ? seat.release('tab') : visuals()?.setComposerOverlay?.(null));
+  const levelEls = new Map();   // part id → its level slider in the inspector (kept in step with other views)
+  let ownScene = false;   // whether the overlay's animation base is this tab's (the lens animates on it too)
   const sounds = soundChoices(), drumModes = drumModeChoices();
   let hosts = null, ui = null, shown = false, lastPlaying = false, playheadEl = null, firstBars = null;
   // the Compose animation: the driver, what it lands on, the lanes it drives, the last frame shown
@@ -62,11 +72,12 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     return e;
   };
   const toggle = (label, on, title, onClick) => { const b = el('button', { className: `ctab-toggle${on ? ' on' : ''}`, textContent: label, title: title || '' }); b.addEventListener('click', onClick); return b; };
-  const levelSlider = (id) => { const r = el('input', { type: 'range', min: 0, max: 1, step: 0.01, value: S.levels[id], title: 'level', className: 'ctab-level' }); r.addEventListener('input', () => core.setLevel(id, r.value)); return r; };
+  const levelSlider = (id) => { const r = el('input', { type: 'range', min: 0, max: 1, step: 0.01, value: tab.state.levels[id], title: 'level', className: 'ctab-level' }); r.addEventListener('input', () => core.setLevel(id, r.value)); levelEls.set(id, r); return r; };
+  core.onLevel((id, value) => { const r = levelEls.get(id); if (r && doc.activeElement !== r) r.value = value; });
 
   // ── the left host: built once, its moving parts re-rendered ──
   function buildLeft(left) {
-    const seed = el('input', { type: 'number', step: 1, className: 'ctab-seed', value: S.input.seed, title: 'the seed: the same seed, the same composition' });
+    const seed = el('input', { type: 'number', step: 1, className: 'ctab-seed', value: tab.state.input.seed, title: 'the seed: the same seed, the same composition' });
     seed.addEventListener('change', () => core.setSeed(seed.value));
     const go = el('button', { className: 'ctab-go', textContent: 'Compose' });
     go.addEventListener('click', pressGo);
@@ -80,9 +91,9 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     tempo.addEventListener('input', () => { core.setTempo(tempo.value); showTempo(); });
     tempoBpm.addEventListener('change', () => { core.setTempo(tempoBpm.value); tempoBpm.blur(); showTempo(); });
     tempoReset.addEventListener('click', () => { core.resetTempo(); showTempo(); });
-    const glide = el('input', { type: 'range', min: 0, max: 500, step: 1, value: S.glideMs, className: 'ctab-glide', title: 'portamento: how long a held (legato) voice slides to its next note' });
-    const glideOut = el('span', { className: 'ctab-muted', textContent: `${S.glideMs} ms` });
-    glide.addEventListener('input', () => { core.setGlide(glide.value); glideOut.textContent = `${S.glideMs} ms`; });
+    const glide = el('input', { type: 'range', min: 0, max: 500, step: 1, value: tab.state.glideMs, className: 'ctab-glide', title: 'portamento: how long a held (legato) voice slides to its next note' });
+    const glideOut = el('span', { className: 'ctab-muted', textContent: `${tab.state.glideMs} ms` });
+    glide.addEventListener('input', () => { core.setGlide(glide.value); glideOut.textContent = `${tab.state.glideMs} ms`; });
     const rhythm = el('span', { className: 'ctab-rhythm' }), status = el('span', { className: 'ctab-status' });
     const note = el('div', { className: 'ctab-note' }), refusal = el('div', { className: 'ctab-refusal' }), readouts = el('div', { className: 'ctab-readouts' });
     const capLabel = el('b', { className: 'ctab-caption-label' }), capDetail = el('span', { className: 'ctab-caption-detail' }), capBeats = el('div', { className: 'ctab-caption-beats' });
@@ -113,25 +124,25 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     ui.tempoBpm.classList.toggle('changed', Math.abs(bpm - spec) > 1e-9);
   }
   function exportJSON() {
-    if (!S.spec) return;
-    const name = `composer-${S.input.layers.filter(Boolean).join('-')}-seed${S.input.seed}.json`;
+    if (!tab.state.spec) return;
+    const name = `composer-${tab.state.input.layers.filter(Boolean).join('-')}-seed${tab.state.input.seed}.json`;
     if (download) { download(name, core.exportJSON()); return; }
     const blob = new Blob([core.exportJSON()], { type: 'application/json' }), a = el('a', { href: URL.createObjectURL(blob), download: name });
     doc.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
   function renderLeft() {
-    const label = tab.button(), s = S.spec;
-    ui.rhythm.replaceChildren(el('b', { textContent: tab.view.hasRhythm ? S.input.layers.filter(Boolean).join(':') : '—' }), ` · ${S.input.cycleSeconds} s cycle`);
+    const label = tab.button(), s = tab.state.spec;
+    ui.rhythm.replaceChildren(el('b', { textContent: tab.view.hasRhythm ? tab.state.input.layers.filter(Boolean).join(':') : '—' }), ` · ${tab.state.input.cycleSeconds} s cycle`);
     ui.rhythm.title = "the main page's rhythm and Playback cycle: Compose reads them; changing either goes back to Compose";
-    if (doc.activeElement !== ui.seed) ui.seed.value = S.input.seed;
+    if (doc.activeElement !== ui.seed) ui.seed.value = tab.state.input.seed;
     const skipping = anim.status === 'playing';
     ui.go.textContent = skipping ? 'Skip ▸' : label;
     ui.go.className = `ctab-go${skipping ? ' skip' : label === 'Stop' ? ' stop' : ''}`;
     ui.go.disabled = skipping ? false : !tab.canPress();
     ui.go.title = skipping ? 'skip to the end (or click the plot, or press Esc)' : '';
     ui.work.className = `ctab-toggle ctab-work${tab.view.showWork ? ' on' : ''}`;
-    ui.status.textContent = S.status === 'error' ? `error: ${S.error}` : S.dirty && s ? 'changed — Compose again' : '';
+    ui.status.textContent = tab.state.status === 'error' ? `error: ${tab.state.error}` : tab.state.dirty && s ? 'changed — Compose again' : '';
     // the plot note: no rhythm yet, or a plot that isn't the Linear Plot
     const v = visuals(), notes = [];
     if (!tab.view.hasRhythm) notes.push(el('span', { textContent: 'Generate a rhythm on the main page first: Compose reads its layers and its Playback cycle.' }));
@@ -143,14 +154,14 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     ui.note.replaceChildren(...notes);
     ui.note.style.display = notes.length ? '' : 'none';
     ui.refusal.textContent = refusalText(s);
-    ui.readouts.replaceChildren(...readoutItems(s, { lastMs: S.lastMs, drums: S.drums }).map(([k, val]) => el('span', {}, `${k} `, el('b', { textContent: val }))));
-    ui.table.replaceChildren(...decisionRows(s, S.drums).map((d) => el('tr', {}, el('td', { textContent: d.what }), el('td', { textContent: d.value }), el('td', { textContent: d.why }))));
+    ui.readouts.replaceChildren(...readoutItems(s, { lastMs: tab.state.lastMs, drums: tab.state.drums }).map(([k, val]) => el('span', {}, `${k} `, el('b', { textContent: val }))));
+    ui.table.replaceChildren(...decisionRows(s, tab.state.drums).map((d) => el('tr', {}, el('td', { textContent: d.what }), el('td', { textContent: d.value }), el('td', { textContent: d.why }))));
     renderLanes();
     showTempo();
   }
 
   function renderLanes() {
-    const s = S.spec;
+    const s = tab.state.spec;
     firstBars = null; laneEls = {}; laneKey = null;
     if (!s || s.refused) { ui.lanes.replaceChildren(playheadEl); return; }
     const { starts, lens, cols, barOf } = barColumns(s), mods = new Map(s.modulations.map((m) => [m.bar, m]));
@@ -186,8 +197,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       laneEls[part.id].lane = el('div', { className: `ctab-lane${part.enabled ? '' : ' off'}${tab.view.selected === part.id ? ' selected' : ''}` }, head(part.id, part.enabled, () => core.setPart(part.id, { enabled: !part.enabled })), bars);
       return laneEls[part.id].lane;
     });
-    if (S.drums) {
-      const d = S.drums, bars = el('div', { className: 'ctab-bars' });
+    if (tab.state.drums) {
+      const d = tab.state.drums, bars = el('div', { className: 'ctab-bars' });
       bars.style.gridTemplateColumns = cols;
       const cells = starts.map((_, k) => el('div', { className: 'ctab-bar' }, el('span', { className: 'ctab-dlabel', textContent: drumBarLabel(d.bars[k]), title: d.bars[k].why })));
       for (const h of d.hits) {
@@ -209,7 +220,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (anim.status === 'playing') { skipAnimation(); return; }
     tab.syncRhythm();
     if (tab.view.showWork && tab.canPress() && tab.button() === 'Compose') {
-      anim.wait(); overlay.setScene(true);
+      anim.wait(); overlay.setScene(true); ownScene = true;
       hosts?.left.classList?.add('ctab-animating');
       showCaption('composing…', 'Compose is running: the steps play once its trace is back', null);
     }
@@ -218,10 +229,10 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   /** after a change: the awaited compose came back (start), or anything else happened (drop it) */
   function syncAnimation() {
     if (anim.status === 'waiting') {
-      if (S.status === 'composing') return;
-      if (S.status === 'ready' && !S.dirty && S.trace && tab.view.showWork) {
+      if (tab.state.status === 'composing') return;
+      if (tab.state.status === 'ready' && !tab.state.dirty && tab.state.trace && tab.view.showWork) {
         const p = plotted(), final = tab.highlights(p);
-        if (final && anim.start({ trace: S.trace, plot: plotOf(p || {}), final })) {
+        if (final && anim.start({ trace: tab.state.trace, plot: plotOf(p || {}), final })) {
           animFinal = final; buildBeats(anim.scene.timeline.groups);
           const a = anim.tick();
           if (a && a.kind === 'frame') applyFrame(a.frame);
@@ -234,7 +245,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   /** back to the ordinary tab: the overlay's own draw, the lanes as they are; redraw when no change is about to */
   function endAnimation(redraw) {
     anim.cancel();
-    overlay.setScene(false);
+    if (ownScene) overlay.setScene(false);
+    ownScene = false;
     animFinal = null; lastFrame = null; laneKey = null; captionKey = null;
     hosts?.left.classList?.remove('ctab-animating');
     if (ui) ui.caption.style.display = 'none';
@@ -270,7 +282,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       x.lane?.classList.toggle('ctab-anim-labels', st === 'labels');
       if (x.chords) x.chords.forEach((c, k) => {
         if (!c) return;
-        const own = S.spec?.chords?.[k]?.name ?? '';
+        const own = tab.state.spec?.chords?.[k]?.name ?? '';
         c.textContent = st === 'shown' ? own : frame.lanes.chords[k] ?? '…';
         c.classList.toggle('ctab-anim-hot', frame.lanes.hot === k);
       });
@@ -281,16 +293,16 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
 
   // ── the inspector ──
   function knobRow(names) {
-    const chosen = knobChosen(S.spec, S.knobs);
+    const chosen = knobChosen(tab.state.spec, tab.state.knobs);
     return el('div', { className: 'ctab-knobs' }, ...names.map((name) => {
-      const f = KNOB_FIELDS.find((x) => x.name === name), input = field(f, fieldValue(name, S.knobs[name]));
+      const f = KNOB_FIELDS.find((x) => x.name === name), input = field(f, fieldValue(name, tab.state.knobs[name]));
       input.addEventListener('change', () => { core.setKnob(name, f.read(input.value)); recomposeIfQuick(); });
       const c = chosen[name];
       return el('div', { className: 'ctab-knob' }, el('label', { textContent: f.label, title: f.title || '' }), input, el('span', { className: `ctab-chosen${c.over ? ' over' : ''}`, textContent: c.text }));
     }));
   }
   function progressionEditor() {
-    const rc = core.rootChoices(), roots = core.progression(), s = S.spec;
+    const rc = core.rootChoices(), roots = core.progression(), s = tab.state.spec;
     const take = el('button', { className: 'ctab-btn', textContent: 'take from last compose', title: 'fill every bar with the root the last compose chose', disabled: !s || s.refused });
     take.addEventListener('click', () => { if (core.takeProgression()) recomposeIfQuick(); });
     const clear = el('button', { className: 'ctab-btn', textContent: 'clear', title: 'every bar back to auto' });
@@ -299,7 +311,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (!tab.view.hasRhythm) return el('div', {}, headRow, el('span', { className: 'ctab-muted', textContent: 'no rhythm yet' }));
     if (rc.refused) return el('div', {}, headRow, el('span', { className: 'ctab-muted', textContent: 'no roots: this row is refused' }));
     const opt = (o) => el('option', { value: o.value, textContent: o.text, title: o.title });
-    const groups = rootGroups(rc), got = s && !s.refused && !S.dirty ? s.chords : null;
+    const groups = rootGroups(rc), got = s && !s.refused && !tab.state.dirty ? s.chords : null;
     const bars = roots.map((ratio, k) => {
       const sel = el('select', { title: `bar ${k + 1}: its chord's root` }, el('option', { value: '', textContent: 'auto' }),
         el('optgroup', { label: 'most heard' }, ...groups.heard.map(opt)), el('optgroup', { label: 'all, by pitch from the root' }, ...groups.all.map(opt)));
@@ -312,7 +324,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     return el('div', {}, headRow, el('div', { className: 'ctab-knobs ctab-prog' }, ...bars), el('div', { className: 'ctab-row' }, take, clear, el('span', { className: 'ctab-muted', textContent: progressionNote(roots) })));
   }
   function drumControls() {
-    const o = S.drumOptions, enabled = S.drums ? S.drums.enabled : o.enabled !== false;
+    const o = tab.state.drumOptions, enabled = tab.state.drums ? tab.state.drums.enabled : o.enabled !== false;
     const mode = el('select', { title: 'the drum mode, or a curated pattern' }, ...drumModes.map((m) => el('option', { value: m.id, textContent: m.label })));
     mode.value = o.mode;
     mode.addEventListener('change', () => core.setDrums({ mode: mode.value }));
@@ -320,7 +332,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       toggle(enabled ? 'on' : 'off', enabled, 'play the drums or not (live)', () => core.setDrums({ enabled: !enabled })), levelSlider('drums')];
   }
   function kitRow() {
-    const kit = S.drumOptions.kit;
+    const kit = tab.state.drumOptions.kit;
     return el('div', { className: 'ctab-knobs' }, ...DRUM_LAB_VOICES.map((v) => {
       const sel = el('select', {}, ...tab.kitChoices(v).map((c) => el('option', { value: c.value, textContent: c.label })));
       sel.value = kit[v] ?? '';
@@ -330,7 +342,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   }
   function partControls(id) {
     if (id === 'drums') return drumControls();
-    const part = S.parts[id];
+    const part = tab.state.parts[id];
     if (!part) return [el('span', { className: 'ctab-muted', textContent: 'Compose first: then its sound, legato and level are here' })];
     const sound = el('select', { title: 'its sound (Audio/voices): live' }, ...sounds.map((x) => el('option', { value: x.id, textContent: x.label })));
     sound.value = part.sound;
@@ -339,7 +351,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       toggle(part.enabled ? 'on' : 'off', part.enabled, 'play this part or not (live)', () => core.setPart(id, { enabled: !part.enabled })), levelSlider(id)];
   }
   function tuningReadout() {
-    const s = S.spec;
+    const s = tab.state.spec;
     if (!s || s.refused) return el('span', { className: 'ctab-muted', textContent: 'Compose first: the root, baseHz and retunes show here' });
     const k = s.knobs, rows = s.chords.map((c) => el('tr', {}, el('td', { textContent: `bar ${c.bar + 1}` }), el('td', { textContent: c.name }), el('td', { textContent: `root ${c.rootTone}` }),
       el('td', { textContent: c.offsetCents ? `${c.offsetCents >= 0 ? '+' : ''}${c.offsetCents.toFixed(1)}¢` : '' })));
@@ -365,7 +377,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     let body;
     if (section === 'harmony') body = [progressionEditor(), el('div', { className: 'ctab-sub', textContent: 'Harmony' }), knobRow(KNOBS_OF.harmony)];
     else if (section === 'lines') {
-      const table = field(TABLE_FIELD, S.table), chosen = knobChosen(S.spec, S.knobs).table;
+      const table = field(TABLE_FIELD, tab.state.table), chosen = knobChosen(tab.state.spec, tab.state.knobs).table;
       table.addEventListener('change', () => core.setTable(table.value));
       body = [knobRow(KNOBS_OF.lines), el('div', { className: 'ctab-knobs' }, el('div', { className: 'ctab-knob' }, el('label', { textContent: TABLE_FIELD.label }), table, el('span', { className: 'ctab-chosen', textContent: chosen.text })))];
     } else if (section === 'drums') body = [el('div', { className: 'ctab-row' }, el('span', { className: 'ctab-sub', textContent: 'Drums' }), ...drumControls()), el('div', { className: 'ctab-sub', textContent: 'Kit — a sound a voice (the made kit, or the site\'s samples)' }), kitRow()];
@@ -437,7 +449,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       shown = true;
       tab.open();
       render();
-      visuals()?.setComposerOverlay?.(overlay);
+      claimPlot();
       if (!was) {
         doc.addEventListener?.('keydown', onKey);
         plotEl = doc.getElementById?.('partitions-mirror-canvas') ?? null;   // the plot as the window shows it
@@ -454,7 +466,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       tab.close();
       if (playheadEl) playheadEl.style.display = 'none';
       lastPlaying = false;
-      visuals()?.setComposerOverlay?.(null);
+      releasePlot();
     },
     render,
   };

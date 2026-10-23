@@ -74,11 +74,14 @@ await tab.press();   // Perform
 check('(playing, with a progression asked)', tab.state.status === 'playing' && tab.core.progressionInput()?.[0] === r0 && tab.state.spec.input.progression?.[0] === r0);
 host.rhythm = { layers: [8, 7, 6, 5], cycleSeconds: 6 };
 tab.syncRhythm();
-check('a new cycle: playback stops, the button goes back to Compose; the progression is kept (same row)', tab.state.status === 'ready' && tab.button() === 'Compose' && tab.state.input.cycleSeconds === 6 && tab.core.progressionInput()?.[0] === r0);
+// (sprint 2) a new rhythm or cycle is another entry of the composition store: a fresh one (idle), the old one cached
+const at4 = tab.store.entry('8:7:6:5@4');
+check('a new cycle: playback stops, the button goes back to Compose; the progression is kept (same row)', tab.state.status === 'idle' && tab.button() === 'Compose' && tab.state.input.cycleSeconds === 6 && tab.core.progressionInput()?.[0] === r0);
+check('(sprint 2) … the cycle before is cached in the store, its composition intact', at4 && at4.state !== tab.state && at4.state.spec && at4.state.status === 'ready' && tab.store.key === '8:7:6:5@6');
 await tab.press(); await tab.press();
 host.rhythm = { layers: [41, 42, 43, 0], cycleSeconds: 6 };
 tab.syncRhythm();
-check('new layers: playback stops, Compose, and the progression is cleared (its ratios were the old row\'s)', tab.state.status === 'ready' && tab.button() === 'Compose' && tab.core.progressionInput() === null && tab.state.input.layers.join() === '41,42,43,0');
+check('new layers: playback stops, Compose, and the progression is cleared (its ratios were the old row\'s)', tab.state.status === 'idle' && tab.button() === 'Compose' && tab.core.progressionInput() === null && tab.state.input.layers.join() === '41,42,43,0');
 host.rhythm = null;
 tab.syncRhythm();
 check('the rhythm gone: nothing to compose', !tab.canPress() && tab.button() === 'Compose');
@@ -98,6 +101,7 @@ console.log('\n— a change while Compose runs');
   check('the page\'s rhythm changes mid-compose: the button is Compose again at once', t2.button() === 'Compose' && t2.state.status !== 'composing');
   release(); await pending;
   check('the old compose\'s answer is dropped when it comes (no spec of the old rhythm)', t2.state.spec === null && t2.button() === 'Compose');
+  check('(sprint 2) … it lands in the old rhythm\'s own entry instead: cached, not lost', t2.store.entry('8:7:6:5@4').state.spec?.input.layers.join() === '8,7,6,5' && t2.store.recallable('8:7:6:5@4'));
   const p2 = t2.press(); release(); await p2;
   check('Compose again: the new rhythm', t2.state.spec.input.layers.join() === '19,17,16,15' && t2.button() === 'Perform');
 }

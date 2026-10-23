@@ -14,9 +14,15 @@
 //              parts, the drums and the plot), or null when the spec isn't of the plotted rhythm.
 //   show work  view.showWork (on by default; the view keeps it in localStorage): the Compose button asks for the compose
 //              trace (state.trace) and the view animates it (compose-animator.js). Off, Compose is exactly as before.
+//   store      (sprint 2) the tab is a view and editor of the page's composition store (Composer/store/): syncRhythm
+//              selects the page's rhythm in the store and binds the controller to that entry, so `state` is the
+//              current rhythm's composition. A compose started for one rhythm lands in that rhythm's entry even if
+//              the page has moved on (it is cached, not dropped); coming back to the rhythm recalls it.
+//   lens       keepPlaying () → true while the Composition lens owns playback: closing the tab doesn't stop it then.
 
 import { createComposerController, kitChoices as sharedKitChoices } from '../perform/composer-controller.js';
 import { highlightsOf, plotOf, HIGHLIGHT_PARTS } from './plot-highlights.js';
+import { createCompositionStore } from '../store/composition-store.js';
 
 export const TAB_VERSION = 'composer-tab-v1';
 /** the site's samples, relative to index.html */
@@ -28,41 +34,53 @@ export const SECTION_OF = Object.freeze({ lead: 'lines', chords: 'harmony', comp
 export const kitChoices = (voice) => sharedKitChoices(voice, PAGE_SAMPLES_BASE);
 
 /**
- * createTabController({ host, runCompose, createContext, timers, clock })
- *   host  { readRhythm () → { layers, cycleSeconds } | null, stopMain (), onMainStarted (fn) → unsubscribe }
+ * createTabController({ host, runCompose, createContext, timers, clock, store, keepPlaying })
+ *   host   { readRhythm () → { layers, cycleSeconds } | null, stopMain (), onMainStarted (fn) → unsubscribe }
+ *   store  the page's composition store (a store of its own by default)
+ *   keepPlaying () → whether closing the tab leaves playback alone (the Composition lens owns it)
  *   the rest as the shared controller's
  */
-export function createTabController({ host = {}, runCompose, createContext, timers, clock } = {}) {
+export function createTabController({ host = {}, runCompose, createContext, timers, clock, store = createCompositionStore(), keepPlaying = () => false } = {}) {
   const core = createComposerController({ runCompose, createContext, timers, clock, beforePerform: () => host.stopMain?.() });
   const view = { open: false, selected: 'lead', section: SECTION_OF.lead, hasRhythm: false, showWork: true };
   const listeners = new Set(), mainListeners = new Set();
   const changed = () => { for (const f of listeners) f(core.state, view); };
-  core.onChange(changed);
+  // a change to any entry the controller acts on (the bound one, or one whose compose just landed) is the store's too
+  core.onChange((st) => { changed(); const key = store.keyOfState(st); if (key) store.notify(key); });
   let memo = { key: null, value: null };
 
   const api = {
     core,
-    state: core.state,
+    store,
+    /** the current rhythm's composition (the store's entry the controller is bound to) */
+    get state() { return core.state; },
     view,
     onChange(f) { listeners.add(f); return () => listeners.delete(f); },
 
-    /** take over the page's rhythm → whether it changed anything */
+    /** take over the page's rhythm: select it in the store and bind its entry → whether it changed anything */
     syncRhythm() {
       const r = host.readRhythm ? host.readRhythm() : null;
       const has = !!(r && r.layers && r.layers.some((v) => v > 0)), flipped = has !== view.hasRhythm;
       view.hasRhythm = has;
-      if (!has) { if (flipped) { core.stop(); changed(); } return flipped; }
-      const moved = core.setInput({ layers: r.layers, cycleSeconds: r.cycleSeconds });   // a move re-renders itself
+      if (!has) { store.select(null); if (flipped) { core.stop(); changed(); } return flipped; }
+      const { state } = store.select(r);
+      const moved = core.bind(state);   // a bind stops playback and re-renders itself
       if (flipped && !moved) changed();
       return moved || flipped;
     },
+    /** the store's key of the rhythm the tab is on (null with none) */
+    key: () => (view.hasRhythm ? store.keyOfState(core.state) : null),
     /** what the main button says: Compose with no rhythm on the page (and it does nothing) */
     button: () => core.button(),
     canPress: () => view.hasRhythm && core.button() !== 'Composing…',
     async press() {
       api.syncRhythm();
       if (!view.hasRhythm) return null;
-      if (core.button() === 'Compose') return core.compose({ trace: view.showWork });
+      if (core.button() === 'Compose') {
+        const key = api.key(), spec = await core.compose({ trace: view.showWork });
+        if (spec && store.keyOfState(core.state) === key) store.made(key, 'window');
+        return spec;
+      }
       return core.press();
     },
     /** "show the work": animate Compose from its trace, or not */
@@ -72,7 +90,7 @@ export function createTabController({ host = {}, runCompose, createContext, time
     onMainStarted(f) { mainListeners.add(f); return () => mainListeners.delete(f); },
 
     open() { view.open = true; api.syncRhythm(); changed(); },
-    close() { view.open = false; core.stop(); changed(); },
+    close() { view.open = false; if (!keepPlaying()) core.stop(); changed(); },
 
     select(id) {
       if (!HIGHLIGHT_PARTS.includes(id)) throw new Error(`composer tab: no part ${id}`);

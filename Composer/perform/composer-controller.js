@@ -25,6 +25,14 @@
 //              button goes back to Compose at once (the main page's rhythm can change under a compose).
 //   hooks      beforePerform () → called as Perform starts (the main page stops its own playback there: one thing
 //              sounds at a time)
+//   state      one composition's state (Composer/store/composition-store.js newCompositionState: the store's entry
+//              shape). The lab keeps the one it starts with. The main page binds the store's current entry
+//              (bind(state), sprint 2): a bind stops playback and re-renders; nothing else in the state moves.
+//   one flight one compose in flight per state: Compose again on a state that is composing joins that compose (the
+//              same promise). A compose lands in the state it was started for, even when another one is bound by
+//              then (the main page's cache); a change to that state while it runs drops the answer, as before.
+//   levels     setLevel notifies onLevel listeners (id, value), not onChange (a slider mid-drag is not re-rendered):
+//              the main page's part strips and the window's inspector keep each other's level in step.
 //   trace      compose({ trace: true }) asks Compose for its trace (core/trace.js) and keeps it apart from the spec, in
 //              `state.trace` (null otherwise): the spec, the lanes and JSON export are the same with it or without it.
 //              The main page's tab animates Compose from it (page/compose-animator.js).
@@ -36,6 +44,7 @@ import { createPlayer } from './composer-player.js';
 import { arrangeDrums, DRUM_MODES, DRUM_VOICES, DEFAULT_KIT } from '../core/drums.js';
 import { DRUM_PATTERNS } from '../core/drum-patterns.js';
 import { MADE_DRUM_CHOICES } from '../../Audio/drums/index.js';
+import { newCompositionState, KNOB_NAMES } from '../store/composition-store.js';
 
 export const LAB_VERSION = 'composer-lab-v1';
 /** a few rhythms across sizes; 41:42:43 first (tone-rich, mid-size) */
@@ -47,7 +56,7 @@ export const PRESETS = Object.freeze([
   { name: '768:769 — 1,536 onsets, 384 tones', layers: [768, 769, 0, 0], cycleSeconds: 8 },
   { name: '4099:4093:4091:4079 — 16,359 onsets, 4,177 tones', layers: [4099, 4093, 4091, 4079], cycleSeconds: 16 },
 ]);
-export const KNOBS = Object.freeze(['bars', 'slotsPerBar', 'frameCentsEachSide', 'modulation', 'anchors', 'settlePasses', 'presence']);
+export const KNOBS = KNOB_NAMES;
 export const AUTO_RECOMPOSE_MS = 300;
 /** the playback tempo's range, BPM */
 export const TEMPO_LIMITS = Object.freeze([30, 300]);
@@ -73,40 +82,51 @@ export function readLayers(values) {
 }
 
 /**
- * createComposerController({ runCompose, createContext, timers, clock, beforePerform })
+ * createComposerController({ runCompose, createContext, timers, clock, beforePerform, destination, state })
  *   runCompose(layers, cycleSeconds, { seed, overrides, worker, progression }) → Promise<spec>   (a page: the worker
  *               for 'full', compose() itself for 'lean' — compose-runner.js; by default compose() for both)
  *   createContext () → an AudioContext, made on the first Perform
  *   beforePerform () → called as Perform starts, before anything is booked
  *   destination   the AudioNode the player's limiter feeds (the context's destination by default)
+ *   state         the composition state to start bound to (a fresh one, on the lab's first preset, by default)
  */
-export function createComposerController({ runCompose = async (l, T, o) => compose(l, T, o), createContext = () => new AudioContext(), timers = globalThis, clock = () => (globalThis.performance ? performance.now() : Date.now()), beforePerform = null, destination = null } = {}) {
-  const state = {
-    input: { layers: [...PRESETS[0].layers], cycleSeconds: PRESETS[0].cycleSeconds, seed: 1 },
-    knobs: Object.fromEntries(KNOBS.map((k) => [k, null])),
-    table: 'full', spec: null, parts: {}, levels: { ...Object.fromEntries(PART_IDS.map((id) => [id, 0.8])), drums: 0.8 }, glideMs: 12, tempoBpm: null,
-    drumOptions: { enabled: true, mode: 'backbeat', fills: true, kit: { ...DEFAULT_KIT } }, drums: null,
-    status: 'idle', error: null, lastMs: null, dirty: true,
-    progression: [], trace: null,
-  };
-  const listeners = new Set();
-  const changed = () => { for (const f of listeners) f(state); };
-  let ctx = null, player = null, run = 0, choices = null, choicesKey = null;
+export function createComposerController({ runCompose = async (l, T, o) => compose(l, T, o), createContext = () => new AudioContext(), timers = globalThis, clock = () => (globalThis.performance ? performance.now() : Date.now()), beforePerform = null, destination = null, state: initial = null } = {}) {
+  let state = initial ?? newCompositionState({ layers: PRESETS[0].layers, cycleSeconds: PRESETS[0].cycleSeconds, seed: 1 });
+  const listeners = new Set(), levelListeners = new Set();
+  const changed = (st = state) => { for (const f of listeners) f(st); };
+  // per state: its compose generation (a change bumps it, dropping the answer in flight) and the compose in flight
+  const runs = new WeakMap(), flights = new WeakMap();
+  const bump = (st) => { const n = (runs.get(st) ?? 0) + 1; runs.set(st, n); return n; };
+  let ctx = null, player = null, choices = null, choicesKey = null;
 
   const overrides = () => { const o = {}; for (const k of KNOBS) if (state.knobs[k] != null) o[k] = state.knobs[k]; return o; };
-  const settled = () => (!state.spec ? 'idle' : state.spec.refused ? 'refused' : 'ready');
+  const settled = (st = state) => (!st.spec ? 'idle' : st.spec.refused ? 'refused' : 'ready');
   const touch = () => {
     if (player?.playing) player.stop();
     state.dirty = true;
     if (state.status === 'playing') state.status = settled();
-    if (state.status === 'composing') { run++; state.status = settled(); }   // the answer in flight is for the old input
+    if (state.status === 'composing') { bump(state); flights.delete(state); state.status = settled(); }   // the answer in flight is for the old input
     changed();
   };
   const sameLayers = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
   const api = {
-    state,
+    get state() { return state; },
     onChange(f) { listeners.add(f); return () => listeners.delete(f); },
+    /** a part's level moved: f(id, value) (onChange is not called for it) */
+    onLevel(f) { levelListeners.add(f); return () => levelListeners.delete(f); },
+    /** act on another composition state from now on (the main page's store entry) → whether it changed. Playback
+     *  stops (it was the old state's); a compose in flight for the old state keeps running and lands there. */
+    bind(next) {
+      if (!next || next === state) return false;
+      if (player?.playing) player.stop();
+      if (state.status === 'playing') state.status = settled();
+      state = next;
+      changed();
+      return true;
+    },
+    /** is a compose in flight for this state (the bound one by default)? */
+    composing: (st = state) => st.status === 'composing' && flights.has(st),
     setLayers(values) { state.input.layers = readLayers(values); state.progression = []; touch(); },
     /** the rhythm from outside (the main page): { layers, cycleSeconds } → whether it changed. A change goes back to
      *  Compose (and stops playback) exactly as typing it would; new layers clear the progression, a new cycle doesn't. */
@@ -128,27 +148,37 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     /** may a knob change re-compose by itself? lean only, and only while it is quick */
     canAutoRecompose: () => state.table === 'lean' && state.lastMs != null && state.lastMs < AUTO_RECOMPOSE_MS,
 
-    /** opts { trace: true → also the compose trace, kept in state.trace } */
-    async compose({ trace = false } = {}) {
-      const mine = ++run, t0 = clock();
+    /** opts { trace: true → also the compose trace, kept in state.trace }. One in flight per state: called again on
+     *  a state that is composing, it returns that compose's promise. */
+    compose({ trace = false } = {}) {
+      const st = state;
+      if (st.status === 'composing' && flights.has(st)) return flights.get(st);
+      const mine = bump(st), t0 = clock();
       if (player?.playing) player.stop();
-      state.status = 'composing'; state.error = null; changed();
-      try {
-        const options = { seed: state.input.seed, overrides: overrides(), worker: state.table === 'full', progression: api.progressionInput() };
-        if (trace) options.trace = true;
-        const answer = await runCompose(state.input.layers, state.input.cycleSeconds, options);
-        if (mine !== run) return state.spec;   // a newer compose took over
-        let spec = answer;
-        if (answer && 'trace' in answer) { const { trace: tr, ...plain } = answer; spec = plain; state.trace = trace ? tr : null; } else state.trace = null;
-        state.spec = spec; state.lastMs = clock() - t0; state.dirty = false;
-        if (spec.refused) { state.parts = {}; state.drums = null; state.status = 'refused'; }
-        else { state.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); state.drums = arrangeDrums(spec, state.drumOptions); state.status = 'ready'; state.tempoBpm = spec.knobs.tempoBpm; }
-      } catch (err) {
-        if (mine !== run) return state.spec;
-        state.status = 'error'; state.error = String(err && err.message ? err.message : err);
-      }
-      changed();
-      return state.spec;
+      st.status = 'composing'; st.error = null;
+      const options = { seed: st.input.seed, overrides: overrides(), worker: st.table === 'full', progression: api.progressionInput() };
+      if (trace) options.trace = true;
+      const flight = (async () => {
+        try {
+          const answer = await runCompose(st.input.layers, st.input.cycleSeconds, options);
+          if (mine !== runs.get(st)) return st.spec;   // a change to this state took over
+          let spec = answer;
+          if (answer && 'trace' in answer) { const { trace: tr, ...plain } = answer; spec = plain; st.trace = trace ? tr : null; } else st.trace = null;
+          st.spec = spec; st.lastMs = clock() - t0; st.dirty = false;
+          if (spec.refused) { st.parts = {}; st.drums = null; st.status = 'refused'; }
+          else { st.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); st.drums = arrangeDrums(spec, st.drumOptions); st.status = 'ready'; st.tempoBpm = spec.knobs.tempoBpm; }
+        } catch (err) {
+          if (mine !== runs.get(st)) return st.spec;
+          st.status = 'error'; st.error = String(err && err.message ? err.message : err);
+        } finally {
+          if (mine === runs.get(st)) flights.delete(st);
+        }
+        changed(st);
+        return st.spec;
+      })();
+      flights.set(st, flight);
+      changed(st);
+      return flight;
     },
     /** what the main button says, and does */
     button() {
@@ -186,7 +216,10 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       if (state.spec && !state.spec.refused) state.drums = arrangeDrums(state.spec, o);
       changed();
     },
-    setLevel(id, value) { state.levels[id] = Number(value); player?.setLevel(id, state.levels[id]); },   // no re-render: a slider is mid-drag
+    setLevel(id, value) {   // no re-render: a slider is mid-drag (onLevel listeners keep other views in step)
+      state.levels[id] = Number(value); player?.setLevel(id, state.levels[id]);
+      for (const f of [...levelListeners]) f(id, state.levels[id]);
+    },
     setGlide(ms) { state.glideMs = Math.max(0, Number(ms) || 0); player?.setGlide(state.glideMs / 1000); },   // portamento; no re-render
     /** the spec's own tempo (null without a spec) */
     specTempo: () => (state.spec && !state.spec.refused ? state.spec.knobs.tempoBpm : null),

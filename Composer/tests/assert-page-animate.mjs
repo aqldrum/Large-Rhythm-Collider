@@ -237,7 +237,8 @@ const asked = [], worker = new FakeWorker();
 const runner = createComposeRunner({ makeWorker: () => worker });
 const runCompose = (l, T, o) => { asked.push({ ...o }); return runner(l, T, o); };
 const bridge = createComposerBridge(win, { runCompose, createContext: () => makeCtx(), timers: { setInterval: () => 1, clearInterval: () => {} }, clock, storage });
-const tab = bridge.controller, anim = bridge.animator, S = tab.state;
+// (sprint 2) the tab's state is the composition store's current entry, so it is read live (a new rhythm is another entry)
+const tab = bridge.controller, anim = bridge.animator, S = new Proxy({}, { get: (_, k) => tab.state[k] });
 const left = doc.createElement('div'), inspector = doc.createElement('div');
 doc.body.append(left, inspector);
 bridge.mountTab({ left, inspector });
