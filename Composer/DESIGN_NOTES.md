@@ -978,6 +978,112 @@ The order (`SPRINT2_ORDER.md`, step 2): during a rhythm's first animated compose
 5. **The window's own Compose animation** (in the Composer tab) doesn't yet respect `prefers-reduced-motion`. Should it?
 6. **The full show is once a page per rhythm and cycle.** Should it be once a session (sessionStorage), like the glyph's breath?
 
+## Interactive tutorial (sprint 2, step 3; built 2026-10-23)
+
+The order (`SPRINT2_ORDER.md`, step 3, and Avery's words for the opening): replace the text tutorial with a guided, animated one, "much more interactive rather than text based", with a playing composition in front of the user within 5–10 s of "Begin", then a short tour while it plays. Everything below that isn't the order is **proposed, not ruled**. Nothing here has been seen in a browser yet.
+
+**The opening** (Avery's four lines, in order):
+1. **"Welcome to the Large Rhythm Collider!"** The popup sits over the main canvas, which a glint circles. Its buttons: Begin, Not now, and "or read the guide".
+2. **"This machine eats numbers…"** The spotlight moves to Rhythm Input, and four generated layers are typed into the real fields. Each field is focused and cleared, then typed a digit at a time; every keystroke is an `input` event (insertText with its digit), then one `change`. The field being typed glows.
+3. **"…to turn structure…"** The real Generate button is clicked: its form submits, and the HUD sorts and generates as for a person. A ripple marks the press. The spotlight then moves to the canvas while the Linear Plot appears.
+4. **"…into music."** The spotlight is on the glyph. The tour presses it through `lrcComposer.lens.press({ pace: 2 })`, never a page click. The theater's full show plays, then the performance starts.
+
+**The scrim leads the show.** While `lrcComposer.theater.up` is true, the tour yields: its spotlight and popup are hidden (`lrc-tour--yield`, `aria-hidden`), and nothing of the tour can be clicked. Any click on the page then skips the show, so the tour dispatches none. Its frame loop checks the scrim each frame and comes back as it lifts.
+
+**The layer generator** (`tour-script.js` `generateLayers(seed)`, pure and seeded).
+- **The criteria** (`layerProblems`):
+  - four distinct 3-digit layers;
+  - none divides another;
+  - the gcd of the set is 1;
+  - greatest first, so the Rhythm Input takes them unchanged (`siteAccepts`: the HUD sorts, and LRCModule parses with `parseInt`);
+  - Compose's own refusal gates pass (`composerAccepts`: `buildRow` + `toneGate`, exactly what `compose()` refuses on);
+  - the tone count is inside the band.
+- **The bias (proposed): 12–144 distinct tones, drawn from the 95 three-digit numbers with no prime factor above 7.**
+  - Uniform 3-digit sets have hundreds of tones (median 437 over 3,000 coprime sets; only about 2 % land in the band). That means a Scale chart hundreds of rows long, and a crowd in every ±15¢ frame.
+  - 7-smooth layers repeat their gaps. The generator's sets (seeds 1–500) have tones at p10 29, p50 70, p90 124, and still sound unlike 12-TET. A set takes about 3.7 draws (half a millisecond); a fallback set (480:320:252:175) is there if 4,000 draws fail (never seen).
+- The page seeds it from the clock; the tests use fixed seeds.
+
+**The timing budget** (`openingBudget`). The parts:
+- the beats: read 500 ms, after typing 250, Generate aimed 350, the plot seen 700, the glyph aimed 600 (2.4 s);
+- the typing: 4 × 40 ms to clear, 12 × 55 ms for the digits, 3 × 90 ms between fields (1.09 s);
+- the site's generate (measured in Node: 7–56 ms);
+- Compose's solve (not scaled);
+- the show, `scene.end / pace`.
+
+**The pace is 2 (proposed).** The full show is always fitted to about 7.45–7.5 s on these rows, so it plays in 3.75 s. Measured in Node on 8 generated sets (the worker's full table with the trace, 0.36–0.97 s), Begin to playing takes 7.6–8.2 s (typical 7.9). With a 1.5 s solve, 0.3 s of site work and the longest show it is still 9.0 s. At pace 1 the same opening takes 11.9 s. In the test, the driver's own virtual clock lands within 0.1 s of the model.
+
+**The tour, while it plays.** Each stop waits for Next, and the music keeps playing.
+1. **Part strips.** The Playback div opens through its own minimize button. The spotlight is on the strips, and the popup explains Lead, Chords, Comping, Bass, Inner and Drums, and the layer dot.
+2. **The Scale readout,** locked, with each bar's chord tones lit.
+3. **The advanced Composer.** The spotlight is on the Playback title, with a double-click ripple every 2.4 s. The popup describes the window, and a **Peek inside** button opens it on its Composer tab. Leaving the stop closes it again and puts back the tab the window remembered. A window the user opens by hand during this stop is closed on leaving too (proposed: "don't leave the window open").
+4. **Cosmos,** pointed at, not entered.
+5. **Back to the row.** The spotlight is on the glyph, with "Read the guide" and Done. Its text follows the lens: under the composition it explains the lens; on the row it says the composition is kept and plays at once on the next press.
+
+**Navigation.**
+- **Next, Back, Skip.** Next and Back are buttons, and → and ← work while the focus is in the popup. Back never goes into the opening, since its steps are actions, not pages. Skip on a stop is Next. In the opening, "Skip ▸" hurries: the beats go, the typing finishes at once (still a real event per digit), and the show is skipped to the landing (queued while Compose runs).
+- **Esc, or ×,** ends the tour at any point. During the show, the theater's own Esc also skips to the landing, so the music starts and the tour is gone.
+- **The lens moving under the tour.** If the lens goes back to the row (the glyph, or a rhythm generated by hand), a stop that needs the composition (the strips, the scale) gives way to the last stop. Next and Back skip those stops while the lens is on the row.
+
+**A clean exit** (every path, tested):
+- the half-typed fields are restored when Generate wasn't pressed yet;
+- the panels and Playback sections the tour opened are closed again, except the Playback div while the composition plays (proposed: its transport and strips are what's sounding);
+- the Composer window opened during its stop is closed, and its tab put back;
+- the overlay, the listeners, the motion timers and the typing glow are removed, and the focus goes back where it was;
+- the lens is left wherever it is.
+
+**Accessibility.**
+- The popup is a `role="dialog"` (non-modal), labelled by its title and described by its text. Its primary button takes the focus on each stop, and the welcome's Begin is focused, so Enter begins.
+- **Reduced motion** (`prefers-reduced-motion`, read at start): the root carries `lrc-tour--still`, with no glide, pulse, glint or ripple. The theater then jumps to the landing on its own (step 2), so the opening is typing, Generate and the solve.
+- **Touch screens** (`pointer: coarse`): the fields aren't focused while typed, so the on-screen keyboard doesn't jump up. The events are the same.
+- **The mobile layout** (`body.mobile-mode`, a scrolling page): each stop scrolls its target into view.
+
+**The first visit (proposed).** The tour opens by itself once, 900 ms after the page's `load`, and only when `localStorage` can say it hasn't been seen (`lrc.tour.seen`, written on every start). It doesn't open:
+- when the storage is missing or throws (it would otherwise open on every visit);
+- when the old slides' "Do not show again" was ticked (`lrcTutorialDismissed`);
+- on a page launched with a rhythm in its URL (`?layers=`, `?a=`…), since the tour would type over it;
+- in Cosmos.
+
+The menu's **Take the tour** (`#tutorial-show-btn`) restarts it any time, closing the menu first. Pressed mid-tour, it starts again from the welcome.
+
+**The old content is the guide.** `TutorialUI.js` no longer opens the slides on load, and their "Do not show again" box is gone. They open from the menu's **Read the guide** (`#tutorial-slides-btn`), the welcome's "or read the guide" and the last stop's "Read the guide" (`window.LRCTutorialSlidesUI`). `TutorialContent.js` is untouched.
+
+**Code** (`Tutorial/`):
+- `tour-script.js`: **pure.** The generator and its criteria, the timing model, the steps as data (id, phase, action, title, text, targets with fallbacks, reveal, needs, motion, peek), navigation (`nextIndex`, `backIndex`) and the first-visit rule.
+- `tour-driver.js`: the DOM driver, `createTour({ win, doc, composer, timers, raf, motion, storage, seed })`, with `start`, `begin`, `next`, `back`, `skip`, `end`, `togglePeek` and `onEvent`. Its pure `placePopup` sets the popup's placement, clamped to 16 px gutters. Everything is injected, so it runs on the DOM stub.
+- `tour-boot.js`: `window.lrcTour`, the menu button and the auto-open.
+- `tour.css`: the spotlight (a ring whose shadow dims the rest; it never takes a click), the popup, the ripple, the yield and still states, in the site's `--hud-*` tokens and accent.
+
+**Site edits (small):**
+- `index.html`: `tour.css`; `tour-boot.js` as a module after the bridge; the menu's two buttons; the dismiss checkbox removed; `TutorialUI.js?v=`.
+- `TutorialUI.js`: no auto-show, `#tutorial-slides-btn`, `LRCTutorialSlidesUI`.
+
+No change to the Composer's modules.
+
+**Tests:** `Composer/tests/assert-tutorial.mjs` (99 checks), in the suite command's glob. It runs over the real bridge (store, lens, theater), LRCModule, LRCVisuals, the HUD's minimize and form handlers and the old TutorialUI. It covers:
+- the generator on 400 seeds, its criteria's refusals, and Compose on 8 sets;
+- the budget, with the solve measured;
+- every target on the page, and the module graph;
+- `placePopup`, including at phone width;
+- the opening end to end: the typed sequence, the real Generate, `press({ pace: 2 })`, no click while the scrim is up, and the driver's clock against the model;
+- every stop with Next, Back, the keys and the peek;
+- Esc on the welcome, mid-typing (the fields restored) and while playing;
+- Skip ▸;
+- the glyph and a hand-generated rhythm mid-tour;
+- reduced motion;
+- the guide;
+- the menu's restart;
+- the auto-open (fresh, seen, throwing storage, URL rhythm, Cosmos).
+
+**Open (for Avery):**
+1. **The bias.** Is a 7-smooth pool with 12–144 tones right for a first impression, or should the tour's numbers be uniformly random 3-digit (hundreds of tones)?
+2. **The pace.** 2 (3.75 s show, ~8 s opening), or brisker?
+3. **The scrim leads** during the show (built). Or should the tour's "…into music." caption stay up over the scrim?
+4. **Esc during the show** ends the tour, and the theater skips to the music (built). Should it end the tour and let the show run?
+5. **The Playback div stays open** at the end while the composition plays (built); everything else the tour opened is closed. Close it too?
+6. **The Composer stop:** describe it with a "Peek inside" button (built), or open and close the window by itself?
+7. **First visit:** someone who ticked the old slides' "Do not show again" isn't shown the tour unasked (built). Show them the new one once anyway?
+8. **The tour types over the current rhythm** (a restart from the menu replaces the user's layers; the old composition stays cached). Ask first when a rhythm is already on the page?
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
