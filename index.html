@@ -13,6 +13,8 @@
     <link rel="stylesheet" href="Composer/page/composition-lens.css?v=20261023">
     <!-- COMPOSITION LENS (sprint 2, step 2): the theater — the scrim and the floating caption (Composer/page/theater.js) -->
     <link rel="stylesheet" href="Composer/page/theater.css?v=20261023">
+    <!-- TUTORIAL (sprint 2, step 3): the guided tour — spotlight, popups, motion (Tutorial/tour-driver.js) -->
+    <link rel="stylesheet" href="Tutorial/tour.css?v=20261023">
 </head>
 <body>
     <!-- Black Canvas Background -->
@@ -103,12 +105,14 @@
                             <button class="dropdown-section-header" type="button" data-target="tutorial-panel">
                                 <div class="dropdown-section-text">
                                     <h2 class="dropdown-section-title">Tutorial</h2>
-                                    <p>Quick-start walkthrough</p>
+                                    <p>A guided tour, or the full guide</p>
                                 </div>
                                 <span class="dropdown-section-icon">+</span>
                             </button>
                             <div id="tutorial-panel" class="dropdown-section-content" hidden>
-                                <button id="tutorial-show-btn" class="tutorial-show-btn" type="button">Show Tutorial</button>
+                                <!-- TUTORIAL (sprint 2, step 3): the guided tour (Tutorial/tour-boot.js) and the old slides, as the guide (TutorialUI.js) -->
+                                <button id="tutorial-show-btn" class="tutorial-show-btn" type="button">Take the tour</button>
+                                <button id="tutorial-slides-btn" class="tutorial-show-btn" type="button">Read the guide</button>
                             </div>
                         </div>
 
@@ -575,17 +579,13 @@
             <div class="tutorial-footer">
                 <button type="button" class="tutorial-close-btn">Close</button>
                 <span class="tutorial-copyright">Avery Logan © 2025</span>
-                <label class="tutorial-dismiss">
-                    <input type="checkbox" id="tutorial-dismiss-checkbox">
-                    <span>Do not show again</span>
-                </label>
             </div>
         </div>
     </div>
 
     <!-- Audio -->
         <script src="Tutorial/TutorialContent.js"></script>
-        <script src="Tutorial/TutorialUI.js"></script>
+        <script src="Tutorial/TutorialUI.js?v=20261023"></script>
         <script src="Playback/LayerControlsUI.js?v=20261021"></script>
         <script src="Playback/PlaybackMainUI.js?v=20260703"></script>
         <script src="Playback/ScaleSelectionUI.js"></script>
@@ -599,6 +599,9 @@
         <!-- The Composer (Composer/) as window.lrcComposer: the Composer tab beside Partitions, and (sprint 2) the
              Composition lens: the header glyph, the composition store, the part strips, the one transport -->
         <script type="module" src="Composer/page/composer-bridge.js?v=20261023.2"></script>
+        <!-- TUTORIAL (sprint 2, step 3): the guided tour (Tutorial/tour-*.js) as window.lrcTour; after the bridge, whose
+             lens it presses -->
+        <script type="module" src="Tutorial/tour-boot.js?v=20261023"></script>
         <script src="Core Interface/AudioEffects.js?v=20241022"></script>
 
         <!-- Progression Solver (Quality Painting on the main page) -->

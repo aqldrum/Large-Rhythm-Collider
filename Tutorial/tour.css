@@ -1,0 +1,92 @@
+/* tour.css — the guided tour (Tutorial/tour-driver.js; Composer sprint 2, step 3; proposed), in the site's own look
+   (style.css: --hud-* tokens, the #00ff88 accent). Classes: lrc-tour-*. The tour's root sits above everything on the
+   page (the old slide tutorial is 10050); its spotlight never takes a click, so the page under it stays live. While
+   the theater's scrim is up the root yields (`lrc-tour--yield`): the scrim leads the show. */
+
+#lrc-tour { position: fixed; inset: 0; z-index: 10100; pointer-events: none; }
+
+/* the spotlight: a glowing ring round the target, the rest of the page dimmed by its shadow */
+.lrc-tour-spot {
+    position: fixed; left: 50%; top: 50%; width: 0; height: 0; box-sizing: border-box;
+    border: 1px solid rgba(0, 255, 136, 0.85); border-radius: 8px; pointer-events: none;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.42), 0 0 18px 2px rgba(0, 255, 136, 0.42), inset 0 0 12px rgba(0, 255, 136, 0.16);
+    transition: left 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.35s cubic-bezier(0.2, 0.8, 0.2, 1),
+                width 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), height 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.25s ease;
+    animation: lrc-tour-pulse 1.8s ease-in-out infinite;
+}
+.lrc-tour-spot.none { opacity: 0; }
+@keyframes lrc-tour-pulse {
+    0%, 100% { border-color: rgba(0, 255, 136, 0.85); }
+    50% { border-color: rgba(0, 255, 136, 0.45); box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.42), 0 0 26px 5px rgba(0, 255, 136, 0.55), inset 0 0 16px rgba(0, 255, 136, 0.22); }
+}
+/* the welcome: a glint running round the main canvas */
+.lrc-tour-spot.lrc-tour-orbit::after {
+    content: ''; position: absolute; inset: -2px; border-radius: 9px; padding: 2px; pointer-events: none;
+    background: conic-gradient(from var(--lrc-tour-angle, 0deg), transparent 0deg 300deg, rgba(0, 255, 136, 0.95) 340deg, transparent 360deg);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+    mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask-composite: exclude;
+    animation: lrc-tour-orbit 3.2s linear infinite;
+}
+@property --lrc-tour-angle { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@keyframes lrc-tour-orbit { to { --lrc-tour-angle: 360deg; } }
+
+/* a press, or the double-click hint: a ring that opens out from the target's centre */
+.lrc-tour-ripple {
+    position: fixed; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; pointer-events: none;
+    border: 2px solid var(--hud-accent, #00ff88); box-shadow: 0 0 12px rgba(0, 255, 136, 0.6);
+    animation: lrc-tour-ripple 0.7s ease-out forwards;
+}
+@keyframes lrc-tour-ripple { from { transform: scale(0.4); opacity: 1; } to { transform: scale(3.4); opacity: 0; } }
+
+/* the popup: small, beside the target */
+.lrc-tour-pop {
+    position: fixed; left: 16px; top: 16px; box-sizing: border-box; width: min(320px, calc(100vw - 32px));
+    padding: 10px 12px 10px; border-radius: var(--border-radius, 6px); pointer-events: auto;
+    background: var(--hud-bg, rgba(20, 20, 20, 0.9)); border: 1px solid rgba(0, 255, 136, 0.45);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 0 14px rgba(0, 255, 136, 0.14);
+    color: var(--hud-text, #fff); font-size: 13px; line-height: 1.45; cursor: default; user-select: none;
+    backdrop-filter: blur(10px);
+    transition: left 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.25s ease;
+}
+.lrc-tour-pop:focus { outline: none; }
+.lrc-tour-pop:focus-visible { box-shadow: 0 0 0 2px rgba(0, 255, 136, 0.35), 0 10px 28px rgba(0, 0, 0, 0.55); }
+.lrc-tour-head { display: flex; align-items: center; justify-content: space-between; min-height: 16px; }
+.lrc-tour-progress { color: var(--hud-text-muted, #ccc); font: 10px/1 monospace; letter-spacing: 0.06em; opacity: 0.8; }
+.lrc-tour-close {
+    background: none; border: none; color: var(--hud-text-muted, #ccc); font-size: 16px; line-height: 1; padding: 0 2px; cursor: pointer;
+}
+.lrc-tour-close:hover, .lrc-tour-close:focus-visible { color: var(--hud-accent, #00ff88); outline: none; }
+.lrc-tour-title { margin: 2px 0 4px; color: var(--hud-accent, #00ff88); font-size: 15px; font-weight: 700; letter-spacing: 0.01em; }
+.lrc-tour-text { margin: 0 0 10px; color: var(--hud-text, #fff); font-size: 12.5px; }
+.lrc-tour-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; justify-content: flex-end; }
+.lrc-tour-btn {
+    padding: 5px 11px; border-radius: 4px; border: 1px solid var(--hud-border, rgba(100, 100, 100, 0.3));
+    background: rgba(40, 40, 40, 0.85); color: var(--hud-text, #fff); font-size: 11.5px; cursor: pointer;
+}
+.lrc-tour-btn:hover:not(:disabled), .lrc-tour-btn:focus-visible { border-color: var(--hud-accent, #00ff88); outline: none; }
+.lrc-tour-btn.primary { background: var(--hud-accent, #00ff88); border-color: var(--hud-accent, #00ff88); color: #04140c; font-weight: 700; }
+.lrc-tour-btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
+.lrc-tour-btn:disabled { opacity: 0.35; cursor: default; }
+.lrc-tour-link {
+    margin-right: auto; padding: 2px 0; background: none; border: none; color: var(--hud-text-muted, #ccc);
+    font-size: 11px; text-decoration: underline; cursor: pointer;
+}
+.lrc-tour-link:hover, .lrc-tour-link:focus-visible { color: var(--hud-accent, #00ff88); outline: none; }
+
+/* a layer field being typed into by the tour */
+.layer-input input.lrc-tour-typing { box-shadow: 0 0 0 2px var(--hud-accent, #00ff88), 0 0 10px rgba(0, 255, 136, 0.5); }
+
+/* the theater's scrim is up: the scrim leads (and a click on the page skips the show, so nothing here is clickable) */
+#lrc-tour.lrc-tour--yield .lrc-tour-spot,
+#lrc-tour.lrc-tour--yield .lrc-tour-pop,
+#lrc-tour.lrc-tour--yield .lrc-tour-ripple { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.2s ease, visibility 0s linear 0.2s; }
+
+/* reduced motion: no glide, no pulse, no glint, no ripple */
+#lrc-tour.lrc-tour--still .lrc-tour-spot,
+#lrc-tour.lrc-tour--still .lrc-tour-pop { transition: none; animation: none; }
+#lrc-tour.lrc-tour--still .lrc-tour-spot::after,
+#lrc-tour.lrc-tour--still .lrc-tour-ripple { display: none; }
+@media (prefers-reduced-motion: reduce) {
+    .lrc-tour-spot, .lrc-tour-pop { transition: none; animation: none; }
+    .lrc-tour-spot::after, .lrc-tour-ripple { display: none; }
+}

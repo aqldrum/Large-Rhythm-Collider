@@ -1,15 +1,17 @@
+// TUTORIAL (sprint 2, step 3): the guided tour (Tutorial/tour-boot.js, the header's "Take the tour") replaced this
+// slide tutorial's flow. The slides stay as "the guide": the menu's "Read the guide" (#tutorial-slides-btn) and the
+// tour's own "Read the guide" open them (window.LRCTutorialSlidesUI.show). They no longer open by themselves on load,
+// and their "Do not show again" box is gone (the tour keeps its own first-visit flag, `lrc.tour.seen`).
 (() => {
-    const STORAGE_KEY = 'lrcTutorialDismissed';
     const overlay = document.getElementById('tutorial-overlay');
     const closeFooterButton = document.querySelector('.tutorial-close-btn');
-    const dismissCheckbox = document.getElementById('tutorial-dismiss-checkbox');
-    const showButton = document.getElementById('tutorial-show-btn');
+    const showButton = document.getElementById('tutorial-slides-btn');
     const slideContainer = document.getElementById('tutorial-slide-content');
     const prevButton = document.getElementById('tutorial-prev');
     const nextButton = document.getElementById('tutorial-next');
     const navStatus = document.getElementById('tutorial-nav-status');
 
-    if (!overlay || !closeFooterButton || !dismissCheckbox || !showButton || !slideContainer || !prevButton || !nextButton || !navStatus) {
+    if (!overlay || !closeFooterButton || !slideContainer || !prevButton || !nextButton || !navStatus) {
         return;
     }
 
@@ -100,14 +102,7 @@
         overlay.setAttribute('aria-hidden', 'true');
     };
 
-    const shouldShowOnLoad = () => {
-        return localStorage.getItem(STORAGE_KEY) !== 'true';
-    };
-
     const handleDismiss = () => {
-        if (dismissCheckbox.checked) {
-            localStorage.setItem(STORAGE_KEY, 'true');
-        }
         hideTutorial();
     };
 
@@ -125,10 +120,15 @@
         }
     });
 
-    showButton.addEventListener('click', () => {
-        dismissCheckbox.checked = false;
+    const openGuide = () => {
+        if (window.lrcTour && window.lrcTour.active) window.lrcTour.end('guide');
+        goToSlide(0);
         showTutorial();
-    });
+    };
+
+    if (showButton) {
+        showButton.addEventListener('click', openGuide);
+    }
 
     prevButton.addEventListener('click', () => {
         goToSlide(currentIndex - 1);
@@ -140,7 +140,5 @@
 
     goToSlide(0);
 
-    if (shouldShowOnLoad()) {
-        showTutorial();
-    }
+    window.LRCTutorialSlidesUI = { show: openGuide, hide: hideTutorial, isOpen: () => overlay.style.display !== 'none' };
 })();
