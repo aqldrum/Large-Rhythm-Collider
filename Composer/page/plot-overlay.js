@@ -130,3 +130,26 @@ export function createPlotOverlay({ getHighlights, getSelected = () => null, mak
   };
   return api;
 }
+
+/**
+ * The overlay seat (sprint 2): the page has ONE Composer overlay, and two things may want it on the Linear Plot: the
+ * Composer tab while it is shown, and the Composition lens. Each claims and releases its own hold; the overlay is set
+ * on the plot while anyone holds it and cleared when the last lets go (so with neither, the plot is drawn exactly as
+ * it was before the Composer existed).
+ *   createOverlaySeat({ visuals: () → window.lrcVisuals, overlay }) → { claim(who), release(who), holds(who), held }
+ *   claim always (re)sets the overlay, which redraws the plot; release clears it only when no one is left.
+ */
+export function createOverlaySeat({ visuals = () => null, overlay } = {}) {
+  const holders = new Set();
+  return {
+    overlay,
+    claim(who) { holders.add(who); visuals()?.setComposerOverlay?.(overlay); },
+    release(who) {
+      if (!holders.delete(who)) return false;
+      if (!holders.size) visuals()?.setComposerOverlay?.(null);
+      return true;
+    },
+    holds: (who) => holders.has(who),
+    get held() { return holders.size > 0; },
+  };
+}

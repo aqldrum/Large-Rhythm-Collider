@@ -9,6 +9,10 @@
 //     draws; the Composer's overlay over the real plot lights the real dots
 //   • PartitionsUI.js: the tab strip [Partitions | Composer], the Composer's hosts swapped in and out (the mirrored
 //     plot stays), the bridge mounted and shown, hidden on leaving the tab or the window, a loading wait
+//   • sprint 2, step 1 (the Composition lens): the glyph in index.html's header beside the Cosmos button (hidden,
+//     aria-pressed, an inline SVG, no text), its stylesheet, the lens's modules in the bridge's graph; LRCModule's
+//     calculateTotalLCM with fewer than four layers (the live-site NaN fixed; four layers exactly as before);
+//     ToneRowPlayback's and PartitionsGlobalControls' transport edits marked, and under the row lens unchanged
 //   node Composer/tests/assert-page-site.mjs
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,6 +37,14 @@ check(`every local script and stylesheet it references exists (${refs.length})`,
 check('the Composer bridge is a module script, after the voice library\'s bridge; its CSS is linked', /<script type="module" src="Composer\/page\/composer-bridge\.js[^"]*"><\/script>/.test(html)
   && html.indexOf('Composer/page/composer-bridge.js') > html.indexOf('Audio/lrc-voices-bridge.js') && /<link rel="stylesheet" href="Composer\/page\/composer-tab\.css[^"]*">/.test(html));
 check('the lab is still not linked from the page', !html.includes('composer-lab'));
+{
+  const controls = html.slice(html.indexOf('<div class="title-bar-controls">'), html.indexOf('</div>', html.indexOf('<div class="title-bar-controls">')));
+  const glyph = controls.match(/<button id="composition-glyph"[^>]*>([\s\S]*?)<\/button>/);
+  check('(sprint 2) the glyph is in the header\'s controls, before the Cosmos button: hidden until a rhythm, aria-pressed, a tooltip', !!glyph && controls.indexOf('composition-glyph') < controls.indexOf('cosmos-enter-btn')
+    && /\shidden[\s>]/.test(glyph[0]) && /aria-pressed="false"/.test(glyph[0]) && /aria-label="Compose"/.test(glyph[0]) && /data-tip="Compose"/.test(glyph[0]) && /type="button"/.test(glyph[0]));
+  check('… an inline SVG notation symbol, with no text on the button', !!glyph && /^<svg[\s\S]*<\/svg>$/.test(glyph[1].trim()) && glyph[1].replace(/<[^>]+>/g, '').trim() === '' && (glyph[1].match(/<ellipse/g) || []).length === 2);
+  check('… its stylesheet is linked, and the bridge is a fresh version', /<link rel="stylesheet" href="Composer\/page\/composition-lens\.css\?v=\d+">/.test(html) && /composer-bridge\.js\?v=20261023/.test(html));
+}
 
 console.log('\n— the module graph');
 function graph(entry) {
@@ -55,6 +67,8 @@ for (const entry of ['Composer/page/composer-bridge.js', 'Composer/lab/composer-
   const g = graph(entry);
   check(`${entry}: ${g.files.length} modules, every import relative and found`, g.bad.length === 0 && g.files.length > 10, g.bad.join('; '));
   if (entry.includes('bridge')) check('the bridge reaches the worker, the shared controller and player, and the voice and drum libraries', ['Composer/core/compose-worker.js', 'Composer/perform/composer-controller.js', 'Composer/perform/composer-player.js', 'Audio/voices/voice.js', 'Audio/drums/index.js'].every((f) => g.files.includes(f)));
+  if (entry.includes('bridge')) check('(sprint 2) … and the store, the lens, the glyph, the part strips and the panel locks', ['Composer/store/composition-store.js', 'Composer/page/lens.js', 'Composer/page/toolbar-glyph.js', 'Composer/page/part-strips.js', 'Composer/page/panel-locks.js'].every((f) => g.files.includes(f)));
+  if (entry.includes('lab')) check('(sprint 2) the lab reaches the store only through the shared controller (its state shape), nothing of the page\'s lens', g.files.includes('Composer/store/composition-store.js') && !g.files.some((f) => /page\/(lens|toolbar-glyph|part-strips|panel-locks)\.js$/.test(f)));
 }
 
 console.log('\n— LRCModule.js: the spread');
@@ -77,6 +91,43 @@ console.log('\n— LRCModule.js: the spread');
     try { o.generateRatiosWithFrequency(big); } catch (e) { overflow = e instanceof RangeError || /call stack/i.test(String(e)); }
     check('(the version before the fix overflowed on the same plot)', overflow);
   } else console.log('  (git unavailable: the before/after comparison is skipped)');
+}
+
+console.log('\n— LRCModule.js: the grid of fewer than four layers (sprint 2: the live-site NaN)');
+{
+  const M = loadClass('Core Interface/LRCModule.js', 'LRCModule', makeDom()), m = new M();
+  check('768:769 with C and D blank: lcm 590,592 (it was NaN: lcm(x, undefined))', m.calculateTotalLCM(768, 769) === 590592 && m.calculateTotalLCM(41, 42, 43) === 74046 && m.calculateTotalLCM(7) === 7);
+  check('missing, zero and non-numbers are skipped; no layer at all is 0', m.calculateTotalLCM(12, undefined, 0, NaN) === 12 && m.calculateTotalLCM() === 0 && m.calculateTotalLCM(0, 0) === 0);
+  const old = atBase('Core Interface/LRCModule.js');
+  if (old) {
+    const O = loadClass('Core Interface/LRCModule.js', 'LRCModule', makeDom(), { source: old }), o = new O();
+    let same = 0, n = 0, seed = 7;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return 1 + (seed % 997); };
+    for (let k = 0; k < 400; k++) { const L = [rnd(), rnd(), rnd(), rnd()]; n++; if (Object.is(m.calculateTotalLCM(...L), o.calculateTotalLCM(...L))) same++; }
+    check(`four layers: exactly the grid it gave before (${same}/${n} random rhythms, and 8:7:6:5 → 840)`, same === n && m.calculateTotalLCM(8, 7, 6, 5) === 840 && o.calculateTotalLCM(8, 7, 6, 5) === 840);
+    check('(the version before the fix gave NaN for two layers)', Number.isNaN(o.calculateTotalLCM(768, 769)));
+  } else console.log('  (git unavailable: the before/after comparison is skipped)');
+  // the site's own generation with C and D blank, as the page does it (generateRhythm reads the inputs)
+  const dom = makeDom(), ids = ['layer-a', 'layer-b', 'layer-c', 'layer-d'], vals = ['768', '769', '', ''];
+  ids.forEach((id, i) => { const e = dom.withId('input', id); e.value = vals[i]; });
+  const G = loadClass('Core Interface/LRCModule.js', 'LRCModule', dom), g = new G();
+  g.generateRhythm();
+  check('generateRhythm with C and D blank: a real grid and composite (1,536 onsets), layers [768, 769, 0, 0]', g.currentGrid === 590592 && g.currentCompositeRhythm.length === 1536 && g.currentRhythms.join() === '768,769,0,0' && g.currentSpacesPlot.every((x) => Number.isFinite(x)));
+}
+
+console.log('\n— ToneRowPlayback.js / PartitionsGlobalControls.js: the one transport (sprint 2)');
+{
+  const trp = fs.readFileSync(path.join(ROOT, 'Playback/ToneRowPlayback.js'), 'utf8'), pgcSrc = fs.readFileSync(path.join(ROOT, 'Playback/Partitions/PartitionsGlobalControls.js'), 'utf8');
+  check('the edits are marked COMPOSITION LENS (sprint 2)', (trp.match(/COMPOSITION LENS \(sprint 2\)/g) || []).length >= 2 && /COMPOSITION LENS \(sprint 2\)/.test(pgcSrc) && /COMPOSITION LENS \(sprint 2\)/.test(fs.readFileSync(path.join(ROOT, 'Core Interface/LRCModule.js'), 'utf8')));
+  const dom = makeDom(), T = loadClass('Playback/ToneRowPlayback.js', 'ToneRowPlayback', dom);
+  const log = [], pb = Object.create(T.prototype);
+  Object.assign(pb, { isPlaying: false, async startPlayback() { this.isPlaying = true; log.push('start'); }, stopPlayback() { this.isPlaying = false; log.push('stop'); } });
+  await pb.togglePlayback(); await pb.togglePlayback();
+  check('no Composer on the page: togglePlayback starts and stops the row exactly as before', log.join() === 'start,stop' && pb.transportIsPlaying() === false);
+  dom.window.lrcComposer = { transport: { owns: () => false, isPlaying: () => true, toggle: () => log.push('lens') } };
+  await pb.togglePlayback();
+  check('the row lens (the transport not owned): still the row\'s', log.join() === 'start,stop,start' && pb.transportIsPlaying() === true);
+  pb.stopPlayback();
 }
 
 console.log('\n— LRCVisuals.js: the hook');

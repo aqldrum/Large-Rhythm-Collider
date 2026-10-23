@@ -769,6 +769,14 @@ class ToneRowPlayback {
     // ====================================
 
     async togglePlayback() {
+        // COMPOSITION LENS (sprint 2): one transport. Under the Composition lens the canvas shows the composition,
+        // so Play/Stop plays and stops it (Composer/page/lens.js); under the row lens nothing here changes.
+        const transport = window.lrcComposer?.transport;
+        if (transport && transport.owns()) {
+            transport.toggle();
+            this.updatePlayButton();
+            return;
+        }
         if (this.isPlaying) {
             this.stopPlayback();
         } else {
@@ -1296,10 +1304,16 @@ class ToneRowPlayback {
         legatoBtn.classList.toggle('active', this.legatoEnabled);
     }
 
+    // COMPOSITION LENS (sprint 2): is whatever the canvas shows playing? (the row, or under the lens its composition)
+    transportIsPlaying() {
+        const transport = window.lrcComposer?.transport;
+        return transport && transport.owns() ? transport.isPlaying() : this.isPlaying;
+    }
+
     updatePlayButton() {
         const playBtn = document.getElementById('play-stop-btn');
         if (playBtn) {
-            if (this.isPlaying) {
+            if (this.transportIsPlaying()) { // COMPOSITION LENS (sprint 2): was this.isPlaying
                 playBtn.textContent = '⏹ Stop';
                 playBtn.classList.add('playing');
             } else {

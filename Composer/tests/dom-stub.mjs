@@ -9,6 +9,8 @@ export function recordingContext(canvas) {
   const rec = (name) => (...args) => { calls.push([name, ...args]); };
   const ctx = { canvas, calls, fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, globalAlpha: 1, lineCap: 'butt', lineJoin: 'miter', imageSmoothingEnabled: true, imageSmoothingQuality: 'low', font: '10px sans-serif', textAlign: 'start' };
   for (const m of ['save', 'restore', 'beginPath', 'closePath', 'moveTo', 'lineTo', 'arc', 'rect', 'fill', 'stroke', 'fillRect', 'clearRect', 'strokeRect', 'drawImage', 'setTransform', 'scale', 'translate', 'fillText', 'setLineDash', 'clip', 'quadraticCurveTo', 'bezierCurveTo', 'ellipse', 'roundRect']) ctx[m] = rec(m);
+  // gradients (the site's lighting animation glows its dots): recorded, with a stop-taking stand-in
+  for (const m of ['createRadialGradient', 'createLinearGradient']) ctx[m] = (...args) => { calls.push([m, ...args]); return { addColorStop() {} }; };
   // property writes that matter for a drawing are recorded too (fillStyle before a fill, etc.)
   return new Proxy(ctx, { set(t, k, v) { if (typeof k === 'string' && !['calls'].includes(k)) calls.push(['set', k, v]); t[k] = v; return true; } });
 }
@@ -75,6 +77,8 @@ export function makeDom() {
     get options() { const out = []; const walk = (n) => { for (const c of n.children) { if (c.tagName === 'OPTION') out.push(c); else walk(c); } }; walk(this); return out; }
     setAttribute(k, v) { if (k === 'id') this.id = v; else if (k === 'class') this.className = v; else this.attributes[k] = String(v); }
     getAttribute(k) { return k === 'class' ? this.className : this.attributes[k] ?? null; }
+    removeAttribute(k) { if (k === 'class') this.className = ''; else delete this.attributes[k]; }
+    hasAttribute(k) { return k === 'class' ? !!this.className : k in this.attributes; }
     get clientWidth() { return 100; } get clientHeight() { return 20; }
     get scrollWidth() { return 100; }
     getBoundingClientRect() { return { left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20, x: 0, y: 0 }; }
@@ -91,12 +95,18 @@ export function makeDom() {
   }
   const matchOne = (el, sel) => {
     const last = sel.split(/\s+/).pop();
-    const m = last.match(/^([a-zA-Z]*)((?:[#.][\w-]+)*)$/);
+    const m = last.match(/^([a-zA-Z]*)((?:[#.][\w-]+)*)((?:\[[\w-]+(?:="[^"]*")?\])*)$/);
     if (!m) return false;
     if (m[1] && el.tagName !== m[1].toUpperCase()) return false;
     for (const part of m[2].match(/[#.][\w-]+/g) || []) {
       if (part[0] === '#' && el.id !== part.slice(1)) return false;
       if (part[0] === '.' && !el.classList.contains(part.slice(1))) return false;
+    }
+    // [attr] and [attr="value"] (a data-* attribute is found set by setAttribute or by dataset)
+    for (const [, name, value] of (m[3] || '').matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)) {
+      const camel = name.startsWith('data-') ? name.slice(5).replace(/-(\w)/g, (_, c) => c.toUpperCase()) : null;
+      const v = name in el.attributes ? el.attributes[name] : camel && camel in el.dataset ? String(el.dataset[camel]) : undefined;
+      if (v === undefined || (value !== undefined && v !== value)) return false;
     }
     return true;
   };

@@ -10,7 +10,9 @@
 //              to the overlay's ordinary draw. Skip (a click, Esc) jumps there; cancel (any change) drops it.
 //
 //   const a = createComposeAnimator({ clock })
-//   a.wait() · a.start({ trace, plot, final }) → whether there was anything to animate · a.skip() · a.cancel()
+//   a.wait() · a.start({ trace, plot, final, pace }) → whether there was anything to animate · a.skip() · a.cancel()
+//   pace (sprint 2 seam): how fast the scene's clock runs (1 as paced; 2 twice as brisk), for the Composition lens's
+//   callers (the tutorial wants it brisker). The scene itself is unchanged; only its clock is scaled.
 //   a.tick() → { kind: 'shimmer', phase } | { kind: 'frame', frame } | { kind: 'ended', frame } | null (idle)
 //   paintFrame(ctx, view, frame, final, { selected }) · paintShimmer(ctx, view, phase)
 
@@ -33,17 +35,17 @@ export function writeShowWork(storage, on) {
 
 /** the driver: idle → waiting → playing → idle, on an injected clock (ms) */
 export function createComposeAnimator({ clock = () => (globalThis.performance ? performance.now() : Date.now()) } = {}) {
-  let status = 'idle', scene = null, t0 = 0, waitedAt = 0;
+  let status = 'idle', scene = null, t0 = 0, waitedAt = 0, rate = 1;
   return {
     get status() { return status; },
     get scene() { return scene; },
     /** Compose is running: shimmer until start() or cancel() */
     wait() { status = 'waiting'; scene = null; waitedAt = clock(); },
     /** the trace is here → whether there is anything to animate (a refusal, a trace of another rhythm: no) */
-    start({ trace, plot, final, timeline = null }) {
+    start({ trace, plot, final, timeline = null, pace = 1 }) {
       const s = buildScene({ trace, plot, final, timeline });
       if (!s) { status = 'idle'; scene = null; return false; }
-      scene = s; status = 'playing'; t0 = clock();
+      scene = s; status = 'playing'; t0 = clock(); rate = Number(pace) > 0 ? Number(pace) : 1;
       return true;
     },
     /** jump to the end (playing only) → whether it did */
@@ -51,11 +53,12 @@ export function createComposeAnimator({ clock = () => (globalThis.performance ? 
     /** drop it, waiting or playing → whether there was one */
     cancel() { if (status === 'idle') return false; status = 'idle'; scene = null; return true; },
     /** seconds into the animation (null unless playing) */
-    elapsed: () => (status === 'playing' ? (clock() - t0) / 1000 : null),
+    elapsed: () => (status === 'playing' ? ((clock() - t0) / 1000) * rate : null),
+    get pace() { return rate; },
     tick() {
       if (status === 'waiting') return { kind: 'shimmer', phase: (((clock() - waitedAt) / 1000) / SHIMMER_SECONDS) % 1 };
       if (status !== 'playing') return null;
-      const t = (clock() - t0) / 1000;
+      const t = ((clock() - t0) / 1000) * rate;
       if (t >= scene.end) { const frame = finalFrame(scene); status = 'idle'; scene = null; return { kind: 'ended', frame }; }
       return { kind: 'frame', frame: frameAt(scene, t) };
     },

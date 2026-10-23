@@ -9,6 +9,8 @@
     <link rel="stylesheet" href="Playback/AdvancedPlayback/progression-bar.css?v=8">
     <!-- Composer tab in the Partitions window (Composer/page/) -->
     <link rel="stylesheet" href="Composer/page/composer-tab.css?v=20261022">
+    <!-- COMPOSITION LENS (sprint 2): the header glyph, the part strips, the Scale/Families locks (Composer/page/) -->
+    <link rel="stylesheet" href="Composer/page/composition-lens.css?v=20261023">
 </head>
 <body>
     <!-- Black Canvas Background -->
@@ -124,6 +126,9 @@
                 </nav>
             </div>
             <div class="title-bar-controls">
+                <!-- COMPOSITION LENS (sprint 2): the glyph — hidden until a rhythm generates; a lens toggle (row ⇄ its
+                     composition), wired by Composer/page/toolbar-glyph.js. Beamed eighths, no text on the button. -->
+                <button id="composition-glyph" class="composition-glyph" type="button" aria-pressed="false" aria-label="Compose" data-tip="Compose" data-state="hidden" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path class="glyph-stems" d="M9.2 17.2V6.6M20 15.2V4.6"></path><path class="glyph-beam" d="M9.2 6.6 20 4.6v2.7L9.2 9.3Z"></path><ellipse cx="6.6" cy="17.4" rx="2.7" ry="1.95" transform="rotate(-22 6.6 17.4)"></ellipse><ellipse cx="17.4" cy="15.4" rx="2.7" ry="1.95" transform="rotate(-22 17.4 15.4)"></ellipse></svg></button>
                 <button id="cosmos-enter-btn" class="reset-btn" title="Fly the rhythm cosmos — select a rhythm out in space and load it into the engine"><img class="cosmos-icon" src="assets/images/cosmos.png" alt="Cosmos"></button>
                 <button id="reset-display-btn" class="reset-btn">Reset Display</button>
             </div>
@@ -465,7 +470,7 @@
     </script>
 
     <!-- Interface Core Modules -->
-    <script src="Core Interface/LRCModule.js?v=20261022"></script>
+    <script src="Core Interface/LRCModule.js?v=20261023"></script>
     <script src="Core Interface/LRCHudController.js"></script>
     <script src="Core Interface/ExpandedInfoView.js"></script>
     <script src="Playback/Partitions/PartitionsDistribution.js"></script>
@@ -473,7 +478,7 @@
     <script src="Playback/Partitions/PartitionsBlockLights.js"></script>
     <script src="Playback/Partitions/PartitionsSamples.js"></script>
     <script src="Playback/Partitions/TransposeUI.js"></script>
-    <script src="Playback/Partitions/PartitionsGlobalControls.js"></script>
+    <script src="Playback/Partitions/PartitionsGlobalControls.js?v=20261023"></script>
     <script src="Playback/Partitions/PartitionsPlayback.js?v=20261021"></script>
     <script src="Playback/Partitions/PartitionsUI.js?v=20261022"></script>
     <script src="Core Interface/LRCSearch.js?"></script>
@@ -586,11 +591,12 @@
         <script src="Playback/AudioEngine.js?v=20261021"></script>
         <script src="Playback/Scheduler.js"></script>
         <script src="Playback/MIDIOut.js?v=20260811"></script>
-        <script src="Playback/ToneRowPlayback.js?v=20261021"></script>
+        <script src="Playback/ToneRowPlayback.js?v=20261023"></script>
         <!-- Shared voice library (Audio/voices/) as window.lrcVoices: the layers' sounds -->
         <script type="module" src="Audio/lrc-voices-bridge.js?v=20261021"></script>
-        <!-- The Composer (Composer/) as window.lrcComposer: the Composer tab beside Partitions -->
-        <script type="module" src="Composer/page/composer-bridge.js?v=20261022"></script>
+        <!-- The Composer (Composer/) as window.lrcComposer: the Composer tab beside Partitions, and (sprint 2) the
+             Composition lens: the header glyph, the composition store, the part strips, the one transport -->
+        <script type="module" src="Composer/page/composer-bridge.js?v=20261023"></script>
         <script src="Core Interface/AudioEffects.js?v=20241022"></script>
 
         <!-- Progression Solver (Quality Painting on the main page) -->
