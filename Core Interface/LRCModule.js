@@ -37,10 +37,14 @@ class LRCModule {
         return (a * b) / this.gcd(a, b);
     }
 
-    calculateTotalLCM(a, b, c, d) {
-        const lcmAB = this.lcm(a, b);
-        const lcmABC = this.lcm(lcmAB, c);
-        return this.lcm(lcmABC, d);
+    // COMPOSITION LENS (sprint 2): the grid of the layers given, ignoring missing ones. Callers pass only the active
+    // layers (`...activeLayers`), so a rhythm with blank C and D used to compute lcm(x, undefined) = NaN. Missing,
+    // zero or non-numeric layers are skipped now; four whole layers give exactly what they gave before (lcm(1, a)
+    // is a, then the same chain). No layer at all: 0 (no grid).
+    calculateTotalLCM(...layers) {
+        const present = layers.filter(v => Number.isFinite(v) && v > 0);
+        if (present.length === 0) return 0;
+        return present.reduce((grid, v) => this.lcm(grid, v), 1);
     }
 
     // ====================================
