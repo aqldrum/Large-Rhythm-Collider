@@ -85,11 +85,12 @@ python3 -m http.server 8000
   - `part-strips.js`: the Playback div's part strips under the lens, in sync with the window
   - `panel-locks.js`: the Scale Selection chord-tone readout and lock, and the Families note
   - `composition-lens.css`: the glyph, the strips and the locks; `plot-overlay.js`'s `createOverlaySeat` shares the one overlay between the tab and the lens
+  - `theater.js` + `theater.css` (sprint 2, step 2): "show the work" as theater, driven by the lens's events: the scrim (one class on `<body>`) and the floating caption around a rhythm's first animated compose, every click or Esc a skip, a window opened mid-show a skip (`lrcComposer.theater`); the short recall version is `trace-frames.js`' `recallTimeline`
 - **`tests/`:** plain Node scripts with no runner.
   - `assert-drums.mjs` checks the drums against the row and against Partitions' own Euclid.
   - `assert-trace.mjs` checks that the trace never steers the spec and that every ref is a real onset.
   - `assert-page-animate.mjs` checks the Compose animation: its frames land exactly on the lit nodes, draw only real onsets, stay bounded on the 16k row, and skip and cancel cleanly.
-  - `assert-page-*.mjs` check the main page's tab and (`assert-page-lens.mjs`) the Composition lens. They use `dom-stub.mjs` (a small DOM) and `site-scripts.mjs` (the site's classic scripts in a vm).
+  - `assert-page-*.mjs` check the main page's tab, (`assert-page-lens.mjs`) the Composition lens and (`assert-page-theater.mjs`) its theater. They use `dom-stub.mjs` (a small DOM) and `site-scripts.mjs` (the site's classic scripts in a vm).
   - `assert-store.mjs` checks the composition store and the controller's binding to it.
   - `rhythms.mjs` is the shared rhythm set, and `settle-baseline.mjs` pins the output from before settling.
   - `time-lines.mjs` is a timing table, not a check.
@@ -103,7 +104,7 @@ Run every suite (the Composer's, the shared voices', Cosmos's and MIDI Out's):
 for t in Composer/tests/assert-*.mjs Cosmos/tests/assert-*.mjs Audio/tests/assert-*.mjs Playback/MIDIOut.test.mjs; do node "$t" >/dev/null 2>&1 || echo FAIL $t; done
 ```
 
-A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added; 55 at the end of that sprint; 57 with sprint 2's `assert-store.mjs` and `assert-page-lens.mjs`. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
+A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added; 55 at the end of that sprint; 57 with sprint 2's `assert-store.mjs` and `assert-page-lens.mjs`; 58 with step 2's `assert-page-theater.mjs`. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
 
 ## Where it lives
 

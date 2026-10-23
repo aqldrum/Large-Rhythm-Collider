@@ -915,8 +915,68 @@ The model (Avery agreed, 2026-10-23; `SPRINT2_ORDER.md`): a composition is a **r
 4. **The Partitions window's Play** under the lens plays the composition too (one transport). Is that right inside Partitions?
 5. **Stopped readout:** all of the composition's tones (built), or the first bar's chord?
 6. **The part strips' grammar:** one part's controls at a time, like the layers (built), or all six as compact rows?
-7. **ProgressionBar open under the lens:** its own lock paints the scale chart every frame, so the two readouts would fight. Close it on entering the lens, or leave it?
-8. **Module caching:** the bridge's imports carry no `?v=`, so a browser pass needs a hard reload after pulling.
+7. **ProgressionBar open under the lens:** its own lock paints the scale chart every frame, so the two readouts would fight. Close it on entering the lens, or leave it? (Step 2: the bar yields the chart to the lens; see "Theater".)
+8. **Module caching:** the bridge's imports carry no `?v=`, so a browser pass needs a hard reload after pulling. (Step 2: no clean fix; see "Theater".)
+
+## Theater (sprint 2, step 2; built 2026-10-23)
+
+The order (`SPRINT2_ORDER.md`, step 2): during a rhythm's first animated compose, a scrim dims the page around the canvas, the caption floats on it, any click or Esc skips, a recall plays a short version, reduced motion jumps to the landing, and callers get a `pace`. Everything below that isn't the order is **proposed, not ruled**. Nothing here has been seen in a browser yet.
+
+**The module** (`Composer/page/theater.js` + `theater.css`, `lrcComposer.theater`). It's driven by the lens's events and owns no clock; it draws nothing on the canvas.
+- **The scrim** is one class, `composition-theater`, on `<body>`. `theater.css` dims four of the five HUD panels (Rhythm Input, Rhythm Info, Visualizations, Search) and the header's title and buttons, and lights the glyph.
+  - **Proposed:** the Playback div stays lit ("the other four divs"): its part strips are where the performance takes over when the scrim lifts. Dimming all five is one selector in `theater.css` (and `THEATER_KEEP`).
+  - Nothing on the panels themselves is written, so removing the class restores them exactly (tested: each panel's and the header's class, style, attributes and dataset, before and after).
+  - It goes up on `composing` (with an animation coming) and stays through `animating`. It lifts on `skip`, `landed` and `row`, and fades through `composition-theater-lifting` for 320 ms.
+- **The caption** is the animation frame's own label and detail (the trace's captions), in a box of its own fixed under the header, over the canvas. Under the full show it also says "click or Esc to skip". It's made when shown and removed when hidden. The short version gets the caption but no scrim (**proposed**: dimming the page for 1.5 s would flash).
+- **Skips while the scrim is up** (capture-phase listeners on the document, removed with the scrim):
+  - any click, except on the glyph, skips to the landing and is swallowed, so a click meant to skip doesn't also press the button under it (**proposed**);
+  - a press (`pointerdown`, `mousedown`, `touchstart`) is swallowed too, so no panel drag starts under the scrim; it doesn't skip;
+  - Esc skips; other keys pass;
+  - the glyph is the cancel: back to the row.
+- **During Compose** (the shimmer), a skip is **queued** (`lens.skip()` now does this): the scrim lifts at once, the shimmer runs on, and the compose lands straight on the landing, unanimated. Esc and a canvas click do the same in the lens itself, so this works without the scrim (a short re-compose).
+- **A window opened mid-show** (Partitions or the Expanded Info View: their `visualizationOverlayStateChanged`, or `lrcComposer.showTab()`) skips to the landing, so the window opens on the composition playing, never on a half-drawn frame (**proposed**: a skip, not a cancel; the planner's word was "cancel").
+- **The other cancels** (a new rhythm, a new cycle, the glyph) are the lens going back to the row. The theater takes down the scrim, the caption and its listeners. Tested: after each one, the later frames draw nothing (zero canvas calls), no frame is queued, and the plot is the row's call for call.
+
+**The lens's timing** (small edits to `lens.js`):
+- **The full show** (the whole trace, fitted to 4–7.5 s) plays once per rhythm and cycle (store key) a page: the first animated compose of that key, seen or skipped.
+- **The short version** is `trace-frames.js` `recallTimeline`: the same scene builder on a timeline where only root (0.4 s), lead (0.5 s), parts (0.45 s) and drums (0.15 s) get time, 1.5 s at pace 1. Every other beat is zero-length, so no frame stops on one (what they leave behind still shows).
+  - It plays for a **recall**, and for a **later compose** of the same key (after a seed or knob edit; **proposed**: "only the first compose animates the full ~7.5 s").
+  - A recall with no trace (made with "show the work" off) lands at once.
+- **No motion:** "show the work" off, or `prefers-reduced-motion` (the bridge's `motionAllowed(win)`, a `motion` dep of the lens), means no shimmer, no animation and no scrim. Compose runs, then it lands; a recall lands at once. The trace is still asked for while the work is shown, so the window's Decisions table keeps it.
+- **The events' details:** `composing` `{ showWork, animate, short }` · `animating` `{ scene, pace, recalled, short }` · `skip` `{ queued }` · `landed` `{ recalled }`. `lens.onFrame(fn)` gives each animation frame (`fn(frame, { short })`), so the theater never ticks the animator itself, and the glyph doesn't re-render 60 times a second.
+- **One frame loop:** the loop now carries a generation. A cancel and a re-press before the next frame used to leave the old queued frame alive, which ran a second loop (two ticks and two paints a frame, for good). Found while testing "no stale draws"; fixed and tested.
+
+**For the tutorial (step 3):** `await lrcComposer.lens.press({ pace })` resolves to `'landed'` once the animation lands and the performance has started (or to `'idle'` if it went back to the row: a refusal, or a cancel).
+- `pace` divides the animation's duration: the full show lasts `scene.end / pace` seconds and the short one `1.5 / pace`. Compose's own solve time isn't scaled. A pace that isn't a positive number is 1.
+- To wait without the promise, listen for `lens.onChange` `landed` (and `row` for the way out). The scrim is `lrcComposer.theater.up`. `animating` carries `scene.end`, for a budget.
+- Note: the tutorial's own spotlight clicks must not be dispatched as page clicks while the scrim is up, or they skip the show.
+
+**Carry-overs from step 1:**
+1. **ProgressionBar vs the lens's readout (proposed: the bar yields).** `ProgressionBar._paintChartForSection` and its frame loop's chart paint now do nothing while the Scale chart carries the lens's `composition-locked` (`ProgressionBar.chartYielded()`). That covers the loop, a bracket drag and a solve. On the way out, the lens's Scale lock rebuilds the chart from the row's selection, then calls `ProgressionBar.repaintChart()`, so a locked voicing shows its section again exactly as before the lens. The bar's own lock, its brackets and its PaintEngine are untouched. Tested on the real ProgressionBar in a vm.
+2. **Cache-busting: not cleanly possible; documented.** ES modules resolve a relative import against the importer's URL *without* its query, so the bridge's `?v=` can't reach the modules under it. A version on every import means rewriting every static import in the bridge's 35-module graph on every bump. A per-file import map could work, but it has to list every module, and the compose worker doesn't see the page's import map. The site is static GitHub Pages (no headers of ours), which serves `max-age=600`, so the live site heals within ten minutes. For a browser pass after pulling: hard-reload, or keep DevTools' "Disable cache" on. The bridge's `?v=` (bumped to `20261023.2`) still refreshes the entry, and the stylesheets' `?v=` work as before.
+
+**Site edits** (small): `index.html` (`theater.css` linked; the bridge's and ProgressionBar's `?v=` bumped); `ProgressionBar.js` (`chartYielded`, `repaintChart`, the two yields, marked `COMPOSITION LENS (sprint 2, step 2)`).
+
+**Tests:** `assert-page-theater.mjs` (79), over the real LRCModule, LRCVisuals, ToneRowPlayback transport and ProgressionBar. It covers:
+- the scrim on and off with the panels' exact restore, and theater.css' selectors;
+- the caption and its label; the lift and its timer;
+- the timing of the full show vs the recall's 1.5 s, and the short version's beats;
+- eight skip paths, plus three queued during Compose;
+- the swallowed press, and the glyph as a cancel;
+- the cancels with no stale draw, and the one frame loop;
+- reduced motion and the setting off; `motionAllowed`;
+- pace on both versions, and bad paces;
+- ProgressionBar yielding and getting the chart back.
+
+`assert-page-lens.mjs` now expects the short version before a recall plays (78).
+
+**Open (for Avery):**
+1. **Which panels dim:** four, with Playback lit (built), or all five?
+2. **A click under the scrim:** swallowed (built), or passed through to what it lands on as well as skipping?
+3. **The short version:** for a recall and a later compose (built), or should a recall just land (the order allowed either)? Is 1.5 s right?
+4. **A window opened mid-show:** skip to the landing (built), or cancel back to the row?
+5. **The window's own Compose animation** (in the Composer tab) doesn't yet respect `prefers-reduced-motion`. Should it?
+6. **The full show is once a page per rhythm and cycle.** Should it be once a session (sessionStorage), like the glyph's breath?
 
 ## Layout (agreed earlier, 2026-10-21)
 
