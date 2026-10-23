@@ -104,3 +104,4 @@ The recommendation says what the store has to hold for each, what new core API e
 ## Log
 
 - 2026-10-23: order written; step 1 dispatched.
+- 2026-10-23: step 1 built (worker): the store (`Composer/store/composition-store.js`; the controller binds an entry), the lens, the glyph, the part strips, the Scale/Families locks and the one transport (`Composer/page/lens.js`, `toolbar-glyph.js`, `part-strips.js`, `panel-locks.js`, `composition-lens.css`), and the LCM fix. 57 suites clean (`assert-store.mjs` and `assert-page-lens.mjs` new). Calls and open questions in `DESIGN_NOTES.md`, "Composition lens and store". Seams for step 2 (lens events, `pace`) and step 3 (`lrcComposer.lens.press({ pace })`, `#composition-glyph` in `index.html`). Not seen in a browser.

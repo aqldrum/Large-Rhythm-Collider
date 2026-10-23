@@ -12,7 +12,10 @@ Serve the repo root as a static site and open the lab:
 python3 -m http.server 8000
 ```
 
-**On the main page:** open `http://localhost:8000/` and generate a rhythm. Double-click the Playback panel's header to open the Partitions window, then pick **Composer** in its title bar's tab strip.
+**On the main page:** open `http://localhost:8000/` and generate a rhythm.
+- **The Composition lens (sprint 2):** a notation glyph appears in the header beside the Cosmos button. Press it and the canvas reads the row as its composition: it composes (animated on the Linear Plot), then plays. The Playback div's Play/Stop then plays and stops the composition, the layer strips become part strips, and Scale Selection becomes a live chord-tone readout. Press the glyph again for the row, everything restored. A rhythm composed before is recalled at once, with no re-solve. "Composition lens and store" in `DESIGN_NOTES.md` has the details.
+
+**The Composer window:** double-click the Playback panel's header to open the Partitions window, then pick **Composer** in its title bar's tab strip. It edits the same composition the glyph plays.
 - Compose reads the page's rhythm and Playback cycle. Changing either turns the button back to Compose.
 - Perform stops main playback, and main playback stops the Composer: one thing sounds at a time.
 - The upper-right Linear Plot lights the Composer's notes, a colour a part, with a playhead during Perform.
@@ -69,18 +72,25 @@ python3 -m http.server 8000
   - `compose-runner.js`: the worker for the full table, the main thread for the lean one
   - `readouts.js`: what a view says about a spec
 - **`lab/`:** `composer-lab.html` and `composer-lab.js`, the lab page and its view. `lab-controller.js` and `lab-player.js` re-export the shared modules under their old names.
-- **`page/`:** the main page's Composer tab:
+- **`store/`:** `composition-store.js` (pure), the main page's one composition store (sprint 2): an entry per rhythm + cycle (the shared controller's state shape, which the controller binds), an LRU of 4, `subscribe`, the page-level lens, recall without re-solve.
+- **`page/`:** the main page's Composer tab, and (sprint 2) the Composition lens:
   - `plot-highlights.js`: the pure spec → per-part node highlights mapping, and the playhead's place on the plot
   - `plot-overlay.js`: draws the highlights on the Linear Plot through `LRCVisuals.setComposerOverlay`
   - `tab-controller.js`: the tab's state (no DOM)
   - `composer-tab.js` and `composer-tab.css`: the view
   - `composer-bridge.js`: `window.lrcComposer`, loaded by `index.html`. `PartitionsUI.js` calls it from its tab strip.
-  - `trace-frames.js` and `compose-animator.js`: Compose animated on the Linear Plot from its trace ("show the work", on by default). `trace-frames.js` is the pure trace + time → frame mapping; `compose-animator.js` is the driver and the painter.
+  - `trace-frames.js` and `compose-animator.js`: Compose animated on the Linear Plot from its trace ("show the work", on by default). `trace-frames.js` is the pure trace + time → frame mapping; `compose-animator.js` is the driver and the painter (with a `pace` seam).
+  - `lens.js`: the Composition lens (row ⇄ composition), the one transport (`lrcComposer.transport`), and the page API for later steps (`lrcComposer.lens`: `press({ pace })`, `toRow()`, `onChange`)
+  - `toolbar-glyph.js`: the header glyph (`#composition-glyph` in `index.html`): hidden, ready (one breath a session), composing, lit
+  - `part-strips.js`: the Playback div's part strips under the lens, in sync with the window
+  - `panel-locks.js`: the Scale Selection chord-tone readout and lock, and the Families note
+  - `composition-lens.css`: the glyph, the strips and the locks; `plot-overlay.js`'s `createOverlaySeat` shares the one overlay between the tab and the lens
 - **`tests/`:** plain Node scripts with no runner.
   - `assert-drums.mjs` checks the drums against the row and against Partitions' own Euclid.
   - `assert-trace.mjs` checks that the trace never steers the spec and that every ref is a real onset.
   - `assert-page-animate.mjs` checks the Compose animation: its frames land exactly on the lit nodes, draw only real onsets, stay bounded on the 16k row, and skip and cancel cleanly.
-  - `assert-page-*.mjs` check the main page's tab. They use `dom-stub.mjs` (a small DOM) and `site-scripts.mjs` (the site's classic scripts in a vm).
+  - `assert-page-*.mjs` check the main page's tab and (`assert-page-lens.mjs`) the Composition lens. They use `dom-stub.mjs` (a small DOM) and `site-scripts.mjs` (the site's classic scripts in a vm).
+  - `assert-store.mjs` checks the composition store and the controller's binding to it.
   - `rhythms.mjs` is the shared rhythm set, and `settle-baseline.mjs` pins the output from before settling.
   - `time-lines.mjs` is a timing table, not a check.
 - **`probe/`:** the 2026-10-21 cost probe (`FINDINGS.md`), the source of the onset gate.
@@ -93,7 +103,7 @@ Run every suite (the Composer's, the shared voices', Cosmos's and MIDI Out's):
 for t in Composer/tests/assert-*.mjs Cosmos/tests/assert-*.mjs Audio/tests/assert-*.mjs Playback/MIDIOut.test.mjs; do node "$t" >/dev/null 2>&1 || echo FAIL $t; done
 ```
 
-A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
+A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added; 55 at the end of that sprint; 57 with sprint 2's `assert-store.mjs` and `assert-page-lens.mjs`. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
 
 ## Where it lives
 

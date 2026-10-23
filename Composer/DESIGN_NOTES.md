@@ -1,4 +1,4 @@
-# Composer: design notes (draft, 2026-10-21; updated 2026-10-22)
+# Composer: design notes (draft, 2026-10-21; updated 2026-10-23)
 
 Working notes from Avery's chat with Claude. Items marked **decided** are Avery's calls; everything else is a proposal or an open question. The 2026-10-21 sprint built phases 1–5 on branch `composer-prototype` (the "Phase" sections below), and Avery's first listening pass on 2026-10-22 is recorded under "First listening pass". The drums were built on the night of 2026-10-22 ("Drums"), on branch `sprint/drums`. The compose trace, the shared source for animating Compose, was built the same night ("Compose trace"), on branch `sprint/trace`, and Compose animated from it on the main page ("Compose animation on the main page"), on branch `sprint/animate`. `Composer/README.md` is the short way in: how to run it and where things are.
 
@@ -637,7 +637,7 @@ Avery's layout (the brief): a **Composer tab beside the Partitions tab**, in the
 4. **The Composer's audio path.** Should it go through the page's master and effects (and MIDI out), or stay on its own graph as built?
 5. **Auto-compose on open** for small rows, as the lab does?
 6. **Zoom into a section** (decided as later): the lanes have one column a bar. The Linear Plot gesture (cmd/alt+scroll) is suspended while the window is open, as it is for Partitions.
-7. **Found, not fixed:** in Node, `LRCModule.calculateTotalLCM(...activeLayers)` returns NaN for fewer than four layers. `lcm(x, undefined)` is NaN, so a rhythm entered with blank layers (768:769 with C and D empty) gets a NaN grid. Entering 1 for an unused layer works. This is untested in a browser; worth a look as its own live-site fix.
+7. **Found, not fixed** (fixed 2026-10-23, sprint 2 step 1: see "Composition lens and store"): in Node, `LRCModule.calculateTotalLCM(...activeLayers)` returns NaN for fewer than four layers. `lcm(x, undefined)` is NaN, so a rhythm entered with blank layers (768:769 with C and D empty) gets a NaN grid. Entering 1 for an unused layer works. This is untested in a browser; worth a look as its own live-site fix.
 
 ## Cosmos Compose mode (built 2026-10-22 night, sprint)
 
@@ -826,6 +826,97 @@ Cosmos's Rhythm and Grid cards gained a COMPOSE button (phase E1: audio and logi
 5. **A click under the full veil** does nothing. Should it skip, stop, or pick through?
 6. **The grains:** jittered off their place (a nebula), or exact?
 7. **Parallax:** the face is screen-facing. A small parallax with the camera's turn would make flying feel more present.
+
+## Composition lens and store (sprint 2, step 1; built 2026-10-23)
+
+The model (Avery agreed, 2026-10-23; `SPRINT2_ORDER.md`): a composition is a **reading of the row**, not a second player. A glyph in the header toggles the canvas between the row and its composition, and the one Play/Stop plays whatever the canvas shows. Everything below that isn't the order is **proposed, not ruled**. Nothing here has been seen in a browser yet.
+
+**The store** (`Composer/store/composition-store.js`, pure).
+- **One entry per rhythm + cycle** (`rhythmKey`: `8:7:6:5@4`, the layers as four whole numbers). An entry *is* one composition's state, the shape the shared controller acts on (`newCompositionState`): the input, knob overrides, table, spec and trace, the parts as they play now (on/off, sound, legato), their levels, the drum options and drums, the progression, the playback tempo, and the status and dirty flags.
+- **The controller binds an entry** (`composer-controller.js` `bind(state)`, sprint 2). The page's tab controller selects the page's rhythm in the store and binds that entry, so `tab.state` is the current rhythm's composition. A bind stops playback. The lab keeps the state it starts with, unchanged.
+- **One compose in flight per entry.** Compose on a composing entry joins the compose in flight (the same promise). A compose lands in the entry it was started for, even after the page has moved on: it is cached, not dropped (before sprint 2 the tab dropped it). A change to that entry while it composes drops the answer, as before.
+- **The LRU keeps 4 rhythms (proposed).** The least recently selected goes first, never the current one and never one composing (the store runs over its capacity until that compose lands).
+- **A new cycle of the same layers** starts from that row's last entry's edits: seed, knobs, table, progression, drum options, levels and glide. It doesn't take the spec (proposed: the edits belong to the row, the spec to the row at that cycle). New layers start fresh.
+- **Recall** (`recallable`): an entry with a spec that isn't refused, and isn't **dirty**. Proposed: a seed, knob, table or progression change since the last Compose makes the glyph compose again; live edits (parts on/off, sounds, legato, levels, drums) don't, and they're in the recall. A clean refusal is known (`refused`), so the glyph says why with no re-solve.
+- **The lens** (`'row' | 'composition'`) and `subscribe` (select, lens, made, change, evict) live here too. `made(key, by)` records whether the glyph or the window made the last spec (informational; step 2's "first compose vs cached" reads the lens's `recalled` instead).
+
+**The lens** (`Composer/page/lens.js`).
+- **Row → composition** (the glyph pressed, a rhythm on the page):
+  - main playback stops;
+  - **proposed:** on another plot type the canvas switches to the Linear Plot, and the prior type comes back with the row;
+  - the overlay seat is claimed, so the lit nodes and the playhead are on the main canvas whether the Composer window is open or not;
+  - the panels adapt (below).
+  - Then a **recall** plays at once (no Compose, no animation). With no composition yet, it **composes**: with "show the work" on, the canvas shimmers, the trace is animated on the main canvas (the existing animator, the lens's own instance), then it plays.
+  - **Proposed:** Esc, a click on the main canvas, or Play during the animation skips to the landing and plays. Play while Compose runs waits.
+- **Composition → row:** the glyph again, a new rhythm, a new cycle (noticed on the next frame), the row started by another path, or a plot type picked by hand.
+  - The animation is dropped and the composition stops; it stays in the store.
+  - The seat is released, so with the window closed the plot draws exactly as before (call for call, tested on the real LRCVisuals).
+  - The panels and the plot type are restored.
+  - **Proposed:** a plot type picked by hand under the lens goes back to the row, and the pick stands (the lit nodes are the Linear Plot's).
+  - **Proposed:** the glyph pressed during Compose goes back to the row at once; the compose lands in the store, unplayed.
+- **A refusal or an error** goes back to the row. The glyph's tip says why ("Compose — Too few tones: …") until the next rhythm.
+- **The one transport.** `ToneRowPlayback.togglePlayback` hands Play/Stop to `lrcComposer.transport` while the lens owns it. Under the lens it plays and stops the composition through the shared player (the controller's `perform`/`stop`, so one thing sounds at a time). Stop keeps the composition and the lens. Under the row lens nothing changes. `updatePlayButton` and the Partitions window's button show whatever the canvas plays.
+- **The window under the lens** edits the same entry. **Proposed:** closing it, or switching to its Partitions tab, no longer stops playback while the lens owns it.
+
+**The glyph** (`Composer/page/toolbar-glyph.js`, the markup in `index.html` as `#composition-glyph` so a tutorial can find it).
+- Beamed eighths in an inline SVG, in a 42 × 28 chip like the Cosmos button, placed before it. No text.
+- **States** (`data-state`): hidden (no rhythm) → ready → composing (a shimmer) → lit (the lens).
+- **The breath:** it breathes once a session, the first time it's ready (`sessionStorage` `lrc.composer.glyphBreathed`, every access wrapped).
+- `aria-pressed` is the lens. The tooltip (`data-tip`, shown on hover and keyboard focus) says "Compose" or "Back to the row". It's a `<button>`, so Enter and Space work. `prefers-reduced-motion` turns the breath and the shimmer off.
+
+**The panels.**
+- **Part strips** (`part-strips.js`). The layer strips' grammar: a row of six part buttons (Lead, Chords, Comping, Bass, Inner, Drums, bordered in the part colours) over the picked part's controls (Mute, Sound, Level). For the drums, Sound is the pattern (proposed).
+  - Picking a part picks it in the window too (its inspector, and the ring on the plot).
+  - A change in either view shows in both: levels through the controller's new `onLevel`, so neither slider re-renders mid-drag; everything else through `onChange`.
+  - **Proposed:** each part button carries a dot in the colour of the layer that strikes most of its lit onsets.
+  - The layer strips are only hidden, and the Layer Controls header reads "Part Controls" meanwhile.
+- **Scale Selection** (`panel-locks.js`): locked with ProgressionBar's `_lockScale` pattern, under its own class (`composition-locked`) so the two locks never undo each other. It's alive as a readout:
+  - playing, the rows of the current bar's chord tones light up (the chord voices' tones that bar, plus its root), and the count reads "3 in Cmaj7 · bar 2";
+  - **proposed:** stopped, every tone the composition plays is lit;
+  - the Composer's exact fractions match the site's spelling (checked on three rows), with a ½¢ fallback;
+  - rows are painted by class, with no rebuild and no write to the selection; on the row the chart is rebuilt from the playback's own selection.
+- **Families:** locked, with the note "the composition is choosing; return to the row to edit".
+
+**The page API for steps 2 and 3** (`window.lrcComposer`):
+- `lens`:
+  - `press({ pace })`, which resolves to the phase once it settles
+  - `toComposition`, `toRow`, `skip`
+  - `mode`, `phase` (`idle`, `composing`, `animating` or `landed`), `glyph()`, `refusal`, `priorPlot`
+  - `onChange(fn)` with the events `composing`, `animating` (with the scene and pace), `landed` (`recalled`), `row`, `change` and `glyph`
+- `transport`, `store`, `glyph`, `seat`, `panels`.
+- **The `pace` seam:** `createComposeAnimator().start({ …, pace })` scales the scene's clock; the scene itself is unchanged.
+- Step 2's scrim can hang on `composing`/`animating` and lift on `landed`. Step 3 calls `lens.press({ pace })` after generating.
+
+**Site edits** (small, marked `COMPOSITION LENS (sprint 2)`):
+- `index.html`: the glyph and its stylesheet, with versions bumped.
+- `ToneRowPlayback.js`: `togglePlayback`, `updatePlayButton` and a new `transportIsPlaying`.
+- `PartitionsGlobalControls.js`: `updatePlayButtonState`.
+- `LRCModule.js`: **the live-site LCM bug.** `calculateTotalLCM(...layers)` now skips missing, zero and non-numeric layers, and returns 0 with none. A rhythm with blank C and D used to get a NaN grid. Four layers give exactly the old grid (400 random rhythms, checked against the old code).
+- No edit to `LRCVisuals.js`, `PartitionsUI.js`, `Cosmos/` or the lab.
+
+**Tests:**
+- `assert-store.mjs` (38): keys, the entry shape, select and the carry-over, the LRU, events, the lens, recall without re-solve, the in-flight rules.
+- `assert-page-lens.mjs` (77), over the real LRCModule (generating from the inputs), the real LRCVisuals, ToneRowPlayback's transport methods and PartitionsGlobalControls in a vm. It covers:
+  - glyph states and the breath;
+  - compose → animate → play on the main canvas; the playhead with the window closed;
+  - the scale readout bar by bar; the transport;
+  - strips ⇄ window for mute, sound, level, drums and selection, and the layer dot;
+  - the row restoring everything (the plot call for call);
+  - cached recall with the window's edits; a new rhythm; a new cycle;
+  - skip by Esc, click and Play; press during Compose; pace;
+  - the plot-type switch and restore; 768:769 with blank C and D, end to end; a refusal.
+- `assert-page-site.mjs` (+13): the glyph markup, the stylesheet, the lens's modules in the graph, the LCM fix (old vs new), and the row lens's transport unchanged.
+- Two existing tests changed with the model: `assert-page-tab.mjs` (a new key is a fresh, idle entry; the old one cached) and `assert-page-animate.mjs` (it reads `tab.state` live).
+
+**Open (for Avery):**
+1. **Recall vs dirty.** Should the glyph recall the last spec even after a seed, knob or progression change in the window (built: no, it composes again)?
+2. **The glyph back to the row stops playback** (the planner's call, built). Or should playback carry over to the row?
+3. **The window's own Perform** still plays the composition with the lens on the row; it doesn't flip the lens. Should it?
+4. **The Partitions window's Play** under the lens plays the composition too (one transport). Is that right inside Partitions?
+5. **Stopped readout:** all of the composition's tones (built), or the first bar's chord?
+6. **The part strips' grammar:** one part's controls at a time, like the layers (built), or all six as compact rows?
+7. **ProgressionBar open under the lens:** its own lock paints the scale chart every frame, so the two readouts would fight. Close it on entering the lens, or leave it?
+8. **Module caching:** the bridge's imports carry no `?v=`, so a browser pass needs a hard reload after pulling.
 
 ## Layout (agreed earlier, 2026-10-21)
 
