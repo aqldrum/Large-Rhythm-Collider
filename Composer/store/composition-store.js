@@ -13,7 +13,9 @@
 //   createCompositionStore({ capacity })  → the store:
 //     select(rhythm | null)               the page's rhythm → { key, state, moved, created }; null: no rhythm
 //     key, state, entry(key), keys()      the current key and state; an entry; the keys, least recently used first
-//     recallable(key)                     has this rhythm a composition to recall (made, not refused)? no re-solve
+//     recallable(key)                     has this rhythm a composition to recall? made, not refused, and not
+//                                         edited since (an input, knob, seed or progression change makes it dirty:
+//                                         the glyph composes again then; live edits — parts, levels, drums — don't)
 //     made(key, by)                       who made the last spec: 'glyph' | 'window' (informational; step 2 reads it)
 //     lens, setLens('row' | 'composition') the page-level lens
 //     notify(key, type), subscribe(fn)    fn({ type, key, store }): select · lens · made · change · evict
@@ -123,10 +125,16 @@ export function createCompositionStore({ capacity = STORE_CAPACITY } = {}) {
     keys: () => [...entries.keys()],
     get size() { return entries.size; },
     keyOfState: (state) => (state ? byState.get(state) ?? null : null),
-    /** a composition to recall for this rhythm (made and not refused): the glyph plays it with no re-solve */
+    /** a composition to recall for this rhythm (made, not refused, its inputs not changed since): the glyph plays
+     *  it with no re-solve (proposed: a dirty entry is composed again) */
     recallable(key = current) {
       const s = key ? entries.get(key)?.state : null;
-      return !!(s && s.spec && !s.spec.refused && s.status !== 'composing' && s.status !== 'error');
+      return !!(s && s.spec && !s.spec.refused && !s.dirty && s.status !== 'composing' && s.status !== 'error');
+    },
+    /** was this rhythm refused, its inputs unchanged since? (the glyph says why, with no re-solve) */
+    refused(key = current) {
+      const s = key ? entries.get(key)?.state : null;
+      return !!(s && s.spec && s.spec.refused && !s.dirty && s.status === 'refused');
     },
     made(key, by) {
       const e = key ? entries.get(key) : null;
