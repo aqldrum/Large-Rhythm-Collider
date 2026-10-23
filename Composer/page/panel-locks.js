@@ -13,7 +13,12 @@
 //   compositionTones(spec, parts) → Set(fraction): every tone any part plays (pure)
 //   scaleRowsFor(available, fractions) → Set of the scale's own spellings (exact, else the nearest within ½¢) (pure)
 //   barAt(spec, t) → the bar sounding at spec time t (pure)
-//   createScaleLock({ doc, tab, playback }) · createFamiliesLock({ doc }) → { enter(), leave(), update(), frame(at) }
+//   createScaleLock({ doc, tab, playback, progression }) · createFamiliesLock({ doc }) → { enter(), leave(), update(), frame(at) }
+//
+// ProgressionBar (sprint 2, step 2; proposed): its own lock repaints the chart every frame while it has a voicing.
+// It yields to this readout while the chart carries `composition-locked` (ProgressionBar.chartYielded), and on the
+// way out the chart is rebuilt from the row's selection and then handed back to it (ProgressionBar.repaintChart), so
+// a locked voicing shows its section again exactly as before the lens.
 
 export const LOCK_CLASS = 'composition-locked';
 export const FAMILIES_NOTE = 'the composition is choosing; return to the row to edit';
@@ -70,7 +75,7 @@ export function barAt(spec, t) {
  *   tab       tab-controller.js (the current entry: its spec and parts as they play now)
  *   playback  () → window.toneRowPlayback (its availableRatios, updateScaleDisplay, updateSelectedNotesCount)
  */
-export function createScaleLock({ doc = globalThis.document, tab, playback = () => globalThis.window?.toneRowPlayback ?? null } = {}) {
+export function createScaleLock({ doc = globalThis.document, tab, playback = () => globalThis.window?.toneRowPlayback ?? null, progression = () => globalThis.window?.ProgressionBar ?? null } = {}) {
   let shown = false, lastKey = null, locked = [];
   const containers = () => ['scale-chart-container', 'partitions-scale-container'].map((id) => doc.getElementById?.(id)).filter(Boolean);
   function lock(on) {
@@ -122,6 +127,8 @@ export function createScaleLock({ doc = globalThis.document, tab, playback = () 
       const pb = playback();
       pb?.updateScaleDisplay?.();
       pb?.updateSelectedNotesCount?.();
+      // …and ProgressionBar's locked voicing paints its section over it again, as it did before the lens
+      try { progression()?.repaintChart?.(); } catch (err) { globalThis.console?.warn?.('composition lens: ProgressionBar repaint failed', err); }
     },
     update() { if (shown) show(tab.state.status === 'playing' ? tab.playheadAt() : null, true); },
     frame(at) { if (shown) show(at); },
