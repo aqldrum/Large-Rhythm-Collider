@@ -58,6 +58,21 @@ export function animationTimeline(trace, { budgets = {}, limits = ANIMATION_LIMI
   return tl;
 }
 
+/** the short version (sprint 2, step 2; proposed): a recall, or a later compose of a rhythm whose full show was seen,
+ *  replays only the root → the lead → the parts landing (and the drums), in about 1.5 s at pace 1. Every other beat
+ *  gets no time: its steps are zero-length, so a frame never stops on one (what they leave behind still persists). */
+export const RECALL_SECONDS = 1.5;
+export const RECALL_BUDGETS = Object.freeze({
+  row: 0, root: 0.4, meter: 0, cells: 0, progression: 0, line: 0.5, chords: 0, line2: 0, settle: 0,
+  harmony: 0, parts: 0.45, drums: 0.15, done: 0, refused: 0,
+});
+/** the short version's timeline → null when the trace has none of its beats (nothing to show: land at once) */
+export function recallTimeline(trace, { seconds = RECALL_SECONDS } = {}) {
+  if (!trace || !Array.isArray(trace.events)) return null;
+  const tl = traceTimeline(trace, { budgets: RECALL_BUDGETS, seconds });
+  return tl.seconds > 0 ? tl : null;
+}
+
 /** is this trace of the plotted rhythm, and not a refusal? */
 export const traceMatchesPlot = (trace, plot) => !!(trace && plot && Array.isArray(trace.events) && trace.grid === plot.grid && trace.onsets === plot.n
   && !trace.events.some((e) => e.kind === 'refused'));

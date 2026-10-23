@@ -265,7 +265,10 @@ console.log('\n— a cached recall, no re-solve, with the window\'s edits');
 const solves1 = solves;
 glyphBtn.click();
 await settle(1);
-check('pressed on a rhythm with a composition: it plays at once — no Compose, no animation', solves === solves1 && lens.phase === 'landed' && tab.state.status === 'playing' && events.at(-1).type === 'landed' && events.at(-1).recalled === true && glyph().state === 'lit');
+// (sprint 2, step 2: a recall plays the theater's short version first — assert-page-theater.mjs times it)
+check('pressed on a rhythm with a composition: no Compose; the short version runs (recalled)', solves === solves1 && lens.phase === 'animating' && events.at(-1).type === 'animating' && events.at(-1).recalled === true && events.at(-1).short === true);
+run(1700);
+check('… then it plays', solves === solves1 && lens.phase === 'landed' && tab.state.status === 'playing' && events.at(-1).type === 'landed' && events.at(-1).recalled === true && glyph().state === 'lit');
 check('… with the window\'s edits as they were left (bass off, its sound and level, son)', tab.state.parts.bass.enabled === false && tab.state.parts.bass.sound === other && tab.state.levels.bass === 0.6 && tab.state.drums.mode === 'son' && bridge.overlay.highlights.parts.bass.enabled === false);
 glyphBtn.click();
 // an edit in the window between two presses shows in the recall
@@ -274,7 +277,7 @@ inspector.querySelectorAll('.ctab-part-pick').find((b) => b.textContent === 'Lea
 inspector.querySelector('.ctab-insp-head').querySelectorAll('.ctab-toggle').find((b) => b.textContent === 'legato').click();
 const legato = tab.state.parts.lead.legato;
 bridge.hideTab();
-glyphBtn.click(); await settle(1);
+glyphBtn.click(); await settle(1); run(1700);
 check('an edit made in the window (lead legato) is in the next recall, still no re-solve', solves === solves1 && tab.state.parts.lead.legato === legato && tab.state.status === 'playing');
 
 console.log('\n— a new rhythm');
@@ -284,7 +287,7 @@ check('… the panels restored and the plot plain', layerToggles.style.display =
 check('… the old rhythm\'s composition still cached', store.recallable('8:7:6:5@4') && store.entry('8:7:6:5@4').state.parts.bass.enabled === false);
 await generate([8, 7, 6, 5]);
 const solves2 = solves;
-glyphBtn.click(); await settle(1);
+glyphBtn.click(); await settle(1); run(1700);
 check('8:7:6:5 again, pressed: recalled from the cache, no re-solve', solves === solves2 && lens.phase === 'landed' && tab.state.status === 'playing');
 
 console.log('\n— a new cycle');
@@ -341,7 +344,7 @@ glyphBtn.click();
 console.log('\n— a plot-type switch');
 vis.setPlotType('wheel');
 check('(the plot on the Wheel)', vis.currentPlotType === 'wheel');
-glyphBtn.click(); await settle(1);
+glyphBtn.click(); await settle(1); run(1700);
 check('the glyph pressed on another plot type: the canvas switches to the Linear Plot (recalled, playing)', vis.currentPlotType === 'linear' && lens.priorPlot === 'wheel' && lens.phase === 'landed' && lens.mode === 'composition');
 glyphBtn.click();
 check('back to the row: the Wheel comes back', vis.currentPlotType === 'wheel' && lens.mode === 'row');

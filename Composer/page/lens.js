@@ -24,19 +24,31 @@
 //   lens.mode · lens.phase ('idle' | 'composing' | 'animating' | 'landed') · lens.glyph() · lens.tip() · lens.refusal
 //   lens.press({ pace }) → Promise<phase once settled> · lens.toComposition({ pace }) · lens.toRow() · lens.skip()
 //   lens.transport { owns(), isPlaying(), toggle() } · lens.onChange(fn) → unsubscribe; fn(event, detail)
-//     events: 'composing' · 'animating' · 'landed' (detail { recalled }) · 'row' · 'change' (the composition or
-//     its playback changed under the lens) · 'glyph' (the rhythm appeared, went, or moved)
-//   Seams for later steps: `pace` scales the animation's clock (the tutorial's brisker theater); the events let
-//   step 2 put a scrim around 'composing'/'animating' and lift it on 'landed'.
+//     events: 'composing' (detail { showWork, animate, short }) · 'animating' ({ scene, pace, recalled, short }) ·
+//     'skip' ({ queued }) · 'landed' ({ recalled }) · 'row' · 'change' (the composition or its playback changed under
+//     the lens) · 'glyph' (the rhythm appeared, went, or moved)
+//   lens.onFrame(fn) → unsubscribe; fn(frame, { short }) on each animation frame (theater.js floats its caption)
+//   `pace` scales the animation's clock (the tutorial's brisker theater); theater.js (sprint 2, step 2) puts its scrim
+//   around 'composing'/'animating' and lifts it on 'skip', 'landed' and 'row'.
+//
+// Sprint 2, step 2 — the theater's timing (proposed):
+//   the full show   only a rhythm's first animated compose (per store key, this page) plays the whole trace (4–7.5 s)
+//   the short one   a recall, or a later compose of that rhythm, plays trace-frames.js' recallTimeline (~1.5 s: the
+//                   root → the lead → the parts land). A recall with no trace (made with "show the work" off) lands
+//   no motion       "show the work" off, or `motion()` false (prefers-reduced-motion): no shimmer, no animation —
+//                   Compose runs, then it lands (the trace is still asked for while the work is shown, for the window)
+//   skip            during the animation: the landing. During Compose (the shimmer): queued — the compose lands
+//                   straight on the landing, unanimated
 //
 // The DOM it touches is injected: host (the page: its plot type, its transport button, its Linear Plot), doc (Esc and
 // the main canvas's click, for skipping), raf, and the panels — views with enter(), leave(), update(), frame(at).
 
 import { plotOf } from './plot-highlights.js';
 import { paintFrame, paintShimmer } from './compose-animator.js';
+import { recallTimeline } from './trace-frames.js';
 import { refusalText } from '../perform/readouts.js';
 
-export const LENS_VERSION = 'composition-lens-v1';
+export const LENS_VERSION = 'composition-lens-v2';
 export const GLYPH_STATES = Object.freeze(['hidden', 'ready', 'composing', 'lit']);
 /** the glyph's tooltip a state (proposed) */
 export const GLYPH_TIPS = Object.freeze({ hidden: '', ready: 'Compose', composing: 'Back to the row', lit: 'Back to the row' });
@@ -55,9 +67,13 @@ export const PHASES = Object.freeze(['idle', 'composing', 'animating', 'landed']
  *   tabShown  () → whether the Composer window's tab is shown (it paints the playhead itself then)
  *   plotted   () → { compositeRhythm, grid } of the plot, or null
  */
-export function createLens({ tab, store, host = {}, overlay, seat, animator, raf = (f) => globalThis.requestAnimationFrame?.(f), doc = null, panels = [], tabShown = () => false, plotted = () => null } = {}) {
+export function createLens({ tab, store, host = {}, overlay, seat, animator, raf = (f) => globalThis.requestAnimationFrame?.(f), doc = null, panels = [], tabShown = () => false, plotted = () => null, motion = () => true } = {}) {
   const core = tab.core;
-  const listeners = new Set();
+  const listeners = new Set(), frameListeners = new Set();
+  // sprint 2, step 2: the keys whose full show has played (or been skipped); a skip asked for during Compose; whether
+  // the animation running is a recall's; the frame loop's generation (a stale queued frame never runs a second loop)
+  const fullShown = new Set();
+  let skipQueued = false, animRecalled = false, animShort = false, loopGen = 0;
   let phase = 'idle', session = 0, lensKey = null, priorPlot = null, switching = false, ownScene = false, pace = 1;
   let looping = false, lastPlaying = false, finalLit = null, refusal = null, settle = null;
 
@@ -66,11 +82,12 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
   const redraw = () => visuals()?.drawPlot?.();
   const each = (m, ...a) => { for (const p of panels) { try { p[m]?.(...a); } catch (err) { globalThis.console?.warn?.(`composition lens: panel ${m} failed`, err); } } };
   const resolveSettle = () => { const s = settle; settle = null; s?.(phase); };
-  const dropScene = () => { animator.cancel(); if (ownScene) overlay.setScene(false); ownScene = false; finalLit = null; };
+  const dropScene = () => { animator.cancel(); if (ownScene) overlay.setScene(false); ownScene = false; finalLit = null; skipQueued = false; };
 
   // ── the frame loop: the lens's own animation, the playhead (unless the window paints it), the panels' readouts ──
-  const onKey = (e) => { if (e.key === 'Escape' && phase === 'animating') { e.preventDefault?.(); api.skip(); } };
-  const onCanvasClick = () => { if (phase === 'animating') api.skip(); };
+  const skippable = () => phase === 'animating' || (phase === 'composing' && ownScene && !skipQueued);
+  const onKey = (e) => { if (e.key === 'Escape' && skippable()) { e.preventDefault?.(); api.skip(); } };
+  const onCanvasClick = () => { if (skippable()) api.skip(); };
   let canvasEl = null;
   function startLoop() {
     if (looping) return;
@@ -78,7 +95,8 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
     doc?.addEventListener?.('keydown', onKey);
     canvasEl = doc?.getElementById?.('visualization-canvas') ?? null;
     canvasEl?.addEventListener?.('click', onCanvasClick);
-    raf(frame);
+    const gen = ++loopGen;
+    raf(() => frame(gen));
   }
   function stopLoop() {
     if (!looping) return;
@@ -86,13 +104,14 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
     doc?.removeEventListener?.('keydown', onKey);
     canvasEl?.removeEventListener?.('click', onCanvasClick); canvasEl = null;
   }
-  function frame() {
-    if (!looping) return;
+  function frame(gen) {
+    if (!looping || gen !== loopGen) return;
     tab.syncRhythm();   // a new cycle (or rhythm) is a new store key: the select below takes the lens back to the row
     if (!looping) return;
     const v = visuals(), onLinear = !!v && v.currentPlotType === 'linear';
     const a = ownScene ? animator.tick() : null;
-    if (a && a.kind === 'ended') land(session);
+    if (a && a.kind === 'frame') for (const f of [...frameListeners]) f(a.frame, { short: animShort });
+    if (a && a.kind === 'ended') land(session, { recalled: animRecalled });
     else if (a && onLinear) overlay.paint((ctx, view) => (a.kind === 'frame' ? paintFrame(ctx, view, a.frame, finalLit, { selected: tab.view.selected }) : paintShimmer(ctx, view, a.phase)));
     const at = phase === 'landed' ? tab.playheadAt() : null;
     if (!tabShown()) {
@@ -100,7 +119,18 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
       else if (lastPlaying) { lastPlaying = false; if (onLinear) overlay.frame(null); }
     }
     each('frame', at);
-    if (looping) raf(frame);
+    if (looping && gen === loopGen) raf(() => frame(gen));
+  }
+
+  /** start the animation of `trace` (the short version when `short`) → whether there was anything to animate */
+  function animate(trace, { short, recalled }) {
+    const timeline = short ? recallTimeline(trace) : null;
+    if (short && !timeline) return false;
+    const pl = plotted(), final = tab.highlights(pl);
+    if (!final || !animator.start({ trace, plot: plotOf(pl || {}), final, pace, timeline })) return false;
+    finalLit = final; phase = 'animating'; animRecalled = recalled; animShort = short;
+    emit('animating', { scene: animator.scene, pace, recalled, short });
+    return true;
   }
 
   /** the composition lands: lit on the plot, and played */
@@ -152,14 +182,23 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
       each('enter');
       startLoop();
       host.refreshTransport?.();
-      if (store.recallable(lensKey)) { land(my, { recalled: true }); return done; }
+      if (store.recallable(lensKey)) {
+        // the short version (proposed), with the work shown and motion allowed; else straight to the landing
+        const trace = store.state.trace;
+        if (tab.view.showWork && motion() && trace) {
+          animator.cancel(); overlay.setScene(true); ownScene = true; redraw();
+          if (animate(trace, { short: true, recalled: true })) return done;
+        }
+        land(my, { recalled: true }); return done;
+      }
       if (store.refused(lensKey)) { refusal = refusalText(store.state.spec); api.toRow(); return done; }   // known: no re-solve
 
       // compose (or join the compose in flight for this rhythm)
       phase = 'composing';
-      const work = !!tab.view.showWork;
-      if (work) { animator.wait(); overlay.setScene(true); ownScene = true; redraw(); }
-      emit('composing', { showWork: work });
+      const work = !!tab.view.showWork, moving = work && motion(), short = fullShown.has(lensKey);
+      animRecalled = false; skipQueued = false;
+      if (moving) { animator.wait(); overlay.setScene(true); ownScene = true; redraw(); }
+      emit('composing', { showWork: work, animate: moving, short });
       const key = lensKey, spec = await core.compose({ trace: work });
       if (my !== session || store.lens !== 'composition') return done;   // the lens moved on; the composition is cached
       const st = store.entry(key)?.state ?? null;
@@ -169,14 +208,8 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
         return done;
       }
       store.made(key, 'glyph');
-      if (work && st.trace) {
-        const pl = plotted(), final = tab.highlights(pl);
-        if (final && animator.start({ trace: st.trace, plot: plotOf(pl || {}), final, pace })) {
-          finalLit = final; phase = 'animating';
-          emit('animating', { scene: animator.scene, pace });
-          return done;
-        }
-      }
+      if (moving) fullShown.add(key);   // seen, or skipped: the next show of this rhythm is the short one
+      if (moving && st.trace && !skipQueued && animate(st.trace, { short, recalled: false })) return done;
       land(my);
       return done;
     },
@@ -186,7 +219,7 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
       session++;
       if (store.lens !== 'composition') { resolveSettle(); return phase; }
       dropScene();
-      phase = 'idle';
+      phase = 'idle'; animRecalled = false; animShort = false;
       stopLoop();
       if (core.state.status === 'playing') core.stop();
       store.setLens('row');
@@ -199,8 +232,15 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
       resolveSettle();
       return phase;
     },
-    /** the animation jumps to its landing (and plays) → whether it did */
-    skip() { if (phase !== 'animating') return false; land(session); return true; },
+    /** the animation jumps to its landing (and plays) → whether it did. During Compose with the work shown, the skip
+     *  is queued: the compose lands straight on the landing (sprint 2, step 2) */
+    skip() {
+      if (phase === 'animating') { emit('skip', { queued: false }); land(session, { recalled: animRecalled }); return true; }
+      if (phase === 'composing' && ownScene && !skipQueued) { skipQueued = true; emit('skip', { queued: true }); return true; }
+      return false;
+    },
+    /** is a skip waiting for Compose to finish? */
+    get skipQueued() { return skipQueued; },
 
     transport: Object.freeze({
       /** does the main Play/Stop belong to the composition now? */
@@ -215,6 +255,7 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
       },
     }),
     onChange(f) { listeners.add(f); return () => listeners.delete(f); },
+    onFrame(f) { frameListeners.add(f); return () => frameListeners.delete(f); },
     /** the plot type the lens will put back on the way out (null: none) */
     get priorPlot() { return priorPlot; },
   };

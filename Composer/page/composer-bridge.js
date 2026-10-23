@@ -21,6 +21,14 @@
 //   lrcComposer.transport   { owns(), isPlaying(), toggle() }: ToneRowPlayback routes the one Play/Stop through it
 //   lrcComposer.store       the composition store (read it; the controller writes it)
 //   lrcComposer.glyph       the glyph view (its element, its state)
+//   lrcComposer.theater     theater.js (sprint 2, step 2): the scrim and the floating caption around a rhythm's first
+//                           animated compose, driven by the lens's events; up, captionShown, interrupt()
+//
+// Cache: the bridge's own <script> carries a `?v=`, but ES modules resolve a relative import against the importer's
+// URL without its query, so the modules under it can't inherit one, and a one-constant `?v=` on every import would
+// need every static import rewritten (or a per-file import map, which a worker doesn't see). The site is static
+// (GitHub Pages, no headers of ours), so there is no clean way: after pulling, hard-reload (or keep DevTools' "Disable
+// cache" on). See DESIGN_NOTES "Theater (sprint 2, step 2)".
 
 import { createTabController, TAB_VERSION } from './tab-controller.js';
 import { createComposerTab } from './composer-tab.js';
@@ -32,8 +40,9 @@ import { createLens } from './lens.js';
 import { createToolbarGlyph } from './toolbar-glyph.js';
 import { createPartStrips } from './part-strips.js';
 import { createScaleLock, createFamiliesLock } from './panel-locks.js';
+import { createTheater } from './theater.js';
 
-export const COMPOSER_BRIDGE_VERSION = 'composer-bridge-v2';
+export const COMPOSER_BRIDGE_VERSION = 'composer-bridge-v3';
 
 /** the page, as the tab controller and the lens see it */
 export function pageHost(win) {
@@ -70,8 +79,13 @@ export function pageHost(win) {
   };
 }
 
+/** may the page move? false under prefers-reduced-motion (a matchMedia that throws, or none: it may) */
+export function motionAllowed(win) {
+  try { return !win.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches; } catch { return true; }
+}
+
 /** the bridge over a window (the page's, or a test's stub) */
-export function createComposerBridge(win, { runCompose = createComposeRunner(), createContext, timers, clock, storage, session } = {}) {
+export function createComposerBridge(win, { runCompose = createComposeRunner(), createContext, timers, clock, storage, session, motion = () => motionAllowed(win) } = {}) {
   const doc = win.document, host = pageHost(win);
   const store = createCompositionStore();
   const tab = createTabController({ host, runCompose, createContext, timers, store, keepPlaying: () => store.lens === 'composition' });
@@ -85,11 +99,12 @@ export function createComposerBridge(win, { runCompose = createComposeRunner(), 
   const view = createComposerTab({ tab, doc, visuals, raf: (f) => win.requestAnimationFrame(f), clock, storage: local, overlay, seat });
   const panels = [
     createPartStrips({ doc, tab, highlights: () => tab.highlights(plotted()), layerMap: () => win.lrcModule?.currentLayerMap ?? null }),
-    createScaleLock({ doc, tab, playback: () => win.toneRowPlayback ?? null }),
+    createScaleLock({ doc, tab, playback: () => win.toneRowPlayback ?? null, progression: () => win.ProgressionBar ?? null }),
     createFamiliesLock({ doc }),
   ];
-  const lens = createLens({ tab, store, host, overlay, seat, animator: createComposeAnimator(clock ? { clock } : {}), raf: (f) => win.requestAnimationFrame(f), doc, panels, tabShown: () => view.shown, plotted });
+  const lens = createLens({ tab, store, host, overlay, seat, animator: createComposeAnimator(clock ? { clock } : {}), raf: (f) => win.requestAnimationFrame(f), doc, panels, tabShown: () => view.shown, plotted, motion });
   const glyph = createToolbarGlyph({ doc, lens, session: sess, timers: timers && timers.setTimeout ? timers : win });
+  const theater = createTheater({ doc, win, lens, timers: timers && timers.setTimeout ? timers : win });
   // a new rhythm on the page: the store selects it (the lens goes back to the row; the glyph re-arms); the tab also
   // checks on every frame while shown, and the lens while it is on, for the cycle
   win.addEventListener('rhythmGenerated', () => tab.syncRhythm());
@@ -99,7 +114,7 @@ export function createComposerBridge(win, { runCompose = createComposeRunner(), 
   return Object.freeze({
     version: COMPOSER_BRIDGE_VERSION, tabVersion: TAB_VERSION,
     mountTab: (hosts) => view.mount(hosts),
-    showTab: () => view.show(),
+    showTab: () => { theater.interrupt('window'); view.show(); },   // never open on a half-drawn show
     hideTab: () => view.hide(),
     isShown: () => view.shown,
     isPlaying: () => tab.state.status === 'playing',
@@ -112,6 +127,7 @@ export function createComposerBridge(win, { runCompose = createComposeRunner(), 
     lens,
     transport: lens.transport,
     glyph,
+    theater,
     panels: Object.freeze({ strips: panels[0], scale: panels[1], families: panels[2] }),
   });
 }
