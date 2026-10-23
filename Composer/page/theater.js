@@ -42,7 +42,7 @@ export function createTheater({ doc = globalThis.document, win = globalThis.wind
   const onPress = (e) => { if (!inGlyph(e.target)) swallow(e); };
   const onClick = (e) => { if (inGlyph(e.target)) return; swallow(e); lens.skip(); };
   const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault?.(); lens.skip(); } };
-  const PRESSES = ['pointerdown', 'mousedown', 'touchstart'];
+  const PRESSES = ['pointerdown', 'mousedown', 'touchstart'], ACTIVE = { capture: true, passive: false };
 
   function raise() {
     if (up) return;
@@ -51,7 +51,7 @@ export function createTheater({ doc = globalThis.document, win = globalThis.wind
     body()?.classList.remove(LIFTING_CLASS);
     body()?.classList.add(THEATER_CLASS);
     doc.addEventListener?.('click', onClick, true);
-    for (const t of PRESSES) doc.addEventListener?.(t, onPress, true);
+    for (const t of PRESSES) doc.addEventListener?.(t, onPress, ACTIVE);   // not passive: a touchstart is swallowed too
     doc.addEventListener?.('keydown', onKey, true);
   }
   function lower() {
