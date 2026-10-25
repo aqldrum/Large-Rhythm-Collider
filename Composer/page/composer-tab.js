@@ -294,14 +294,14 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     }
     if (c.badge) cell.append(el('span', { className: 'ctab-badge', textContent: String(c.badge), title: `${c.badge} alternate${c.badge === 1 ? '' : 's'}: select the cell to hear them` }));
     if (c.edited) cell.append(el('span', { className: 'ctab-edited', textContent: '✎', title: `edited${c.editKind ? `: ${c.editKind}` : ''} (not Compose's own)` }));
-    cell.addEventListener('click', () => { tab.selectCell(c.part, c.from); ui?.lanes.focus?.(); });
+    cell.addEventListener('click', () => { tab.selectCell(c.part, c.from); ui?.lanes.focus?.({ preventScroll: true }); });
     return cell;
   }
   function renderMatrix() {
     const typingField = !!fieldInput && doc.activeElement === fieldInput;
     rebuilding = true;
     try { buildMatrix(); } finally { rebuilding = false; }
-    if (typingField && fieldInput.parentNode) fieldInput.focus();
+    if (typingField && fieldInput.parentNode) fieldInput.focus({ preventScroll: true });
   }
   function buildMatrix() {
     const s = tab.state.spec;
@@ -399,7 +399,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   function openCell() {
     tab.setSection(CONTEXT_SECTION);
     const first = hosts?.inspector.querySelector('.ctab-alt, .ctab-step, .ctab-ctx-action');
-    first?.focus?.();
+    first?.focus?.({ preventScroll: true });
   }
   const onKey = (e) => {
     const a = doc.activeElement;
