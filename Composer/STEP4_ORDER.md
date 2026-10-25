@@ -113,3 +113,4 @@ Merge, run the full suite, then write a browser list for Avery: swaps (chord, le
 
 ## Log
 - 2026-10-25: order written; Avery took the proposed answers on all 8 questions. Not dispatched yet.
+- 2026-10-25: 4c built on `step4/drums`: the `grid` source (`mode: 'grid'`, silent cells), `gridOf` (exact for backbeat, every pattern and prime; `against` onset-exact; `with` 28 % and `partition` 34 % keep their onsets), and `mode: 'prime'` (p nearest N·S, as decided; measured: its level-2 swing is up to a whole slot, and below N·S the downbeat cell goes silent; proposed: p ≈ 4·N·S). Unchanged without a grid (595 hashes). 60 suites clean. DESIGN_NOTES "Step 4c".

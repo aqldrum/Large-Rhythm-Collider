@@ -89,6 +89,7 @@ python3 -m http.server 8000
 - **`../Tutorial/`** (sprint 2, step 3): the guided tour of the main page, `window.lrcTour`. `tour-script.js` is the pure script (the seeded layer generator, the opening's timing model, the steps as data); `tour-driver.js` plays it with a spotlight, popups and motion (real typing, the real Generate, the glyph through `lens.press({ pace })`, yielding to the theater's scrim); `tour-boot.js` wires the menu's "Take the tour" and the first-visit auto-open; `tour.css`. The old slides (`TutorialUI.js`, `TutorialContent.js`) stay as "Read the guide". "Interactive tutorial" in `DESIGN_NOTES.md`.
 - **`tests/`:** plain Node scripts with no runner.
   - `assert-drums.mjs` checks the drums against the row and against Partitions' own Euclid.
+  - `assert-drum-grid.mjs` (step 4c) checks the drum grid source, presets ⇄ grid and the two-level prime partition; `drums-baseline.mjs` pins the drums from before it (sha256, never edited), so that with no grid they stay byte-identical.
   - `assert-trace.mjs` checks that the trace never steers the spec and that every ref is a real onset.
   - `assert-page-animate.mjs` checks the Compose animation: its frames land exactly on the lit nodes, draw only real onsets, stay bounded on the 16k row, and skip and cancel cleanly.
   - `assert-page-*.mjs` check the main page's tab, (`assert-page-lens.mjs`) the Composition lens and (`assert-page-theater.mjs`) its theater. They use `dom-stub.mjs` (a small DOM) and `site-scripts.mjs` (the site's classic scripts in a vm).
@@ -106,7 +107,7 @@ Run every suite (the Composer's, the shared voices', Cosmos's and MIDI Out's):
 for t in Composer/tests/assert-*.mjs Cosmos/tests/assert-*.mjs Audio/tests/assert-*.mjs Playback/MIDIOut.test.mjs; do node "$t" >/dev/null 2>&1 || echo FAIL $t; done
 ```
 
-A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added; 55 at the end of that sprint; 57 with sprint 2's `assert-store.mjs` and `assert-page-lens.mjs`; 58 with step 2's `assert-page-theater.mjs`; 59 with step 3's `assert-tutorial.mjs`. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
+A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added; 55 at the end of that sprint; 57 with sprint 2's `assert-store.mjs` and `assert-page-lens.mjs`; 58 with step 2's `assert-page-theater.mjs`; 59 with step 3's `assert-tutorial.mjs`; 60 with step 4c's `assert-drum-grid.mjs`. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
 
 ## Where it lives
 
