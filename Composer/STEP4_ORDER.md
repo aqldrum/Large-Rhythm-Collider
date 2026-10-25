@@ -113,3 +113,4 @@ Merge, run the full suite, then write a browser list for Avery: swaps (chord, le
 
 ## Log
 - 2026-10-25: order written; Avery took the proposed answers on all 8 questions. Not dispatched yet.
+- 2026-10-25: 4b built on `step4/typed`: `core/chord-symbols.js` (parser parity, tokenizer, `barMaterials`, `resolveSymbols`, symbols ⇄ pins) and quality pins in `core/progression.js`. The ratio form is byte-identical, and `assert-chord-symbols.mjs` is added (60 suites). Quality pins on a root pinned twice with different qualities wait on a one-line harmony.js seam (DESIGN_NOTES "Step 4b"), for after 4a.
