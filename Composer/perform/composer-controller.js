@@ -55,6 +55,9 @@
 //              A re-compose (decision 5) keeps the chord edits as pins (into `progression` as { ratio, quality }),
 //              drops the lead edits, drops a pin the new row lacks, keeps the drum grid only on the same meter, and
 //              says what it dropped in `state.dropped`.
+//   audition   (STEP 4e) audition(run) / keepAudition() / revertAudition() / auditioning(): an edit tried live (the
+//              window's alternates); kept, it is one undo step; reverted, the edits AND the undo/redo stacks are as
+//              they were before it (no redo step is left). Auditions in a row are one audition.
 
 import { compose, rearticulate, chooseMeter, PART_IDS } from '../core/compose.js';
 import { rootCandidates, chooseChordOnRoot, qualityById } from '../core/progression.js';
@@ -63,7 +66,7 @@ import { createPlayer } from './composer-player.js';
 import { arrangeDrums, gridOf, readGrid, beatsOf, ALL_DRUM_MODES, DRUM_VOICES, DEFAULT_KIT, GRID_CHARS } from '../core/drums.js';
 import { DRUM_PATTERNS } from '../core/drum-patterns.js';
 import { MADE_DRUM_CHOICES } from '../../Audio/drums/index.js';
-import { newCompositionState, KNOB_NAMES, emptyEdits } from '../store/composition-store.js';
+import { newCompositionState, KNOB_NAMES, emptyEdits, UNDO_LIMIT } from '../store/composition-store.js';
 import { ALTERNATE_CAPS } from '../core/trace.js';   // STEP 4a
 // STEP 4d: the edits
 import { rearrange, applyRearrange, materialsOf, materialsKey } from '../core/rearrange.js';
@@ -152,6 +155,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   let looseField = { key: null, value: null };   // the field's materials before any compose (the knobs as they are)
   // per state: the fold — each edit's spec in order, so a new edit is one rearrange and an undo of the last is none
   const folds = new WeakMap();
+  // STEP 4e: per state, the audition open on it: { composed, base (the snapshot before it), undo, redo, last }
+  const auditions = new WeakMap();
   const editListeners = new Set();
   const STALE = Symbol('stale');
   const ready = (st) => !!(st.composed && !st.composed.refused && st.spec && !st.spec.refused);
@@ -726,6 +731,54 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       st.undo.push(snapshotOf(st));
       restoreSnapshot(st, snap);
       return applyEdits(st, { kind: 'redo' });
+    },
+
+    // ── STEP 4e: the audition (DESIGN_NOTES "Step 4e") — an edit tried live, then kept as one undo step or taken back
+    // leaving no trace: the undo and redo stacks come back exactly as they were before the first audition ──
+    /** try an edit: run () → one of the actions above (its Promise). Auditions in a row (a second alternate tried
+     *  before keeping) are one audition: keeping it is one undo step, reverting it goes back to before the first. */
+    audition(run) {
+      const st = state;
+      requireSpec(st);
+      let mark = auditions.get(st);
+      if (!mark || mark.composed !== st.composed) {
+        mark = { composed: st.composed, base: snapshotOf(st), undo: st.undo.slice(), redo: st.redo.slice(), last: null };
+        auditions.set(st, mark);
+      }
+      let p;
+      try { p = Promise.resolve(run()); } catch (err) { p = Promise.reject(err); }   // run now: a worker edit is in flight (applying()) as this returns
+      mark.last = p.catch(() => null);
+      return p;
+    },
+    /** is an audition open on the bound entry (and not overtaken by a Compose)? */
+    auditioning: () => { const m = auditions.get(state); return !!m && m.composed === state.composed; },
+    /** keep the audition: it stays, as ONE undo step back to before it → Promise<{ ok }> */
+    keepAudition() {
+      const st = state, mark = auditions.get(st);
+      auditions.delete(st);
+      if (!mark) return Promise.resolve({ ok: false, empty: true, kind: 'keep' });
+      return mark.last.then(() => {
+        if (st.composed !== mark.composed) return { ok: false, stale: true, kind: 'keep' };
+        const now = snapshotOf(st), same = JSON.stringify(now) === JSON.stringify(mark.base);
+        st.undo = same ? mark.undo : [...mark.undo, mark.base];
+        while (st.undo.length > UNDO_LIMIT) st.undo.shift();
+        st.redo = same ? mark.redo : [];
+        changed(st);
+        return { ok: true, kind: 'keep', noop: same };
+      });
+    },
+    /** take the audition back: the edits as they were before it, and the undo and redo stacks too (no redo step is
+     *  left) → Promise<{ ok, … }> */
+    revertAudition() {
+      const st = state, mark = auditions.get(st);
+      auditions.delete(st);
+      if (!mark) return Promise.resolve({ ok: false, empty: true, kind: 'revert' });
+      return mark.last.then(() => {
+        if (st.composed !== mark.composed) return { ok: false, stale: true, kind: 'revert' };
+        restoreSnapshot(st, mark.base);
+        st.undo = mark.undo; st.redo = mark.redo;
+        return applyEdits(st, { kind: 'revert' });
+      });
     },
     get player() { return player; },
     get context() { return ctx; },
