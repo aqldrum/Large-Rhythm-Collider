@@ -181,7 +181,7 @@ console.log('\n— the partition line, from the downbeat');
   check('a layer asked: by name or value, when it strikes the downbeat; refused when it does not', partitionLine(s, drumGrid(s), { layer: 'A' }).value === 8 && partitionLine(s, drumGrid(s), { layer: 6 }).name === 'C'
     && throws(() => partitionLine(specs[1].spec, drumGrid(specs[1].spec), { layer: 'A' }), /does not strike the downbeat/));
   check('hitsPerBar sets the count (N·hitsPerBar, at most v)', partitionLine(specs[1].spec, drumGrid(specs[1].spec), { hitsPerBar: 3 }).hits === 3 * specs[1].spec.knobs.bars);
-  check('the two-level prime source is a visible seam: deferred, it throws', throws(() => levelOneLights(drumGrid(s), { source: 'prime' }), /deferred/));
+  check('the two-level prime source is built (step 4c, assert-drum-grid.mjs): the prime nearest the 2 × 3·2 cells (11 and 13: the larger) lights by default', levelOneLights(drumGrid(s), { source: 'prime' }).count === 13 && throws(() => levelOneLights(drumGrid(s), { source: 'prime', p: 8 }), /prime/));
 }
 
 console.log('\n— curated patterns');

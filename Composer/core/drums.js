@@ -40,8 +40,22 @@
 // nearest S, then the slowest), its v pulses are the blocks (grid mode at P = v, from the phase: each block starts on
 // one of that layer's onsets, and the first on the downbeat), and `hits` of them sound: Partitions' secondary pattern
 // E(hits, v), turned so its first stroke is the downbeat. hits = min(v, N·S) by default (a pulse a slot on average), or
-// N·hitsPerBar. The two-level prime partition (deferred, Avery) is the same selection over another level-1 source:
-// `levelOneLights` names the source and `selectLights` chooses among them; see DESIGN_NOTES "Drums".
+// N·hitsPerBar.
+//
+// Step 4c (DESIGN_NOTES "Step 4c: drum grid and the prime partition"):
+//   grid       `drumOptions.grid`: { voice: [one string a bar] }, each string S·m places (`beatsOf`: m = 1 unless
+//              S < 4; decided: slot resolution, no half-slots), `x` a stroke, `X` an accent, `.` off. A bar in mode
+//              'grid' plays its strings; each cell lands through `land()` like any stroke (the nearest onset in the
+//              place's window, then one place wider, else silent: `silentCells`). Fills and crashes stay options over
+//              it. `gridOf(arrangement)` writes any arrangement back as a grid (a hit's `pos` → place round(pos·m)), so
+//              every mode and pattern is a preset of the grid.
+//   prime      the two-level prime partition (Avery's design). Level 1: p lights evenly over the cycle from the
+//              downbeat, each landed on its nearest onset (uneven in time: they are real onsets); p defaults to the
+//              prime nearest N·S (decided; N·S·m under 4 slots, proposed). Level 2: the bar grid's N·S·m cells treat
+//              the p lights as an even grid, cell j covering lights ⌊j·p/C⌋ up to the next cell's, and a lit cell
+//              strikes its first light. The cells lit are `selectLights(C, hits)` (Euclid from the downbeat; hits = C,
+//              every cell, by default, or N·hitsPerBar), or the grid's perc row when a grid is given. The prime line
+//              plays on the perc, over the backbeat (or over the grid's other voices) (proposed).
 
 import { partitionSizes, euclidPattern } from './cells.js';
 import { phrasesOf, isStrongBeat } from './harmony.js';
@@ -52,6 +66,10 @@ export const DRUM_VOICES = Object.freeze(['kick', 'snare', 'hat', 'perc', 'cym']
 /** the modes laid over the backbeat, then every curated pattern by name */
 export const LAYERED_MODES = Object.freeze(['backbeat', 'with', 'against', 'partition']);
 export const DRUM_MODES = Object.freeze([...LAYERED_MODES, ...PATTERN_NAMES]);
+/** the modes that read a source of their own (step 4c): the step grid, and the two-level prime partition. Kept out of
+ *  DRUM_MODES, the presets' list (the lab's mode select and the tests read it) */
+export const SOURCE_MODES = Object.freeze(['grid', 'prime']);
+export const ALL_DRUM_MODES = Object.freeze([...DRUM_MODES, ...SOURCE_MODES]);
 /** a voice's sound: an Audio/drums choice (`made:<id>` or a sample URL); '' is that voice off */
 export const DEFAULT_KIT = Object.freeze({ kick: 'made:kick', snare: 'made:snare', hat: 'made:hihat', perc: 'made:perc', cym: 'made:cym' });
 export const DRUM_VELOCITY = Object.freeze({ kick: 0.85, snare: 0.75, hat: 0.3, perc: 0.5, cym: 0.55 });
@@ -59,9 +77,13 @@ export const ACCENT = 0.12;
 /** a stroke on an onset more layers strike is that much louder a layer (the row's own accents) */
 export const STRIKE_ACCENT = 0.04;
 export const FILL_MIN_PHRASE_BARS = 4;
-export const DRUM_OPTIONS = Object.freeze(['enabled', 'mode', 'fills', 'kit', 'seed', 'layer', 'hitsPerBar', 'perBar']);
-/** level-1 sources of the partition: 'layer' is built; 'prime' (Avery's two-level prime partition) is deferred */
+export const DRUM_OPTIONS = Object.freeze(['enabled', 'mode', 'fills', 'kit', 'seed', 'layer', 'hitsPerBar', 'perBar', 'grid', 'p']);
+/** level-1 sources of the partition: 'layer' (a layer striking the downbeat) and 'prime' (p even lights, landed) */
 export const PARTITION_SOURCES = Object.freeze(['layer', 'prime']);
+/** what an `X` adds in a grid: the patterns' accent, but the hat's is the backbeat's own beat lift (+0.08), so a
+ *  backbeat written as a grid plays back at its own velocities (proposed) */
+export const GRID_ACCENT = Object.freeze({ kick: ACCENT, snare: ACCENT, hat: 0.08, perc: ACCENT, cym: ACCENT });
+export const GRID_CHARS = Object.freeze({ off: '.', stroke: 'x', accent: 'X' });
 
 const EPS = 1e-9;
 const LAYER_NAMES = 'ABCD';
@@ -163,20 +185,81 @@ export function selectLights(count, hits) {
   return out;
 }
 
+export const isPrime = (n) => { if (!(Number.isSafeInteger(n) && n >= 2)) return false; for (let d = 2; d * d <= n; d++) if (n % d === 0) return false; return true; };
+/** the prime nearest n (decision 7); of two equally near, the larger (proposed: a cell then never lacks a light) */
+export function nearestPrime(n) {
+  if (!(Number.isFinite(n) && n >= 0)) fail(`bad count ${n}`);
+  const c = Math.round(n);
+  for (let d = 0; ; d++) { if (isPrime(c + d)) return c + d; if (c - d >= 2 && isPrime(c - d)) return c - d; }
+}
+
+/** the grid's places a bar and its cells over the cycle: S·m places a bar (decision 6), C = N·S·m cells */
+export function gridShape(g) { const m = beatsOf(g.S).m; return { m, places: g.S * m, cells: g.N * g.S * m }; }
+
+/**
+ * Level 1 of the prime partition: p lights evenly over the cycle from the downbeat, light i aimed at i/p of it and
+ * landed on the onset nearest that place within half a light either side (`snap: 'light'`), then a whole light
+ * either side (`'wide'`), else dark (tick null). So they are uneven in time: each is a real onset.
+ * → [{ i, at (i/p, its even place), tick, time (s from the downbeat), r (its real place, a share of the cycle),
+ *      bar, pos (slot units in its bar), slot, snap }]
+ */
+export function primeLights(g, p) {
+  if (!isPrime(p)) fail(`the prime partition's p must be a prime, not ${p}`);
+  const out = [], w = 1 / p;
+  for (let i = 0; i < p; i++) {
+    const at = i / p;
+    let on = g.nearest(at, at - w / 2, at + w / 2), snap = 'light';
+    if (!on) { on = g.nearest(at, at - w, at + w); snap = 'wide'; }
+    if (!on) { out.push({ i, at, tick: null, time: null, r: null, bar: null, pos: null, slot: null, snap: null }); continue; }
+    const r = g.relOf(on.tick), where = placeOf(g, r);
+    out.push({ i, at, tick: on.tick, time: r * g.T, r, bar: where.bar, pos: where.pos, slot: where.slot, snap });
+  }
+  return out;
+}
+
+/** level 2: the lights cell j of C covers, [from, to) — the p lights read as an even grid, whatever their timing;
+ *  empty (from === to) only when p < C */
+export function cellLights(j, p, C) { return { from: Math.floor((j * p) / C), to: Math.floor(((j + 1) * p) / C) }; }
+
 /**
  * Level 1 of the partition: the lights the selection chooses among, counted from the downbeat.
  *   source 'layer'   a layer that strikes the downbeat: its v pulses, light i at pulse (downbeat's + i) mod v
- *   source 'prime'   DEFERRED (Avery's two-level prime partition): a prime number of lights spread evenly over the
- *                    cycle, landed on onsets, which level 2 (the bars × slots partition) would treat as an even grid
- *                    irrespective of their uneven timing. Not built: it throws, so the seam is visible.
- * → { source, count, tickAt(i) }
+ *   source 'prime'   Avery's two-level prime partition: p lights spread evenly over the cycle (p a prime, by default
+ *                    the prime nearest the grid's cells, N·S when S ≥ 4), each landed on an onset (`primeLights`)
+ * → { source, count, tickAt(i) } (+ lights, for 'prime')
  */
-export function levelOneLights(g, { source = 'layer', layer } = {}) {
-  if (source === 'prime') fail('the two-level prime partition is deferred (DESIGN_NOTES "Drums")');
+export function levelOneLights(g, { source = 'layer', layer, p = null } = {}) {
+  if (source === 'prime') {
+    const count = p ?? nearestPrime(gridShape(g).cells), lights = primeLights(g, count);
+    return { source, count, lights, tickAt: (i) => lights[mod(i, count)].tick };
+  }
   if (source !== 'layer') fail(`no partition source ${JSON.stringify(source)} (${PARTITION_SOURCES.join(', ')})`);
   const L = g.layers.find((x) => x.layer === layer.layer);
   if (!L) fail(`layer ${layer.name} is not in the rhythm`);
   return { source, count: L.value, tickAt: (i) => mod(layer.pulse + i, L.value) * L.step };
+}
+
+/**
+ * The two-level prime partition: level 1's p lights, level 2's C cells, the cells lit and what each strikes.
+ *   lit   null: `selectLights(C, hits)` (Euclid from the downbeat; hits = C by default, or N·hitsPerBar);
+ *         else the lit cells' indices (a grid's perc row)
+ * → { p, cells, hits, lights (primeLights), selected: [cell], struck: [{ cell, light }], silent: [{ cell, why }],
+ *     emptyCells (cells covering no light), perCell (lights a cell: min, max) }
+ */
+export function primePartition(spec, g = drumGrid(spec), { p = null, hitsPerBar = null, lit = null } = {}) {
+  const C = gridShape(g).cells, L1 = levelOneLights(g, { source: 'prime', p }), P1 = L1.count;
+  const hits = lit ? lit.length : Math.max(1, Math.min(C, hitsPerBar != null ? Math.round(hitsPerBar * g.N) : C));
+  const selected = lit ? [...lit].sort((a, b) => a - b) : selectLights(C, hits);
+  const struck = [], silent = [];
+  for (const j of selected) {
+    const { from, to } = cellLights(j, P1, C);
+    if (from >= to) { silent.push({ cell: j, why: 'the cell covers no light (p < cells)' }); continue; }
+    if (L1.lights[from].tick == null) { silent.push({ cell: j, why: `its first light (${from}) found no onset` }); continue; }
+    struck.push({ cell: j, light: from });
+  }
+  let empty = 0, lo = Infinity, hi = 0;
+  for (let j = 0; j < C; j++) { const { from, to } = cellLights(j, P1, C), n = to - from; if (!n) empty++; lo = Math.min(lo, n); hi = Math.max(hi, n); }
+  return { p: P1, cells: C, hits: selected.length, lights: L1.lights, selected, struck, silent, emptyCells: empty, perCell: { min: lo, max: hi } };
 }
 
 /**
@@ -205,24 +288,88 @@ export function partitionLine(spec, g = drumGrid(spec), { layer = null, hitsPerB
 export function readDrumOptions(options = {}) {
   const o = options || {};
   for (const k of Object.keys(o)) if (!DRUM_OPTIONS.includes(k)) fail(`no drum option "${k}" (${DRUM_OPTIONS.join(', ')})`);
-  const mode = o.mode ?? 'backbeat';
-  if (!DRUM_MODES.includes(mode)) fail(`mode must be one of ${DRUM_MODES.join(', ')}, not ${JSON.stringify(mode)}`);
+  const grid = o.grid == null ? null : readGrid(o.grid);
+  // a grid given with no mode is played as the grid (an edit turns the mode to 'grid'); with another mode it waits,
+  // unread, for a bar in mode 'grid' or 'prime'
+  const mode = o.mode ?? (grid ? 'grid' : 'backbeat');
+  if (!ALL_DRUM_MODES.includes(mode)) fail(`mode must be one of ${ALL_DRUM_MODES.join(', ')}, not ${JSON.stringify(mode)}`);
   const kit = { ...DEFAULT_KIT };
   for (const [v, c] of Object.entries(o.kit || {})) { if (!DRUM_VOICES.includes(v)) fail(`no drum voice ${v}`); kit[v] = c == null ? '' : String(c); }
   const perBar = {};
-  for (const [b, m] of Object.entries(o.perBar || {})) { if (!DRUM_MODES.includes(m)) fail(`bar ${b}: no mode ${m}`); perBar[b] = m; }
+  for (const [b, m] of Object.entries(o.perBar || {})) { if (!ALL_DRUM_MODES.includes(m)) fail(`bar ${b}: no mode ${m}`); perBar[b] = m; }
   if (o.hitsPerBar != null && !(Number(o.hitsPerBar) > 0)) fail(`bad hitsPerBar ${o.hitsPerBar}`);
-  return { enabled: o.enabled ?? true, mode, fills: o.fills ?? true, kit, seed: o.seed ?? null, layer: o.layer ?? null, hitsPerBar: o.hitsPerBar == null ? null : Number(o.hitsPerBar), perBar };
+  if (o.p != null && !isPrime(o.p)) fail(`p must be a prime (the two-level prime partition's level 1), not ${JSON.stringify(o.p)}`);
+  const out = { enabled: o.enabled ?? true, mode, fills: o.fills ?? true, kit, seed: o.seed ?? null, layer: o.layer ?? null, hitsPerBar: o.hitsPerBar == null ? null : Number(o.hitsPerBar), perBar };
+  // only when given, so options without them resolve (and echo in `spec.drums.options`) exactly as before step 4c
+  if (grid) out.grid = grid;
+  if (o.p != null) out.p = o.p;
+  return out;
+}
+
+/** a grid as given → a copy, checked: { voice: [string a bar] }, a voice left out silent, the strings of `x X .` */
+export function readGrid(grid) {
+  if (typeof grid !== 'object' || Array.isArray(grid)) fail('a drum grid is { voice: [one string a bar] }');
+  const out = {};
+  for (const [v, rows] of Object.entries(grid)) {
+    if (!DRUM_VOICES.includes(v)) fail(`grid: no drum voice ${v} (${DRUM_VOICES.join(', ')})`);
+    if (!Array.isArray(rows)) fail(`grid: ${v} must be one string a bar`);
+    rows.forEach((line, k) => { if (typeof line !== 'string' || !/^[xX.]*$/.test(line)) fail(`grid: ${v} bar ${k + 1} is ${JSON.stringify(line)}: x a stroke, X an accent, . off`); });
+    out[v] = [...rows];
+  }
+  return out;
+}
+
+/** a grid that bars in mode 'grid' or 'prime' read must fit the meter: N strings a voice, S·m places each */
+function checkGridShape(grid, N, W) {
+  for (const [v, rows] of Object.entries(grid)) {
+    if (rows.length !== N) fail(`grid: ${v} has ${rows.length} bar${rows.length === 1 ? '' : 's'}, the composition ${N}`);
+    rows.forEach((line, k) => { if (line.length !== W) fail(`grid: ${v} bar ${k + 1} has ${line.length} places, not ${W} (S·m)`); });
+  }
+}
+
+/**
+ * An arrangement written as a grid (the presets ⇄ grid): a hit at `pos` → place round(pos·m) of its bar (a place
+ * rounding to the bar's end is the next bar's first), a prime stroke → its cell (in the perc row). The fills' strokes
+ * (kick and snare from beat 3 of a fill bar) and the crashes (cym on a crash bar's downbeat) are left out: they are
+ * options over the grid. `X` where the stroke's own velocity (its strikes' lift taken off) is accented.
+ * → { voice: [one string a bar] }, every voice
+ */
+export function gridOf(d) {
+  const S = d.beats.slotsPerBar, m = d.beats.subdivide, N = d.bars.length, W = S * m, fillFrom = beatsOf(S).pos[2];
+  const rows = Object.fromEntries(DRUM_VOICES.map((v) => [v, Array.from({ length: N }, () => new Array(W).fill('.'))]));
+  for (const h of d.hits) {
+    let bar, place;
+    if (h.snap === 'prime') { bar = Math.floor(h.cell / W); place = h.cell % W; }
+    else {
+      const b = d.bars[h.bar];
+      if (b.fill && (h.voice === 'kick' || h.voice === 'snare') && h.pos >= fillFrom - EPS) continue;
+      if (b.crash && h.voice === 'cym' && Math.abs(h.pos) < EPS) continue;
+      bar = h.bar; place = Math.round(h.pos * m);
+      if (place >= W) { place -= W; bar = mod(bar + 1, N); }
+    }
+    const lift = STRIKE_ACCENT * Math.max(0, h.strikes - 1), base = DRUM_VELOCITY[h.voice];
+    const accent = h.velocity >= 1 - 1e-12 ? base + lift < 1 - 1e-12 : h.velocity - lift > base + GRID_ACCENT[h.voice] / 2;
+    const row = rows[h.voice][bar];
+    if (accent) row[place] = 'X'; else if (row[place] === '.') row[place] = 'x';
+  }
+  return Object.fromEntries(DRUM_VOICES.map((v) => [v, rows[v].map((r) => r.join(''))]));
 }
 
 /**
  * The drums of a spec.
- *   options  { enabled (true), mode ('backbeat' | 'with' | 'against' | 'partition' | a pattern name), fills (true),
- *              kit: { voice: choice }, seed (the spec's), layer (partition: a layer striking the downbeat, by name or
- *              value), hitsPerBar (partition), perBar: { bar: mode } (a bar's own mode) }
+ *   options  { enabled (true), mode ('backbeat' | 'with' | 'against' | 'partition' | a pattern name | 'grid' |
+ *              'prime'), fills (true), kit: { voice: choice }, seed (the spec's), layer (partition: a layer striking
+ *              the downbeat, by name or value), hitsPerBar (partition, prime), perBar: { bar: mode } (a bar's own mode),
+ *              grid: { voice: [one string a bar] } (read by bars in mode 'grid', and as the lit cells of 'prime'),
+ *              p (prime: level 1's light count, a prime; the prime nearest the cells by default) }
  * → null for a refusal, else { version, enabled, mode, options, kit, beats, partition, bars: [{ bar, mode, fill, crash,
- *   why }], hits: [{ voice, bar, pos, slot, tick, time, velocity, strikes, snap }], decisions, stats }
- *   snap  'slot' (the onset nearest its place), 'wide' (the second look), 'note' (a part's note), 'layer' (partition)
+ *   why }], hits: [{ voice, bar, pos, slot, tick, time, velocity, strikes, snap }], decisions, stats }, and only when a
+ *   bar is in mode 'grid' or 'prime': silentCells: [{ bar, voice, place }] (grid cells, and prime cells, no onset
+ *   struck), and when one is 'prime': prime (`primePartition`'s, its lights' real times for the UI strip)
+ *   snap  'slot' (the onset nearest its place), 'wide' (the second look), 'note' (a part's note), 'layer' (partition),
+ *         'prime' (the prime partition: the hit also carries its `cell` and `light`)
+ * With no grid read and no bar in mode 'prime', the output is byte for byte the drums of before step 4c (tested
+ * against drums-baseline.mjs).
  */
 export function arrangeDrums(spec, options = {}) {
   if (!spec || spec.refused) return null;
@@ -237,14 +384,14 @@ export function arrangeDrums(spec, options = {}) {
     ? `the bar's ${S} slots cut in 4 beats as Partitions cuts a block (${beats.sizes.join(', ')} slots)`
     : `${S} slot${S === 1 ? '' : 's'} a bar is under 4 beats: cut on 1/${m} slots (${beats.sizes.map((s) => `${s}/${m}`).join(', ')}), a beat between anchors landing on a real onset inside its slot`);
 
-  const hits = [], stats = { silent: 0, wide: 0 };
+  const hits = [], stats = { silent: 0, wide: 0 }, silentCells = [];
   const push = (hit) => { const s = g.strikesAt(hit.tick); hits.push({ ...hit, time: g.relOf(hit.tick) * T, velocity: Math.min(1, hit.velocity + STRIKE_ACCENT * Math.max(0, s.strikes - 1)), strikes: s.strikes }); };
   /** a stroke at place q (slot units) of bar `bar`, landed on the onset nearest it */
-  const land = (voice, bar, q, velocity) => {
+  const land = (voice, bar, q, velocity, cell = false) => {
     const gq = bar * S + q, r = g.rAt(gq);
     let on = g.nearest(r, g.rAt(gq - h), g.rAt(gq + h)), snap = 'slot';
     if (!on) { on = g.nearest(r, g.rAt(gq - 2 * h), g.rAt(gq + 2 * h)); snap = 'wide'; }
-    if (!on) { stats.silent++; return; }
+    if (!on) { stats.silent++; if (cell) silentCells.push({ bar, voice, place: Math.round(q * m) }); return; }
     if (snap === 'wide') stats.wide++;
     push({ voice, bar, pos: q, slot: mod(bar * S + Math.floor(q + EPS), P), tick: on.tick, velocity, snap });
   };
@@ -263,24 +410,43 @@ export function arrangeDrums(spec, options = {}) {
   decide('drums.fills', [...fillBars], !opt.fills ? 'asked off' : fillBars.size
     ? `the last bar of each phrase of ${FILL_MIN_PHRASE_BARS} bars or more fills its second half (from beat 3), and a crash opens the bar after it`
     : `no phrase is ${FILL_MIN_PHRASE_BARS} bars or more (${phrases.map((x) => x.bars).join(' + ')} bar${N === 1 ? '' : 's'}): no fills`);
-  const bars = [];
+  const bars = [], W = S * m;
+  const modes = Array.from({ length: N }, (_, k) => opt.perBar[k] ?? opt.mode);
+  const usesGrid = modes.includes('grid'), usesPrime = modes.includes('prime');
+  if (usesGrid && !opt.grid) fail('mode \'grid\' plays drumOptions.grid, and none was given');
+  if ((usesGrid || usesPrime) && opt.grid) {
+    checkGridShape(opt.grid, N, W);
+    decide('drums.grid', W, `the step grid: ${W} places a bar (${m === 1 ? 'a place a slot' : `${S} slot${S === 1 ? '' : 's'} on 1/${m} slots`}), each cell landed on the onset nearest its place`);
+  }
+  /** a bar's grid strings → its strokes, voice by voice, place by place (perc left to the prime line in a prime bar) */
+  const gridStrokes = (k, prime) => {
+    const out = [];
+    for (const voice of DRUM_VOICES) {
+      if (prime && voice === 'perc') continue;
+      const line = opt.grid[voice]?.[k];
+      if (line) for (let u = 0; u < W; u++) if (line[u] !== '.') out.push({ voice, q: u / m, velocity: DRUM_VELOCITY[voice] + (line[u] === 'X' ? GRID_ACCENT[voice] : 0), cell: true });
+    }
+    return out;
+  };
   for (let k = 0; k < N; k++) {
     const ph = phrases.find((x) => k >= x.from && k < x.from + x.bars), mode = opt.perBar[k] ?? opt.mode;
     const fill = fillBars.has(k), crash = fillBars.has(mod(k - 1, N)) && fillBars.size > 0;
     const pat = DRUM_PATTERNS[mode], patBar = pat ? (k - ph.from) % pat.bars : 0;
-    const what = pat ? `${pat.label}${pat.bars > 1 ? ` (bar ${patBar + 1} of ${pat.bars})` : ''}` : mode === 'backbeat' ? 'backbeat' : `backbeat + ${mode}`;
+    const what = pat ? `${pat.label}${pat.bars > 1 ? ` (bar ${patBar + 1} of ${pat.bars})` : ''}` : mode === 'backbeat' ? 'backbeat'
+      : mode === 'grid' ? 'the step grid' : mode === 'prime' ? `${opt.grid ? 'the step grid' : 'backbeat'} + the prime partition` : `backbeat + ${mode}`;
     bars.push({ bar: k, mode, fill, crash, why: `${what}${opt.perBar[k] ? ' (asked for this bar)' : ''}${fill ? `; fills from beat 3: the last bar of a ${ph.bars}-bar phrase` : ''}${crash ? '; a crash on the downbeat: the phrase opens after a fill' : ''}` });
 
     // the bar's groove: the backbeat, or the pattern's strokes through the beats
     const strokes = [];
-    if (pat) {
+    if (mode === 'grid' || (mode === 'prime' && opt.grid)) strokes.push(...gridStrokes(k, mode === 'prime'));
+    else if (pat) {
       for (const s of patternStrokes(pat)) if (s.bar === patBar) { const q = placeOfF(s.f); if (q != null) strokes.push({ voice: s.voice, q, velocity: DRUM_VELOCITY[s.voice] + (s.accent ? ACCENT : 0) }); }
     } else {
       strokes.push({ voice: 'kick', q: beats.pos[0], velocity: DRUM_VELOCITY.kick + ACCENT }, { voice: 'kick', q: beats.pos[2], velocity: DRUM_VELOCITY.kick });
       strokes.push({ voice: 'snare', q: beats.pos[1], velocity: DRUM_VELOCITY.snare }, { voice: 'snare', q: beats.pos[3], velocity: DRUM_VELOCITY.snare });
       for (let q = 0; q < S; q++) strokes.push({ voice: 'hat', q, velocity: DRUM_VELOCITY.hat + (beatSet.has(q.toFixed(6)) ? 0.08 : 0) });
     }
-    for (const s of strokes) if (!(fill && s.voice !== 'cym' && s.voice !== 'perc' && s.q >= fillFrom - EPS)) land(s.voice, k, s.q, s.velocity);
+    for (const s of strokes) if (!(fill && s.voice !== 'cym' && s.voice !== 'perc' && s.q >= fillFrom - EPS)) land(s.voice, k, s.q, s.velocity, !!s.cell);
     if (fill) for (const s of patternStrokes(FILL)) if (s.f >= 0.5 - EPS) {
       const q = placeOfF(s.f);
       if (q == null) continue;
@@ -322,6 +488,21 @@ export function arrangeDrums(spec, options = {}) {
       });
     }
   }
+  let prime = null;
+  if (usesPrime) {
+    // the lit cells: the grid's perc row over the prime bars, or Euclid over every cell (each kept if its bar is prime)
+    const lit = opt.grid ? [] : null;
+    if (lit) for (let k = 0; k < N; k++) if (modes[k] === 'prime') { const line = opt.grid.perc?.[k] || ''; for (let u = 0; u < W; u++) if (line[u] && line[u] !== '.') lit.push(k * W + u); }
+    prime = primePartition(spec, g, { p: opt.p ?? null, hitsPerBar: opt.hitsPerBar, lit });
+    const accentOf = (cell) => (opt.grid ? opt.grid.perc[Math.floor(cell / W)][cell % W] === 'X' : cell === prime.selected[0]);
+    for (const x of prime.silent) if (modes[Math.floor(x.cell / W)] === 'prime') { stats.silent++; silentCells.push({ bar: Math.floor(x.cell / W), voice: 'perc', place: x.cell % W }); }
+    for (const { cell, light } of prime.struck) {
+      if (modes[Math.floor(cell / W)] !== 'prime') continue;
+      const L1 = prime.lights[light];
+      push({ voice: 'perc', bar: L1.bar, pos: L1.pos, slot: L1.slot, tick: L1.tick, velocity: DRUM_VELOCITY.perc + (accentOf(cell) ? (opt.grid ? GRID_ACCENT.perc : ACCENT) : 0), snap: 'prime', cell, light });
+    }
+    decide('drums.prime', prime.p, `the two-level prime partition: level 1 lights ${prime.p} even places of the cycle from the downbeat, each landed on its nearest onset${opt.p != null ? ' (p asked)' : ` (the prime nearest the ${prime.cells} cells)`}; level 2 reads them as ${prime.cells} even cells (${prime.perCell.min === prime.perCell.max ? prime.perCell.min : `${prime.perCell.min}–${prime.perCell.max}`} light${prime.perCell.max === 1 ? '' : 's'} a cell), ${opt.grid ? `${prime.hits} lit by the grid's perc row` : prime.hits === prime.cells ? 'every cell lit' : `${prime.hits} lit by Partitions' secondary pattern E(${prime.hits}, ${prime.cells}) from the downbeat`}, each striking its first light on the perc${prime.silent.length ? `; ${prime.silent.length} lit cell${prime.silent.length === 1 ? '' : 's'} silent (${prime.silent[0].why})` : ''}`);
+  }
   decide('drums.kit', { ...opt.kit }, DRUM_VOICES.some((v) => opt.kit[v] !== DEFAULT_KIT[v]) ? 'asked' : 'the made kit of Audio/drums (chunk-tunes\' strokes)');
   if (opt.mode === 'against' || Object.values(opt.perBar).includes('against')) decide('drums.seed', seed, 'the seed orders the empty slots `against` fills (a generator of its own: Compose\'s draws do not move)');
 
@@ -333,10 +514,12 @@ export function arrangeDrums(spec, options = {}) {
   const perVoice = Object.fromEntries(DRUM_VOICES.map((v) => [v, out.filter((x) => x.voice === v).length]));
   return {
     version: COMPOSER_DRUMS_VERSION, enabled: !!opt.enabled, mode: opt.mode,
-    options: { ...opt, seed, kit: { ...opt.kit }, perBar: { ...opt.perBar } }, kit: { ...opt.kit },
+    options: { ...opt, seed, kit: { ...opt.kit }, perBar: { ...opt.perBar }, ...(opt.grid ? { grid: readGrid(opt.grid) } : {}) }, kit: { ...opt.kit },
     beats: { slotsPerBar: S, subdivide: m, sizes: beats.sizes, positions: beats.pos },
     partition: partition && { layer: partition.name, value: partition.value, from: partition.from, hits: partition.hits, candidates: partition.candidates },
     bars, hits: out, decisions,
     stats: { hits: perVoice, total: out.length, wide: stats.wide, silent: stats.silent, merged: hits.length - out.length },
+    ...(usesGrid || usesPrime ? { silentCells } : {}),
+    ...(prime ? { prime } : {}),
   };
 }
