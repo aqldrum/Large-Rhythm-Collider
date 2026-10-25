@@ -9,6 +9,7 @@
 //     → { parts, drums, chords, modulations, changedBars, retunedBars, changed, exceptions, stats }
 //   applyRearrange(spec, result) → the spec with the result written in (a new object; the spec is not touched)
 //   materialsOf(spec) → { row, cells }: the row and cells a spec was composed over, rebuilt from its input and knobs
+//   materialsKey(spec) → the key they can be kept under (STEP 4d)
 //
 // What is decided (Avery, STEP4_ORDER.md "Decisions") and what is proposed:
 //   pinned      the comp layer (spec.stats.compLayer), baseHz (spec.knobs) and every part's sound, legato and on/off
@@ -59,6 +60,10 @@ export function materialsOf(spec) {
   const k = spec.knobs;
   return { row, cells: buildCells(row, { bars: k.bars, slotsPerBar: k.slotsPerBar, anchors: k.anchors, phase: k.phase }) };
 }
+
+/** the key a composition's row and cells can be kept under (STEP 4d: the controller's and the worker's caches): its
+ *  layers and the knobs materialsOf builds the cells from */
+export const materialsKey = (spec) => JSON.stringify([spec.input.layers, spec.knobs.bars, spec.knobs.slotsPerBar, spec.knobs.anchors, spec.knobs.phase]);
 
 // per cells (one compose's materials): the part context and the bars' tones, built once for every edit of that spec
 const cache = new WeakMap();

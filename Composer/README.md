@@ -71,10 +71,10 @@ python3 -m http.server 8000
 - **`perform/`:** what the lab and the main page share, with no DOM:
   - `composer-controller.js`: state and actions
   - `composer-player.js`: a lookahead scheduler, with an optional destination, injectable timers and a public `tick()`
-  - `compose-runner.js`: the worker for the full table, the main thread for the lean one
+  - `compose-runner.js`: the worker for the full table, the main thread for the lean one; `runCompose.rearrange` sends a big row's edits to the same worker (step 4d)
   - `readouts.js`: what a view says about a spec
 - **`lab/`:** `composer-lab.html` and `composer-lab.js`, the lab page and its view. `lab-controller.js` and `lab-player.js` re-export the shared modules under their old names.
-- **`store/`:** `composition-store.js` (pure), the main page's one composition store (sprint 2): an entry per rhythm + cycle (the shared controller's state shape, which the controller binds), an LRU of 4, `subscribe`, the page-level lens, recall without re-solve.
+- **`store/`:** `composition-store.js` (pure), the main page's one composition store (sprint 2): an entry per rhythm + cycle (the shared controller's state shape, which the controller binds), an LRU of 4, `subscribe`, the page-level lens, recall without re-solve. Step 4d adds each entry's live edits (`composed`, `edits`, the typed `field`, `undo`/`redo`, `dropped`), and `composition-edits.js` (pure) holds their records, the undo snapshots and the alternates read from the trace. The controller applies them (`swapChord`, `swapLead`, `setProgressionField`, the drum grid, `undo`/`redo`, `alternatesOf`), in the module worker for big rows. "Step 4d: store edits and pins" in `DESIGN_NOTES.md`.
 - **`page/`:** the main page's Composer tab, and (sprint 2) the Composition lens:
   - `plot-highlights.js`: the pure spec → per-part node highlights mapping, and the playhead's place on the plot
   - `plot-overlay.js`: draws the highlights on the Linear Plot through `LRCVisuals.setComposerOverlay`
@@ -99,6 +99,7 @@ python3 -m http.server 8000
   - `assert-store.mjs` checks the composition store and the controller's binding to it.
   - `assert-tutorial.mjs` checks the guided tour (`Tutorial/`): the layer generator, the targets, the opening's time budget, and the driver end to end over the stub.
   - (step 4a) `assert-trace-caps.mjs` checks the trace's caps option and the show cut back; `assert-refactor-identity.mjs` checks that Compose is byte for byte the frozen pre-refactor core (`fixtures/*-before.js`, never edited); `assert-rearrange.mjs` checks chord and lead swaps.
+  - (step 4d) `assert-store-edits.mjs` checks the store's live edits and pins: swaps, the typed field, undo/redo, the alternates, a re-compose keeping pins and dropping lead edits, the drum grid, the worker path, recall through the glyph, and `against` stable across a swap.
   - `rhythms.mjs` is the shared rhythm set, and `settle-baseline.mjs` pins the output from before settling.
   - `time-lines.mjs` is a timing table, not a check.
 - **`probe/`:** the 2026-10-21 cost probe (`FINDINGS.md`), the source of the onset gate.
@@ -111,7 +112,7 @@ Run every suite (the Composer's, the shared voices', Cosmos's and MIDI Out's):
 for t in Composer/tests/assert-*.mjs Cosmos/tests/assert-*.mjs Audio/tests/assert-*.mjs Playback/MIDIOut.test.mjs; do node "$t" >/dev/null 2>&1 || echo FAIL $t; done
 ```
 
-A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added; 55 at the end of that sprint; 57 with sprint 2's `assert-store.mjs` and `assert-page-lens.mjs`; 58 with step 2's `assert-page-theater.mjs`; 59 with step 3's `assert-tutorial.mjs`; 60 with step 4b's `assert-chord-symbols.mjs`; 61 with step 4c's `assert-drum-grid.mjs`; 64 with step 4a's `assert-trace-caps.mjs`, `assert-refactor-identity.mjs` and `assert-rearrange.mjs`. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
+A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added; 55 at the end of that sprint; 57 with sprint 2's `assert-store.mjs` and `assert-page-lens.mjs`; 58 with step 2's `assert-page-theater.mjs`; 59 with step 3's `assert-tutorial.mjs`; 60 with step 4b's `assert-chord-symbols.mjs`; 61 with step 4c's `assert-drum-grid.mjs`; 64 with step 4a's `assert-trace-caps.mjs`, `assert-refactor-identity.mjs` and `assert-rearrange.mjs`; 65 with step 4d's `assert-store-edits.mjs`. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
 
 ## Where it lives
 

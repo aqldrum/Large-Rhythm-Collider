@@ -8,6 +8,10 @@
 //     worker: true    the module worker (Composer/core/compose-worker.js), made on first use and kept
 //     worker: false   compose() itself, a tick later (so the page can say "Composing…" first)
 // A refusal is a spec with `refused: true`; only a thrown error (or the worker failing) rejects.
+//
+//   runCompose.rearrange({ key, spec, edit, opts }) → Promise<rearrange's result>   (STEP 4d) a local edit in the same
+//     module worker (compose-worker.js keeps the row and cells per key); the controller sends the edits of big rows
+//     and every smoothPhrase here
 
 import { compose } from '../core/compose.js';
 
@@ -19,21 +23,25 @@ import { compose } from '../core/compose.js';
 export function createComposeRunner({ makeWorker = () => new Worker(new URL('../core/compose-worker.js', import.meta.url), { type: 'module' }), defer = (fn) => setTimeout(fn, 0) } = {}) {
   let worker = null, seq = 0;
   const pending = new Map();
-  function viaWorker(layers, cycleSeconds, { seed, overrides, progression, trace }) {
+  function post(message, pick) {
     if (!worker) {
       worker = makeWorker();
       worker.onmessage = (event) => {
         const p = pending.get(event.data.id);
         if (!p) return;
         pending.delete(event.data.id);
-        if (event.data.ok) p.resolve(event.data.spec); else p.reject(new Error(event.data.error));
+        if (event.data.ok) p.resolve(p.pick(event.data)); else p.reject(new Error(event.data.error));
       };
       worker.onerror = (event) => { for (const p of pending.values()) p.reject(new Error(event.message || 'the Compose worker failed')); pending.clear(); worker = null; };
     }
     const id = ++seq;
-    return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); worker.postMessage({ id, layers, cycleSeconds, options: { seed, overrides, progression, ...(trace ? { trace } : {}) } }); });
+    return new Promise((resolve, reject) => { pending.set(id, { resolve, reject, pick }); worker.postMessage({ id, ...message }); });
   }
-  return (layers, cycleSeconds, options = {}) => (options.worker
+  const viaWorker = (layers, cycleSeconds, { seed, overrides, progression, trace }) => post({ layers, cycleSeconds, options: { seed, overrides, progression, ...(trace ? { trace } : {}) } }, (d) => d.spec);
+  const run = (layers, cycleSeconds, options = {}) => (options.worker
     ? viaWorker(layers, cycleSeconds, options)
     : new Promise((resolve, reject) => defer(() => { try { resolve(compose(layers, cycleSeconds, { seed: options.seed, overrides: options.overrides, progression: options.progression, ...(options.trace ? { trace: options.trace } : {}) })); } catch (err) { reject(err); } })));
+  /** STEP 4d: a local edit in the worker → rearrange's result */
+  run.rearrange = ({ key = null, spec, edit, opts = {} }) => post({ kind: 'rearrange', key, spec, edit, opts }, (d) => d.result);
+  return run;
 }

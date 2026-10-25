@@ -30,8 +30,8 @@
 //              a pattern  one of drum-patterns.js, landed through the beats (a pattern's step is a fraction of the bar)
 //   fills      the last bar of each phrase of 4 bars or more (harmony.js `phrasesOf`) plays the fill over its second
 //              half (from beat 3), and a crash opens the bar after it — the loop's first bar when the fill is the last.
-//   seed       only `against` draws (a seeded generator of its own, `${seed}/drums`), so the drums never move a draw
-//              Compose makes for the other parts.
+//   seed       only `against` draws (a seeded generator of its own per bar, `${seed}/drums/${bar}`: STEP 4d), so the
+//              drums never move a draw Compose makes for the other parts, and an edit to one bar never re-draws another.
 //
 // The partition layer, single level. Partitions' grid mode cuts the whole cycle from tick 0 in P blocks (P chosen per
 // layer, up to the grid) and its secondary count lights an Euclidean subset of them (getSecondaryAllowedSet). Here the
@@ -374,7 +374,9 @@ export function gridOf(d) {
 export function arrangeDrums(spec, options = {}) {
   if (!spec || spec.refused) return null;
   const opt = readDrumOptions(options), g = drumGrid(spec), { N, S, P, T } = g;
-  const seed = opt.seed ?? spec.input?.seed ?? 1, rng = seeded(`${seed}/drums`);
+  // STEP 4d: `against` draws from a generator of its bar's own (`${seed}/drums/${bar}`), so an edit to one bar (a chord
+  // swap rebuilds its comping) never re-draws a later bar's strokes; before 4d one generator ran in bar order
+  const seed = opt.seed ?? spec.input?.seed ?? 1, rngOfBar = (k) => seeded(`${seed}/drums/${k}`);
   const beats = beatsOf(S), m = beats.m, h = 1 / (2 * m);
   const decisions = [];
   const decide = (what, value, why) => { decisions.push({ what, value, why }); return value; };
@@ -470,7 +472,7 @@ export function arrangeDrums(spec, options = {}) {
           push({ voice: 'perc', bar: k, pos: q, slot: j, tick: n.tick, velocity: DRUM_VELOCITY.perc + (a && b || isStrongBeat(q, S) ? ACCENT : 0), snap: 'note' });
         }
       } else if (modeOf(k) === 'against') {
-        const empty = [];
+        const empty = [], rng = rngOfBar(k);
         for (let q = 0; q < S; q++) if (!lead.has(k * S + q) && !comp.has(k * S + q)) empty.push({ q, off: beatSet.has(q.toFixed(6)) ? 1 : 0, r: rng() });
         empty.sort((x, y) => x.off - y.off || x.r - y.r);
         for (const e of empty.slice(0, Math.max(1, Math.floor(S / 2))).sort((x, y) => x.q - y.q)) land('perc', k, e.q, DRUM_VELOCITY.perc + (e.off ? 0 : 0.05));

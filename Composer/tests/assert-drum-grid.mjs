@@ -1,6 +1,7 @@
 // assert-drum-grid.mjs — step 4c: the drum grid source, presets ⇄ grid, and the two-level prime partition
 // (Composer/core/drums.js), against the row it plays and Partitions' own Euclid:
-//   • byte identity: with no grid and no prime mode, arrangeDrums is exactly the drums of b69a39e (drums-baseline.mjs)
+//   • byte identity: with no grid and no prime mode, arrangeDrums is exactly the drums of b69a39e (drums-baseline.mjs),
+//     except `against`, re-seeded per bar in step 4d (its variants left out, the hashes never edited)
 //   • the grid source: every grid stroke's tick is a real onset (its time and strikes the row's), a whole-slot cell
 //     the onset cells.js finds nearest its anchor; the silent cells reported, and every lit cell accounted for
 //   • presets ⇄ grid: gridOf(preset) arranges the preset's own hits, for every mode and pattern on many rows (odd,
@@ -72,12 +73,18 @@ console.log('Composer drum grid (step 4c)');
 
 console.log('\n— unchanged without a grid');
 {
+  // STEP 4d: `against` now seeds each bar's draws on its own (`${seed}/drums/${bar}`), so a swap in one bar never
+  // re-draws another (assert-store-edits.mjs tests that). That moves `against`'s output on purpose, so the variants
+  // that play it (the mode itself, and a bar of it under perBar) are left out here; the frozen hashes are not edited,
+  // and every other variant must still match them byte for byte.
+  const usesAgainst = (v) => !!v && (v.mode === 'against' || Object.values(v.perBar || {}).includes('against'));
+  const kept = DRUM_BASELINE_VARIANTS.filter((v) => !usesAgainst(v)).length;
   let bad = '', n = 0;
   for (const c of DRUM_BASELINE_CASES) {
     const [L, T, ov] = c, spec = compose(L, T, { seed: DRUM_BASELINE_SEED, overrides: { ...ov } }), want = DRUM_BASELINE[caseName(c)];
-    DRUM_BASELINE_VARIANTS.forEach((v, i) => { n++; if (sha(v === null ? spec.drums : arrangeDrums(spec, v)) !== want[i]) bad ||= `${caseName(c)} variant ${i} ${J(v)}`; });
+    DRUM_BASELINE_VARIANTS.forEach((v, i) => { if (usesAgainst(v)) return; n++; if (sha(v === null ? spec.drums : arrangeDrums(spec, v)) !== want[i]) bad ||= `${caseName(c)} variant ${i} ${J(v)}`; });
   }
-  check(`every mode and option variant, no grid, no prime: byte for byte the drums of b69a39e (${n} = ${DRUM_BASELINE_CASES.length} cases × ${DRUM_BASELINE_VARIANTS.length} variants)`, !bad && n === 595, bad);
+  check(`every mode and option variant but \`against\` (re-seeded per bar in step 4d), no grid, no prime: byte for byte the drums of b69a39e (${n} = ${DRUM_BASELINE_CASES.length} cases × ${kept} variants; ${DRUM_BASELINE_VARIANTS.length - kept} against variants left out)`, !bad && n === 527 && kept === 31, bad);
   const s = specs[1].spec, unused = arrangeDrums(s, { mode: 'rock', grid: randomGrid(s, 1) });
   const { options: o1, ...a } = unused, { options: o2, ...b } = arrangeDrums(s, { mode: 'rock' });
   check('a grid given to a bar in another mode waits unread: the drums are the mode\'s own (only the options echo it)', J(a) === J(b) && o1.grid && !o2.grid && !('silentCells' in unused));
