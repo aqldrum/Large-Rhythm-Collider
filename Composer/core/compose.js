@@ -149,6 +149,185 @@ export function rearticulate(part, { sound = part.sound, legato = part.legato, e
   return { ...part, sound, struck, legato, enabled, notes };
 }
 
+// ── the part builders (STEP 4a: lifted out of compose() unchanged, so Compose and a rearrange are the same code) ──
+//
+// Each reads the row through a part context (`partContext`) and a bar's chord as harmony.js records it (`chordRecord`:
+// rootCents, rootTone, rootNode, intervals, frame). A note here is the builders' own shape, { node, tone, octave, pitch,
+// bar, slot, time, slotSeconds, (voice | strikes | strong) }; `partOf` turns a part's notes into the spec's.
+
+/**
+ * The geometry every part is read through: the cycle's time from the phase, each onset's slot and bar, the slots' onsets
+ * in time order (built on first use), and the chord-class test.
+ *   opts { cycleSeconds, phase ([num, den]: bar 1's downbeat), frameCentsEachSide }
+ * → { row, cells, T, S, N, P, e, phaseX, timeOf, slotSeconds, starts, posSlot, inBar, inSlot, pitchAtLeast, chordClass }
+ */
+export function partContext(row, cells, { cycleSeconds: T, phase, frameCentsEachSide: e }) {
+  const S = cells.slotsPerBar, N = cells.bars, P = N * S, phaseX = phase[0] / phase[1];
+  const timeOf = (tick) => mod(tick / row.grid - phaseX, 1) * T;
+  const slotSeconds = (cell) => cells.slots[cell].length * T;
+  // every onset's bar and slot by its place from the phase (a bar runs from its first anchor to the next bar's)
+  const starts = cells.slots.map((s) => mod(s.anchor - phaseX, 1));
+  const posSlot = new Int32Array(row.n);
+  for (let i = 0; i < row.n; i++) {
+    const x = mod(row.x[i] - phaseX, 1); let lo = 0, hi = P - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= x + EPS) lo = mid; else hi = mid - 1; }
+    posSlot[i] = lo;
+  }
+  const inBar = Array.from({ length: N }, () => []);
+  for (let i = 0; i < row.n; i++) inBar[Math.floor(posSlot[i] / S)].push(i);
+  let inSlot = null;
+  const pitchAtLeast = (tone, floor) => { const c = row.toneCents[tone], octave = Math.ceil((floor - c) / 1200 - EPS); return { octave, pitch: c + 1200 * octave }; };
+  const chordClass = (c, tone) => { const k = classOfCents(row.toneCents[tone] - c.rootCents); return Math.abs(k.dev) <= e + EPS && c.intervals.includes(k.pc) ? k.pc : -1; };
+  return {
+    row, cells, T, S, N, P, e, phaseX, timeOf, slotSeconds, starts, posSlot, inBar, pitchAtLeast, chordClass,
+    /** each slot's onsets, in time order (then row order) */
+    get inSlot() {
+      if (!inSlot) {
+        inSlot = Array.from({ length: P }, () => []);
+        for (let i = 0; i < row.n; i++) inSlot[posSlot[i]].push(i);
+        for (const list of inSlot) list.sort((a, b) => timeOf(row.tick[a]) - timeOf(row.tick[b]) || a - b);
+      }
+      return inSlot;
+    },
+  };
+}
+
+/** a builder's note on onset i, in a register (octave and pitch given) */
+const noteAt = (ctx, i, octave, pitch, bar, extra = {}) => ({ node: i, tone: ctx.row.tone[i], octave, pitch, bar, slot: ctx.posSlot[i], time: ctx.timeOf(ctx.row.tick[i]), slotSeconds: ctx.slotSeconds(ctx.posSlot[i]), ...extra });
+
+/** the lead's notes (harmony.js' line notes: node, tone, octave, pitch, bar, cell, beat) as the builders' notes */
+export function leadNotesOf(ctx, notes) {
+  const { row, S, timeOf, slotSeconds } = ctx;
+  return notes.map((n) => ({ node: n.node, tone: n.tone, octave: n.octave, pitch: n.pitch, bar: n.bar, slot: n.cell, time: timeOf(row.tick[n.node]), slotSeconds: slotSeconds(n.cell), strong: isStrongBeat(n.beat, S) }));
+}
+
+/**
+ * Bar k's chord voices: a voice a chord class (root first, then up), each the bar's onset of that class inside the bar's
+ * frame with the most strikes (then the earliest), stacked close from an octave under the root up. → [note with `voice`]
+ */
+export function chordVoicesOfBar(ctx, c, k) {
+  const { row, inBar, timeOf, pitchAtLeast, chordClass } = ctx, out = [];
+  let floor = c.rootCents + REGISTER.chords - 50;
+  c.intervals.forEach((pc, v) => {
+    let best = -1;
+    for (const i of inBar[k]) if (chordClass(c, row.tone[i]) === pc && (best < 0 || row.strikes[i] > row.strikes[best] || (row.strikes[i] === row.strikes[best] && timeOf(row.tick[i]) < timeOf(row.tick[best])))) best = i;
+    if (best < 0) return;
+    const { octave, pitch } = pitchAtLeast(row.tone[best], floor);
+    floor = pitch + 1;
+    out.push(noteAt(ctx, best, octave, pitch, k, { voice: v }));
+  });
+  return out;
+}
+
+/** a layer (its bit index b) cut into bar k's slots: { steps (slots it strikes), on (each struck slot's first strike, where it is a chord tone) } */
+function compStepsOfBar(ctx, c, k, b) {
+  const { row, S, inSlot, chordClass } = ctx;
+  let steps = 0; const on = [];
+  for (let j = k * S; j < (k + 1) * S; j++) {
+    const first = inSlot[j].find((i) => row.owners[i] & (1 << b));
+    if (first === undefined) continue;
+    steps++;
+    if (chordClass(c, row.tone[first]) >= 0) on.push(first);
+  }
+  return { steps, on };
+}
+/**
+ * Every layer's comping, scored over the bars (rhythm-claves.js and chunk-comping.js, ported): 25–50 % of its steps on
+ * chord tones, a straight or triplet count of steps to the bar, a stroke in every bar.
+ * → [{ layer (bit index), value, score, hits: [bar → strokes] }], in row.active's order
+ */
+export function compChoicesOf(ctx, chords) {
+  const { row, N } = ctx;
+  return row.active.map((b) => {
+    let density = 0, fit = 0, covered = 0;
+    const hits = [];
+    for (let k = 0; k < N; k++) {
+      const { steps, on } = compStepsOfBar(ctx, chords[k], k, b);
+      const x = steps ? on.length / steps : 0, [lo, hi] = COMP_SHARE;
+      density += x < lo ? x / lo : x > hi ? (1 - x) / (1 - hi) : 1;
+      fit += [4, 8, 16].includes(steps) ? 1 : [3, 6, 12].includes(steps) ? 0.75 : 0.4;
+      if (on.length) covered++;
+      hits.push(on);
+    }
+    return { layer: b, value: row.layers[b], score: (density + fit + covered) / (3 * N), hits };
+  });
+}
+/** bar k's comping on the given layer (its bit index): the struck slots on chord tones, else the root onset once → [note with `strikes`] */
+export function compOfBar(ctx, c, k, layer) {
+  const { row, S, posSlot, pitchAtLeast } = ctx, floor = c.rootCents + REGISTER.chords - 50;
+  const { on } = compStepsOfBar(ctx, c, k, layer);
+  const strokes = on.length ? on : (c.rootNode != null && Math.floor(posSlot[c.rootNode] / S) === k ? [c.rootNode] : []);
+  return strokes.map((i) => { const { octave, pitch } = pitchAtLeast(row.tone[i], floor); return noteAt(ctx, i, octave, pitch, k, { strikes: row.strikes[i] }); });
+}
+
+/**
+ * Bar k's bass: lines.js' bass mined over the bar, rooted on its chord's root tone, two octaves under the lead's range,
+ * opening on a tone of the root's class (inside the frame) where it can, else the cheapest line; no line: the root onset.
+ *   opts { table, scale (the parent scale, on the sounding grid), target (the bar's: harmony.js targetOfBar) }
+ * → { line | null, notes, rooted (its first note on the root's class) }
+ */
+export function bassOfBar(ctx, c, k, { table, scale, target }) {
+  const { row, cells, e, timeOf, slotSeconds, posSlot, pitchAtLeast } = ctx;
+  // the root's class in the bar's frame: a bass line opens on it where it can
+  const rootClass = []; for (let t = 0; t < row.tones.length; t++) { const k2 = classOfCents(row.toneCents[t] - c.rootCents); if (k2.pc === 0 && Math.abs(k2.dev) <= e + EPS) rootClass.push(t); }
+  const bassOpts = { from: k, bars: 1, types: ['bass'], table, targets: { scale, bars: [target] }, register: REGISTER.bass };
+  let lines = mineLines(row, cells, [c.frame], { ...bassOpts, rules: { startTones: rootClass } }).lines || [];
+  if (!lines.length) lines = mineLines(row, cells, [c.frame], bassOpts).lines || [];
+  const line = lines[0];
+  const notes = line ? line.notes.map((n) => ({ node: n.node, tone: n.tone, octave: n.octave, pitch: n.pitch, bar: k, slot: n.cell, time: timeOf(row.tick[n.node]), slotSeconds: slotSeconds(n.cell) }))
+    : c.rootNode != null ? [(() => { const { octave, pitch } = pitchAtLeast(c.rootTone, c.rootCents + REGISTER.bass - 50); return { node: c.rootNode, tone: c.rootTone, octave, pitch, bar: k, slot: posSlot[c.rootNode], time: timeOf(row.tick[c.rootNode]), slotSeconds: slotSeconds(posSlot[c.rootNode]) }; })()] : [];
+  return { line: line ?? null, notes, rooted: notes.length > 0 && classOfCents(row.toneCents[notes[0].tone] - c.rootCents).pc === 0 };
+}
+
+/** what the inner voice keeps off: the lead's slots (cells) and onsets → { cells: Set, nodes: [node] } */
+export const leadAvoidOf = (notes) => ({ cells: new Set(notes.map((n) => (n.cell ?? n.slot))), nodes: notes.map((n) => n.node) });
+/**
+ * The inner voice over bars [from, from + bars): a lead line (sparse or mid) over the chords an octave under the lead,
+ * never on the lead's onsets and paying weights.avoid = 0.6 a note on a slot where the lead sounds.
+ *   opts { chords (every bar's chord record), targets ({ scale, bars: every bar's target }), lead (leadAvoidOf), table,
+ *          rules (added to the miner's: STEP 4a's bar-local `before` / `after` boundaries, lines.js) }
+ * → { line | null, notes, onLead (notes on a slot where the lead sounds) }
+ */
+export function innerOf(ctx, { from, bars }, { chords, targets, lead, table, rules = {} }) {
+  const { row, cells, S, timeOf, slotSeconds } = ctx;
+  const frames = chords.slice(from, from + bars).map((c) => c.frame), sub = { scale: targets.scale, bars: targets.bars.slice(from, from + bars) };
+  const avoidSlots = Array.from({ length: bars * S }, (_, j) => lead.cells.has(from * S + j));
+  const got = mineLines(row, cells, frames, { from, bars, types: ['lead'], table, targets: sub, register: REGISTER.inner, rules: { avoidSlots, avoidNodes: lead.nodes, ...rules }, weights: { avoid: 0.6 } });
+  const line = (got.lines || []).find((l) => l.band !== 'dense');
+  if (!line) return { line: null, notes: [], onLead: 0 };
+  let onLead = 0;
+  const notes = line.notes.map((n) => { if (lead.cells.has(n.cell)) onLead++; return { node: n.node, tone: n.tone, octave: n.octave, pitch: n.pitch, bar: n.bar, slot: n.cell, time: timeOf(row.tick[n.node]), slotSeconds: slotSeconds(n.cell) }; });
+  return { line, notes, onLead };
+}
+
+/**
+ * A part as the spec has it, from the builders' notes: articulated (legato, retriggers) voice by voice when `voice`
+ * (the chords: notes is then [voice → notes]), each note's hz at baseHz × ratio × 2^octave × its bar's retune.
+ *   opts { sound, legato, enabled, baseHz, ratioOf (bar → fundamentalRatio), voice }
+ */
+export function partOf(ctx, id, notes, { sound, legato, enabled, baseHz, ratioOf, voice = false }) {
+  const { row, T } = ctx;
+  const struck = isStruck(sound), groups = voice ? notes : [notes];
+  for (const g of groups) if (g) articulate(g, { legato, struck, cycleSeconds: T });
+  const flat = (voice ? groups.flat().filter(Boolean) : notes).sort((a, b) => a.time - b.time || a.node - b.node);
+  return {
+    id, role: id, sound, struck, legato, enabled,
+    notes: flat.map((n) => {
+      const [num, den] = row.tones[n.tone].split('/').map(Number);
+      const accent = id === 'comp' ? 0.1 * Math.max(0, (n.strikes ?? 1) - 1) : id === 'lead' && n.strong ? 0.1 : 0;
+      return {
+        node: n.node, tick: row.tick[n.node], time: n.time, ratio: row.tones[n.tone], octave: n.octave, hz: baseHz * (num / den) * 2 ** n.octave * ratioOf(n.bar),
+        duration: n.duration, velocity: Math.min(1, VELOCITY[id] + accent), bar: n.bar, slot: n.slot, slotSeconds: n.slotSeconds, retrigger: n.retrigger, ...(voice ? { voice: n.voice } : {}),
+      };
+    }),
+  };
+}
+
+/** a bar's chord as the spec has it, from harmony.js' record. opts { fundamentalRatio, targeted (a targeted progression's: is this bar pinned; undefined: no progression) } */
+export const specChordOf = (c, { fundamentalRatio, targeted }) => ({ bar: c.bar, name: c.name, quality: c.quality, intervals: [...c.intervals], pcs: [...c.pcs], rootPc: c.rootPc, rootTone: c.rootFraction, rootNode: c.rootNode,
+  offsetCents: c.offsetCents, rawOffsetCents: c.rawOffsetCents, fundamentalRatio, offGrid: !!c.offGrid, exceptions: c.exceptions.length, empty: !!c.empty,
+  ...(targeted !== undefined ? { targeted, fallback: targeted ? c.fallback ?? null : null } : {}) });
+
 /**
  * Compose.
  *   layers         the rhythm, [a, b, c, d] as the LRC names them
@@ -235,64 +414,20 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   const h = harmonize(row, cells, { root: rootTone, frameCentsEachSide: e, modulation, table, foldOffsets, settlePasses, ...(targeted ? { progression: harmonyPins(prog) } : {}), trace: rec });
   rec?.harmony(h);
   if (prog) { const d = targeted ? describeProgression(prog, h.chords, row) : { value: prog.roots.map(() => 'auto'), why: `no root of the progression could be used, so every bar is auto: ${prog.notes.join('; ')}` }; decide('progression', d.value, d.why); }
-  const S = cells.slotsPerBar, N = cells.bars, phaseX = phase[0] / phase[1];
-  const timeOf = (tick) => mod(tick / row.grid - phaseX, 1) * T;
+  // ── the parts (STEP 4a: built by the exported per-bar builders below, which a rearrange calls too) ──
+  const ctx = partContext(row, cells, { cycleSeconds: T, phase, frameCentsEachSide: e });
+  const { S, N } = ctx;
   const ratioOf = (bar) => h.chords[bar].fundamentalRatio;   // the sounding retune: a folded name never moves it
-  const slotSeconds = (cell) => cells.slots[cell].length * T;
-  // every onset's bar and slot by its place from the phase (a bar runs from its first anchor to the next bar's)
-  const starts = cells.slots.map((s) => mod(s.anchor - phaseX, 1));
-  const posSlot = new Int32Array(row.n);
-  for (let i = 0; i < row.n; i++) {
-    const x = mod(row.x[i] - phaseX, 1); let lo = 0, hi = P - 1;
-    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= x + EPS) lo = mid; else hi = mid - 1; }
-    posSlot[i] = lo;
-  }
-  const inBar = Array.from({ length: N }, () => []);
-  for (let i = 0; i < row.n; i++) inBar[Math.floor(posSlot[i] / S)].push(i);
-  const pitchAtLeast = (tone, floor) => { const c = row.toneCents[tone], octave = Math.ceil((floor - c) / 1200 - EPS); return { octave, pitch: c + 1200 * octave }; };
-  const chordClass = (c, tone) => { const k = classOfCents(row.toneCents[tone] - c.rootCents); return Math.abs(k.dev) <= e + EPS && c.intervals.includes(k.pc) ? k.pc : -1; };
 
   const parts = {};
   // lead
-  parts.lead = h.lead.notes.map((n) => ({ node: n.node, tone: n.tone, octave: n.octave, pitch: n.pitch, bar: n.bar, slot: n.cell, time: timeOf(row.tick[n.node]), slotSeconds: slotSeconds(n.cell), strong: isStrongBeat(n.beat, S) }));
+  parts.lead = leadNotesOf(ctx, h.lead.notes);
   // chords: a voice a chord class
   const voices = [];
-  for (let k = 0; k < N; k++) {
-    const c = h.chords[k];
-    let floor = c.rootCents + REGISTER.chords - 50;
-    c.intervals.forEach((pc, v) => {
-      let best = -1;
-      for (const i of inBar[k]) if (chordClass(c, row.tone[i]) === pc && (best < 0 || row.strikes[i] > row.strikes[best] || (row.strikes[i] === row.strikes[best] && timeOf(row.tick[i]) < timeOf(row.tick[best])))) best = i;
-      if (best < 0) return;
-      const { octave, pitch } = pitchAtLeast(row.tone[best], floor);
-      floor = pitch + 1;
-      (voices[v] ||= []).push({ node: best, tone: row.tone[best], octave, pitch, bar: k, slot: posSlot[best], time: timeOf(row.tick[best]), slotSeconds: slotSeconds(posSlot[best]), voice: v });
-    });
-  }
+  for (let k = 0; k < N; k++) for (const n of chordVoicesOfBar(ctx, h.chords[k], k)) (voices[n.voice] ||= []).push(n);
   // comping: a layer cut into the bars and their slots: a slot's step is the layer's first strike in it, and it sounds
   // when that strike's tone is one of the bar's chord tones (rhythm-claves.js' tone set, chunk-comping.js' ranking)
-  const inSlot = Array.from({ length: P }, () => []);
-  for (let i = 0; i < row.n; i++) inSlot[posSlot[i]].push(i);
-  for (const list of inSlot) list.sort((a, b) => timeOf(row.tick[a]) - timeOf(row.tick[b]) || a - b);
-  const compChoices = row.active.map((b) => {
-    let density = 0, fit = 0, covered = 0;
-    const hits = [];
-    for (let k = 0; k < N; k++) {
-      let steps = 0; const on = [];
-      for (let j = k * S; j < (k + 1) * S; j++) {
-        const first = inSlot[j].find((i) => row.owners[i] & (1 << b));
-        if (first === undefined) continue;
-        steps++;
-        if (chordClass(h.chords[k], row.tone[first]) >= 0) on.push(first);
-      }
-      const x = steps ? on.length / steps : 0, [lo, hi] = COMP_SHARE;
-      density += x < lo ? x / lo : x > hi ? (1 - x) / (1 - hi) : 1;
-      fit += [4, 8, 16].includes(steps) ? 1 : [3, 6, 12].includes(steps) ? 0.75 : 0.4;
-      if (on.length) covered++;
-      hits.push(on);
-    }
-    return { layer: b, value: row.layers[b], score: (density + fit + covered) / (3 * N), hits };
-  });
+  const compChoices = compChoicesOf(ctx, h.chords);
   const tieOrder = compChoices.map(() => rng());
   let comp;
   if (ov.compLayer != null) {
@@ -303,40 +438,25 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     decide('compLayer', 'ABCD'[comp.layer], `layer ${'ABCD'[comp.layer]} (${comp.value}) makes the best claves on the chord tones: ${comp.score.toFixed(3)} (a slot's step its first strike there; 25–50 % of the steps on chord tones, a straight or triplet count of steps to the bar, a stroke in every bar), ties by the seed`);
   }
   parts.comp = [];
-  for (let k = 0; k < N; k++) {
-    const c = h.chords[k], floor = c.rootCents + REGISTER.chords - 50;
-    const strokes = comp.hits[k].length ? comp.hits[k] : (c.rootNode != null && Math.floor(posSlot[c.rootNode] / S) === k ? [c.rootNode] : []);
-    for (const i of strokes) { const { octave, pitch } = pitchAtLeast(row.tone[i], floor); parts.comp.push({ node: i, tone: row.tone[i], octave, pitch, bar: k, slot: posSlot[i], time: timeOf(row.tick[i]), slotSeconds: slotSeconds(posSlot[i]), strikes: row.strikes[i] }); }
-  }
+  for (let k = 0; k < N; k++) parts.comp.push(...compOfBar(ctx, h.chords[k], k, comp.layer));
   // bass: bar by bar, rooted on the bar's root tone
   parts.bass = [];
   let bassRooted = 0;
   for (let k = 0; k < N; k++) {
-    const c = h.chords[k];
-    // the root's class in the bar's frame: a bass line opens on it where it can
-    const rootClass = []; for (let t = 0; t < row.tones.length; t++) { const k2 = classOfCents(row.toneCents[t] - c.rootCents); if (k2.pc === 0 && Math.abs(k2.dev) <= e + EPS) rootClass.push(t); }
-    const bassOpts = { from: k, bars: 1, types: ['bass'], table, targets: { scale: h.targets.scale, bars: [h.targets.bars[k]] }, register: REGISTER.bass };
-    let lines = mineLines(row, cells, [c.frame], { ...bassOpts, rules: { startTones: rootClass } }).lines || [];
-    if (!lines.length) lines = mineLines(row, cells, [c.frame], bassOpts).lines || [];
-    const line = lines[0];
-    const notes = line ? line.notes.map((n) => ({ node: n.node, tone: n.tone, octave: n.octave, pitch: n.pitch, bar: k, slot: n.cell, time: timeOf(row.tick[n.node]), slotSeconds: slotSeconds(n.cell) }))
-      : c.rootNode != null ? [(() => { const { octave, pitch } = pitchAtLeast(c.rootTone, c.rootCents + REGISTER.bass - 50); return { node: c.rootNode, tone: c.rootTone, octave, pitch, bar: k, slot: posSlot[c.rootNode], time: timeOf(row.tick[c.rootNode]), slotSeconds: slotSeconds(posSlot[c.rootNode]) }; })()] : [];
-    if (notes.length && classOfCents(row.toneCents[notes[0].tone] - c.rootCents).pc === 0) bassRooted++;
-    rec?.bassBar(k, line ?? null, notes.length && classOfCents(row.toneCents[notes[0].tone] - c.rootCents).pc === 0);
-    parts.bass.push(...notes);
+    const b = bassOfBar(ctx, h.chords[k], k, { table, scale: h.targets.scale, target: h.targets.bars[k] });
+    if (b.rooted) bassRooted++;
+    rec?.bassBar(k, b.line, b.rooted);
+    parts.bass.push(...b.notes);
   }
   // inner: over the chords an octave under the lead, off the lead's onsets
   parts.inner = [];
-  const leadCells = new Set(h.lead.notes.map((n) => n.cell)), leadNodes = h.lead.notes.map((n) => n.node);
+  const lead = leadAvoidOf(h.lead.notes);
   let innerOnLead = 0;
-  for (const { from, bars } of phrasesOf(cells)) {
-    const frames = h.chords.slice(from, from + bars).map((c) => c.frame), sub = { scale: h.targets.scale, bars: h.targets.bars.slice(from, from + bars) };
-    const avoidSlots = Array.from({ length: bars * S }, (_, j) => leadCells.has(from * S + j));
-    const got = mineLines(row, cells, frames, { from, bars, types: ['lead'], table, targets: sub, register: REGISTER.inner, rules: { avoidSlots, avoidNodes: leadNodes }, weights: { avoid: 0.6 } });
-    const line = (got.lines || []).find((l) => l.band !== 'dense');
-    rec?.innerPhrase(from, bars, line ?? null);
-    if (!line) continue;
-    for (const n of line.notes) { if (leadCells.has(n.cell)) innerOnLead++; parts.inner.push({ node: n.node, tone: n.tone, octave: n.octave, pitch: n.pitch, bar: n.bar, slot: n.cell, time: timeOf(row.tick[n.node]), slotSeconds: slotSeconds(n.cell) }); }
+  for (const span of phrasesOf(cells)) {
+    const got = innerOf(ctx, span, { chords: h.chords, targets: h.targets, lead, table });
+    rec?.innerPhrase(span.from, span.bars, got.line);
+    innerOnLead += got.onLead;
+    parts.inner.push(...got.notes);
   }
 
   // ── legato, sounds, pitch ──
@@ -360,22 +480,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   const baseHz = decide('baseHz', ov.baseHz ?? (leadPitch == null ? 261.6255653005986 : LEAD_TARGET_HZ / 2 ** (leadPitch / 1200)),
     ov.baseHz ? 'asked' : leadPitch == null ? 'no lead notes: 1/1 at middle C' : `the lead's median pitch (${leadPitch.toFixed(1)}¢ above 1/1) at √(440·660) ≈ 539 Hz`);
 
-  const out = (id, notes, { voice = false } = {}) => {
-    const struck = isStruck(sound[id]), groups = voice ? notes : [notes];
-    for (const g of groups) if (g) articulate(g, { legato: legato[id], struck, cycleSeconds: T });
-    const flat = (voice ? groups.flat().filter(Boolean) : notes).sort((a, b) => a.time - b.time || a.node - b.node);
-    return {
-      id, role: id, sound: sound[id], struck, legato: legato[id], enabled: enabled[id],
-      notes: flat.map((n) => {
-        const [num, den] = row.tones[n.tone].split('/').map(Number);
-        const accent = id === 'comp' ? 0.1 * Math.max(0, (n.strikes ?? 1) - 1) : id === 'lead' && n.strong ? 0.1 : 0;
-        return {
-          node: n.node, tick: row.tick[n.node], time: n.time, ratio: row.tones[n.tone], octave: n.octave, hz: baseHz * (num / den) * 2 ** n.octave * ratioOf(n.bar),
-          duration: n.duration, velocity: Math.min(1, VELOCITY[id] + accent), bar: n.bar, slot: n.slot, slotSeconds: n.slotSeconds, retrigger: n.retrigger, ...(voice ? { voice: n.voice } : {}),
-        };
-      }),
-    };
-  };
+  const out = (id, notes, { voice = false } = {}) => partOf(ctx, id, notes, { sound: sound[id], legato: legato[id], enabled: enabled[id], baseHz, ratioOf, voice });
   const partList = [out('lead', parts.lead), out('chords', voices, { voice: true }), out('comp', parts.comp), out('bass', parts.bass), out('inner', parts.inner)];
   rec?.parts(partList, { comp, compChoices, compAsked: ov.compLayer != null });
 
@@ -386,11 +491,9 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
       bars: N, slotsPerBar: S, beatsPerBar: BEATS_PER_BAR, anchors, phase: [...phase], frameCentsEachSide: e, root: row.tones[rootTone], modulation, table,
       tempoBpm: meter.tempoBpm, leader, baseHz, cycleSeconds: T,
     },
-    chords: h.chords.map((c) => ({ bar: c.bar, name: c.name, quality: c.quality, intervals: [...c.intervals], pcs: [...c.pcs], rootPc: c.rootPc, rootTone: c.rootFraction, rootNode: c.rootNode,
-      offsetCents: c.offsetCents, rawOffsetCents: c.rawOffsetCents, fundamentalRatio: ratioOf(c.bar), offGrid: !!c.offGrid, exceptions: c.exceptions.length, empty: !!c.empty,
-      ...(targeted ? { targeted: prog.roots[c.bar] != null, fallback: prog.roots[c.bar] != null ? c.fallback ?? null : null } : {}) })),
+    chords: h.chords.map((c) => specChordOf(c, { fundamentalRatio: ratioOf(c.bar), targeted: targeted ? prog.roots[c.bar] != null : undefined })),
     modulations: h.modulations.map((m) => ({ ...m })),
-    timeline: { slotStarts: starts.map((x) => x * T), barStarts: starts.filter((_, j) => j % S === 0).map((x) => x * T) },
+    timeline: { slotStarts: ctx.starts.map((x) => x * T), barStarts: ctx.starts.filter((_, j) => j % S === 0).map((x) => x * T) },
     parts: partList,
     decisions,
     stats: {
