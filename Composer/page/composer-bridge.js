@@ -42,7 +42,7 @@ import { createPartStrips } from './part-strips.js';
 import { createScaleLock, createFamiliesLock } from './panel-locks.js';
 import { createTheater } from './theater.js';
 
-export const COMPOSER_BRIDGE_VERSION = 'composer-bridge-v3';
+export const COMPOSER_BRIDGE_VERSION = 'composer-bridge-v4';
 
 /** the page, as the tab controller and the lens see it */
 export function pageHost(win) {
@@ -94,7 +94,8 @@ export function createComposerBridge(win, { runCompose = createComposeRunner(), 
   const visuals = () => win.lrcVisuals ?? null;
   const plotted = () => { const v = visuals(); return v && v.compositeRhythm ? { compositeRhythm: v.compositeRhythm, grid: v.grid } : null; };
   // the page's one overlay, and its seat: the tab while shown, the lens while on
-  const overlay = createPlotOverlay({ getHighlights: () => tab.highlights(plotted()), getSelected: () => tab.view.selected, makeCanvas: () => doc.createElement('canvas') });
+  // STEP 4e: getFocus rings the window's selected matrix cell (only while the tab shows its context section)
+  const overlay = createPlotOverlay({ getHighlights: () => tab.highlights(plotted()), getSelected: () => tab.view.selected, getFocus: () => tab.cellFocus(plotted()), makeCanvas: () => doc.createElement('canvas') });
   const seat = createOverlaySeat({ visuals, overlay });
   const view = createComposerTab({ tab, doc, visuals, raf: (f) => win.requestAnimationFrame(f), clock, storage: local, overlay, seat });
   const panels = [

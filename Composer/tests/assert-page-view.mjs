@@ -88,7 +88,9 @@ go.click(); await settle();
 check(`Compose: the button says Perform; readouts (${qa(left, 'ctab-readouts')[0].children.length}) and decisions (${q(left, 'ctab-decisions-table').children.length})`, go.textContent === 'Perform' && q(left, 'ctab-readouts').children.length > 5 && q(left, 'ctab-decisions-table').children.length > 10);
 const lanes = qa(left, 'ctab-lane');
 check(`a lane a part, Drums included (${lanes.length}), each name a part`, lanes.length === 6 && lanes.map((l) => q(l, 'ctab-lane-name').textContent).join() === 'Lead,Chords,Comping,Bass,Inner,Drums');
-check('a column a bar', qa(lanes[0], 'ctab-bar').length === bridge.controller.state.spec.knobs.bars && qa(lanes[1], 'ctab-chord').length === bridge.controller.state.spec.knobs.bars);
+// STEP 4e: the lanes are the matrix now; a lead cell spans its phrase, so the Chords row is the one with a cell a bar
+check('a column a bar (the Chords row; the Lead row a cell a phrase)', qa(lanes[1], 'ctab-bar').length === bridge.controller.state.spec.knobs.bars && qa(lanes[1], 'ctab-chord').length === bridge.controller.state.spec.knobs.bars
+  && qa(lanes[0], 'ctab-bar').length === Math.ceil(bridge.controller.state.spec.knobs.bars / Math.max(1, Math.floor(32 / bridge.controller.state.spec.knobs.slotsPerBar))));
 check('the plot was redrawn with the lit nodes', bridge.overlay.highlights && bridge.overlay.highlights.parts.lead.indices.length > 0 && bridge.overlay.snapshotted);
 
 win.toneRowPlayback.isPlaying = true;
@@ -104,9 +106,11 @@ dom.raf.flush(2);
 check('… and the playhead goes away', q(left, 'ctab-playhead').style.display === 'none');
 
 console.log('\n— the inspector');
-check('lead is selected: its sound, legato, on/off and level; the Lines section', q(inspector, 'ctab-insp-name').textContent === 'Lead' && inspector.querySelector('select') && qa(inspector, 'ctab-toggle').length >= 2 && q(inspector, 'ctab-level') && inspector.querySelector('.ctab-insp-tab.active').textContent === 'Lines');
+// STEP 4e: the inspector opens on the selected cell's context; the settings sections are tabs beside it
+check('lead is selected: its sound, legato, on/off and level; the cell\'s context (Bars 1–… · Lead)', q(inspector, 'ctab-insp-name').textContent === 'Lead' && inspector.querySelector('select') && qa(inspector, 'ctab-toggle').length >= 2 && q(inspector, 'ctab-level') && /^Bars? 1.* · Lead$/.test(inspector.querySelector('.ctab-insp-tab.active').textContent));
 q(qa(left, 'ctab-lane')[5], 'ctab-lane-name').click();
-check('click Drums in the lanes: the inspector shows the drums, on the Drums section, with the kit', q(inspector, 'ctab-insp-name').textContent === 'Drums' && inspector.querySelector('.ctab-insp-tab.active').textContent === 'Drums'
+qa(inspector, 'ctab-insp-tab').find((b) => b.textContent === 'Drums').click();
+check('click Drums in the matrix, then the Drums section: the inspector shows the drums, with the kit', q(inspector, 'ctab-insp-name').textContent === 'Drums' && inspector.querySelector('.ctab-insp-tab.active').textContent === 'Drums'
   && inspector.querySelectorAll('option').some((o) => o.value === 'assets/audio/kick1.wav') && qa(left, 'ctab-lane')[5].classList.contains('selected'));
 const mode = inspector.querySelector('select');
 mode.value = 'son'; mode.dispatchEvent(new win.Event('change'));

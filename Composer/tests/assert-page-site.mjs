@@ -43,7 +43,7 @@ check('the lab is still not linked from the page', !html.includes('composer-lab'
   check('(sprint 2) the glyph is in the header\'s controls, before the Cosmos button: hidden until a rhythm, aria-pressed, a tooltip', !!glyph && controls.indexOf('composition-glyph') < controls.indexOf('cosmos-enter-btn')
     && /\shidden[\s>]/.test(glyph[0]) && /aria-pressed="false"/.test(glyph[0]) && /aria-label="Compose"/.test(glyph[0]) && /data-tip="Compose"/.test(glyph[0]) && /type="button"/.test(glyph[0]));
   check('… an inline SVG notation symbol, with no text on the button', !!glyph && /^<svg[\s\S]*<\/svg>$/.test(glyph[1].trim()) && glyph[1].replace(/<[^>]+>/g, '').trim() === '' && (glyph[1].match(/<ellipse/g) || []).length === 2);
-  check('… its stylesheet is linked, and the bridge is a fresh version', /<link rel="stylesheet" href="Composer\/page\/composition-lens\.css\?v=\d+">/.test(html) && /composer-bridge\.js\?v=20261023/.test(html));
+  check('… its stylesheet is linked, and the bridge is a fresh version', /<link rel="stylesheet" href="Composer\/page\/composition-lens\.css\?v=\d+">/.test(html) && Number(html.match(/composer-bridge\.js\?v=([\d.]+)"/)?.[1]) >= 20261023);   // STEP 4e bumped it (20261025.1)
 }
 
 console.log('\n— the module graph');

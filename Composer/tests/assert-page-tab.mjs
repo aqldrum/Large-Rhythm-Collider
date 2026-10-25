@@ -7,7 +7,7 @@
 //   • the progression and the drums carried through it exactly as the lab carries them; the page's sample paths
 //   • the selection and the inspector's section; the lit nodes memoized, and null for another rhythm
 //   node Composer/tests/assert-page-tab.mjs
-import { createTabController, SECTIONS, SECTION_OF, kitChoices, PAGE_SAMPLES_BASE } from '../page/tab-controller.js';
+import { createTabController, SECTIONS, SECTION_OF, CONTEXT_SECTION, kitChoices, PAGE_SAMPLES_BASE } from '../page/tab-controller.js';
 import { compose } from '../core/compose.js';
 import { siteRhythm } from './site-scripts.mjs';
 
@@ -117,9 +117,14 @@ check('take from last compose, then clear', tab.core.takeProgression() && tab.co
 check('root choices come from the page\'s row', tab.core.rootChoices().candidates.length > 3);
 
 console.log('\n— the selection and the inspector');
-check('lead is selected, on Lines', tab.view.selected === 'lead' && tab.view.section === 'lines');
+// STEP 4e: the inspector opens on the selected cell's context (CONTEXT_SECTION); a part picked there keeps it, and on a
+// settings section a part picks its own section, as before
+check('lead is selected, bar 1, on the cell\'s context (STEP 4e)', tab.view.selected === 'lead' && tab.view.bar === 0 && tab.view.section === CONTEXT_SECTION);
 tab.select('drums');
-check('select the drums: the Drums section', tab.view.selected === 'drums' && tab.view.section === 'drums');
+check('select the drums: still the context, now the drums\' bar', tab.view.selected === 'drums' && tab.view.section === CONTEXT_SECTION);
+tab.setSection('lines');
+tab.select('drums');
+check('on a settings section, select the drums: the Drums section', tab.view.selected === 'drums' && tab.view.section === 'drums');
 tab.select('chords');
 check('select the chords: Harmony', tab.view.section === 'harmony' && SECTION_OF.chords === 'harmony');
 tab.setSection('tuning');

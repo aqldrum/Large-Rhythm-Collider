@@ -19,9 +19,14 @@
 //              current rhythm's composition. A compose started for one rhythm lands in that rhythm's entry even if
 //              the page has moved on (it is cached, not dropped); coming back to the rhythm recalls it.
 //   lens       keepPlaying () → true while the Composition lens owns playback: closing the tab doesn't stop it then.
+//   cell       (STEP 4e: the matrix) the selection is a CELL, a part and a bar (view.selected, view.bar): the inspector's
+//              context section ('cell', the default) follows it; selectCell(part, bar) picks one (a lead cell is its
+//              phrase). select(part) keeps the bar. cellFocus(plot) → the cell's lit nodes, which the overlay rings
+//              on the mirrored plot while the context section is shown (its getFocus seam).
 
 import { createComposerController, kitChoices as sharedKitChoices } from '../perform/composer-controller.js';
-import { highlightsOf, plotOf, HIGHLIGHT_PARTS } from './plot-highlights.js';
+import { highlightsOf, plotOf, indexOfTick, HIGHLIGHT_PARTS } from './plot-highlights.js';
+import { phraseSpans, cellSpan } from './matrix.js';
 import { createCompositionStore } from '../store/composition-store.js';
 
 export const TAB_VERSION = 'composer-tab-v1';
@@ -31,6 +36,8 @@ export const SECTIONS = Object.freeze(['harmony', 'lines', 'drums', 'tuning']);
 export const SECTION_LABELS = Object.freeze({ harmony: 'Harmony', lines: 'Lines', drums: 'Drums', tuning: 'Tuning' });
 /** the section a part opens on (proposed) */
 export const SECTION_OF = Object.freeze({ lead: 'lines', chords: 'harmony', comp: 'lines', bass: 'lines', inner: 'lines', drums: 'drums' });
+/** STEP 4e: the inspector's context section, the selected cell's (the default; proposed) */
+export const CONTEXT_SECTION = 'cell';
 export const kitChoices = (voice) => sharedKitChoices(voice, PAGE_SAMPLES_BASE);
 
 /**
@@ -42,12 +49,12 @@ export const kitChoices = (voice) => sharedKitChoices(voice, PAGE_SAMPLES_BASE);
  */
 export function createTabController({ host = {}, runCompose, createContext, timers, clock, store = createCompositionStore(), keepPlaying = () => false } = {}) {
   const core = createComposerController({ runCompose, createContext, timers, clock, beforePerform: () => host.stopMain?.() });
-  const view = { open: false, selected: 'lead', section: SECTION_OF.lead, hasRhythm: false, showWork: true };
+  const view = { open: false, selected: 'lead', bar: 0, section: CONTEXT_SECTION, hasRhythm: false, showWork: true };
   const listeners = new Set(), mainListeners = new Set();
   const changed = () => { for (const f of listeners) f(core.state, view); };
   // a change to any entry the controller acts on (the bound one, or one whose compose just landed) is the store's too
   core.onChange((st) => { changed(); const key = store.keyOfState(st); if (key) store.notify(key); });
-  let memo = { key: null, value: null };
+  let memo = { key: null, value: null }, focusMemo = { key: null, value: null };
 
   const api = {
     core,
@@ -92,13 +99,49 @@ export function createTabController({ host = {}, runCompose, createContext, time
     open() { view.open = true; api.syncRhythm(); changed(); },
     close() { view.open = false; if (!keepPlaying()) core.stop(); changed(); },
 
+    /** a part (its name in the matrix, the strips' pick): the bar is kept; on a settings section, the part's own */
     select(id) {
       if (!HIGHLIGHT_PARTS.includes(id)) throw new Error(`composer tab: no part ${id}`);
-      view.selected = id; view.section = SECTION_OF[id]; changed();
+      view.selected = id;
+      if (view.section !== CONTEXT_SECTION) view.section = SECTION_OF[id];
+      changed();
+    },
+    /** STEP 4e: a cell of the matrix (part, bar): the inspector's context section shows it */
+    selectCell(id, bar) {
+      if (!HIGHLIGHT_PARTS.includes(id)) throw new Error(`composer tab: no part ${id}`);
+      const N = api.bars();
+      if (!(Number.isInteger(bar) && bar >= 0 && (N === 0 || bar < N))) throw new Error(`composer tab: no bar ${bar}`);
+      view.selected = id; view.bar = bar; view.section = CONTEXT_SECTION; changed();
     },
     setSection(name) {
-      if (!SECTIONS.includes(name)) throw new Error(`composer tab: no section ${name}`);
+      if (!SECTIONS.includes(name) && name !== CONTEXT_SECTION) throw new Error(`composer tab: no section ${name}`);
       view.section = name; changed();
+    },
+    /** the composition's bars (0 with none) */
+    bars: () => (core.state.spec && !core.state.spec.refused ? core.state.spec.knobs.bars : 0),
+    /** the selected cell: { part, bar, from, to } (a lead cell spans its phrase), the bar kept inside the meter */
+    cell() {
+      const N = api.bars();
+      if (N && view.bar >= N) view.bar = N - 1;
+      const spans = N ? phraseSpans(core.state.spec) : [];
+      return { part: view.selected, bar: view.bar, ...cellSpan(view.selected, view.bar, spans) };
+    },
+    /** the selected cell's lit nodes on the plot: { part, indices } (null: no context shown, or nothing to light) */
+    cellFocus(plotted) {
+      const s = core.state;
+      if (!view.open || view.section !== CONTEXT_SECTION || !s.spec || s.spec.refused) return null;
+      const plot = plotOf(plotted || {}), c = api.cell(), parts = core.currentParts();
+      const key = [s.spec, s.drums, plot?.ticks, plot?.grid, c.part, c.from, c.to, ...parts];
+      if (focusMemo.key && focusMemo.key.length === key.length && focusMemo.key.every((v, i) => v === key[i])) return focusMemo.value;
+      let value = null;
+      if (plot && api.highlights(plotted)) {
+        const items = c.part === 'drums' ? s.drums?.hits ?? [] : parts.find((p) => p.id === c.part)?.notes ?? [];
+        const seen = new Set();
+        for (const it of items) if (it.bar >= c.from && it.bar < c.to) { const i = indexOfTick(plot.ticks, it.tick); if (i >= 0) seen.add(i); }
+        value = { part: c.part, from: c.from, to: c.to, indices: [...seen].sort((a, b) => a - b) };
+      }
+      focusMemo = { key, value };
+      return value;
     },
 
     /** the lit nodes of the spec as it plays now, on the rhythm plotted ({ compositeRhythm, grid }) */

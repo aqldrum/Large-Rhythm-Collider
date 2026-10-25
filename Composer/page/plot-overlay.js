@@ -10,6 +10,9 @@
 //   frame   the snapshot back (one blit, however many onsets the row has), then the playhead: a line at its place on
 //           the plot, a ring on the onset under it, and a glow on each node sounding now. No dot of the row is redrawn
 //           per frame, so a 16k-onset row costs the same as 8:7:6:5.
+//   focus   (STEP 4e) getFocus () → { part, indices } | null: the Composer window's selected matrix cell. Its nodes are
+//           drawn on top and ringed (the rest of its part unringed), so a cell lights on the mirrored plot. Without
+//           getFocus, or with null, the draw is exactly as before (the whole selected part ringed).
 // While the main page animates its own lights (LRCVisuals.isAnimating: main playback), no snapshot is taken: the
 // Composer is stopped then (one thing sounds at a time), and every main frame redraws the plot anyway.
 //   scene   while Compose is animated (compose-animator.js), setScene(true): draw washes the plot and snapshots it with
@@ -51,13 +54,14 @@ export function partOrder(selected) {
 }
 
 /**
- * createPlotOverlay({ getHighlights, getSelected, makeCanvas })
+ * createPlotOverlay({ getHighlights, getSelected, getFocus, makeCanvas })
  *   getHighlights () → plot-highlights.js highlights for the plot as drawn now, or null (nothing lit)
  *   getSelected   () → the selected part's id (drawn on top, ringed)
+ *   getFocus      () → the selected cell's { part, indices } (STEP 4e; ringed instead of the whole part), or null
  *   makeCanvas    () → a canvas for the snapshot (document.createElement('canvas') in the page)
  */
-export function createPlotOverlay({ getHighlights, getSelected = () => null, makeCanvas = () => (typeof document !== 'undefined' ? document.createElement('canvas') : null) } = {}) {
-  let view = null, ctxOf = null, snap = null, snapOk = false, lit = null, scene = false;
+export function createPlotOverlay({ getHighlights, getSelected = () => null, getFocus = () => null, makeCanvas = () => (typeof document !== 'undefined' ? document.createElement('canvas') : null) } = {}) {
+  let view = null, ctxOf = null, snap = null, snapOk = false, lit = null, scene = false, lastFocus = null;
 
   const washOver = (ctx, { width, height, button }) => {
     ctx.save();
@@ -73,12 +77,17 @@ export function createPlotOverlay({ getHighlights, getSelected = () => null, mak
     /** LRCVisuals' hook: called at the end of each Linear Plot draw. view: { positions, width, height, dotSize, canvas,
      *  button, animating } */
     draw(ctx, v) {
-      view = v; ctxOf = ctx; snapOk = false;
+      view = v; ctxOf = ctx; snapOk = false; lastFocus = null;
       lit = getHighlights();
       if (!lit && !scene) return;
       washOver(ctx, v);
-      const selected = getSelected(), r = litRadius(v);
-      if (!scene) for (const id of order(selected)) { const h = lit.parts[id]; if (h && h.indices.length) drawLitPart(ctx, h, v.positions, r, id === selected); }
+      const focus = scene ? null : getFocus(), selected = focus ? focus.part : getSelected(), r = litRadius(v);
+      if (!scene) for (const id of order(selected)) {
+        const h = lit.parts[id];
+        if (!h || !h.indices.length) continue;
+        if (focus && id === focus.part) { lastFocus = focus; drawLitPart(ctx, h, v.positions, r, false); if (focus.indices.length) drawLitPart(ctx, h, v.positions, r + 1, true, focus.indices); }
+        else drawLitPart(ctx, h, v.positions, r, id === selected);
+      }
       if (v.animating || !v.canvas) return;
       snap ??= makeCanvas();
       if (!snap) return;
@@ -126,6 +135,8 @@ export function createPlotOverlay({ getHighlights, getSelected = () => null, mak
     },
     /** what the last draw lit (for the view and tests) */
     get highlights() { return lit; },
+    /** the cell the last draw ringed (STEP 4e), or null */
+    get focus() { return lastFocus; },
     get snapshotted() { return snapOk; },
   };
   return api;
