@@ -124,3 +124,42 @@ Merge, run the full suite, then write a browser list for Avery: swaps (chord, le
 - 2026-10-25: 4d (Store) built on `step4/store`. Each entry keeps `composed` (Compose's spec) and `spec` (composed + edits, a fold of `rearrange` in the edits' order, each step kept), so the player, lanes, plot, strips, lens and recall read the edits with no page edit. Actions: `swapChord`, `swapLead` (chords follow, smooth), `setProgressionField` (the typed text kept as the source; typed chord edits), the drum grid (`setDrumGrid`, `setDrumCell`, `applyDrumPreset`), `undo`/`redo` (50), `alternatesOf`. A re-compose bakes chord edits into `progression` as `{ ratio, quality }` pins, drops lead edits, drops a pin the new row lacks and keeps the grid only on the same meter, all said in `state.dropped`. Edits run on the main thread up to 32,768 onsets (a lead swap on the full table to 2,048), else in the compose worker (`kind: 'rearrange'`, rows kept per key); smoothPhrase always there. The owed items are done: `grid`/`prime` are in the controller's drum modes, and `against` is seeded per bar (its 4 baseline variants left out, 527 hashes unchanged). `assert-store-edits.mjs` is added (65 suites). DESIGN_NOTES "Step 4d: store edits and pins".
 - 2026-10-25: 4d merged (log conflict only). Open for Avery (4d): should undo survive a re-compose; should removing a pin through the field re-arm the glyph; should a swapped chord stay pinned through "chords follow"; should the field show the fallback that actually plays (chosen with the lead); move `barMaterials` to the worker for huge rows (~270 ms at 524k)? Audition has no API of its own (4e: swap + undo leaves a redo step).
 - 2026-10-25: 4c prime revision built on `step4/prime` (decision 7 as re-ruled). p is a seeded random prime in (N·S, max(199, the next prime ≥ 2·N·S)] (the range proposed), drawn from `${seed}/drums/prime`, so no other part or `against` bar moves. Level 2 is Partitions' own `getSecondaryAllowedSet(p, N·S)` (for a prime p, identical to its UI's `computeL2Coverages` cut), turned so light 0, the downbeat, is always chosen. Proposed: a dark chosen light lands within its cell; the controller drops an asked p a new meter outgrows (`state.dropped.p`). Measured: level 2 moves a stroke at most half a slot over the drawn range (mean 0.05–0.16 by S), deeper the nearer p is to N·S; merges under 1.5 % on dense rows. `prime` output gains `drawn`, `range`, `chosen`, and `struck[].tick`/`snap`. `assert-drum-prime.mjs` added (66 suites). DESIGN_NOTES "Step 4c", "The prime partition, revised".
+- 2026-10-25: the prime revision was merged cleanly (dd91af9..4ef233d, merge ea053e8); 66/0 suites. Decision 7 as re-ruled:
+  - **p:** drawn uniformly from the primes in (N·S, U], U = max(199, the smallest prime ≥ 2·N·S), from its own draw `${seed}/drums/prime`.
+  - **Level 2:** Partitions' own `getSecondaryAllowedSet(p, C)`, matching what the live UI plays (`computeL2Coverages`) for every C ≥ 3. The downbeat always sounds.
+  - **A dark chosen light:** lands within its cell instead of going silent (proposed).
+  - **The feel:** a drift-and-reset under half a slot, shaped by p mod C. True long-short alternation appears only when p mod C ≈ C/2. A small p gives a push-and-pull rubato; a p near U is almost straight.
+- 2026-10-25: **WRAPPED for the night.** 4a–4d and the prime revision are merged on composer-sprint-2 (tip below). **Next: 4e (the matrix UI), not started.**
+
+## Morning notes (Avery)
+
+**State:**
+- composer-sprint-2 holds sprint 2 steps 1–3 and step 4 phases 4a–4d plus the prime revision. 66 Node suites pass. Not pushed, not on main.
+- The step-4 work has no UI yet (4e), so a browser pass shows only steps 1–3 behaving as before, now reading the edited composition.
+- **Serve it with caching off.** Module imports carry no version strings, and a stale cached module gives "does not provide an export named …":
+  `python3 -c "import http.server as h` / `class H(h.SimpleHTTPRequestHandler):` / `    def end_headers(self): self.send_header('Cache-Control','no-store'); super().end_headers()` / `h.test(HandlerClass=H, port=8000)"` (four lines), or keep DevTools' Disable cache ticked.
+
+**Open calls, all proposed in the code:**
+- **4b:**
+  - Flats come back sharp when the field is rebuilt from pins. 4d now keeps the typed text while the field is the source.
+  - After a modulation, should both chord names show?
+- **4c:**
+  - Should the whole kit play on the prime lights, or just the perc (as built)?
+  - Keep `with`/`partition` perc rows tied to their source until edited (they round-trip only 28–34 %)?
+- **4c prime:**
+  - Is the ceiling U right, and should the draw stay uniform?
+  - Should a dark chosen light land within its cell (built) or stay silent?
+  - Under 4 slots, p is drawn above N·S·m. Right?
+  - A stale asked p is dropped after a meter change. Right?
+- **4d:**
+  - Should undo survive a re-compose?
+  - Should removing a pin via the field make the glyph compose again?
+  - Should a swapped chord stay pinned through "chords follow"?
+  - Should the field show the fallback that actually plays?
+  - Should `barMaterials` move to the worker for huge rows?
+- **From your pass:**
+  - The tutorial opening needs more reading time.
+  - "Show the work" should be slower.
+  - The glyph contact sheet is coming from another agent.
+  - The improvise direction is recorded in `DIRECTIONS.md`.
+- **Elsewhere:** the two Cosmos fold fixes are still uncommitted in the composer-sprint worktree (not on this branch).
