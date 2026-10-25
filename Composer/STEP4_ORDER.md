@@ -34,7 +34,7 @@ Also from the recommendations, taken as written:
 | 4b. Typed progression: `chord-symbols.js`, resolve, `barMaterials`, quality pins | `step4/typed` | — | new `core/chord-symbols.js`, `core/progression.js` | MERGED (6a92539..ac83a05) |
 | 4c. Drum grid source, presets ⇄ grid, prime level 1 | `step4/drums` | — | `core/drums.js` | MERGED (83211fc..d8c7886) |
 | 4d. Store: `edits`, pins, `drumOptions.grid`, invalidation, undo; the controller merge | `step4/store` | 4a, 4b, 4c merged | `store/`, `perform/composer-controller.js` | built on `step4/store` |
-| 4e. UI: the matrix, then the four inspector contexts ∥ the typed field | `step4/ui` (+ `step4/ui-typed` if split) | 4d merged | `page/composer-tab.*`, `page/tab-controller.js`, `PartitionsUI.js` hosts | waiting |
+| 4e. UI: the matrix, then the four inspector contexts ∥ the typed field | `step4/ui` (+ `step4/ui-typed` if split) | 4d merged | `page/composer-tab.*`, `page/tab-controller.js`, `PartitionsUI.js` hosts | dispatched (from 850adee) |
 | 4f. Final merge, suites, browser list | `composer-sprint-2` | all | — | waiting |
 
 4a, 4b and 4c run in parallel: they touch disjoint files.
@@ -130,6 +130,7 @@ Merge, run the full suite, then write a browser list for Avery: swaps (chord, le
   - **A dark chosen light:** lands within its cell instead of going silent (proposed).
   - **The feel:** a drift-and-reset under half a slot, shaped by p mod C. True long-short alternation appears only when p mod C ≈ C/2. A small p gives a push-and-pull rubato; a p near U is almost straight.
 - 2026-10-25: **WRAPPED for the night.** 4a–4d and the prime revision are merged on composer-sprint-2 (tip below). **Next: 4e (the matrix UI), not started.**
+- 2026-10-25: 4e dispatched (Opus) at Avery's request, to finish step 4 for a full browser test.
 
 ## Morning notes (Avery)
 
