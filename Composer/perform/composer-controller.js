@@ -37,16 +37,40 @@
 //              `state.trace` (STEP 4a: always, at ALTERNATE_CAPS, for the alternates; before, only for
 //              compose({ trace: true })): the spec, the lanes and JSON export are the same with it or without it.
 //              The main page's tab animates Compose from it (page/compose-animator.js) while "show the work" is on.
+//   edits      (STEP 4d; DESIGN_NOTES "Step 4d: store edits and pins") live local edits of the composition, held in the
+//              entry (store/composition-store.js: composed, edits, field, undo/redo, dropped):
+//                swapChord(bar, candidate | { rootTone, quality })   a bar's chord (decision 1: the lead stays)
+//                swapLead(phrase, lineId, { chordsFollow, smooth })  a phrase's lead for a runner-up line (decision 2)
+//                setProgressionField(text)   the typed field: resolved per bar (chord-symbols.js), its chords typed edits
+//                setDrumGrid(grid) / setDrumCell(bar, voice, place, value) / applyDrumPreset(mode)   the step grid
+//                undo() / redo()             (at most UNDO_LIMIT steps; a Compose clears them)
+//              Each returns a Promise of { ok, changedBars, retunedBars, … }; on this thread it has applied before it
+//              returns. `state.composed` is Compose's spec, untouched; `state.spec` is composed + edits (rearrange.js,
+//              in the edits' order), so the player, the lanes, the plot, the part strips, the lens and its recall all
+//              read the edited composition with no change of theirs. The parts' sound/legato/on-off and levels stay
+//              live as before, over the edited notes. Edits never make the entry dirty.
+//              Where an edit runs: this thread while the row has at most MAIN_THREAD_ONSETS onsets (a lead swap on
+//              the full table: MAIN_THREAD_LEAD_FULL_ONSETS), else the module worker (runCompose.rearrange, the row
+//              kept there per key); `smooth` (smoothPhrase) always in the worker. No worker given: this thread.
+//              A re-compose (decision 5) keeps the chord edits as pins (into `progression` as { ratio, quality }),
+//              drops the lead edits, drops a pin the new row lacks, keeps the drum grid only on the same meter, and
+//              says what it dropped in `state.dropped`.
 
 import { compose, rearticulate, chooseMeter, PART_IDS } from '../core/compose.js';
-import { rootCandidates } from '../core/progression.js';
+import { rootCandidates, chooseChordOnRoot, qualityById } from '../core/progression.js';
 import { NOTE_INSTRUMENT_IDS, getInstrument } from '../../Audio/voices/recipes.js';
 import { createPlayer } from './composer-player.js';
-import { arrangeDrums, DRUM_MODES, DRUM_VOICES, DEFAULT_KIT } from '../core/drums.js';
+import { arrangeDrums, gridOf, readGrid, beatsOf, ALL_DRUM_MODES, DRUM_VOICES, DEFAULT_KIT, GRID_CHARS } from '../core/drums.js';
 import { DRUM_PATTERNS } from '../core/drum-patterns.js';
 import { MADE_DRUM_CHOICES } from '../../Audio/drums/index.js';
-import { newCompositionState, KNOB_NAMES } from '../store/composition-store.js';
+import { newCompositionState, KNOB_NAMES, emptyEdits } from '../store/composition-store.js';
 import { ALTERNATE_CAPS } from '../core/trace.js';   // STEP 4a
+// STEP 4d: the edits
+import { rearrange, applyRearrange, materialsOf, materialsKey } from '../core/rearrange.js';
+import { barMaterials, resolveSymbols, pinsToField } from '../core/chord-symbols.js';
+import { phrasesOf, isStrongBeat } from '../core/harmony.js';
+import { orderedEdits, setChordEdit, removeChordEdit, setLeadEdit, removeLeadEdit, sameRecord, hasEdits, snapshotOf, restoreSnapshot, pushUndo, pinOf, asksOf,
+  rewriteToken, chordAlternates, leadAlternates, leadAlternatesOf, phraseOfBar } from '../store/composition-edits.js';
 
 export const LAB_VERSION = 'composer-lab-v1';
 /** a few rhythms across sizes; 41:42:43 first (tone-rich, mid-size) */
@@ -62,13 +86,19 @@ export const KNOBS = KNOB_NAMES;
 export const AUTO_RECOMPOSE_MS = 300;
 /** the playback tempo's range, BPM */
 export const TEMPO_LIMITS = Object.freeze([30, 300]);
+/** STEP 4d: an edit runs on this thread while the row has at most this many onsets (a chord swap measured ≤ ~17 ms at
+ *  32,766 onsets on either table, 24–28 ms at 131,070), else in the module worker (proposed) */
+export const MAIN_THREAD_ONSETS = 32768;
+/** …a lead swap on the full table only up to this many (it is 35–50 ms from 10k onsets up, 15 ms at 1,536; proposed) */
+export const MAIN_THREAD_LEAD_FULL_ONSETS = 2048;
 /** every sound a part can play: the note-role instruments of Audio/voices, in the catalog's order */
 export const soundChoices = () => NOTE_INSTRUMENT_IDS.map((id) => ({ id, label: getInstrument(id).label }));
 
 // ── drums ──
-const DRUM_MODE_LABELS = { backbeat: 'backbeat (default)', with: 'clave: with lead + comping', against: 'clave: against lead + comping', partition: 'partition: the downbeat layer' };
-/** every drum mode: the layered modes, then each curated pattern */
-export const drumModeChoices = () => DRUM_MODES.map((id) => ({ id, label: DRUM_MODE_LABELS[id] ?? `pattern: ${DRUM_PATTERNS[id].label}` }));
+const DRUM_MODE_LABELS = { backbeat: 'backbeat (default)', with: 'clave: with lead + comping', against: 'clave: against lead + comping', partition: 'partition: the downbeat layer',
+  grid: 'grid: the step grid', prime: 'prime: the two-level prime partition' };   // STEP 4d: grid and prime (drums.js keeps them out of DRUM_MODES)
+/** every drum mode: the layered modes, each curated pattern, then the source modes (the step grid, the prime partition) */
+export const drumModeChoices = () => ALL_DRUM_MODES.map((id) => ({ id, label: DRUM_MODE_LABELS[id] ?? `pattern: ${DRUM_PATTERNS[id].label}` }));
 /** the built-in samples Partitions plays (assets/audio): relative to the lab page by default; the main page passes
  *  its own base ('assets/audio/') */
 const SAMPLE_KINDS = { kick: 'kick', snare: 'snare', hat: 'hat', perc: 'perc', cym: 'cym' };
@@ -91,8 +121,12 @@ export function readLayers(values) {
  *   beforePerform () → called as Perform starts, before anything is booked
  *   destination   the AudioNode the player's limiter feeds (the context's destination by default)
  *   state         the composition state to start bound to (a fresh one, on the lab's first preset, by default)
+ *   runRearrange  ({ key, spec, edit, opts }) → Promise<rearrange's result>: the worker for big rows (STEP 4d;
+ *                 runCompose.rearrange by default, compose-runner.js'; none: every edit on this thread)
+ *   mainThreadOnsets, leadFullOnsets   where an edit runs (MAIN_THREAD_ONSETS, MAIN_THREAD_LEAD_FULL_ONSETS)
  */
-export function createComposerController({ runCompose = async (l, T, o) => compose(l, T, o), createContext = () => new AudioContext(), timers = globalThis, clock = () => (globalThis.performance ? performance.now() : Date.now()), beforePerform = null, destination = null, state: initial = null } = {}) {
+export function createComposerController({ runCompose = async (l, T, o) => compose(l, T, o), createContext = () => new AudioContext(), timers = globalThis, clock = () => (globalThis.performance ? performance.now() : Date.now()), beforePerform = null, destination = null, state: initial = null,
+  runRearrange = runCompose?.rearrange ?? null, mainThreadOnsets = MAIN_THREAD_ONSETS, leadFullOnsets = MAIN_THREAD_LEAD_FULL_ONSETS } = {}) {
   let state = initial ?? newCompositionState({ layers: PRESETS[0].layers, cycleSeconds: PRESETS[0].cycleSeconds, seed: 1 });
   const listeners = new Set(), levelListeners = new Set();
   const changed = (st = state) => { for (const f of listeners) f(st); };
@@ -112,6 +146,203 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   };
   const sameLayers = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
+  // ── STEP 4d: the edits ──────────────────────────────────────────────────────────────────────────────────────────
+  // per composed spec: its row and cells (materialsOf, ~8 ms on the 16k row, once), and the field's bar materials
+  const mats = new WeakMap(), fieldMats = new WeakMap();
+  let looseField = { key: null, value: null };   // the field's materials before any compose (the knobs as they are)
+  // per state: the fold — each edit's spec in order, so a new edit is one rearrange and an undo of the last is none
+  const folds = new WeakMap();
+  const editListeners = new Set();
+  const STALE = Symbol('stale');
+  const ready = (st) => !!(st.composed && !st.composed.refused && st.spec && !st.spec.refused);
+  const requireSpec = (st) => { if (!ready(st)) throw new Error('composer: nothing composed to edit'); };
+  const materialsFor = (st) => { let m = mats.get(st.composed); if (!m) { m = materialsOf(st.composed); mats.set(st.composed, m); } return m; };
+  /** the field's materials: the composed spec's bars (its knobs reproduce its cells), else Compose's for the knobs now */
+  function fieldMaterialsOf(st) {
+    if (ready(st)) {
+      let m = fieldMats.get(st.composed);
+      if (!m) { m = barMaterials(st.composed.input.layers, st.composed.knobs.cycleSeconds, st.composed.knobs, { row: materialsFor(st).row }); fieldMats.set(st.composed, m); }
+      return m;
+    }
+    const knobs = { ...overrides(), seed: st.input.seed }, key = JSON.stringify([st.input.layers, st.input.cycleSeconds, knobs]);
+    if (looseField.key !== key) {
+      let value;
+      try { value = barMaterials(st.input.layers, st.input.cycleSeconds, knobs); } catch (err) { value = { refused: true, reason: String(err && err.message ? err.message : err) }; }
+      looseField = { key, value };
+    }
+    return looseField.value;
+  }
+  /** the field's word for a bar's ask (a pin or null) */
+  const wordOf = (m, ask) => (ask ? pinsToField([ask], m) || '-' : '-');
+  /** keep a typed field in step with a bar's ask after an edit (the user's text elsewhere untouched) */
+  function syncField(st, bars) {
+    if (!st.field) return;
+    const m = fieldMaterialsOf(st);
+    if (!m || m.refused) return;
+    const asks = asksOf(st, st.composed?.knobs?.bars ?? m.cells.bars);
+    let text = st.field.text;
+    for (const k of bars) text = rewriteToken(text, k, wordOf(m, asks[k]));
+    st.field = { text };
+  }
+  /** is bar k inside a phrase whose lead edit has the chords follow? */
+  const followed = (st, k) => Object.entries(st.edits.lead).some(([p, e]) => e.chordsFollow && phraseOfBar(st.composed, k) === Number(p));
+  /** where an edit runs */
+  function onWorker(st, e) {
+    if (!runRearrange) return false;
+    if (e.kind === 'lead' && e.smooth) return true;
+    const n = st.composed.stats.onsets;
+    return n > mainThreadOnsets || (e.kind === 'lead' && st.composed.knobs.table === 'full' && n > leadFullOnsets);
+  }
+  /** an edit record → rearrange's edit and options */
+  function jobOf(st, e) {
+    if (e.kind === 'chord') return { edit: { bar: e.bar, chord: { rootTone: e.rootTone, quality: e.quality } }, opts: {} };
+    const line = st.trace?.lines?.[e.lineId];
+    if (!line) throw new Error(`composer: no line ${e.lineId} in the trace`);
+    return { edit: { phrase: e.phrase, line: { notes: line.notes }, chordsFollow: !!e.chordsFollow }, opts: e.smooth ? { smoothPhrase: true } : {} };
+  }
+  /** the bars that moved from one spec to the next: a chord or a part's notes (not their lengths), else only re-pitched */
+  function movedBars(a, b) {
+    const N = b.knobs.bars, changedBars = [], retunedBars = [];
+    const chordOf = (c) => { const { name, pcs, rootPc, offsetCents, rawOffsetCents, fundamentalRatio, offGrid, ...rest } = c; return JSON.stringify(rest); };
+    const notesOf = (spec, k) => spec.parts.map((p) => p.notes.filter((n) => n.bar === k).map(({ duration, retrigger, hz, ...rest }) => JSON.stringify(rest)).join('|')).join('/');
+    for (let k = 0; k < N; k++) {
+      if (chordOf(a.chords[k]) !== chordOf(b.chords[k]) || notesOf(a, k) !== notesOf(b, k)) changedBars.push(k);
+      else if (Math.abs(a.chords[k].fundamentalRatio - b.chords[k].fundamentalRatio) > 1e-12) retunedBars.push(k);
+    }
+    return { changedBars, retunedBars };
+  }
+  /** the edited spec in place: the parts re-articulated as they play now, the drums arranged over it */
+  function settleState(st, eff) {
+    const next = eff ? { ...eff, drums: st.composed.drums } : st.composed, T = st.composed.knobs.cycleSeconds;
+    const art = Object.fromEntries(Object.values(st.parts).map((p) => [p.id, { sound: p.sound, legato: p.legato, enabled: p.enabled }]));
+    st.spec = next;
+    st.parts = Object.fromEntries(next.parts.map((p) => { const a = art[p.id]; return [p.id, a && (a.sound !== p.sound || a.legato !== p.legato || a.enabled !== p.enabled) ? rearticulate(p, { ...a, cycleSeconds: T }) : p]; }));
+    st.drums = arrangeDrums(next, st.drumOptions);
+  }
+  /**
+   * composed + edits, in order, from the fold's cache: the steps whose edits are unchanged are kept, the rest run
+   * (this thread, or the worker). → the summary, or a Promise of it (a step went to the worker), or STALE (a newer
+   * fold took over). Throws (or rejects) when a step can't be made.
+   */
+  function runFold(st) {
+    let f = folds.get(st);
+    if (!f || f.composed !== st.composed) { f = { composed: st.composed, base: { ...st.composed, drums: undefined }, steps: [], gen: 0, applying: false }; folds.set(st, f); }
+    const mine = ++f.gen, list = orderedEdits(st.edits), sigs = list.map((e) => JSON.stringify(e)), was = st.spec;
+    let i = 0, spec = f.base;
+    while (i < list.length && f.steps[i] && f.steps[i].sig === sigs[i]) { spec = f.steps[i].spec; i++; }
+    f.steps.length = i;
+    const commit = (r) => { spec = applyRearrange(spec, r); f.steps.push({ sig: sigs[i], spec }); i++; };
+    const finish = () => { f.applying = false; settleState(st, list.length ? spec : null); return { ok: true, ...movedBars(was, st.spec), edits: list.length }; };
+    const loop = () => {
+      while (i < list.length) {
+        const e = list[i], job = jobOf(st, e);
+        if (onWorker(st, e)) {
+          f.applying = true;
+          // stale: a newer fold of this state took over, or a Compose landed (a new fold record) while it ran; a
+          // stale answer, or a stale failure, never touches the state
+          const stale = () => mine !== f.gen || folds.get(st) !== f || st.composed !== f.composed;
+          return Promise.resolve(runRearrange({ key: materialsKey(spec), spec, edit: job.edit, opts: job.opts })).then((r) => (stale() ? STALE : (commit(r), loop())),
+            (err) => { if (stale()) return STALE; f.applying = false; throw err; });
+        }
+        const { row, cells } = materialsFor(st);
+        commit(rearrange(spec, row, cells, job.edit, job.opts));
+      }
+      return finish();
+    };
+    return loop();
+  }
+  /** apply the entry's edits now (after a change of them); on a failure the snapshot comes back (and the undo step goes) */
+  function applyEdits(st, { rollback = null, kind = 'edit', detail = {} } = {}) {
+    const done = (out) => {
+      if (out === STALE) return { ok: true, superseded: true };
+      changed(st);
+      const result = { ...out, kind, ...detail };
+      for (const fn of [...editListeners]) fn(result, st);
+      return result;
+    };
+    const failed = (err) => {
+      const error = String(err && err.message ? err.message : err);
+      if (rollback) { restoreSnapshot(st, rollback); st.undo.pop(); }
+      let again;
+      try { again = runFold(st); } catch { again = null; }
+      return Promise.resolve(again).catch(() => null).then(() => { changed(st); return { ok: false, error, kind, ...detail }; });
+    };
+    let out;
+    try { out = runFold(st); } catch (err) { return failed(err); }
+    return out && typeof out.then === 'function' ? out.then(done, failed) : Promise.resolve(done(out));
+  }
+  /** one undoable change of the bound entry's edits: mutate () → false for nothing to do */
+  function edit(kind, detail, mutate) {
+    const st = state;
+    requireSpec(st);
+    const before = snapshotOf(st);
+    if (mutate(st) === false) { restoreSnapshot(st, before); return Promise.resolve({ ok: true, noop: true, kind, ...detail }); }
+    pushUndo(st, before);
+    return applyEdits(st, { rollback: before, kind, detail });
+  }
+  /** one undoable change of the bound entry's drum grid or mode (no rearrange: the drums re-arranged over the spec) */
+  function drumEdit(kind, detail, mutate) {
+    const st = state;
+    requireSpec(st);
+    const before = snapshotOf(st);
+    if (mutate(st) === false) { restoreSnapshot(st, before); return Promise.resolve({ ok: true, noop: true, kind, ...detail }); }
+    try { st.drums = arrangeDrums(st.spec, st.drumOptions); } catch (err) { restoreSnapshot(st, before); return Promise.resolve({ ok: false, error: String(err && err.message ? err.message : err), kind, ...detail }); }
+    pushUndo(st, before);
+    changed(st);
+    const result = { ok: true, kind, ...detail, silentCells: st.drums.silentCells ?? [] };
+    for (const fn of [...editListeners]) fn(result, st);
+    return Promise.resolve(result);
+  }
+  /** the drum grid as it plays now: the entry's own (mode grid or prime), else the arrangement written as one */
+  const gridNow = (st) => ((st.drumOptions.mode === 'grid' || st.drumOptions.mode === 'prime') && st.drumOptions.grid ? JSON.parse(JSON.stringify(st.drumOptions.grid)) : gridOf(st.drums));
+  const gridWidth = (spec) => spec.knobs.slotsPerBar * beatsOf(spec.knobs.slotsPerBar).m;
+  const noteGrid = (st) => { st.edits.grid ??= { bars: st.composed.knobs.bars, slotsPerBar: st.composed.knobs.slotsPerBar, from: st.drumOptions.mode === 'grid' ? 'backbeat' : st.drumOptions.mode }; };
+  /** decision 5, as a compose starts: the chord edits written into the pin list as { ratio, quality } */
+  function bakePins(st) {
+    const entries = Object.entries(st.edits?.chords ?? {});
+    if (!entries.length) return;
+    const p = [...st.progression];
+    for (const [bar, e] of entries) { while (p.length <= Number(bar)) p.push(null); p[Number(bar)] = { ratio: e.rootTone, quality: 'asked' in e ? e.asked : e.quality }; }
+    st.progression = p;
+  }
+  /** decision 5, as a compose lands: pins the new row lacks dropped (amber), lead edits dropped, the grid kept on the
+   *  same meter only; the edits cleared (they are pins now) and the undo stack with them */
+  function landEdits(st, spec, sent) {
+    const dropped = { pins: [], unhonored: [], lead: [], grid: null };
+    for (const [phrase, e] of Object.entries(st.edits?.lead ?? {})) dropped.lead.push({ phrase: Number(phrase), lineId: e.lineId });
+    if (!spec.refused) {
+      const N = spec.knobs.bars, p = [...st.progression];
+      sent.forEach((pin, k) => {
+        if (!pin) return;
+        const c = spec.chords[k];
+        if (k >= N || !c?.targeted) { dropped.pins.push({ bar: k, ratio: pin.ratio, quality: pin.quality, reason: k >= N ? 'pastBars' : 'notInRow' }); if (k < p.length) p[k] = null; }
+        else if (pin.quality && c.quality !== pin.quality) dropped.unhonored.push({ bar: k, ratio: pin.ratio, asked: pin.quality, got: c.quality });
+      });
+      while (p.length && pinOf(p[p.length - 1]) == null) p.pop();
+      st.progression = p;
+      const g = st.drumOptions.grid;
+      if (g) {
+        const meta = st.edits?.grid ?? null, W = gridWidth(spec), now = { bars: N, slotsPerBar: spec.knobs.slotsPerBar };
+        const fits = meta ? meta.bars === N && meta.slotsPerBar === now.slotsPerBar : Object.values(g).every((rows) => rows.length === N && rows.every((r) => r.length === W));
+        if (!fits) {
+          delete st.drumOptions.grid;
+          if (st.drumOptions.mode === 'grid') st.drumOptions.mode = meta?.from && meta.from !== 'grid' ? meta.from : 'backbeat';
+          dropped.grid = { was: meta ? { bars: meta.bars, slotsPerBar: meta.slotsPerBar } : null, now };
+          st.edits.grid = null;
+        }
+      }
+      if (st.field && dropped.pins.some((x) => x.reason === 'notInRow')) {
+        let text = st.field.text;
+        for (const x of dropped.pins) if (x.reason === 'notInRow') text = rewriteToken(text, x.bar, '-');
+        st.field = { text };
+      }
+    }
+    st.edits = { ...emptyEdits(), grid: st.drumOptions.grid ? st.edits?.grid ?? null : null };
+    st.undo = []; st.redo = [];
+    st.dropped = dropped.pins.length || dropped.unhonored.length || dropped.lead.length || dropped.grid ? dropped : null;
+    folds.delete(st);
+  }
+
   const api = {
     get state() { return state; },
     onChange(f) { listeners.add(f); return () => listeners.delete(f); },
@@ -129,7 +360,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     },
     /** is a compose in flight for this state (the bound one by default)? */
     composing: (st = state) => st.status === 'composing' && flights.has(st),
-    setLayers(values) { state.input.layers = readLayers(values); state.progression = []; touch(); },
+    setLayers(values) { state.input.layers = readLayers(values); state.progression = []; state.field = null; touch(); },
     /** the rhythm from outside (the main page): { layers, cycleSeconds } → whether it changed. A change goes back to
      *  Compose (and stops playback) exactly as typing it would; new layers clear the progression, a new cycle doesn't. */
     setInput({ layers, cycleSeconds } = {}) {
@@ -137,7 +368,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       const newLayers = !sameLayers(L, state.input.layers), newCycle = T !== state.input.cycleSeconds;
       if (!newLayers && !newCycle) return false;
       state.input.layers = L; state.input.cycleSeconds = T;
-      if (newLayers) state.progression = [];
+      if (newLayers) { state.progression = []; state.field = null; }
       touch();
       return true;
     },
@@ -145,7 +376,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     setSeed(seed) { state.input.seed = Number.isFinite(Number(seed)) ? Number(seed) : String(seed); touch(); },
     setKnob(name, value) { if (!KNOBS.includes(name)) throw new Error(`lab: no knob ${name}`); state.knobs[name] = value === '' || value === undefined ? null : value; touch(); },
     setTable(table) { if (table !== 'full' && table !== 'lean') throw new Error(`lab: no table ${table}`); state.table = table; touch(); },
-    loadPreset(i) { const p = PRESETS[i]; state.input.layers = [...p.layers]; state.input.cycleSeconds = p.cycleSeconds; state.progression = []; touch(); },
+    loadPreset(i) { const p = PRESETS[i]; state.input.layers = [...p.layers]; state.input.cycleSeconds = p.cycleSeconds; state.progression = []; state.field = null; touch(); },
     overrides,
     /** may a knob change re-compose by itself? lean only, and only while it is quick */
     canAutoRecompose: () => state.table === 'lean' && state.lastMs != null && state.lastMs < AUTO_RECOMPOSE_MS,
@@ -158,6 +389,10 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       const mine = bump(st), t0 = clock();
       if (player?.playing) player.stop();
       st.status = 'composing'; st.error = null;
+      // STEP 4d (decision 5): the chord edits go to Compose as pins, { ratio, quality }, written into the pin list now
+      // (the edits themselves are cleared when the compose lands: until then they still play over the old spec)
+      bakePins(st);
+      const sent = st.progression.map(pinOf);
       const options = { seed: st.input.seed, overrides: overrides(), worker: st.table === 'full', progression: api.progressionInput() };
       // STEP 4a: always ask for the trace, at the alternates' caps (12 chords a bar, 8 runner-up lines a phrase), so the
       // alternates never depend on "show the work"; the show still obeys the setting (it reads state.trace only when on)
@@ -168,7 +403,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
           if (mine !== runs.get(st)) return st.spec;   // a change to this state took over
           let spec = answer;
           if (answer && 'trace' in answer) { const { trace: tr, ...plain } = answer; spec = plain; st.trace = tr; } else st.trace = null;   // STEP 4a: kept whatever `trace` says
-          st.spec = spec; st.lastMs = clock() - t0; st.dirty = false;
+          st.spec = spec; st.composed = spec; st.lastMs = clock() - t0; st.dirty = false;
+          landEdits(st, spec, sent);   // STEP 4d: the edits baked or dropped (decision 5), the undo stack cleared
           if (spec.refused) { st.parts = {}; st.drums = null; st.status = 'refused'; }
           else { st.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); st.drums = arrangeDrums(spec, st.drumOptions); st.status = 'ready'; st.tempoBpm = spec.knobs.tempoBpm; }
         } catch (err) {
@@ -202,8 +438,9 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     currentParts: () => PART_IDS.map((id) => state.parts[id]).filter(Boolean),
     /** the spec with the parts as they play now: what JSON export downloads */
     currentSpec: () => (state.spec && !state.spec.refused ? { ...state.spec, parts: api.currentParts(), drums: state.drums } : state.spec),
-    /** what JSON export downloads: the spec as it plays now, plus how it is played (never written into the spec) */
-    exportObject: () => (state.spec && !state.spec.refused ? { ...api.currentSpec(), playback: { tempoBpm: api.tempo(), factor: api.tempoFactor() } } : state.spec),
+    /** what JSON export downloads: the spec as it plays now (edits and all), plus how it is played (never written
+     *  into the spec), and (STEP 4d) the edits that made it from Compose's spec, when there are any */
+    exportObject: () => (state.spec && !state.spec.refused ? { ...api.currentSpec(), playback: { tempoBpm: api.tempo(), factor: api.tempoFactor() }, ...(api.editsExport() ? { edits: api.editsExport() } : {}) } : state.spec),
     exportJSON: () => JSON.stringify(api.exportObject(), null, 2),
     setPart(id, { sound, legato, enabled } = {}) {
       const part = state.parts[id];
@@ -217,6 +454,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       const o = state.drumOptions;
       for (const [k, v] of Object.entries(rest)) { if (v === null) delete o[k]; else if (v !== undefined) o[k] = v; }
       if (kit) o.kit = { ...o.kit, ...kit };
+      // STEP 4d: the step grid picked as a mode starts from the drums as they play now
+      if (o.mode === 'grid' && !o.grid && state.drums) { o.grid = gridOf(state.drums); state.edits.grid ??= { bars: state.spec.knobs.bars, slotsPerBar: state.spec.knobs.slotsPerBar, from: 'backbeat' }; }
       if (state.spec && !state.spec.refused) state.drums = arrangeDrums(state.spec, o);
       changed();
     },
@@ -273,22 +512,214 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       const rc = api.rootChoices();
       return rc.refused ? 0 : chooseMeter(rc.onsets, state.input.cycleSeconds, { slotsPerBar: state.knobs.slotsPerBar ?? null }).bars;
     },
-    /** the editor's roots, one a bar (null: auto), cut or padded to progressionBars() */
-    progression: () => Array.from({ length: api.progressionBars() }, (_, k) => state.progression[k] ?? null),
-    /** what Compose is sent: the editor's roots, or null when every bar is auto */
-    progressionInput: () => { const p = api.progression(); return p.some((x) => x != null) ? p : null; },
+    /** the editor's roots, one a bar (null: auto), cut or padded to progressionBars() (STEP 4d: a pin with a quality
+     *  shows as its ratio here) */
+    progression: () => Array.from({ length: api.progressionBars() }, (_, k) => pinOf(state.progression[k])?.ratio ?? null),
+    /** what Compose is sent: the pins, one a bar (a ratio, or { ratio, quality }: STEP 4d), or null when every bar is auto */
+    progressionInput: () => { const p = Array.from({ length: api.progressionBars() }, (_, k) => state.progression[k] ?? null); return p.some((x) => pinOf(x) != null) ? p : null; },
     setProgressionRoot(bar, ratio) {
       if (!(Number.isInteger(bar) && bar >= 0)) throw new Error(`lab: no bar ${bar}`);
       const p = [...state.progression]; while (p.length <= bar) p.push(null);
       p[bar] = ratio === '' || ratio === 'auto' || ratio == null ? null : String(ratio);
       state.progression = p; touch();
     },
-    clearProgression() { state.progression = []; touch(); },
+    clearProgression() { state.progression = []; state.field = null; touch(); },
     /** seed the editor with the roots the last compose chose → whether there was one to take */
     takeProgression() {
       if (!state.spec || state.spec.refused) return false;
       state.progression = state.spec.chords.map((c) => c.rootTone); touch();
       return true;
+    },
+
+    // ── STEP 4d: live edits (the entry's edits, applied over Compose's spec; DESIGN_NOTES "Step 4d") ──
+    /** the composition as it plays, edits and all (state.spec) */
+    effectiveSpec: () => state.spec,
+    /** Compose's own spec, before any edit */
+    composedSpec: () => state.composed,
+    hasEdits: () => hasEdits(state),
+    canUndo: () => state.undo.length > 0,
+    canRedo: () => state.redo.length > 0,
+    /** is an edit of this state (the bound one by default) running in the worker? */
+    applying: (st = state) => !!folds.get(st)?.applying,
+    /** an edit applied: f(result, state), result { ok, kind, changedBars, retunedBars, … } */
+    onEdit(f) { editListeners.add(f); return () => editListeners.delete(f); },
+    /** the bars whose fundamental differs from Compose's (a swap's modulation re-pitching later bars) */
+    retunedBars: () => (ready(state) ? state.spec.chords.flatMap((c, k) => (Math.abs(c.fundamentalRatio - state.composed.chords[k].fundamentalRatio) > 1e-12 ? [k] : [])) : []),
+    /** the edits as JSON export carries them (null with none) */
+    editsExport() {
+      const e = state.edits, grid = state.drumOptions.grid && (state.drumOptions.mode === 'grid' || state.drumOptions.mode === 'prime');
+      if (!hasEdits(state) && !grid && !state.field) return null;
+      return { chords: JSON.parse(JSON.stringify(e.chords)), lead: JSON.parse(JSON.stringify(e.lead)), order: [...e.order],
+        drums: grid ? { mode: state.drumOptions.mode, grid: JSON.parse(JSON.stringify(state.drumOptions.grid)), from: e.grid?.from ?? null } : null, field: state.field ? state.field.text : null };
+    },
+    /**
+     * A bar's alternates (a pure read of the kept trace): part 'chords' → the bar's 12 candidates; 'lead' → the bar's
+     * phrase's kept line and its 8 runner-ups; each marked current. Other parts have none here (null).
+     */
+    alternatesOf(bar, part = 'chords') {
+      if (!ready(state) || !state.trace) return null;
+      if (part === 'chords') return chordAlternates(state, bar);
+      if (part === 'lead') { const p = phraseOfBar(state.spec, bar); return p < 0 ? null : leadAlternates(state, p); }
+      return null;
+    },
+    /** swap bar k's chord: a trace candidate ({ root: { ratio }, quality }) or { rootTone, quality } (decision 1: the
+     *  lead stays). A swap to Compose's own chord removes the bar's edit. */
+    swapChord(bar, chord) {
+      requireSpec(state);
+      const N = state.composed.knobs.bars;
+      if (!(Number.isInteger(bar) && bar >= 0 && bar < N)) throw new Error(`composer: no bar ${bar}`);
+      const rootTone = chord?.root?.ratio ?? chord?.rootTone, quality = chord?.quality?.id ?? chord?.quality;
+      if (typeof rootTone !== 'string') throw new Error('composer: a chord swap needs a root (a candidate, or { rootTone })');
+      if (!qualityById(quality)) throw new Error(`composer: no quality ${quality}`);
+      return edit('chord', { bar }, (st) => {
+        const cur = st.spec.chords[bar], own = st.composed.chords[bar];
+        if (!cur.empty && cur.rootTone === rootTone && cur.quality === quality) return false;   // it plays already
+        if (!own.empty && own.rootTone === rootTone && own.quality === quality && !followed(st, bar)) removeChordEdit(st.edits, bar);
+        else setChordEdit(st.edits, bar, { rootTone, quality, from: 'swap' });
+        syncField(st, [bar]);
+        return true;
+      });
+    },
+    /** swap phrase p's lead for another line the miner made for it (an id of the trace's lines; decision 2).
+     *  { chordsFollow (false): the phrase's chords chosen again over it (its chord edits give way), smooth (false):
+     *  the inner re-mined over the whole phrase, in the worker }. Its own line again removes the edit. */
+    swapLead(phrase, lineId, { chordsFollow = false, smooth = false } = {}) {
+      requireSpec(state);
+      const spans = phrasesOf({ bars: state.composed.knobs.bars, slotsPerBar: state.composed.knobs.slotsPerBar });
+      if (!(Number.isInteger(phrase) && phrase >= 0 && phrase < spans.length)) throw new Error(`composer: no phrase ${phrase}`);
+      if (!state.trace?.lines?.[lineId]) throw new Error(`composer: no line ${lineId} in the trace`);
+      return edit('lead', { phrase }, (st) => {
+        const kept = leadAlternatesOf(st.trace)[phrase]?.kept ?? null, want = { lineId, chordsFollow: !!chordsFollow, ...(smooth ? { smooth: true } : {}) };
+        const had = st.edits.lead[phrase];
+        if (lineId === kept) { if (!removeLeadEdit(st.edits, phrase)) return false; }
+        else if (had && sameRecord(had, want)) return false;
+        else setLeadEdit(st.edits, phrase, want);
+        if (chordsFollow && lineId !== kept) {
+          const span = spans[phrase], bars = [];
+          for (let k = span.from; k < span.from + span.bars; k++) if (removeChordEdit(st.edits, k)) bars.push(k);
+          syncField(st, bars);
+        }
+        return true;
+      });
+    },
+    /**
+     * The typed progression field (chord-symbols.js): resolved per bar against the composition's bars (decisions 3
+     * and 4). With a composition, each typed bar is a typed chord edit (live; the quality the bar supports, as Compose
+     * would pick it over the root; the asked quality kept for the pin), an auto bar has none (and no pin). Before any
+     * compose, the pins are Compose's progression (the entry goes dirty, as a root pick does). The text is kept as the
+     * field's source either way. → Promise<{ ok, resolution, live, … }>
+     */
+    setProgressionField(text) {
+      const st = state, value = String(text ?? ''), m = fieldMaterialsOf(st);
+      if (!m || m.refused) { st.field = { text: value }; changed(); return Promise.resolve({ ok: false, error: m?.reason ?? 'no materials', resolution: null, live: false }); }
+      const N = m.cells.bars, resolution = resolveSymbols(value, m, { keep: asksOf(st, N) });
+      if (!ready(st)) {
+        const pins = resolution.pins.map((x) => (x ? { ...x } : null));
+        while (pins.length && pins[pins.length - 1] == null) pins.pop();
+        st.progression = pins; st.field = { text: value };
+        touch();
+        return Promise.resolve({ ok: true, resolution, live: false });
+      }
+      const S = st.composed.knobs.slotsPerBar, { row } = m;
+      const leadIn = (k) => (st.spec.parts.find((x) => x.id === 'lead')?.notes ?? []).filter((n) => n.bar === k)
+        .map((n) => ({ cents: row.toneCents[row.tone[n.node]], strong: isStrongBeat(m.cells.slots[n.slot].beat, S) }));
+      return edit('field', {}, (s2) => {
+        let any = value !== s2.field?.text;
+        for (let k = 0; k < N; k++) {
+          const pin = resolution.pins[k], had = s2.edits.chords[k];
+          if (!pin) {
+            if (removeChordEdit(s2.edits, k)) any = true;
+            if (pinOf(s2.progression[k])) { s2.progression = s2.progression.map((x, j) => (j === k ? null : x)); any = true; }
+            continue;
+          }
+          const tone = row.tones.indexOf(pin.ratio);
+          const pick = chooseChordOnRoot(m.bars[k], leadIn(k), { tone, cents: row.toneCents[tone], quality: pin.quality ?? null }, { eachSide: m.frameCentsEachSide, gridBase: m.baseCents, modulation: m.modulation });
+          const rec = { rootTone: pin.ratio, quality: pick.quality.id, from: 'typed', asked: pin.quality ?? null };
+          const prog = pinOf(s2.progression[k]), own = s2.composed.chords[k];
+          // already pinned so, and composed over the pin: nothing to edit
+          if (!had && prog && prog.ratio === pin.ratio && prog.quality === rec.asked && own.targeted && own.rootTone === pin.ratio) continue;
+          if (had && sameRecord(had, rec)) continue;
+          setChordEdit(s2.edits, k, rec); any = true;
+        }
+        s2.field = { text: value };
+        return any;
+      }).then((r) => ({ ...r, resolution, live: true }));
+    },
+    /** the field as it shows now: { text (the typed text, else the asks written in the Composer's names), typed,
+     *  resolution (resolveSymbols': per bar cents, amber, the pin) } */
+    progressionField() {
+      const m = fieldMaterialsOf(state);
+      if (!m || m.refused) return { text: state.field?.text ?? '', typed: !!state.field, resolution: null };
+      const asks = asksOf(state, m.cells.bars), text = state.field ? state.field.text : pinsToField(asks, m);
+      return { text, typed: !!state.field, resolution: resolveSymbols(text, m, { keep: asks }) };
+    },
+    /** the drum grid as it plays now (the entry's own, else the arrangement written as one: gridOf) */
+    drumGrid() {
+      if (!ready(state) || !state.drums) return null;
+      const own = (state.drumOptions.mode === 'grid' || state.drumOptions.mode === 'prime') && !!state.drumOptions.grid;
+      return { grid: gridNow(state), mode: state.drumOptions.mode, own, bars: state.spec.knobs.bars, places: gridWidth(state.spec), m: beatsOf(state.spec.knobs.slotsPerBar).m, silentCells: state.drums.silentCells ?? [] };
+    },
+    /** the whole grid ({ voice: [one string a bar] }, x X .): the mode turns to 'grid' (a prime mode stays prime: the
+     *  grid's perc row is its selection) */
+    setDrumGrid(grid) {
+      requireSpec(state);
+      const g = readGrid(grid), N = state.spec.knobs.bars, W = gridWidth(state.spec);
+      for (const [v, rows] of Object.entries(g)) if (rows.length !== N || rows.some((r) => r.length !== W)) throw new Error(`composer: the grid's ${v} must be ${N} strings of ${W} places`);
+      return drumEdit('drums', {}, (st) => {
+        if (JSON.stringify(st.drumOptions.grid ?? null) === JSON.stringify(g) && (st.drumOptions.mode === 'grid' || st.drumOptions.mode === 'prime')) return false;
+        noteGrid(st);
+        st.drumOptions.grid = g;
+        if (st.drumOptions.mode !== 'prime') st.drumOptions.mode = 'grid';
+        return true;
+      });
+    },
+    /** one cell: value 'x' | 'X' | '.' (or true / false); the grid starts from the drums as they play now */
+    setDrumCell(bar, voice, place, value) {
+      requireSpec(state);
+      const N = state.spec.knobs.bars, W = gridWidth(state.spec), ch = value === true ? GRID_CHARS.stroke : value === false || value == null ? GRID_CHARS.off : String(value);
+      if (!(Number.isInteger(bar) && bar >= 0 && bar < N)) throw new Error(`composer: no bar ${bar}`);
+      if (!DRUM_VOICES.includes(voice)) throw new Error(`composer: no drum voice ${voice}`);
+      if (!(Number.isInteger(place) && place >= 0 && place < W)) throw new Error(`composer: no place ${place} (a bar has ${W})`);
+      if (!Object.values(GRID_CHARS).includes(ch)) throw new Error(`composer: a cell is x, X or . (not ${JSON.stringify(value)})`);
+      return drumEdit('drums', { bar, voice, place }, (st) => {
+        const g = gridNow(st), line = g[voice][bar];
+        if (line[place] === ch && (st.drumOptions.mode === 'grid' || st.drumOptions.mode === 'prime') && st.drumOptions.grid) return false;
+        g[voice][bar] = line.slice(0, place) + ch + line.slice(place + 1);
+        noteGrid(st);
+        st.drumOptions.grid = g;
+        if (st.drumOptions.mode !== 'prime') st.drumOptions.mode = 'grid';
+        return true;
+      });
+    },
+    /** a preset (a layered mode, a pattern, or 'prime'): it plays as itself, and the grid shows it (gridOf) until a
+     *  cell is edited */
+    applyDrumPreset(mode) {
+      requireSpec(state);
+      if (!ALL_DRUM_MODES.includes(mode) || mode === 'grid') throw new Error(`composer: no drum preset ${mode}`);
+      return drumEdit('drums', { mode }, (st) => {
+        if (st.drumOptions.mode === mode && !st.drumOptions.grid) return false;
+        st.drumOptions.mode = mode;
+        delete st.drumOptions.grid;
+        st.edits.grid = null;
+        return true;
+      });
+    },
+    /** back one edit (chords, lead, the field, the drum grid) → Promise<{ ok, … }> */
+    undo() {
+      const st = state;
+      if (!ready(st) || !st.undo.length) return Promise.resolve({ ok: false, empty: true, kind: 'undo' });
+      const snap = st.undo.pop();
+      st.redo.push(snapshotOf(st));
+      restoreSnapshot(st, snap);
+      return applyEdits(st, { kind: 'undo' });
+    },
+    redo() {
+      const st = state;
+      if (!ready(st) || !st.redo.length) return Promise.resolve({ ok: false, empty: true, kind: 'redo' });
+      const snap = st.redo.pop();
+      st.undo.push(snapshotOf(st));
+      restoreSnapshot(st, snap);
+      return applyEdits(st, { kind: 'redo' });
     },
     get player() { return player; },
     get context() { return ctx; },
