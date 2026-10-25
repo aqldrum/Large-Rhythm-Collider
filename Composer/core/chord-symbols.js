@@ -10,7 +10,15 @@
 //              its character span so a UI can mark it inline. Two marks of the Composer's own (proposed): an AUTO
 //              token ('-', '.', '_', '?', 'auto') leaves its bar to Compose; a trailing '*' ('D*') pins the root and
 //              leaves the quality to Compose (what a ratio pick from the lab is).
-//   (the rest of this file — materials, resolution, the display helpers — follows below its own header)
+//   (materials, resolution and the display helpers: their own header, below the parser)
+
+import { buildRow, isRow, toneGate, ONSET_GATE, MIN_TONES } from './row.js';
+import { buildCells } from './cells.js';
+import { defaultRoot, toneIndexOf, classOfCents, PRESENCE_MODES, DEFAULT_FRAME_CENTS_EACH_SIDE } from './frame.js';
+import { downbeats } from './lines.js';
+import { chooseMeter, seededRandom } from './compose.js';
+import { CHORD_QUALITIES, PC_NAMES } from './harmony.js';
+import { rootCandidates, chooseChordOnRoot, qualityById, isFallbackQuality, FALLBACK_QUALITIES, MAX_MISSING, COMPOSER_PROGRESSION_VERSION } from './progression.js';
 
 const NOTE_BASE = Object.freeze({ C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 });
 const toFinite = (v, f = 0) => { const n = Number(v); return Number.isFinite(n) ? n : f; };
@@ -184,3 +192,201 @@ export function readToken(text) {
   const parsed = parseChordSymbol(body);
   return parsed.ok ? { kind: 'chord', parsed } : { kind: 'error', error: `"${t}": ${parsed.error}` };
 }
+
+// ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+//   materials  `barMaterials(layers, T, knobs, { row })`: what resolving needs before any compose — the row, the
+//              meter, the root, the phase and the cells exactly as Compose builds them for the same knobs (a spec's
+//              `knobs`, or Compose's overrides plus `seed`: the phase is the seed's first draw, as in Compose), each
+//              bar's tones as harmony.js reads them, and progression.js' `rootCandidates` on that root.
+//   resolve    `resolveSymbols(field, materials, { frameCentsEachSide, modulation, keep })`, a bar a symbol:
+//                the root  symbols are RELATIVE (decided, 3): C is the composition's base root, as the Composer names
+//                          chords, read on the base grid. The candidate cluster of the symbol's class with the least
+//                          |dev|, more presence breaking ties; inside the ±frame it is supported. Off the frame
+//                          (decided, 4) it is the nearest cluster at any offset, amber with its cents; with modulation
+//                          on Compose's own rule may retune there (`mayRetune`), off it stays and is flagged `offGrid`.
+//                          Never snapped into the frame. `keep` (the pin list the field was made from) keeps a pinned
+//                          ratio that is still of the symbol's class, so the lab's pick and the field stay one list.
+//                the quality  the symbol's intervals as a quality of the Composer (exact, else the richest catalog
+//                          quality inside them, the rest dropped and said; proposed), tested by chooseChordOnRoot's own
+//                          rule on the bar's tones: ✓ (whole), amber 'no ♭7' (one class missing: still kept), or
+//                          amber 'fallback' (Compose's own pick over the root, shown without the lead: provisional).
+//                bars      more symbols than bars: the extras dropped and flagged; fewer: the rest auto.
+//              → per bar the display and the pin, and `pins` ([{ ratio, quality } | null] × N: `compose`'s progression).
+//   display    `pinsToField(pins, materials)`: a pin list → the field, in the Composer's chord names (the base root
+//              C, sharps, CHORD_QUALITIES' suffixes; a root without a quality 'D*', an auto bar '-', trailing autos
+//              cut). With `keep`, field → pins → field and pins → field → pins are both the identity (tested).
+
+export const COMPOSER_CHORD_SYMBOLS_VERSION = 'composer-chord-symbols-v1';
+/** a class above a root, as the field names what a bar lacks ('no ♭7'; proposed) */
+export const INTERVAL_SHORT = Object.freeze(['root', '♭2', '2', '♭3', '3', '4', '♭5', '5', '♯5', '6', '♭7', '7']);
+const EPS = 1e-9;
+const mod = (v, n) => ((v % n) + n) % n;
+const fail = (what) => { throw new Error(`composer/chord-symbols: ${what}`); };
+const devLabel = (d) => (Math.abs(d) < 0.05 ? '' : ` ${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(1)}¢`);
+
+/**
+ * The bars' material before a compose.
+ *   knobs  { seed (1), bars, slotsPerBar, anchors ('partitioned'), phase, frameCentsEachSide (15), root, presence
+ *          ('cluster'), modulation (true) }: a spec's `knobs` reproduce its cells; Compose's overrides + seed the
+ *          cells that compose would build
+ *   opts   { row: a row already built for these layers (skips the build) }
+ * → { version, row, meter, rootTone, root (ratio), baseCents, frameCentsEachSide, presence, modulation, anchors, phase,
+ *     cells, bars: [[{ tone, cents, count, strikes, weight, node }] in the order the slots hold them] × N, candidates }
+ *   | { version, refused: true, reason }
+ */
+export function barMaterials(layers, cycleSeconds, knobs = {}, { row: given = null } = {}) {
+  const k = knobs ?? {};
+  const row = given ?? buildRow(layers, { gate: ONSET_GATE });
+  if (!isRow(row)) return { version: COMPOSER_CHORD_SYMBOLS_VERSION, refused: true, reason: row?.tooDense ? 'tooDense' : 'tooLarge' };
+  if (toneGate(row, MIN_TONES)) return { version: COMPOSER_CHORD_SYMBOLS_VERSION, refused: true, reason: 'tooFewTones' };
+  if (!(Number.isFinite(cycleSeconds) && cycleSeconds > 0)) fail(`cycleSeconds must be a positive number, not ${cycleSeconds}`);
+  const e = k.frameCentsEachSide ?? DEFAULT_FRAME_CENTS_EACH_SIDE, presence = k.presence ?? 'cluster';
+  if (!PRESENCE_MODES.includes(presence)) fail(`presence must be one of ${PRESENCE_MODES.join(', ')}`);
+  const rootTone = k.root != null ? toneIndexOf(row, k.root) : defaultRoot(row, e, { presence });
+  const meter = chooseMeter(row.n, cycleSeconds, { bars: k.bars ?? null, slotsPerBar: k.slotsPerBar ?? null });
+  const anchors = k.anchors ?? 'partitioned', P = meter.bars * meter.slotsPerBar;
+  let phase = k.phase;
+  if (!phase) {   // Compose's own draw: the seed's first, over the root's first three downbeats
+    const beats = downbeats(row, P, 3, rootTone, { anchors, cluster: presence === 'cluster' ? e : null });
+    phase = beats[Math.floor(seededRandom(k.seed ?? 1)() * beats.length)];
+  }
+  const cells = buildCells(row, { bars: meter.bars, slotsPerBar: meter.slotsPerBar, anchors, phase });
+  // each bar's tones from the cells' windows, as harmony.js' bar material reads them
+  const maps = Array.from({ length: cells.bars }, () => new Map());
+  for (const s of cells.slots) for (const t of s.tones) {
+    const m = maps[s.bar];
+    if (!m.has(t.tone)) m.set(t.tone, { tone: t.tone, cents: row.toneCents[t.tone], count: 0, strikes: 0, weight: 0, node: t.node });
+    const x = m.get(t.tone); x.count += t.count; x.strikes += t.strikes; x.weight = x.count + x.strikes;
+  }
+  const candidates = rootCandidates(row, { frameCentsEachSide: e, presence, root: rootTone });
+  return { version: COMPOSER_CHORD_SYMBOLS_VERSION, row, meter, rootTone, root: row.tones[rootTone], baseCents: row.toneCents[rootTone], frameCentsEachSide: e, presence,
+    modulation: k.modulation ?? true, anchors, phase, cells, bars: maps.map((m) => [...m.values()]), candidates: candidates.candidates };
+}
+
+/**
+ * A symbol's intervals as one of the Composer's qualities: exact (CHORD_QUALITIES, then the fallbacks), else the
+ * richest catalog quality inside them (more classes, then catalog order; proposed), the rest dropped.
+ * → { quality: id | null, exact, dropped: [interval] }
+ */
+export function qualityOfIntervals(intervals) {
+  const want = [...new Set(intervals.map((i) => mod(i, 12)))].sort((a, b) => a - b), key = want.join();
+  const exact = [...CHORD_QUALITIES, ...FALLBACK_QUALITIES].find((q) => q.intervals.join() === key);
+  if (exact) return { quality: exact.id, exact: true, dropped: [] };
+  let best = null;
+  for (const q of CHORD_QUALITIES) if (q.intervals.every((i) => want.includes(i)) && (!best || q.intervals.length > best.intervals.length)) best = q;
+  if (!best) for (const q of FALLBACK_QUALITIES) if (q.intervals.every((i) => want.includes(i))) { best = q; break; }
+  return best ? { quality: best.id, exact: false, dropped: want.filter((i) => !best.intervals.includes(i)) } : { quality: null, exact: false, dropped: want };
+}
+
+/** a quality's suffix in the Composer's chord names ('' major, 'm7', …; the fallbacks' '5', 'no5', 'mno5', 'no3no5') */
+const suffixOf = (id) => qualityById(id)?.suffix ?? '';
+
+/** the candidate a symbol's root class resolves to, on the base grid → { cand, dev (signed, from the class's centre) } */
+function rootFor(pc, candidates, keepTone, row, baseCents) {
+  if (keepTone != null) {
+    const c = classOfCents(row.toneCents[keepTone] - baseCents);
+    if (c.pc === pc) return { cand: candidates.find((x) => x.tone === keepTone) ?? { tone: keepTone, ratio: row.tones[keepTone], cents: row.toneCents[keepTone], pc: c.pc, dev: c.dev, presence: row.toneCount[keepTone], kept: true }, dev: c.dev, kept: true };
+  }
+  let best = null, bestDev = 0;
+  for (const x of candidates) {
+    // in the class: its own deviation; any other: the signed way round the circle from the class's centre
+    const dev = x.pc === pc ? x.dev : mod(x.fromRoot - 100 * pc + 600, 1200) - 600;
+    const better = !best || Math.abs(dev) < Math.abs(bestDev) - EPS || (Math.abs(Math.abs(dev) - Math.abs(bestDev)) <= EPS && (x.presence > best.presence || (x.presence === best.presence && x.tone < best.tone)));
+    if (better) { best = x; bestDev = dev; }
+  }
+  return { cand: best, dev: bestDev, kept: false };
+}
+
+/** the bar's weight of each class over a root, read in its ±frame (chooseChordOnRoot's own reading) */
+function classesOver(tones, rootCents, e) {
+  const w = new Float64Array(12);
+  for (const t of tones) { const c = classOfCents(t.cents - rootCents); if (Math.abs(c.dev) <= e + EPS) w[c.pc] += t.weight; }
+  return w;
+}
+
+/**
+ * The field read against a composition's bars.
+ *   field      a string ('Cmaj7 Am7 Dm7 G7', '|' or ',' separated too) or tokenizeField's tokens
+ *   materials  barMaterials'
+ *   opts       { frameCentsEachSide, modulation (materials' by default), keep: a pin list the field came from }
+ * → { version, bars, ok (nothing amber, dropped or wrong), pins: [{ ratio, quality } | null] × N, notes: [what was
+ *     dropped, padded or not read], extras: [{ text, index, start, end }], perBar: [{
+ *       bar, token ({ text, index, start, end } | null), kind ('auto' | 'chord' | 'root' | 'error'), status ('auto' |
+ *       'ok' | 'amber' | 'error'), error?, symbol?, name (the chord as the Composer names it: base root C, sharps),
+ *       root?: { tone, ratio, cents, pc, dev, label ('D +6.2¢'), inFrame, presence, kept, offGrid, mayRetune },
+ *       quality?: { asked (id | null), exact, dropped: [interval], support ('whole' | 'missing' | 'fallback' | 'free'),
+ *         missing: [interval], label ('✓' | 'no ♭7' | 'fallback: Dm' | ''), fallback?: { quality, name } },
+ *       amber: [why], pin }] }
+ *   | { version, refused: true, reason }
+ */
+export function resolveSymbols(field, materials, { frameCentsEachSide = null, modulation = null, keep = null } = {}) {
+  if (!materials || materials.refused) return { version: COMPOSER_CHORD_SYMBOLS_VERSION, refused: true, reason: materials?.reason ?? 'noMaterials' };
+  const { row, baseCents, candidates } = materials, N = materials.cells.bars;
+  const e = frameCentsEachSide ?? materials.frameCentsEachSide, mods = modulation ?? materials.modulation;
+  const tokens = typeof field === 'string' || field == null ? tokenizeField(field) : field;
+  const notes = [], extras = tokens.slice(N);
+  if (extras.length) notes.push(`${tokens.length} symbols for ${N} bars: ${extras.map((t) => `"${t.text}"`).join(', ')} dropped`);
+  else if (tokens.length && tokens.length < N) notes.push(`${tokens.length} symbol${tokens.length === 1 ? '' : 's'} for ${N} bars: bar${N - tokens.length > 1 ? 's' : ''} ${tokens.length + 1}${N - tokens.length > 1 ? `–${N}` : ''} auto`);
+  const perBar = Array.from({ length: N }, (_, k) => {
+    const token = tokens[k] ?? null, read = readToken(token?.text);
+    if (read.kind === 'auto') return { bar: k, token, kind: 'auto', status: 'auto', name: '', amber: [], pin: null };
+    if (read.kind === 'error') { notes.push(`bar ${k + 1}: ${read.error}, so auto`); return { bar: k, token, kind: 'error', status: 'error', error: read.error, name: '', amber: [read.error], pin: null }; }
+    const sym = read.parsed, keepTone = keep?.[k]?.ratio != null ? row.tones.indexOf(keep[k].ratio) : -1;
+    const { cand, dev, kept } = rootFor(sym.rootPc, candidates, keepTone >= 0 ? keepTone : null, row, baseCents);
+    const amber = [], inFrame = Math.abs(dev) <= e + EPS;
+    const root = { tone: cand.tone, ratio: cand.ratio, cents: cand.cents, pc: sym.rootPc, dev, label: `${PC_NAMES[sym.rootPc]}${devLabel(dev)}`, inFrame, presence: cand.presence, kept,
+      offGrid: !inFrame && !mods, mayRetune: !inFrame && mods };
+    if (!inFrame) amber.push(`${root.label}: off the ±${e}¢ frame${mods ? ', so Compose may retune there' : ' and modulation is off, so it stays unretuned (offGrid)'}`);
+    // the quality: a chord's own, or Compose's for a bare root ('D*')
+    const tones = materials.bars[k], w = classesOver(tones, cand.cents, e), lacks = (q) => q.intervals.filter((i) => !(w[i] > 0));
+    let quality;
+    if (read.kind === 'root') quality = { asked: null, exact: true, dropped: [], support: 'free', missing: [], label: '' };
+    else {
+      const m = qualityOfIntervals(sym.intervals);
+      quality = { asked: m.quality, exact: m.exact, dropped: m.dropped, support: 'free', missing: [], label: '' };
+      if (m.dropped.length) amber.push(`${sym.symbol}: the Composer has no ${m.quality ? `quality with its ${m.dropped.map((i) => INTERVAL_SHORT[i]).join(', ')}, so ${PC_NAMES[sym.rootPc]}${suffixOf(m.quality)}` : 'quality inside it, so Compose\'s'}`);
+      if (m.quality) {
+        const q = qualityById(m.quality), short = lacks(q), ok = isFallbackQuality(q) ? short.every((i) => i === 0) : short.length <= MAX_MISSING;
+        quality.missing = short;
+        if (ok && !short.length) { quality.support = 'whole'; quality.label = '✓'; }
+        else if (ok) { quality.support = 'missing'; quality.label = `no ${short.map((i) => INTERVAL_SHORT[i]).join(', ')}`; amber.push(`${PC_NAMES[sym.rootPc]}${q.suffix}: the bar sounds no ${short.map((i) => INTERVAL_SHORT[i]).join(', ')} over its root (kept: one class may be missing)`); }
+        else {
+          // Compose's own pick over the root, without the lead (provisional: the lead votes in Compose)
+          const pick = chooseChordOnRoot(tones, [], { tone: cand.tone, cents: cand.cents, quality: q.id }, { eachSide: e, gridBase: baseCents, modulation: mods });
+          const name = `${PC_NAMES[sym.rootPc]}${pick.quality.suffix}`;
+          quality.support = 'fallback'; quality.label = `fallback: ${name}`; quality.fallback = { quality: pick.quality.id, name };
+          amber.push(`${PC_NAMES[sym.rootPc]}${q.suffix}: the bar lacks its ${short.map((i) => INTERVAL_SHORT[i]).join(', ')}, so Compose's ${name} (provisional)`);
+        }
+      }
+    }
+    const name = `${PC_NAMES[sym.rootPc]}${quality.asked ? suffixOf(quality.asked) : read.kind === 'root' ? FREE_QUALITY_MARK : ''}`;
+    return { bar: k, token, kind: read.kind, status: amber.length ? 'amber' : 'ok', symbol: sym, name, root, quality, amber, pin: { ratio: cand.ratio, quality: quality.asked } };
+  });
+  return { version: COMPOSER_CHORD_SYMBOLS_VERSION, progressionVersion: COMPOSER_PROGRESSION_VERSION, bars: N, ok: !extras.length && perBar.every((b) => b.status === 'ok' || b.status === 'auto'),
+    pins: perBar.map((b) => b.pin), notes, extras, perBar };
+}
+
+/** the field's pins as `compose`'s progression (null when every bar is auto) */
+export const progressionOf = (resolved) => (resolved?.pins?.some(Boolean) ? resolved.pins.map((p) => (p ? { ...p } : null)) : null);
+
+/**
+ * A pin list (a progression: ratios, { ratio }, { ratio, quality }, or auto) → the field, in the Composer's chord
+ * names: the root's class on the base grid (base root C, sharps), the quality's suffix, 'D*' for a root without one,
+ * '-' for an auto bar (trailing autos cut), a ratio not of the row '?'. → string
+ */
+export function pinsToField(pins, materials) {
+  if (!Array.isArray(pins) || !materials || materials.refused) return '';
+  const { row, baseCents } = materials;
+  const words = pins.map((p) => {
+    if (p == null || p === '' || p === 'auto') return '-';
+    const ratio = typeof p === 'string' ? p : p.ratio ?? p.root, t = row.tones.indexOf(ratio);
+    if (t < 0) return '?';
+    const pc = classOfCents(row.toneCents[t] - baseCents).pc, q = typeof p === 'object' ? p.quality ?? null : null;
+    return `${PC_NAMES[pc]}${q != null ? suffixOf(q) : FREE_QUALITY_MARK}`;
+  });
+  while (words.length && words[words.length - 1] === '-') words.pop();
+  return words.join(' ');
+}
+
+/** the field → its pins, kept against the pin list it came from: `resolveSymbols(field, materials, { keep }).pins` */
+export const fieldToPins = (field, materials, opts = {}) => resolveSymbols(field, materials, opts).pins;
