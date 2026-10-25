@@ -1084,6 +1084,49 @@ No change to the Composer's modules.
 7. **First visit:** someone who ticked the old slides' "Do not show again" isn't shown the tour unasked (built). Show them the new one once anyway?
 8. **The tour types over the current rhythm** (a restart from the menu replaces the user's layers; the old composition stays cached). Ask first when a rhythm is already on the page?
 
+## Step 4b: typed progression (built 2026-10-25, branch `step4/typed`)
+
+`Cmaj7 Am7 Dm7 G7`, one symbol a bar, read against the composition's own tones before any compose. Built as `Composer/core/chord-symbols.js` (new) and an extension of `core/progression.js`, checked by `Composer/tests/assert-chord-symbols.mjs` (57 checks). No other module changed: `assert-progression.mjs` passes unchanged.
+
+**Decided (Avery, STEP4_ORDER.md):**
+- **3. Symbols are relative.** C is the composition's base root, as the Composer already names chords; they are read on the base grid, not as absolute pitch through the fundamental.
+- **4. Off the frame,** a symbol resolves to the nearest cluster at any offset, shown amber with its cents. With modulation on, Compose's own rule may retune there; with it off, it stays amber and is flagged `offGrid`. It is never snapped into the frame.
+
+**The API:**
+- **`parseChordSymbol(text)`:** a port of the site's `ProgressionSolver.parseChordSymbol`: accidentals (♯ ♭ 𝄪 𝄫), suffixes (Δ − ° ø, 6/9, alterations, add / no / omit), slash bass. It returns the site's own fields, plus `bass` (the slash bass's class, when there is one). Parity with the site's parser, loaded in a vm, holds on every field of 116,211 symbols (140 root spellings × 83 suffixes × 10 slash forms, plus edge cases).
+- **`tokenizeField(text)`:** the site's tokenizer (`|`, `,`, `;`, tabs, newlines and spaces all separate), with each token's character span for inline marks. `readToken` adds two marks of the Composer's own (**proposed**): an auto token (`-`, `.`, `_`, `?`, `auto`) leaves its bar to Compose; a trailing `*` (`D*`) pins the root and leaves the quality to Compose, which is what a lab ratio pick is.
+- **`barMaterials(layers, T, knobs, { row })`:** the row, the meter, the root, the phase (the seed's first draw, as in Compose), the cells, each bar's tones as harmony.js reads them, and `rootCandidates`. `knobs` is a spec's `knobs`, or Compose's overrides plus `seed`. Tested against 105 composes (5 rhythms × 7 override sets × 3 seeds): the same meter, phase, root and cells, again from `spec.knobs`; and harmonize's support for 13 pinned chords re-derived from its bar tones.
+- **`resolveSymbols(field, materials, { frameCentsEachSide, modulation, keep })`,** per bar:
+  - **the root:** the candidate cluster of the symbol's class with the least |dev|, more presence breaking ties. Inside the ±frame it's supported (`F −2.0¢`). Outside, the nearest cluster at any offset, amber, with `mayRetune` (modulation on) or `offGrid` (off). A class the row lacks entirely reaches into the next class (on 8:7:6:5, `F` → 35/32, `F −113.7¢`);
+  - **the quality:** the symbol's intervals as a Composer quality, then `chooseChordOnRoot`'s test on the bar's tones: ✓ (whole), amber `no ♭7` (one class short: kept), or amber `fallback: Dm` (Compose's own pick over the root, shown without the lead, so provisional);
+  - **the bars:** more symbols than bars, the extras dropped and flagged; fewer, the rest auto; a symbol that doesn't parse is said and left auto.
+  - It returns `pins`, `[{ ratio, quality } | null] × N`: Compose's progression. `progressionOf(resolved)` is the same, or null when every bar is auto.
+- **`pinsToField(pins, materials)` / `fieldToPins(field, materials, { keep })`:** the two views of one list. A pin list becomes the field in the Composer's chord names: base root C, sharps, `CHORD_QUALITIES`' suffixes, `D*` for a root with no quality, `-` for an auto bar, trailing autos cut. With `keep`, pins → field → pins is the identity (216 lists: every candidate × every quality, and none), and so is field → pins → field for fields in the Composer's names.
+- **progression.js:**
+  - an entry may be `{ ratio, quality }` (a quality id of `CHORD_QUALITIES` or `FALLBACK_QUALITIES`; `qualityById`), and `readProgression` returns `qualities`;
+  - `chooseChordOnRoot` takes `pin.quality`. It keeps the quality where the bar supports it (a catalog quality: every class but at most one; a fallback dyad: its other tone sounding), and the settle passes keep it too. Otherwise it falls back exactly as before, reporting `forced: { quality, honored, missing }`;
+  - `describeProgression` says per bar whether the asked quality was kept, unsupported, or waiting on the seam.
+
+**The seam (needs harmony.js, after 4a merges).** `harmonize` hands `choose` the pin as `{ tone, cents }`, without its bar. So `harmonyPins` keys a quality by its root tone. That is exact unless one root is pinned with two qualities, or with one and none (`F Cmaj7 Fsus4 F`). Those bars choose freely, and the decisions say so (`ambiguous`). The one-line fix, in `chordsFrom` at harmony.js:315:
+`{ tone: pin, cents: row.toneCents[pin], ...(progression.qualities ? { quality: progression.qualities[k] } : {}) }`
+After it, `pin.quality` wins on every bar (already tested through `choose`), and specs without quality pins stay byte-identical (`qualities` is absent then).
+
+**The ratio form's identity.** Eight targeted composes (traced, worker, modulation off, too long, ratios not of the row) hash byte-identical to b69a39e's `progression.js`, and `{ ratio, quality: null }` composes the `{ ratio }` spec. Every resolved field composed (162 fields of every kind on 119:42:15:8) keeps its roots, keeps each supported quality, and never forces an unsupported one.
+
+**Measured** (Node, M4 Max): `barMaterials` 0.03 ms on 8:7:6:5, 0.08 ms on 119:42:15:8, 11.5 ms on the 16,359-onset row (2.2 ms given its row; the rest is `buildRow`). `resolveSymbols` 0.03 ms, and 0.09 ms on the 16k row.
+
+**Proposed calls:**
+- **Symbols the Composer has no quality for** (C9, C6, C13♯11) take the richest catalog quality inside them, and the rest is dropped and said (C9 → C7, "no quality with its 2"). C/E is the triad, as the site folds a slash bass into the set. The slash bass isn't voiced (v1's bass roots on the chord).
+- **A dyad pinned** (`C5`, `Cno5`) is supported when its other tone sounds, the fallback rule. The every-class-but-one rule would pass a power chord whose fifth is silent.
+- **The auto marks** `-` `.` `_` `?` `auto` and the free-quality mark `D*`.
+- **`keep`:** a pinned ratio still of the symbol's class is kept, so a lab pick that isn't the class's nearest cluster survives a field edit.
+- **The fallback shown** is Compose's pick without the lead. Compose's real pick can differ, because the lead votes.
+
+**Open, for Avery:**
+1. **Flats come back sharp** (`Bb7` → `A#7`) when the field is rewritten from pins. Should the UI keep the typed text while the field is the source, and rewrite only on a lab pick (proposed), or spell flats?
+2. **Names after a modulation.** The field reads on the base grid (decision 3). After an earlier retune, the composed chord's (folded) name can read a class away from the typed symbol. Show both?
+3. **Unsupported qualities.** The field says the fallback. Should the pin keep the asked quality, so a later re-compose that supports it honors it (built: the pin keeps it), or drop it to the fallback?
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

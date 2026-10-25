@@ -31,6 +31,17 @@
 //              under the kept lead and never the root. A phrase whose bars are all pinned skips the first, unharmonized
 //              lead pass (its chords need no lead); a phrase with an auto bar mines it as before, and the auto bars
 //              are derived from it, the pinned ones ranked with it too.
+//   quality pins (step 4b, 2026-10-25; proposed): an entry may also be `{ ratio, quality }`, a quality id of
+//              CHORD_QUALITIES or FALLBACK_QUALITIES (`qualityById`), as a typed symbol or a chord swap pins it.
+//              `chooseChordOnRoot` takes it as `pin.quality`: kept when the bar supports it (a catalog quality: every
+//              class but at most one sounding, as above; a fallback dyad: its other tone sounding), and then the
+//              settle passes keep it too; otherwise the bar falls back as it always has, and says so (`forced`).
+//              No quality anywhere: every result here exactly as before (the ratio form's identity is tested).
+//              THE SEAM: harmonize hands `choose` the pin as { tone, cents } without its bar, so `harmonyPins` keys a
+//              quality by its root tone, which is exact unless one root is pinned with two qualities (or with one and
+//              none); those bars choose freely and are said (`ambiguous`), until harmony.js passes the bar's quality
+//              itself: `{ tone: pin, cents: row.toneCents[pin], ...(progression.qualities ? { quality:
+//              progression.qualities[k] } : {}) }` — then `pin.quality` wins, for every bar.
 
 import { buildRow, isRow, toneGate, ONSET_GATE, MIN_TONES } from './row.js';
 import { classOfCents, clusterPresence, defaultRoot, toneIndexOf, PRESENCE_MODES, DEFAULT_FRAME_CENTS_EACH_SIDE } from './frame.js';
@@ -48,6 +59,11 @@ export const FALLBACK_QUALITIES = Object.freeze([
 /** the classes a supported quality may lack in its bar (proposed) */
 export const MAX_MISSING = 1;
 const AUTO = new Set([null, undefined, '', 'auto']);
+const QUALITIES = new Map([...CHORD_QUALITIES, ...FALLBACK_QUALITIES].map((q) => [q.id, q]));
+/** a quality of CHORD_QUALITIES or FALLBACK_QUALITIES by its id → the quality | null */
+export const qualityById = (id) => QUALITIES.get(id) ?? null;
+/** is the quality one of the thin fallbacks (a dyad or the root alone) */
+export const isFallbackQuality = (q) => !!q && FALLBACK_QUALITIES.includes(q);
 
 const EPS = 1e-9;
 const mod = (v, n) => ((v % n) + n) % n;
@@ -84,11 +100,13 @@ export function rootCandidates(rowOrLayers, { frameCentsEachSide: e = DEFAULT_FR
 }
 
 /**
- * A progression read against a row of N bars. → { targeted (any bar pinned), roots: [tone | null] × N, asked: the
- * entries as given (for the spec's input), notes: [what was cut, padded or not found] }
+ * A progression read against a row of N bars. Each entry a ratio, `{ ratio }`, `{ ratio, quality }` (a quality id;
+ * null or absent: Compose's), or auto. → { targeted (any bar pinned), roots: [tone | null] × N, qualities: [id | null]
+ * × N (only on a pinned bar), asked: the entries' ratios as given (for the spec's input), notes: [what was cut,
+ * padded or not found] }
  */
 export function readProgression(progression, row, bars) {
-  if (progression == null) return { targeted: false, roots: Array(bars).fill(null), asked: null, notes: [] };
+  if (progression == null) return { targeted: false, roots: Array(bars).fill(null), qualities: Array(bars).fill(null), asked: null, notes: [] };
   if (!Array.isArray(progression)) fail(`a progression is a list, one root a bar (a ratio or null), not ${JSON.stringify(progression)}`);
   const notes = [], given = progression.length;
   if (given > bars) notes.push(`${given} slots for ${bars} bars: the last ${given - bars} dropped`);
@@ -101,8 +119,15 @@ export function readProgression(progression, row, bars) {
     if (t < 0) { notes.push(`bar ${k + 1}: ${ratio} is not a tone of this row, so auto`); return null; }
     return t;
   });
+  const qualities = roots.map((t, k) => {
+    const x = progression[k], id = t != null && x && typeof x === 'object' ? x.quality ?? null : null;
+    if (id == null) return null;
+    if (typeof id !== 'string') fail(`bar ${k + 1}: a quality is an id ('minor_7th'), not ${JSON.stringify(id)}`);
+    if (!QUALITIES.has(id)) { notes.push(`bar ${k + 1}: no quality "${id}", so Compose's`); return null; }
+    return id;
+  });
   const asked = progression.map((x) => (AUTO.has(x) ? null : typeof x === 'string' ? x : (x.ratio ?? x.root)));
-  return { targeted: roots.some((r) => r != null), roots, asked, notes };
+  return { targeted: roots.some((r) => r != null), roots, qualities, asked, notes };
 }
 
 /** does the bar sound a class of the pinned root: its weight there, read in the root's ±frame → Float64Array(12) */
@@ -116,12 +141,13 @@ function classWeights(tones, rootCents, e) {
  * One bar's chord on a pinned root (chooseChord's shape, so harmonize takes it as its own):
  *   tones  [{ tone, cents, weight, count, node }]   the bar's tones (may be empty)
  *   lead   [{ cents, strong }]                      the lead's notes in the bar, passing tones left out (may be empty)
- *   pin    { tone, cents }                          the root asked
+ *   pin    { tone, cents, quality? }                the root asked, and a quality id to keep where the bar supports it
  *   opts   { eachSide, gridBase, offset, modulation, prevPcs, foldOffsets, observe (chooseChord's: the compose trace;
  *            a quality the bar does not support is shown with a null key and the classes it lacks) }
  * → chooseChord's fields + { targeted: true, fallback: null | quality id, sounded: 'exact' | 'cluster' | 'absent',
  *     missing: [interval] (the classes the chosen quality lacks in the bar; on a fallback, those of
- *     the catalog quality the bar comes nearest to) }
+ *     the catalog quality the bar comes nearest to), forced (only when a quality was asked): { quality (the id asked),
+ *     honored, missing (the classes the asked quality lacks in the bar) } }
  */
 export function chooseChordOnRoot(tones, lead, pin, { eachSide = DEFAULT_FRAME_CENTS_EACH_SIDE, gridBase = 0, offset = 0, modulation = true, prevPcs = null, foldOffsets = true, observe = null } = {}) {
   if (!pin || !Number.isFinite(pin.cents)) fail('a pinned root needs its tone and cents');
@@ -148,6 +174,14 @@ export function chooseChordOnRoot(tones, lead, pin, { eachSide = DEFAULT_FRAME_C
     return best;
   };
   let best = pickOf(CHORD_QUALITIES, (q) => lacks(q).length <= MAX_MISSING), fallback = null, missing = best ? lacks(best.quality) : [];
+  // a quality asked (a typed symbol, a kept swap): kept where the bar supports it, by the same test
+  const asked = pin.quality != null ? qualityById(pin.quality) ?? fail(`no quality "${pin.quality}"`) : null;
+  let forced = null;
+  if (asked) {
+    const short = lacks(asked), ok = isFallbackQuality(asked) ? short.every((i) => i === 0) : short.length <= MAX_MISSING;
+    forced = { quality: asked.id, honored: ok, missing: short };
+    if (ok) { best = rank(asked, CHORD_QUALITIES.includes(asked) ? CHORD_QUALITIES.indexOf(asked) : FALLBACK_QUALITIES.indexOf(asked)); missing = short; }
+  }
   if (!best) {
     // the catalog quality the bar comes nearest to: what it lacks, for the decisions list
     missing = CHORD_QUALITIES.map(lacks).reduce((a, m) => (m.length < a.length ? m : a));
@@ -163,11 +197,29 @@ export function chooseChordOnRoot(tones, lead, pin, { eachSide = DEFAULT_FRAME_C
   return { root, quality: best.quality, intervals: [...best.quality.intervals], pcs, rootPc, violations: best.violations, held: best.held, support: best.support,
     offGrid: !modulation && step.modulate, modulate, dev: step.dev, offset: after,
     named: { offset: after - 100 * shift, shift, rootPc: namedPc, pcs: best.quality.intervals.map((i) => mod(namedPc + i, 12)).sort((a, b) => a - b) },
-    targeted: true, fallback, sounded, missing };
+    targeted: true, fallback, sounded, missing, ...(forced ? { forced } : {}) };
 }
 
-/** what harmonize takes for a read progression: { roots, choose } (null when no bar is pinned) */
-export const harmonyPins = (read) => (read && read.targeted ? { roots: [...read.roots], choose: chooseChordOnRoot } : null);
+/**
+ * What harmonize takes for a read progression: { roots, choose } (null when no bar is pinned), exactly as before when
+ * no quality is pinned. With quality pins: { roots, qualities, choose, ambiguous: [bar] }, `choose` reading a pin's
+ * own `quality` when harmonize passes one, else the quality pinned on that root tone (see THE SEAM at the head).
+ */
+export function harmonyPins(read) {
+  if (!read || !read.targeted) return null;
+  const qualities = read.qualities ?? [];
+  if (!qualities.some((q) => q != null)) return { roots: [...read.roots], choose: chooseChordOnRoot };
+  const byTone = new Map(), ambiguousTones = new Set();
+  read.roots.forEach((t, k) => {
+    if (t == null) return;
+    const q = qualities[k] ?? null;
+    if (byTone.has(t) && byTone.get(t) !== q) ambiguousTones.add(t); else byTone.set(t, q);
+  });
+  for (const t of ambiguousTones) byTone.set(t, null);
+  const ambiguous = read.roots.flatMap((t, k) => (t != null && ambiguousTones.has(t) ? [k] : []));
+  const choose = (tones, lead, pin, how) => chooseChordOnRoot(tones, lead, 'quality' in pin ? pin : { ...pin, quality: byTone.get(pin.tone) ?? null }, how);
+  return { roots: [...read.roots], qualities: [...qualities], choose, ambiguous };
+}
 
 const INTERVAL_NAMES = ['root', '♭2', '2nd', '♭3', '3rd', '4th', '♭5', '5th', '♯5', '6th', '♭7', '7th'];
 /**
@@ -179,8 +231,15 @@ export function describeProgression(read, chords, row) {
   const pinned = read.roots.flatMap((r, k) => (r == null ? [] : [k + 1])), auto = read.roots.length - pinned.length;
   const parts = [`bar${pinned.length > 1 ? 's' : ''} ${pinned.join(', ')} targeted: the root asked, the quality the best of those the bar's own tones support over it (all its classes but at most one sounding in the bar, the root among them), ranked as Compose ranks chords (proposed); the settle passes re-derive the quality, never the root`];
   if (auto) parts.push(`${auto} auto bar${auto > 1 ? 's' : ''} from the lead as always${pinned.length ? ' (the first lead mined only for phrases holding an auto bar)' : ''}`);
+  const qualities = read.qualities ?? [], seam = qualities.some((q) => q != null) ? harmonyPins(read).ambiguous : [];
   for (const k of pinned) {
-    const c = chords[k - 1];
+    const c = chords[k - 1], want = qualities[k - 1] ?? null;
+    if (want != null) {
+      const q = qualityById(want), sym = `${q.suffix || 'maj'} (${want})`;
+      if (seam.includes(k - 1) && c.quality !== want) parts.push(`bar ${k}: the quality asked, ${sym}, waits on harmonize passing a bar's own quality (its root is pinned elsewhere with another), so ${c.name}, Compose's (proposed)`);
+      else if (c.quality === want) parts.push(`bar ${k}: the quality asked, ${sym}, kept: the bar supports it`);
+      else parts.push(`bar ${k}: the quality asked, ${sym}, is not supported by the bar's own tones, so ${c.name}, as Compose picks it (proposed)`);
+    }
     if (c.fallback) parts.push(`bar ${k}: no chord quality has all but one of its tones in the bar over ${c.rootFraction} (the nearest lacks the ${c.missing.map((i) => INTERVAL_NAMES[i]).join(' and ')}), so ${c.name}, the ${c.fallback === 'root_only' ? 'root alone' : `${c.fallback.replace('_', ' ')} dyad`} (fallback, proposed)`);
     if (c.sounded !== 'exact') parts.push(`bar ${k}: ${c.rootFraction} itself does not sound in the bar${c.sounded === 'cluster' ? ', only its ±frame cluster' : ''}; the root is kept, and its onset is not played as one`);
     if (c.offGrid) parts.push(`bar ${k}: ${c.rootFraction} is off the grid and modulation is off, so it is kept, unretuned (offGrid)`);

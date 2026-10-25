@@ -65,6 +65,7 @@ python3 -m http.server 8000
 ## Files
 
 - **`core/`:** pure ES modules (no DOM, fetch or clock) that run in a page, a worker or Node. `compose-worker.js` wraps `compose()` for a module worker. `superrow.js` lays many rhythms of one grid on one row for Cosmos's Grid-card Compose, and `superrow-worker.js` builds and composes one off the main thread ("Cosmos Compose mode" in `DESIGN_NOTES.md`).
+- **`core/chord-symbols.js`** (step 4b): the typed progression field. It ports the site's chord-symbol parser and tokenizer, then `barMaterials` (the row, the cells and the bars' tones before a compose), `resolveSymbols` (a symbol a bar → a root cluster and a quality, ✓ or amber, as `{ ratio, quality }` pins for `compose`'s progression) and `pinsToField` / `fieldToPins`. `progression.js` takes those pins. See "Step 4b: typed progression" in `DESIGN_NOTES.md`.
 - **`core/trace.js`:** the compose trace, `compose(..., { trace: true })` → `spec.trace`: every decision as ordered, untimed events pointing at the row's onsets, for the main-page and Cosmos animations; `traceTimeline()` paces it. `TRACE.md` is the contract.
 - **`perform/`:** what the lab and the main page share, with no DOM:
   - `composer-controller.js`: state and actions
@@ -88,6 +89,7 @@ python3 -m http.server 8000
   - `theater.js` + `theater.css` (sprint 2, step 2): "show the work" as theater, driven by the lens's events: the scrim (one class on `<body>`) and the floating caption around a rhythm's first animated compose, every click or Esc a skip, a window opened mid-show a skip (`lrcComposer.theater`); the short recall version is `trace-frames.js`' `recallTimeline`
 - **`../Tutorial/`** (sprint 2, step 3): the guided tour of the main page, `window.lrcTour`. `tour-script.js` is the pure script (the seeded layer generator, the opening's timing model, the steps as data); `tour-driver.js` plays it with a spotlight, popups and motion (real typing, the real Generate, the glyph through `lens.press({ pace })`, yielding to the theater's scrim); `tour-boot.js` wires the menu's "Take the tour" and the first-visit auto-open; `tour.css`. The old slides (`TutorialUI.js`, `TutorialContent.js`) stay as "Read the guide". "Interactive tutorial" in `DESIGN_NOTES.md`.
 - **`tests/`:** plain Node scripts with no runner.
+  - `assert-chord-symbols.mjs` checks the typed field: parity with the site's parser, `barMaterials` against Compose, the resolution, quality pins in Compose, and the ratio form's identity.
   - `assert-drums.mjs` checks the drums against the row and against Partitions' own Euclid.
   - `assert-trace.mjs` checks that the trace never steers the spec and that every ref is a real onset.
   - `assert-page-animate.mjs` checks the Compose animation: its frames land exactly on the lit nodes, draw only real onsets, stay bounded on the 16k row, and skip and cancel cleanly.
@@ -106,7 +108,7 @@ Run every suite (the Composer's, the shared voices', Cosmos's and MIDI Out's):
 for t in Composer/tests/assert-*.mjs Cosmos/tests/assert-*.mjs Audio/tests/assert-*.mjs Playback/MIDIOut.test.mjs; do node "$t" >/dev/null 2>&1 || echo FAIL $t; done
 ```
 
-A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added; 55 at the end of that sprint; 57 with sprint 2's `assert-store.mjs` and `assert-page-lens.mjs`; 58 with step 2's `assert-page-theater.mjs`; 59 with step 3's `assert-tutorial.mjs`. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
+A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added; 55 at the end of that sprint; 57 with sprint 2's `assert-store.mjs` and `assert-page-lens.mjs`; 58 with step 2's `assert-page-theater.mjs`; 59 with step 3's `assert-tutorial.mjs`; 60 with step 4b's `assert-chord-symbols.mjs`. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
 
 ## Where it lives
 

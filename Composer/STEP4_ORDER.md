@@ -31,7 +31,7 @@ Also from the recommendations, taken as written:
 | Phase | Branch | Depends on | Edits | Status |
 | --- | --- | --- | --- | --- |
 | 4a. Core: trace caps → builder refactor (byte-identical) → `rearrange.js` | `step4/core` | — | `core/compose.js`, `core/harmony.js`, `core/lines.js`, `core/trace.js`, new `core/rearrange.js`, `page/trace-frames.js` (slice) | dispatched |
-| 4b. Typed progression: `chord-symbols.js`, resolve, `barMaterials`, quality pins | `step4/typed` | — | new `core/chord-symbols.js`, `core/progression.js` | dispatched |
+| 4b. Typed progression: `chord-symbols.js`, resolve, `barMaterials`, quality pins | `step4/typed` | — | new `core/chord-symbols.js`, `core/progression.js` | MERGED (6a92539..ac83a05) |
 | 4c. Drum grid source, presets ⇄ grid, prime level 1 | `step4/drums` | — | `core/drums.js` | dispatched |
 | 4d. Store: `edits`, pins, `drumOptions.grid`, invalidation, undo; the controller merge | `step4/store` | 4a, 4b, 4c merged | `store/`, `perform/composer-controller.js` | waiting |
 | 4e. UI: the matrix, then the four inspector contexts ∥ the typed field | `step4/ui` (+ `step4/ui-typed` if split) | 4d merged | `page/composer-tab.*`, `page/tab-controller.js`, `PartitionsUI.js` hosts | waiting |
@@ -114,3 +114,5 @@ Merge, run the full suite, then write a browser list for Avery: swaps (chord, le
 ## Log
 - 2026-10-25: order written; Avery took the proposed answers on all 8 questions.
 - 2026-10-25: 4a, 4b and 4c dispatched in parallel (Opus), each in its own worktree off b69a39e.
+- 2026-10-25: 4b built on `step4/typed`: `core/chord-symbols.js` (parser parity, tokenizer, `barMaterials`, `resolveSymbols`, symbols ⇄ pins) and quality pins in `core/progression.js`. The ratio form is byte-identical, and `assert-chord-symbols.mjs` is added (60 suites). Quality pins on a root pinned twice with different qualities wait on a one-line harmony.js seam (DESIGN_NOTES "Step 4b"), for after 4a.
+- 2026-10-25: 4b merged. Owed after 4a merges: a one-line pin change in harmony.js `chordsFrom` (~line 315), `{ tone: pin, cents: row.toneCents[pin], ...(progression.qualities ? { quality: progression.qualities[k] } : {}) }`, so a root pinned with two qualities honors each bar's quality (byte-identical without quality pins). Open for Avery: flats come back sharp when the field is rewritten from pins (keep the typed text?); show both names after a modulation?
