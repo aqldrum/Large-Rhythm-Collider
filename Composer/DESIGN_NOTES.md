@@ -1255,6 +1255,93 @@ The order: `STEP4_ORDER.md` "4a. Core", built on `STEP4_RECOMMENDATIONS.md` §1.
   - the boundaries;
   - the costs.
 
+## Step 4d: store edits and pins (built 2026-10-25, branch `step4/store`)
+
+The order: `STEP4_ORDER.md` "4d. Store". Avery's decisions there are marked **decided**; everything else is **proposed, not ruled**. Node only: nothing here has been seen or heard in a browser. Built in `store/composition-store.js`, a new `store/composition-edits.js` (pure), `perform/composer-controller.js`, `perform/compose-runner.js` and `core/compose-worker.js` (the worker path), a one-line `materialsKey` in `core/rearrange.js`, and `against` in `core/drums.js`. Checked by `tests/assert-store-edits.mjs` (88 checks).
+
+**The entry** (`newCompositionState`, new fields):
+- `composed`: Compose's own spec, never touched.
+- `spec`: the composition **as edited**, composed + edits. With no edits it is the same object as `composed`. **Proposed:** keeping the edited spec in `spec` means the player, the tab's lanes, the plot overlay, the part strips, the Scale readout, the lens and its recall all read the edited composition with no change of theirs (none of `page/` was edited).
+- `edits`: `{ chords: { [bar]: { rootTone, quality, from: 'swap' | 'typed', asked? } }, lead: { [phrase]: { lineId, chordsFollow, smooth? } }, order, grid }`.
+  - `order` (`'chord:3'`, `'lead:1'`) is the order the edits apply in. A changed edit moves to the end; a removed one drops out.
+  - `asked` (typed chords only) is the quality the field asked for. `quality` is what plays: the asked one where the bar supports it, else Compose's own pick over the root (`chooseChordOnRoot`, with the bar's lead). The pin keeps `asked` (4b's open question 3, as built there).
+  - `grid`: `{ bars, slotsPerBar, from }`, the meter `drumOptions.grid` was written for, and the mode it came from.
+- `drumOptions.grid`: the step grid (4c's shape).
+- `field`: `{ text }`, the typed progression as the user typed it (4b's open question 1, proposed: the text is the field's source, so flats stay flats; only the swapped bar's symbol is rewritten).
+- `undo` / `redo`: snapshots of the edits, the field, the pins and the drum mode and grid. At most `UNDO_LIMIT` = 50 (proposed).
+- `dropped`: what the last Compose dropped, for the UI's amber: `{ pins: [{ bar, ratio, quality, reason: 'notInRow' | 'pastBars' }], unhonored: [{ bar, ratio, asked, got }], lead: [{ phrase, lineId }], grid: { was, now } | null }`, or null.
+- `progression` is now the pin list Compose is sent, `[ratio | { ratio, quality } | null]`: the lab's root picks are the ratio form, a re-compose bakes the chord edits in as `{ ratio, quality }`. `progression()` (the lab's editor) still reads ratios.
+
+**Edits are live (decided).** No edit makes the entry dirty, and the glyph recalls spec + edits with no re-solve. The parts' sound, legato, on/off and levels stay live as before, over the edited notes (re-articulated, never re-mined).
+
+**The merge** (`perform/composer-controller.js`). The edited spec is a fold: `rearrange` + `applyRearrange` once per edit, in `order`, starting from the composed spec (its drums left out; the drums are arranged after, over the edited spec, with the entry's own drum options). The fold keeps each step's spec, so:
+- a new edit is one rearrange;
+- an undo of the last edit is none (the step before is kept);
+- a changed or removed edit re-runs only the steps after it.
+
+Two proposed rules make the order safe:
+- **A swap to the chord Compose made removes the edit** (unless the phrase's chords follow a swapped lead), so swapping back is the composed spec byte for byte (4a's identity). The same goes for a lead swapped back to its kept line. A typed chord is kept even then: the user typed it, and it is a pin on the next Compose.
+- **A lead swap with "chords follow" drops the chord edits of its phrase** (they would otherwise come back as pins). A chord swapped in that phrase afterwards applies after it, so it wins.
+
+**The API that 4e calls** (each action returns a Promise of `{ ok, kind, changedBars, retunedBars, … }`; on the main thread it has applied before it returns; a failure rolls the edit back and says `{ ok: false, error }`):
+- `swapChord(bar, candidate | { rootTone, quality })`; `swapLead(phrase, lineId, { chordsFollow, smooth })`;
+- `setProgressionField(text)` → `{ resolution, live }`; `progressionField()` → `{ text, typed, resolution }` (per bar: cents, amber, the pin);
+- `setDrumGrid(grid)`, `setDrumCell(bar, voice, place, 'x' | 'X' | '.')`, `applyDrumPreset(mode)`, and `drumGrid()` → `{ grid, mode, own, bars, places, m, silentCells }`;
+- `undo()`, `redo()`, `canUndo()`, `canRedo()`;
+- `alternatesOf(bar, 'chords' | 'lead')`: a pure read of the kept trace. For chords, the bar's chosen-round candidates (12), each marked `current` and `composed`, with `currentIndex` (-1 when the bar plays a typed chord that isn't among them). For the lead, the bar's phrase: the kept line first, then its runner-ups (8), each with `perNote` and its shape. Other parts: null.
+- reads: `effectiveSpec()`, `composedSpec()`, `hasEdits()`, `applying()` (a worker edit in flight), `retunedBars()` (vs Compose's), `editsExport()`;
+- events: `onEdit(fn)` → `fn(result, state)` after each applied edit, plus `onChange` as before.
+
+**Chord swaps and the field.**
+- A candidate from `alternatesOf` goes straight into `swapChord`.
+- **The typed field** resolves the text with `resolveSymbols` against `barMaterials(…, composed.knobs, { row })`. With a composition, each typed bar is a typed chord edit (live), and an auto bar has no chord edit and no pin (the field is the whole chord row's view: swaps show in it as their names). Proposed: removing a pin through the field doesn't make the entry dirty; it only changes what the next Compose is sent. Before any compose, the field's pins are Compose's progression, and the entry goes dirty, as a root pick does.
+- A bar already pinned with the same root and asked quality, and composed over that pin, gets no edit.
+- **A swap rewrites only its own bar's symbol** in a typed field (`rewriteToken`): the user's separators and spellings elsewhere are kept, and trailing autos are cut.
+
+**The drums.**
+- `setDrumCell` starts the grid from the drums as they play now (`gridOf`), sets the cell, and turns the mode to `grid` (decided: an edit turns the mode to grid). Proposed: a `prime` mode stays `prime`, since the grid's perc row is its selection.
+- `applyDrumPreset(mode)` plays the preset as itself (its own arrangement, exactly), and the grid shows it through `gridOf` until a cell is edited. Proposed: a preset clears the entry's own grid rather than storing `gridOf(preset)` (with `with` or `partition` a stored grid would re-land 66–72 % of the perc strokes, 4c's measurement).
+- `grid` and `prime` are in the controller's drum-mode choices and labels now (`drumModeChoices()` is `ALL_DRUM_MODES`). `setDrums({ mode: 'grid' })` with no grid yet starts one from the drums as they play.
+
+**A re-compose (decided, 5).**
+- At Compose's start the chord edits are written into `progression` as `{ ratio, quality }` (a typed one's asked quality), and Compose solves around them. Until the compose lands they still play over the old spec.
+- When it lands, a pin is checked against the new spec: not `targeted` there means the new row lacks the root (`notInRow`) or the bar is past the new meter (`pastBars`). It is dropped from the pins and listed in `dropped.pins` (a typed field's symbol for it becomes `-`). A pin whose quality the new bar can't support stays a pin and is listed in `dropped.unhonored`.
+- The lead edits are dropped and listed. The edits are cleared (they are pins now), and so is the undo stack (proposed: its steps belong to the old spec).
+- **The drum grid** is kept when the meter (N, S) is unchanged, else dropped. The mode goes back to the one the grid came from, and `dropped.grid` says so.
+- Proposed: new layers in the lab clear the pins and the field, as they always cleared the progression. The chord edits still go through the check above, so they show as dropped.
+- **A new cycle of the same row** (the store's `inheritEdits`) carries the chord edits as pins, the field and the drum grid (checked on its first Compose), never the lead edits.
+
+**Where an edit runs** (proposed). Measured in Node, M4 Max, on the chosen round's candidates (rearrange + applyRearrange; the materials once per composition):
+
+| row | onsets | materials | chord swap, lean: median / max | full: median / max |
+| --- | --- | --- | --- | --- |
+| 768:769 | 1,536 | 1–2 ms | 1.9 / 4.5 ms | 4.9 / 7.5 ms |
+| 3001:2999:2003:1999 | 9,999 | 4–7 ms | 4.1 / 5.6 | 9.0 / 14.3 |
+| 4099:4093:4091:4079 | 16,359 | 7–8 ms | 4.6 / 6.2 | 10.4 / 15.8 |
+| 16384:16383 | 32,766 | 12–15 ms | 5.8 / 15.0 | 11.1 / 16.7 |
+| 65536:65535 | 131,070 | 43–45 ms | 15.3 / 24.0 | 20.5 / 28.3 |
+| 262144:262143 | 524,286 | 250–267 ms | 53 / 107 | 61 / 102 |
+
+A lead swap costs the table, not the row: lean 4–13 ms (1.5k to 32k onsets), full 15 ms at 1,536 and 35–42 ms from 10k up; chords following add 5–10 ms.
+- **`MAIN_THREAD_ONSETS` = 32,768.** Up to it, every edit runs on the main thread (a chord swap ≤ ~17 ms, plus the materials once). Past it, the module worker runs it.
+- **`MAIN_THREAD_LEAD_FULL_ONSETS` = 2,048.** A lead swap on the full table runs in the worker past this.
+- **`smooth`** (smoothPhrase, 68–294 ms on the 16k row) always runs in the worker.
+- **No worker given** (Node, the lab's default runner): everything runs on the main thread.
+- **The worker** is the Compose worker. `compose-worker.js` answers `{ kind: 'rearrange', key, spec, edit, opts }`, and keeps the row and cells of the last 3 keys (`materialsKey`: the layers and the knobs the cells read). `compose-runner.js` exposes it as `runCompose.rearrange`, which the controller takes as its default `runRearrange`. The trace stays on the page: a lead swap sends the line's notes.
+- Measured through a mocked worker on 65536:65535 (in-process, a structured clone each way): the first swap 79 ms (the row built in the worker), the next 18 ms. A rearrange on the main thread with the row given: 25 ms.
+- An edit while one is in the worker supersedes it (`{ superseded: true }`). The newer fold applies both, reusing every step already made. A worker answer that comes back after a Compose has landed is dropped too.
+
+**`against`, seeded per bar** (`core/drums.js`, owed from 4a). Each bar draws its empty-slot order from its own generator, `${seed}/drums/${bar}` (it was one generator in bar order). Over 168 candidate swaps on 4 rows, no bar but the swapped one moves (before: 52 of 336 swaps re-drew later bars). This changes `against`'s output, so `drums-baseline.mjs` stays frozen and `assert-drum-grid.mjs` leaves out its 4 `against` variants with the reason stated; the other 527 hashes are byte for byte. The prime's p rule is left alone (Avery hasn't re-ruled it).
+
+**JSON export** is the composition as it plays (edits and all) plus `playback`, and, when there are any, `edits: { chords, lead, order, drums: { mode, grid, from } | null, field }`.
+
+**Open, for Avery:**
+1. **Re-compose clears undo.** After a Compose the chord edits are pins and the old steps have no spec to apply to. Keep it that way, or keep an undo step that restores the pins?
+2. **The field and pins.** Taking a pin out through the field (an auto bar) doesn't make the entry dirty: the spec still plays the pinned chord until the next Compose. Is that right, or should the glyph compose again?
+3. **"Chords follow" drops the phrase's chord edits.** Or should a swapped chord stay pinned through it?
+4. **A typed quality the bar can't support** plays Compose's pick over the root (with the lead) live, and stays the asked pin for the next Compose. 4b's field shows the fallback without the lead, so the two can name different chords. Show what plays?
+5. **The field on rows past the threshold** still reads the bars on the main thread (`barMaterials` with the row: ~10 ms at 16k, ~270 ms at 524k, once per composition). Move it to the worker too?
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
