@@ -21,7 +21,7 @@ import { siteRhythm } from './site-scripts.mjs';
 import { createComposerBridge } from '../page/composer-bridge.js';
 import { compose, PART_IDS } from '../core/compose.js';
 import { rearrange, applyRearrange, materialsOf } from '../core/rearrange.js';
-import { arrangeDrums, gridOf, ALL_DRUM_MODES } from '../core/drums.js';
+import { arrangeDrums, gridOf, ALL_DRUM_MODES, beatsOf, drawPrime, nextPrime } from '../core/drums.js';
 import { answer, keptMaterials } from '../core/compose-worker.js';
 import { createComposeRunner } from '../perform/compose-runner.js';
 import { createComposerController, drumModeChoices, MAIN_THREAD_ONSETS } from '../perform/composer-controller.js';
@@ -232,6 +232,18 @@ console.log('\n— the drum grid');
   check('a cell off the grid is refused', threw);
   D.c.setDrums({ mode: 'grid' });
   check('the grid picked as a mode starts from the drums as they play', s.drumOptions.mode === 'grid' && J(s.drumOptions.grid) === J(gridOf(arrangeDrums(s.spec, { ...s.drumOptions, mode: 'backbeat', grid: undefined }))));
+  // STEP 4c-prime: p is drawn from the composition's seed; an asked p the meter's cells outgrow is dropped, and said
+  D.c.setDrums({ mode: 'prime', grid: null });
+  const cellsOf = (spec) => spec.knobs.bars * spec.knobs.slotsPerBar * beatsOf(spec.knobs.slotsPerBar).m, c0 = cellsOf(s.spec);
+  check(`the prime mode draws p from the composition's seed (${s.drums.prime.p} above ${c0} cells)`, s.drums.prime.drawn && s.drums.prime.p === drawPrime(c0, s.spec.input.seed) && s.drums.prime.p > c0);
+  const asked = nextPrime(c0 + 1);
+  D.c.setDrums({ p: asked });
+  check(`an asked p plays (${asked})`, s.drums.prime.p === asked && !s.drums.prime.drawn);
+  const b0 = s.spec.knobs.bars;
+  D.c.setKnob('bars', 2 * b0);
+  await D.c.compose();
+  check(`a meter whose cells outgrow the asked p drops it, and says so (${J(s.dropped?.p)}); the prime mode draws its own`, s.spec.knobs.bars === 2 * b0 && cellsOf(s.spec) >= asked
+    && s.dropped?.p?.was === asked && s.dropped.p.cells === cellsOf(s.spec) && !('p' in s.drumOptions) && s.drums.prime.drawn && s.drums.prime.p > cellsOf(s.spec));
 }
 
 console.log('\n— against is stable across a swap (drums.js, seeded per bar in step 4d)');

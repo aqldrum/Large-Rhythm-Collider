@@ -38,7 +38,8 @@
 //   field      { text } | null: the typed progression as the user typed it, kept as the field's source (proposed)
 //   undo/redo  snapshots of { edits, field, the drum mode and grid }, at most UNDO_LIMIT (proposed: 50)
 //   dropped    what the last Compose dropped (amber in the UI): { pins: [{ bar, ratio, quality, reason }],
-//              unhonored: [{ bar, ratio, asked, got }], lead: [{ phrase, lineId }], grid: { was, now } | null } | null
+//              unhonored: [{ bar, ratio, asked, got }], lead: [{ phrase, lineId }], grid: { was, now } | null,
+//              p: { was, cells } | null (STEP 4c-prime: an asked drumOptions.p the new meter's cells outgrew) } | null
 //   progression the pin list Compose is sent: [ratio | { ratio, quality } | null] a bar (the lab's root picks are the
 //              ratio form; a Compose bakes the chord edits in here as { ratio, quality })
 // A new cycle of the same row carries the chord edits as pins (into `progression`), the typed field and the drum
