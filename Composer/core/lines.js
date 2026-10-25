@@ -192,16 +192,25 @@ const frameSummary = (frames) => (frames.every((f) => f === frames[0])
 
 export const intervalCost = (ad, r) => (ad < r.same ? r.repeat : ad <= r.step ? 0 : ad <= r.skip ? r.skipCost : r.leapCost + (ad - r.skip) / 1200);
 export const rulesOf = (rules) => ({ ...DEFAULT_RULES, ...rules, weights: { ...DEFAULT_WEIGHTS, ...(rules?.weights || {}) } });
+// STEP 4a: the close cost of a tone over a bar's root tone, memoized across calls (a pure function of the two fractions:
+// the same numbers, sooner; a bar-local re-mine reads it for every run). Cleared when it grows past CLOSE_MEMO_MAX.
+const CLOSE_MEMO_MAX = 1 << 18, closeMemo = new Map();
+function closeOver(fraction, tone) {
+  const key = `${fraction}|${tone}`;
+  let v = closeMemo.get(key);
+  if (v === undefined) { if (closeMemo.size >= CLOSE_MEMO_MAX) closeMemo.clear(); closeMemo.set(key, (v = closeCost(intervalOver(fraction, tone)))); }
+  return v;
+}
 /** each candidate's part under the targets: [slot][cand] → { role, bar, foreign, chord (its chord cost, unweighted), close } */
 export function rolesOf(lattice, r) {
-  const t = r.targets, P = lattice.P, memo = new Map();
+  const t = r.targets, P = lattice.P;
   return lattice.slots.map((slot, k) => {
     const g = t ? t.bars[Math.floor(k * t.bars.length / P)] : null;
     return slot.cands.map((c) => {
       if (!t) return { role: c.outside ? 'foreign' : 'tone', bar: null, foreign: c.outside, chord: 0, close: c.close };
       const scale = g.scale ?? t.scale, foreign = c.outside || (scale ? !scale.includes(c.pc) : false), onChord = !foreign && (!g.chord || g.chord.includes(c.pc));
       let close;
-      if (g.tone) { const key = `${c.fraction}|${g.tone}`; close = memo.get(key); if (close === undefined) memo.set(key, (close = closeCost(intervalOver(c.fraction, g.tone)))); } else close = !foreign && c.pc === g.root ? 0 : onChord ? 0.4 : 1;
+      if (g.tone) close = closeOver(c.fraction, g.tone); else close = !foreign && c.pc === g.root ? 0 : onChord ? 0.4 : 1;
       return { role: foreign ? 'foreign' : onChord ? (g.chord ? 'chord' : 'tone') : 'scale', bar: g.name, foreign, chord: foreign || onChord ? 0 : slot.accent, close };
     });
   });
@@ -228,6 +237,9 @@ export function scoreLine(lattice, picks, rules) {
   const last = picks[picks.length - 1];
   terms.gap += ((lattice.P - 1 - last.slot) / S) ** 2;
   terms.close = roles[last.slot][last.cand].close;
+  // STEP 4a: boundaries (a bar-local re-mine): the moves in from the note before the span and out to the note after it
+  if (r.before) terms.interval += r.strict * intervalCost(Math.abs(lattice.slots[picks[0].slot].cands[picks[0].cand].pitch - r.before.pitch), r);
+  if (r.after) terms.interval += r.strict * intervalCost(Math.abs(r.after.pitch - lattice.slots[last.slot].cands[last.cand].pitch), r);
   let cost = 0; for (const k of Object.keys(terms)) cost += w[k] * terms[k];
   return { cost, terms, roles: picks.map((p) => roles[p.slot][p.cand]) };
 }
@@ -260,6 +272,7 @@ export function pickLines(lattice, rules = {}) {
   const WIDTH = (nMax + 1) * F;
   const cost = new Float64Array(total * WIDTH).fill(Infinity), back = new Int32Array(total * WIDTH).fill(-1);
   const avoidNodes = r.avoidNodes ? new Set(r.avoidNodes) : null, startTones = r.startTones ? new Set(r.startTones) : null;
+  const before = r.before ?? null, after = r.after ?? null;   // STEP 4a: { pitch } either side of the span, or null
   for (let k = 0; k < P; k++) {
     const slot = slots[k], busy = r.avoidSlots && r.avoidSlots[k] ? w.avoid : 0;
     for (let bi = 0; bi < slot.cands.length; bi++) {
@@ -268,7 +281,7 @@ export function pickLines(lattice, rules = {}) {
       if (avoidNodes && avoidNodes.has(b.node)) continue;
       const own = busy + w.accent * (1 - slot.accent) + w.support * (1 - b.share) + (rb.foreign ? w.outside : 0) + w.chord * rb.chord
         + (r.contour ? w.contour * Math.abs(b.pitch - contourAt(r.contour, k, P)) / 600 : 0), sb = (base[k] + bi) * WIDTH;
-      if (k < maxGap && (!startTones || startTones.has(b.tone))) cost[sb + F] = w.gap * (k / S) ** 2 + own;
+      if (k < maxGap && (!startTones || startTones.has(b.tone))) cost[sb + F] = w.gap * (k / S) ** 2 + own + (before ? r.strict * w.interval * intervalCost(Math.abs(b.pitch - before.pitch), r) : 0);
       for (let j = Math.max(0, k - maxGap); j < k; j++) {
         const gap = w.gap * ((k - j) / S) ** 2, from = slots[j].cands;
         for (let ai = 0; ai < from.length; ai++) {
@@ -296,7 +309,7 @@ export function pickLines(lattice, rules = {}) {
     let best = Infinity, at = -1;
     for (let k = Math.max(0, P - maxGap); k < P; k++) for (let ci = 0; ci < slots[k].cands.length; ci++) {
       if (roles[k][ci].foreign) continue;
-      const end = w.close * roles[k][ci].close + w.gap * ((P - 1 - k) / S) ** 2;
+      const end = w.close * roles[k][ci].close + w.gap * ((P - 1 - k) / S) ** 2 + (after ? r.strict * w.interval * intervalCost(Math.abs(after.pitch - slots[k].cands[ci].pitch), r) : 0);
       for (let f = 0; f < F; f++) { const i = (base[k] + ci) * WIDTH + n * F + f, v = cost[i] + end; if (v < best) { best = v; at = i; } }
     }
     if (at < 0) continue;
@@ -357,7 +370,9 @@ export function describeLine(row, lattice, pick, rules, tag = {}) {
  *            rooted on the frame's root), weights, minTones, register (cents added to the range and contour: −1200 an
  *            octave down), rules (added to every run's: e.g. avoidSlots [bool by lattice slot] and avoidNodes [onset
  *            index] — an avoided node is never a candidate, an avoided slot costs weights.avoid a note; startTones [tone
- *            index] — the tones a line may open on) }
+ *            index] — the tones a line may open on; before, after — STEP 4a's boundaries for a bar-local re-mine: { pitch }
+ *            (cents above 1/1, as a lattice candidate's) of the note just before the span and just after it, each move
+ *            to them priced as a move inside the line, strict × interval × I; absent, nothing changes) }
  * → { version, table, from, bars, slotsPerBar, root, over, frame, runs, lines } | { tooFewTones, tones, min }
  */
 export function mineLines(row, cells, frame, opts = {}) {
