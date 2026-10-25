@@ -27,6 +27,22 @@
 // glide), not its spec (proposed: the edits belong to the row, the spec to the row at that cycle). New layers start
 // fresh. One compose in flight per entry is the controller's rule (a second Compose of the same entry joins the
 // first); a compose keeps running when its rhythm stops being current, and lands in its own entry.
+//
+// STEP 4d (DESIGN_NOTES "Step 4d: store edits and pins"; the controller acts on these, the store only holds them):
+//   composed   Compose's own spec, never touched. `spec` is the composition as it is EDITED: composed + edits (the
+//              same object as `composed` with no edits), so everything that plays or draws reads it as before.
+//   edits      { chords: { [bar]: { rootTone, quality, from: 'swap' | 'typed', asked? } }, lead: { [phrase]: { lineId,
+//              chordsFollow, smooth? } }, order: ['chord:3', 'lead:1', …] (the order they apply in), grid: { bars,
+//              slotsPerBar, from } | null (the meter `drumOptions.grid` was written for, and the mode it came from) }.
+//              Live edits: they never make the entry dirty, and the glyph recalls spec + edits with no re-solve.
+//   field      { text } | null: the typed progression as the user typed it, kept as the field's source (proposed)
+//   undo/redo  snapshots of { edits, field, the drum mode and grid }, at most UNDO_LIMIT (proposed: 50)
+//   dropped    what the last Compose dropped (amber in the UI): { pins: [{ bar, ratio, quality, reason }],
+//              unhonored: [{ bar, ratio, asked, got }], lead: [{ phrase, lineId }], grid: { was, now } | null } | null
+//   progression the pin list Compose is sent: [ratio | { ratio, quality } | null] a bar (the lab's root picks are the
+//              ratio form; a Compose bakes the chord edits in here as { ratio, quality })
+// A new cycle of the same row carries the chord edits as pins (into `progression`), the typed field and the drum
+// grid (the controller drops it on its next Compose if the meter moved); never the lead edits (decision 5).
 
 import { PART_IDS } from '../core/compose.js';
 import { DEFAULT_KIT } from '../core/drums.js';
@@ -36,6 +52,13 @@ export const STORE_VERSION = 'composition-store-v1';
 export const STORE_CAPACITY = 4;
 export const LENSES = Object.freeze(['row', 'composition']);
 export const KNOB_NAMES = Object.freeze(['bars', 'slotsPerBar', 'frameCentsEachSide', 'modulation', 'anchors', 'settlePasses', 'presence']);
+/** how many edits an entry's undo stack keeps (proposed) */
+export const UNDO_LIMIT = 50;
+/** no edits */
+export const emptyEdits = () => ({ chords: {}, lead: {}, order: [], grid: null });
+const copy = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
+/** a pin list entry copied (a ratio, { ratio, quality }, or null) */
+const copyPin = (x) => (x && typeof x === 'object' ? { ...x } : x);
 
 /** four layers as whole numbers (0 absent) */
 export const normalLayers = (layers = []) => [0, 1, 2, 3].map((i) => { const v = Number(layers[i]); return Number.isInteger(v) && v > 0 ? v : 0; });
@@ -54,6 +77,8 @@ export function newCompositionState({ layers = [0, 0, 0, 0], cycleSeconds = 10, 
     drumOptions: { enabled: true, mode: 'backbeat', fills: true, kit: { ...DEFAULT_KIT } }, drums: null,
     status: 'idle', error: null, lastMs: null, dirty: true,
     progression: [], trace: null,
+    // STEP 4d
+    composed: null, edits: emptyEdits(), field: null, undo: [], redo: [], dropped: null,
   };
 }
 
@@ -62,8 +87,15 @@ function inheritEdits(to, from) {
   to.input.seed = from.input.seed;
   to.knobs = { ...from.knobs };
   to.table = from.table;
-  to.progression = [...from.progression];
-  to.drumOptions = { ...from.drumOptions, kit: { ...from.drumOptions.kit } };
+  to.progression = from.progression.map(copyPin);
+  // STEP 4d: the chord edits as pins (decision 5: a re-compose keeps them; a new cycle is one), the lead edits not
+  for (const [bar, e] of Object.entries(from.edits?.chords ?? {})) {
+    while (to.progression.length <= Number(bar)) to.progression.push(null);
+    to.progression[Number(bar)] = { ratio: e.rootTone, quality: 'asked' in e ? e.asked : e.quality };
+  }
+  to.drumOptions = { ...from.drumOptions, kit: { ...from.drumOptions.kit }, ...(from.drumOptions.grid ? { grid: copy(from.drumOptions.grid) } : {}) };
+  to.edits = { ...emptyEdits(), grid: copy(from.edits?.grid ?? null) };
+  to.field = copy(from.field ?? null);
   to.levels = { ...from.levels };
   to.glideMs = from.glideMs;
   return to;
