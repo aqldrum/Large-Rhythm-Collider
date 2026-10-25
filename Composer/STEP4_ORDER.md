@@ -34,7 +34,7 @@ Also from the recommendations, taken as written:
 | 4b. Typed progression: `chord-symbols.js`, resolve, `barMaterials`, quality pins | `step4/typed` | — | new `core/chord-symbols.js`, `core/progression.js` | MERGED (6a92539..ac83a05) |
 | 4c. Drum grid source, presets ⇄ grid, prime level 1 | `step4/drums` | — | `core/drums.js` | MERGED (83211fc..d8c7886) |
 | 4d. Store: `edits`, pins, `drumOptions.grid`, invalidation, undo; the controller merge | `step4/store` | 4a, 4b, 4c merged | `store/`, `perform/composer-controller.js` | built on `step4/store` |
-| 4e. UI: the matrix, then the four inspector contexts ∥ the typed field | `step4/ui` (+ `step4/ui-typed` if split) | 4d merged | `page/composer-tab.*`, `page/tab-controller.js`, `PartitionsUI.js` hosts | waiting |
+| 4e. UI: the matrix, then the four inspector contexts ∥ the typed field | `step4/ui` | 4d merged | `page/composer-tab.*`, `page/tab-controller.js`, new `page/matrix.js` + `page/audition.js`, `page/plot-overlay.js`, `page/composer-bridge.js`, the controller's audition helper | built on `step4/ui` |
 | 4f. Final merge, suites, browser list | `composer-sprint-2` | all | — | waiting |
 
 4a, 4b and 4c run in parallel: they touch disjoint files.
@@ -131,6 +131,7 @@ Merge, run the full suite, then write a browser list for Avery: swaps (chord, le
   - **The feel:** a drift-and-reset under half a slot, shaped by p mod C. True long-short alternation appears only when p mod C ≈ C/2. A small p gives a push-and-pull rubato; a p near U is almost straight.
 - 2026-10-25: **WRAPPED for the night.** 4a–4d and the prime revision are merged on composer-sprint-2 (tip below). **Next: 4e (the matrix UI), not started.**
 
+- 2026-10-25: 4e (UI) built on `step4/ui`. The lanes are the bar × part matrix (decision 8): six rows, a column a bar, lead cells a phrase, each cell a mini view with an alternates badge and edited / "retunes bars k–m" marks; a selected cell is ringed on the mirrored plot (`plot-overlay.js` `getFocus`); arrows and Enter. The typed field runs over the Chords row with each bar's resolution inline (applied on Enter or blur, the text kept). The inspector follows the cell (chords: 12 candidates; lead: 8 runner-ups, chords follow, smooth; bass/comping/inner: what they follow, the comp layer read-only; drums: the step grid, every preset, the prime strip) beside the four settings sections. Audition (held to the next bar boundary while performing) / keep / revert, with a controller helper so a reverted audition leaves no redo step. Undo/Redo buttons and ⌘Z / ⇧⌘Z. A bar picker under 600 px. `assert-page-matrix.mjs` added (67 suites). DESIGN_NOTES "Step 4e".
 ## Morning notes (Avery)
 
 **State:**
