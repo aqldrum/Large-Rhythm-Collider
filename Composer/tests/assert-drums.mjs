@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { compose } from '../core/compose.js';
 import { buildRow } from '../core/row.js';
 import { buildCells, partitionSizes } from '../core/cells.js';
-import { arrangeDrums, beatsOf, drumGrid, downbeatLayers, partitionLine, selectLights, levelOneLights, DRUM_MODES, LAYERED_MODES, DEFAULT_KIT, FILL_MIN_PHRASE_BARS } from '../core/drums.js';
+import { arrangeDrums, beatsOf, drumGrid, downbeatLayers, partitionLine, selectLights, levelOneLights, isPrime, DRUM_MODES, LAYERED_MODES, DEFAULT_KIT, FILL_MIN_PHRASE_BARS } from '../core/drums.js';
 import { DRUM_PATTERNS, PATTERN_NAMES, FILL, patternStrokes } from '../core/drum-patterns.js';
 import { phrasesOf } from '../core/harmony.js';
 import { RHYTHMS } from './rhythms.mjs';
@@ -181,7 +181,9 @@ console.log('\n— the partition line, from the downbeat');
   check('a layer asked: by name or value, when it strikes the downbeat; refused when it does not', partitionLine(s, drumGrid(s), { layer: 'A' }).value === 8 && partitionLine(s, drumGrid(s), { layer: 6 }).name === 'C'
     && throws(() => partitionLine(specs[1].spec, drumGrid(specs[1].spec), { layer: 'A' }), /does not strike the downbeat/));
   check('hitsPerBar sets the count (N·hitsPerBar, at most v)', partitionLine(specs[1].spec, drumGrid(specs[1].spec), { hitsPerBar: 3 }).hits === 3 * specs[1].spec.knobs.bars);
-  check('the two-level prime source is built (step 4c, assert-drum-grid.mjs): the prime nearest the 2 × 3·2 cells (11 and 13: the larger) lights by default', levelOneLights(drumGrid(s), { source: 'prime' }).count === 13 && throws(() => levelOneLights(drumGrid(s), { source: 'prime', p: 8 }), /prime/));
+  // step 4c-prime: p is a seeded random prime above the cells (assert-drum-prime.mjs)
+  const p12 = levelOneLights(drumGrid(s), { source: 'prime' }).count;
+  check(`the two-level prime source is built (step 4c, assert-drum-prime.mjs): a seeded prime above the 2 × 3·2 cells lights by default (${p12})`, isPrime(p12) && p12 > 12 && p12 <= 199 && throws(() => levelOneLights(drumGrid(s), { source: 'prime', p: 8 }), /prime/));
 }
 
 console.log('\n— curated patterns');

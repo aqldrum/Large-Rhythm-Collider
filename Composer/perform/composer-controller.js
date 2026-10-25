@@ -308,7 +308,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   /** decision 5, as a compose lands: pins the new row lacks dropped (amber), lead edits dropped, the grid kept on the
    *  same meter only; the edits cleared (they are pins now) and the undo stack with them */
   function landEdits(st, spec, sent) {
-    const dropped = { pins: [], unhonored: [], lead: [], grid: null };
+    const dropped = { pins: [], unhonored: [], lead: [], grid: null, p: null };
     for (const [phrase, e] of Object.entries(st.edits?.lead ?? {})) dropped.lead.push({ phrase: Number(phrase), lineId: e.lineId });
     if (!spec.refused) {
       const N = spec.knobs.bars, p = [...st.progression];
@@ -331,6 +331,12 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
           st.edits.grid = null;
         }
       }
+      // STEP 4c-prime: an asked p must be a prime above the meter's N·S·m cells; one the new meter outgrew is dropped
+      // (the prime mode then draws its own from the seed), and said
+      if (st.drumOptions.p != null) {
+        const cells = N * gridWidth(spec);
+        if (!(st.drumOptions.p > cells)) { dropped.p = { was: st.drumOptions.p, cells }; delete st.drumOptions.p; }
+      }
       if (st.field && dropped.pins.some((x) => x.reason === 'notInRow')) {
         let text = st.field.text;
         for (const x of dropped.pins) if (x.reason === 'notInRow') text = rewriteToken(text, x.bar, '-');
@@ -339,7 +345,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     }
     st.edits = { ...emptyEdits(), grid: st.drumOptions.grid ? st.edits?.grid ?? null : null };
     st.undo = []; st.redo = [];
-    st.dropped = dropped.pins.length || dropped.unhonored.length || dropped.lead.length || dropped.grid ? dropped : null;
+    st.dropped = dropped.pins.length || dropped.unhonored.length || dropped.lead.length || dropped.grid || dropped.p ? dropped : null;
     folds.delete(st);
   }
 

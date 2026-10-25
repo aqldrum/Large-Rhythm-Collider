@@ -1129,14 +1129,14 @@ After it, `pin.quality` wins on every bar (already tested through `choose`), and
 
 ## Step 4c: drum grid and the prime partition (built 2026-10-25, branch `step4/drums`)
 
-`Composer/core/drums.js`, checked by `Composer/tests/assert-drum-grid.mjs` against `Composer/tests/drums-baseline.mjs` (the drums' sha256s at b69a39e, never edited). The spec is `STEP4_ORDER.md` "4c". Decisions 6 (slot resolution) and 7 (the prime nearest N·S) are Avery's, marked **decided**; everything else is **proposed**. Nothing here has been heard or seen in a browser.
+`Composer/core/drums.js`, checked by `Composer/tests/assert-drum-grid.mjs` against `Composer/tests/drums-baseline.mjs` (the drums' sha256s at b69a39e, never edited). The spec is `STEP4_ORDER.md` "4c". Decisions 6 (slot resolution) and 7 (p: first "the prime nearest N·S", **superseded**; re-ruled as a seeded random prime above N·S, see "The prime partition, revised" below) are Avery's, marked **decided**; everything else is **proposed**. Nothing here has been heard or seen in a browser.
 
 **The API:**
 - `arrangeDrums(spec, { ..., grid, p })`. `grid` is `{ voice: [one string a bar] }` for kick, snare, hat, perc and cym: `x` a stroke, `X` an accent, `.` off. A voice left out is silent.
 - New modes, `SOURCE_MODES = ['grid', 'prime']`, kept out of `DRUM_MODES` (the presets' list, which the lab's mode select reads). `ALL_DRUM_MODES` is both. A grid with no mode plays as mode `grid`; with another mode it waits unread (proposed: the store can keep a grid while a preset plays). `perBar` takes the new modes too.
 - `gridOf(arrangement)` → the grid of any arrangement. `readGrid(grid)` checks one.
-- The prime partition: `nearestPrime(n)`, `isPrime(n)`, `gridShape(g)` → `{ m, places, cells }`, `primeLights(g, p)`, `cellLights(j, p, C)`, `primePartition(spec, g, { p, hitsPerBar, lit })`. `levelOneLights(g, { source: 'prime', p })` no longer throws.
-- Only when a bar is in mode `grid` or `prime`, the output gains `silentCells: [{ bar, voice, place }]`, and with `prime` also `prime: { p, cells, hits, lights, selected, struck, silent, emptyCells, perCell }`. Prime strokes are `snap: 'prime'` and carry `cell` and `light`.
+- The prime partition: `nearestPrime(n)`, `isPrime(n)`, `gridShape(g)` → `{ m, places, cells }`, `primeLights(g, p)`, `cellLights(j, p, C)`, `primePartition(spec, g, { p, hitsPerBar, lit })`. `levelOneLights(g, { source: 'prime', p })` no longer throws. (The revision adds `seed`, `primeRange`, `drawPrime`, `primeSelection`, `nextPrime`, `PRIME_CEILING`, and changes `cellLights`: see "The prime partition, revised".)
+- Only when a bar is in mode `grid` or `prime`, the output gains `silentCells: [{ bar, voice, place }]`, and with `prime` also `prime: { p, cells, hits, lights, selected, struck, silent, emptyCells, perCell }` (the revision adds `drawn`, `range` and `chosen`). Prime strokes are `snap: 'prime'` and carry `cell` and `light`.
 
 **The grid (decided: slot resolution).**
 - S·m places a bar, with m = 1 unless S < 4 (`beatsOf`): 8 places on 8 slots, 6 on 3 (half slots).
@@ -1156,7 +1156,7 @@ After it, `pin.quality` wins on every bar (already tested through `choose`), and
 
 The recommendations guessed that `with` "nearly always" re-lands on its own onset. It doesn't: a lead or comping note can be any onset in its slot's window, not just the one nearest the anchor, and the layer's pulses are where they are. At slot resolution (decision 6) an edit to a `with` or `partition` bar re-lands those strokes on the anchors' onsets, which is audibly straighter.
 
-**The prime partition** (`mode: 'prime'`; Avery's two-level design, quoted in the order).
+**The prime partition, first build** (`mode: 'prime'`; Avery's two-level design, quoted in the order). **SUPERSEDED on 2026-10-25:** p and level 2 below are the first rule, kept as the record of what was measured. The rule as it is now built is "The prime partition, revised", after the open questions.
 - **Level 1:** p lights, light i aimed at i/p of the cycle from the downbeat. Each lands on the onset nearest it within half a light either side, then within a whole light, else it's dark (`snap: 'light' | 'wide' | null`). So the lights are real onsets, uneven in time, and light 0 is the downbeat. **p is the prime nearest N·S (decided).** Under 4 slots a bar it's the prime nearest the N·S·m cells (proposed: otherwise the cells would outnumber the lights about m to 1). Of two equally near primes, the larger is taken (proposed). `p` can be asked, and must be prime.
 - **Level 2:** the grid's C = N·S·m cells read the p lights as an even grid. Cell j covers lights ⌊j·p/C⌋ up to the next cell's, and a lit cell strikes its first light, on the perc.
   - **The cells lit:** by default `selectLights(C, hits)`, Partitions' secondary pattern from the downbeat. hits = C by default, every cell (proposed, the partition mode's "a pulse a slot"), or N·hitsPerBar. With a grid, the grid's perc row lights the cells, and its X accents. Without one, the first cell is accented.
@@ -1164,7 +1164,7 @@ The recommendations guessed that `with` "nearly always" re-lands on its own onse
 - **The voices (proposed):** the prime line plays on the perc, over the backbeat, as the partition line does. With a grid, the grid's kick, snare, hat and cym play under it as in mode `grid`, and its perc row is the selection. So `gridOf` of a prime arrangement arranges back exactly.
 - **For the UI strip:** `spec.drums.prime.lights` is `[{ i, at, tick, time, r, bar, pos, slot, snap }]`.
 
-**How the swing comes out** (every cell lit; deviation of each struck light from its cell's even place j/C, in slots; the anchors are within 0.001 of that on these rows):
+**How the swing came out under the first rule** (every cell lit; deviation of each struck light from its cell's even place j/C, in slots; the anchors are within 0.001 of that on these rows):
 
 | row (cells) | p | lights a cell | level-1 landing, mean / max | struck vs even, mean / max | downbeat cell |
 |---|---|---|---|---|---|
@@ -1187,12 +1187,57 @@ What the table says:
 - **With p near 4·N·S** (131 for 32 cells), each cell holds about 4 lights. The struck lights sit at most about a quarter slot early, with p mod C teeth (3 for 131/32), a swing-sized push. That matches Avery's "triple digits… almost perfectly in time" for level 1, with level 2 adding the swing.
 
 **Open (for Avery):**
-1. **Should p sit above N·S?** Proposed: yes, a prime about 4·N·S (or a pick from the triple-digit primes), so a cell holds several lights and level 2's swing is about ¼ slot rather than a whole one. At least never below N·S, which silences the downbeat cell. Decision 7 is built as ruled.
-2. **The level-2 cut:** the order's ⌊j·p/C⌋ (built), or Partitions' own `calculatePartitionSizes(p, C)` cut (the same sizes, with the long cells one or two places over)?
+1. ~~**Should p sit above N·S?**~~ **Answered (Avery, 2026-10-25): yes, a seeded random prime above N·S, to the low triple digits** (built: "revised" below). Proposed then: yes, a prime about 4·N·S (or a pick from the triple-digit primes), so a cell holds several lights and level 2's swing is about ¼ slot rather than a whole one. At least never below N·S, which silences the downbeat cell. Decision 7 is built as ruled.
+2. ~~**The level-2 cut**~~ **Answered: Partitions' own distribution** (built: "revised" below; for a prime p its secondary pattern and its UI's L2 cut are the same selection). Asked then: the order's ⌊j·p/C⌋ (built), or Partitions' own `calculatePartitionSizes(p, C)` cut (the same sizes, with the long cells one or two places over)?
 3. **The prime line's voices:** perc over the backbeat (built). Should the whole kit ride the prime lights instead?
 4. **Default density:** every cell lit (built). Or thinner by default, say hitsPerBar = 5 of 8?
 5. **with / partition under an edit:** they re-land on the anchors' onsets (only 28 % and 34 % keep their onset). Should the store keep a `with` or `partition` perc row bound to its source until that row itself is edited?
-6. **A dark light, or an empty cell,** is silent and reported. Should it strike the cell's next light instead?
+6. **A dark light, or an empty cell,** is silent and reported. Should it strike the cell's next light instead? (Revised: no cell is empty now, and a dark chosen light lands within its cell's reach, proposed: "revised" below.)
+
+**The prime partition, revised** (step 4c-prime, built 2026-10-25, branch `step4/prime`; `tests/assert-drum-prime.mjs`, 27 checks; Node only, not heard).
+
+**The rule (decided, Avery 2026-10-25): p is a seeded random prime above N·S, up to the low triple digits, and level 2 uses Partitions' own distribution of N·S over p.** In Avery's words, the grid is a string of lights all turned off. Level 1 says which to turn on. Level 2 treats those as a new grid, irrespective of level 1's uneven notes, and says which stay on. A large prime is granular enough to be almost in time; level 2 adds the distinct swing.
+
+- **The range (proposed):** p is one of the primes in (C, U], uniformly, with C = N·S cells (N·S·m under 4 slots, proposed, as before) and U = max(199, the smallest prime ≥ 2C) (`primeRange`, `PRIME_CEILING`). So small meters reach the low triple digits, and a large one still has primes up to about 2C. 32 cells: the 35 primes 37–199. 104 cells (8 × 13): 107–211.
+  - Partitions has no range convention to match: its two count inputs are plain numbers, capped at 64 in the UI, below Avery's triple digits.
+- **The draw:** one draw from the drums' own generator `${seed}/drums/prime` (`drawPrime(C, seed)`), beside `against`'s per-bar `${seed}/drums/${bar}`. Compose's parts and chords, and `against`'s bars, never move (tested). The seed is `drumOptions.seed`, else the spec's: the same seed, the same p. The decisions say p was drawn, from where, and by the seed (`drums.prime`, `drums.seed`).
+- **An asked `p`** must be a prime above C. Anything else is refused (an error, as before for a non-prime). A drumOptions.p that a new meter's cells outgrow is dropped by the controller on the next Compose, and said in `state.dropped.p = { was, cells }`; the mode then draws its own (proposed).
+- **Level 1:** unchanged. p lights at i/p of the cycle from the downbeat, each on the onset nearest it within half a light, then a whole light (`primeLights`). Light 0 is the downbeat.
+- **Level 2:** `primeSelection(p, C)` is Partitions' `getSecondaryAllowedSet(p, C)`: E(C, p), turned so that its first stroke is index 0. It chooses C of the p lights in order, and cell j strikes the j-th (`chosen[j]`).
+  - **The downbeat cell sounds:** the turn puts light 0 first, always, so cell 0 strikes the downbeat light. With `hitsPerBar` the cells lit are E(N·hitsPerBar, C), turned the same way, so cell 0 stays lit.
+  - **Parity, against the site's own scripts in a vm:** `euclidPattern` is `generateEuclideanPattern` on 27,025 (steps, pulses). `primeSelection` is `getSecondaryAllowedSet` for every prime p in range, C = 1–120 (3,546 pairs). For C ≥ 3 it is also exactly the live UI's L2 cut, `computeL2Coverages` (the starts of `calculatePartitionSizes(p, C)`), which is what Partitions plays when its second count is typed. The two cuts part only at C = 2, which no meter has (the grid has at least 4 places a bar).
+  - Each cell holds Partitions' group, ⌊p/C⌋ or ⌈p/C⌉ lights (`cellLights`, `perCell`). No cell is empty.
+- **A dark chosen light (proposed):** in the triple digits a light is narrow (±1/p of the cycle), and on a sparse row many lights find no onset. A chosen light that is dark strikes the onset nearest its place within its cell's reach, half a cell either side and then a whole cell (`snap: 'cell' | 'cell-wide'` on the `struck` entry), as `land()` widens any stroke. Without this, 8:7:6:5 and 11:9:7:5 on their own Compose meters lost 28 % and 48 % of their cells. With it they lose none. A cell is still silent when no onset lies within a whole cell; that happens only on asked meters with more cells than the row has onsets.
+- **The grid, perBar, fills and the voices** are as in the first build: a grid's perc row lights the cells, its X accents, its other voices play as the grid. Without a grid the downbeat cell is accented.
+
+**Output changes** (`spec.drums.prime`; the store reads only `p`, and 4e has not been built):
+- new: `drawn` (p was drawn, not asked), `range: { above, upTo, primes }` (C, U, how many primes), `chosen: [light]` (cell j's light);
+- `struck` entries gain `tick` and `snap` (the stroke's onset; it's the light's own unless the light was dark);
+- `emptyCells` is always 0 now, kept for the shape; `perCell` is Partitions' group sizes;
+- unchanged: `p`, `cells`, `hits`, `lights` (its entries' keys too), `selected` (still the cells lit, not the lights chosen), `silent`.
+- API: new `primeRange(C)`, `drawPrime(C, seed)`, `primeSelection(p, C)`, `nextPrime(n)`, `PRIME_CEILING`. `cellLights(j, p, C, chosen?)` now returns Partitions' group for cell j, not ⌊j·p/C⌋. `levelOneLights` and `primePartition` take `seed`. `nearestPrime` stays, as a helper only.
+- Tests: `assert-drum-grid.mjs` keeps the grid, presets ⇄ grid (prime included) and the byte identity (527 hashes, `against` left out as before); its first-rule prime checks are replaced by `assert-drum-prime.mjs`. `assert-drums.mjs`'s seam check now expects a drawn prime. `assert-store-edits.mjs` adds 3 checks (the drawn p, an asked p, the dropped p).
+
+**How it swings now.** The deviation of each struck stroke from its cell's even place j/C, in slots. "Level 2" is Partitions' part alone (chosen[j]/p against j/C). "Struck" adds level 1's landing on the row's real onsets. The rows are 41:42:43, 119:42:15:8, 768:769 and 97:103:37, over N = 2–8 and 6 seeds each:
+
+| S | p/C drawn | level 2, mean / max | struck vs even, mean / max | strokes merged on one onset |
+|---|---|---|---|---|
+| 3 | 2.0–15.9 | 0.05 / 0.24 | 0.06 / 0.36 | 0.02 % |
+| 5 | 2.1–19.1 | 0.08 / 0.43 | 0.09 / 0.77 | 0 |
+| 7 | 1.8–13.6 | 0.11 / 0.50 | 0.13 / 0.91 | 0.05 % |
+| 8 | 1.6–11.9 | 0.12 / 0.49 | 0.15 / 0.84 | 0.07 % |
+| 11 | 1.4–8.7 | 0.15 / 0.49 | 0.19 / 1.31 | 0.6 % |
+| 13 | 1.3–7.4 | 0.16 / 0.50 | 0.21 / 1.42 | 1.4 % |
+
+- **p sets the depth.** By p/C, level 2's mean / max: 1–1.5: 0.18 / 0.50; 2–3: 0.13 / 0.49; 3–5: 0.09 / 0.33; 5–8: 0.05 / 0.17; 8 and up: 0.03 / 0.12 slots. Over the drawn range level 2 never moved a stroke more than half a slot. Forced to the first prime above C (p/C 1.01–1.21), it's 0.40 / 0.98: the first build's whole-slot sawtooth.
+- **p mod C sets the shape.** The struck light drifts from its cell's even place by less than a light (N·S/p slots), and resets about min(p mod C, C − p mod C) times a cycle. So 97 over 32 cells (97 mod 32 = 1) drifts steadily early, to 0.32 slot, and resets once, at the loop. 157 over 32 (mod 29) drifts late to 0.18 slot and resets 3 times. 151 over 16 (mod 7, near C/2) alternates ±0.05 slot cell to cell: the nearest to a long-short swing.
+- **Merges** (two cells striking one onset; the louder kept) stay under 1.5 % on these rows. On sparse rows (19:17:16:15, 8:7:6:5, 11:9:7:5) on asked meters, where the cells outnumber the onsets, 11–31 % merge.
+- Determinism: the same seed gives byte-identical drums (tested).
+
+**Open (for Avery), the revision:**
+1. **The range's top:** U = max(199, the next prime ≥ 2·N·S) (proposed). Should a large meter reach further, or the range favour some part of it? A small p/C (just above N·S) is the deepest drift, up to about half a slot, and 4·N·S and up is nearly straight.
+2. **The dark-light landing within a cell** (proposed), or silence as the first build had it?
+3. **Under 4 slots** p is drawn above the N·S·m cells, not N·S (proposed, as before).
 
 ## Step 4a: core rearrange (built 2026-10-25)
 
