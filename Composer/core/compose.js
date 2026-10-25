@@ -49,7 +49,7 @@
 //
 // Refusals: { refused: true, reason: 'tooDense' | 'tooLarge' | 'tooFewTones', detail }.
 //
-// The trace (`trace: true`; trace.js, Composer/TRACE.md): `spec.trace`, every decision above as ordered, untimed events
+// The trace (`trace: true`, or `trace: { caps }` for longer lists: STEP 4a; trace.js, Composer/TRACE.md): `spec.trace`, every decision above as ordered, untimed events
 // pointing at the row's onsets, for a renderer to animate. It observes and never steers: without `spec.trace` the spec
 // is byte-identical to the one composed with the trace off, and off (the default) nothing of it runs.
 
@@ -61,7 +61,7 @@ import { harmonize, phrasesOf, isStrongBeat, DEFAULT_SETTLE_PASSES, MAX_SETTLE_P
 import { getInstrument } from '../../Audio/voices/recipes.js';
 import { readProgression, harmonyPins, describeProgression } from './progression.js';
 import { arrangeDrums } from './drums.js';
-import { createTrace, refusedTrace } from './trace.js';
+import { createTrace, refusedTrace, traceCapsOf } from './trace.js';
 
 export const COMPOSER_SPEC_VERSION = 'composer-spec-v1';
 export const BEATS_PER_BAR = 4;
@@ -159,7 +159,9 @@ export function rearticulate(part, { sound = part.sound, legato = part.legato, e
  *                  the full table unless asked), progression ([a ratio of the row | null] a bar: progression.js;
  *                  absent or all null: lead-led, exactly as without it),
  *                  drums (drums.js `arrangeDrums` options, or false: no `drums` in the spec),
- *                  trace (true: `spec.trace`, the compose trace of trace.js; off by default) }
+ *                  trace (true: `spec.trace`, the compose trace of trace.js, at TRACE_CAPS; { caps }: the same at
+                  ALTERNATE_CAPS (12 chord candidates a bar, 8 runner-up lines a phrase) with `caps` over them, STEP
+                  4a; off by default) }
  * → the spec (see the head of this file and Composer/DESIGN_NOTES.md "Phase 4"), or a refusal
  */
 export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker = false, progression = null, drums = {}, trace = false } = {}) {
@@ -171,14 +173,15 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   for (const k of Object.keys(overrides || {})) if (!OVERRIDES.includes(k)) fail(`no override "${k}" (overrides are ${OVERRIDES.join(', ')})`);
   const ov = overrides || {}, T = cycleSeconds;
 
-  const refusal = (r) => (trace ? { ...r, trace: refusedTrace(r, { cycleSeconds }) } : r);
+  const traceCaps = trace ? traceCapsOf(trace) : null;   // STEP 4a: true → TRACE_CAPS; { caps } → ALTERNATE_CAPS + caps
+  const refusal = (r) => (trace ? { ...r, trace: refusedTrace(r, { cycleSeconds, caps: traceCaps }) } : r);
   // PREBUILT ROW (Cosmos Compose, E1): options.row, a row built elsewhere (superrow.js), stands in for buildRow(layers)
   const row = arguments[2]?.row ?? buildRow(layers, { gate: ONSET_GATE });
   if (!isRow(row)) return refusal({ version: COMPOSER_SPEC_VERSION, input, refused: true, reason: row.tooDense ? 'tooDense' : 'tooLarge', detail: row });
   const few = toneGate(row, MIN_TONES);
   if (few) return refusal({ version: COMPOSER_SPEC_VERSION, input, refused: true, reason: 'tooFewTones', detail: few });
   // the trace's recorder (trace.js), or null: every `rec?.` below is skipped, arguments and all, when it is off
-  const rec = trace ? createTrace(row, { cycleSeconds: T, meter: { bars: BAR_CHOICES, slots: SLOT_CHOICES, tempoRange: TEMPO_RANGE, beatsPerBar: BEATS_PER_BAR } }) : null;
+  const rec = trace ? createTrace(row, { cycleSeconds: T, meter: { bars: BAR_CHOICES, slots: SLOT_CHOICES, tempoRange: TEMPO_RANGE, beatsPerBar: BEATS_PER_BAR }, caps: traceCaps }) : null;
   rec?.row();
 
   const rng = seededRandom(seed), decisions = [];

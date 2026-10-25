@@ -226,6 +226,12 @@ The chord events of round `chosenRound` are these chords. The lead events of tha
 | `partNotes` | 256 | notes per part event (`truncated` counts the rest) |
 | `drumHits` | 512 | strokes in the drums event (`truncated` counts the rest) |
 
+**Longer lists for the alternates (step 4a).** `compose(..., { trace: { caps } })` asks for a trace with `ALTERNATE_CAPS`: `chordCandidates` 12 and `runnersUp` 8, the rest as above, with `caps` over them (an unknown cap, or a count that isn't an integer ≥ 0, throws). The Composer's controller always asks for this one, whatever "show the work" says, so a bar's 12 best chords and a phrase's 8 runner-up lines are there for the matrix (STEP4_RECOMMENDATIONS.md §1). `trace: true` is unchanged: `TRACE_CAPS`, the trace Cosmos's dust reads.
+
+- **`capTrace(trace, caps = TRACE_CAPS)`** cuts a trace back to smaller `chordCandidates` and `runnersUp`. Each chord event keeps its first k candidates (a pick past the cut gets `pickIndex` −1), each lead event its first r runners-up, and the node and line tables keep only what the events still name. The result is byte for byte the trace a compose with those caps makes (`tests/assert-trace-caps.mjs`). A trace already within them comes back as it is.
+- **The show reads it cut back.** `page/trace-frames.js` `buildScene` applies `capTrace(trace, TRACE_CAPS)` first, so the main page's animation is the same frame for frame on either trace (tested). The timeline is unaffected: the events are the same events.
+- **Measured** on the 16,359-onset row (best of 2): lean 109 → 153 KB, 323 → 370 nodes, 30 → 55 lines; full 96 → 129 KB, 323 → 364 nodes, 26 → 46 lines. Compose's time doesn't move (lean 665 / 656 / 656 ms off / 6-3 / 12-8; full 1,695 / 1,709 / 1,711 ms).
+
 Every other list is bounded by the meter. A cycle has at most 8 bars × 8 slots, 2 phrases at 8 slots a bar, 4 settle rounds' worth of chords and 13 qualities.
 
 **Measured on the 16,359-onset row** (4099:4093:4091:4079, 16 s, 8 × 8, best of interleaved runs):

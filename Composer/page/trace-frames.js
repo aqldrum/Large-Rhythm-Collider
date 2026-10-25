@@ -24,7 +24,7 @@
 //   parts      each part's notes cascade in, in its colour
 //   drums      strokes drop in, bar by bar
 
-import { traceTimeline } from '../core/trace.js';
+import { traceTimeline, capTrace, TRACE_CAPS } from '../core/trace.js';
 import { classOfCents } from '../core/frame.js';
 import { indexOfTick, PART_COLORS, PART_LABELS } from './plot-highlights.js';
 
@@ -85,8 +85,11 @@ export const traceMatchesPlot = (trace, plot) => !!(trace && plot && Array.isArr
  *   timeline  animationTimeline(trace) by default
  * → null when there is nothing to animate, else { trace, plot, final, timeline, end, steps, missed, ... }
  */
-export function buildScene({ trace, plot, final, timeline = null } = {}) {
-  if (!traceMatchesPlot(trace, plot) || !final) return null;
+export function buildScene({ trace: given, plot, final, timeline = null } = {}) {
+  if (!traceMatchesPlot(given, plot) || !final) return null;
+  // STEP 4a: the store keeps a trace with longer lists (ALTERNATE_CAPS, for the alternates); the show reads it cut back
+  // to the show's own caps (6 chord candidates, 3 runners-up), so it plays exactly as before
+  const trace = capTrace(given, TRACE_CAPS);
   const tl = timeline || animationTimeline(trace), ev = trace.events;
   // trace nodes → plot indices, by tick
   const at = new Map();

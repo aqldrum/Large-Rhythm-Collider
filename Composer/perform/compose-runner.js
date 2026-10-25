@@ -4,7 +4,7 @@
 //
 //   const runCompose = createComposeRunner();
 //   runCompose(layers, cycleSeconds, { seed, overrides, worker, progression, trace }) → Promise<spec>   (trace: true →
-//     spec.trace, the compose trace, both ways)
+//     spec.trace, the compose trace, both ways; trace: { caps } passed through as it is: STEP 4a)
 //     worker: true    the module worker (Composer/core/compose-worker.js), made on first use and kept
 //     worker: false   compose() itself, a tick later (so the page can say "Composing…" first)
 // A refusal is a spec with `refused: true`; only a thrown error (or the worker failing) rejects.
@@ -31,9 +31,9 @@ export function createComposeRunner({ makeWorker = () => new Worker(new URL('../
       worker.onerror = (event) => { for (const p of pending.values()) p.reject(new Error(event.message || 'the Compose worker failed')); pending.clear(); worker = null; };
     }
     const id = ++seq;
-    return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); worker.postMessage({ id, layers, cycleSeconds, options: { seed, overrides, progression, ...(trace ? { trace: true } : {}) } }); });
+    return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); worker.postMessage({ id, layers, cycleSeconds, options: { seed, overrides, progression, ...(trace ? { trace } : {}) } }); });
   }
   return (layers, cycleSeconds, options = {}) => (options.worker
     ? viaWorker(layers, cycleSeconds, options)
-    : new Promise((resolve, reject) => defer(() => { try { resolve(compose(layers, cycleSeconds, { seed: options.seed, overrides: options.overrides, progression: options.progression, ...(options.trace ? { trace: true } : {}) })); } catch (err) { reject(err); } })));
+    : new Promise((resolve, reject) => defer(() => { try { resolve(compose(layers, cycleSeconds, { seed: options.seed, overrides: options.overrides, progression: options.progression, ...(options.trace ? { trace: options.trace } : {}) })); } catch (err) { reject(err); } })));
 }
