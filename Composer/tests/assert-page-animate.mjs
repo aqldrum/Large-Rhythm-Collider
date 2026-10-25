@@ -253,7 +253,9 @@ const litNow = () => { const h = bridge.overlay.highlights, want = tab.highlight
 
 check('"show the work" is on by default (nothing stored)', work.classList.contains('on') && tab.view.showWork);
 go.click();
-check('Compose: the worker is asked for the trace', asked.length === 1 && asked[0].trace === true && worker.posted[0].options.trace === true);
+// STEP 4a: the controller always asks for the trace, at the alternates' caps (the show cuts it back)
+const altAsked = (o) => !!o && typeof o.trace === 'object' && o.trace.caps?.chordCandidates === 12 && o.trace.caps?.runnersUp === 8;
+check('Compose: the worker is asked for the trace (step 4a: at the alternates\' caps, 12/8)', asked.length === 1 && altAsked(asked[0]) && altAsked(worker.posted[0].options));
 check('while it runs: waiting, the tab marked animating, a "composing…" caption, the plot washed as the base', anim.status === 'waiting' && left.classList.contains('ctab-animating') && caption.style.display !== 'none'
   && q('ctab-caption-label').textContent === 'composing…' && bridge.overlay.scene && bridge.overlay.snapshotted);
 let fr = run(32);
@@ -349,10 +351,10 @@ console.log('\n— "show the work" off: the tab as it was');
 tab.core.setSeed(13);
 const nAsked = asked.length, b0 = ctx2d.calls.length;
 go.click();
-check('Compose asks for no trace (the options exactly as before)', asked.length === nAsked + 1 && !('trace' in asked[nAsked]) && !('trace' in worker.posted[worker.posted.length - 1].options));
+check('Compose still asks for the trace (step 4a: always, for the alternates; nothing is shown)', asked.length === nAsked + 1 && altAsked(asked[nAsked]) && altAsked(worker.posted[worker.posted.length - 1].options));
 check('no shimmer: not waiting, no caption, the base never set', anim.status === 'idle' && caption.style.display === 'none' && !bridge.overlay.scene && !left.classList.contains('ctab-animating'));
 await settle();
-check('the spec lands at once: Perform, lit, no trace kept', go.textContent === 'Perform' && S.trace === null && litNow() && lanesHidden() === 0);
+check('the spec lands at once: Perform, lit; the trace kept for the alternates (step 4a), never shown', go.textContent === 'Perform' && S.trace && !('trace' in S.spec) && anim.status === 'idle' && litNow() && lanesHidden() === 0);
 const arcsOff = ctx2d.calls.slice(b0).some((c) => c[0] === 'fillText');
 const q2 = ctx2d.calls.length; dom.raf.flush(3);
 check('no frame paints (no animation, no playhead)', !arcsOff && ctx2d.calls.length === q2);
