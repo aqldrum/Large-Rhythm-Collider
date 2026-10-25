@@ -79,7 +79,8 @@ python3 -m http.server 8000
   - `plot-highlights.js`: the pure spec → per-part node highlights mapping, and the playhead's place on the plot
   - `plot-overlay.js`: draws the highlights on the Linear Plot through `LRCVisuals.setComposerOverlay`
   - `tab-controller.js`: the tab's state (no DOM)
-  - `composer-tab.js` and `composer-tab.css`: the view
+  - `composer-tab.js` and `composer-tab.css`: the view. Step 4e: the lanes became the bar × part matrix (the typed field across the top of the Chords row) and the inspector follows the selected cell (its alternates, its notes, its drum steps); Undo/Redo, ⌘Z / ⇧⌘Z
+  - `matrix.js` (step 4e, pure): the matrix and the inspector's lists as data (cells, marks, the arrow keys, the field's inline resolution, the prime strip); `audition.js`: an alternate auditioned at the next bar boundary, kept, or reverted with no redo step (over the controller's `audition` / `keepAudition` / `revertAudition`). "Step 4e: the matrix and the context inspector" in `DESIGN_NOTES.md`
   - `composer-bridge.js`: `window.lrcComposer`, loaded by `index.html`. `PartitionsUI.js` calls it from its tab strip.
   - `trace-frames.js` and `compose-animator.js`: Compose animated on the Linear Plot from its trace ("show the work", on by default). `trace-frames.js` is the pure trace + time → frame mapping; `compose-animator.js` is the driver and the painter (with a `pace` seam).
   - `lens.js`: the Composition lens (row ⇄ composition), the one transport (`lrcComposer.transport`), and the page API for later steps (`lrcComposer.lens`: `press({ pace })`, `toRow()`, `onChange`)
@@ -100,6 +101,7 @@ python3 -m http.server 8000
   - `assert-store.mjs` checks the composition store and the controller's binding to it.
   - `assert-tutorial.mjs` checks the guided tour (`Tutorial/`): the layer generator, the targets, the opening's time budget, and the driver end to end over the stub.
   - (step 4a) `assert-trace-caps.mjs` checks the trace's caps option and the show cut back; `assert-refactor-identity.mjs` checks that Compose is byte for byte the frozen pre-refactor core (`fixtures/*-before.js`, never edited); `assert-rearrange.mjs` checks chord and lead swaps.
+  - (step 4e) `assert-page-matrix.mjs` checks the matrix and the context inspector: 6 × N with the lead spanning phrases, a cell lit on the plot, the alternates, audition → keep and → revert (no redo step), the bar-boundary audition, undo/redo by keyboard, the typed field's inline resolution, the drum steps and presets, the prime strip, the narrow fallback, and the edits in the part strips and the glyph's recall.
   - (step 4d) `assert-store-edits.mjs` checks the store's live edits and pins: swaps, the typed field, undo/redo, the alternates, a re-compose keeping pins and dropping lead edits, the drum grid, the worker path, recall through the glyph, and `against` stable across a swap.
   - `rhythms.mjs` is the shared rhythm set, and `settle-baseline.mjs` pins the output from before settling.
   - `time-lines.mjs` is a timing table, not a check.

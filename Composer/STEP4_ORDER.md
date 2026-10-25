@@ -34,8 +34,8 @@ Also from the recommendations, taken as written:
 | 4b. Typed progression: `chord-symbols.js`, resolve, `barMaterials`, quality pins | `step4/typed` | — | new `core/chord-symbols.js`, `core/progression.js` | MERGED (6a92539..ac83a05) |
 | 4c. Drum grid source, presets ⇄ grid, prime level 1 | `step4/drums` | — | `core/drums.js` | MERGED (83211fc..d8c7886) |
 | 4d. Store: `edits`, pins, `drumOptions.grid`, invalidation, undo; the controller merge | `step4/store` | 4a, 4b, 4c merged | `store/`, `perform/composer-controller.js` | built on `step4/store` |
-| 4e. UI: the matrix, then the four inspector contexts ∥ the typed field | `step4/ui` (+ `step4/ui-typed` if split) | 4d merged | `page/composer-tab.*`, `page/tab-controller.js`, `PartitionsUI.js` hosts | dispatched (from 850adee) |
-| 4f. Final merge, suites, browser list | `composer-sprint-2` | all | — | waiting |
+| 4e. UI: the matrix, then the four inspector contexts ∥ the typed field | `step4/ui` | 4d merged | `page/composer-tab.*`, `page/tab-controller.js`, new `page/matrix.js` + `page/audition.js`, `page/plot-overlay.js`, `page/composer-bridge.js`, the controller's audition helper | MERGED (d31c1d1..83e682c) |
+| 4f. Final merge, suites, browser list | `composer-sprint-2` | all | — | DONE (below) |
 
 4a, 4b and 4c run in parallel: they touch disjoint files.
 - 4b must not edit `harmony.js` or `compose.js`. It extends `readProgression` and `chooseChordOnRoot` in `progression.js` only. 4a must not edit `progression.js`.
@@ -132,6 +132,7 @@ Merge, run the full suite, then write a browser list for Avery: swaps (chord, le
 - 2026-10-25: **WRAPPED for the night.** 4a–4d and the prime revision are merged on composer-sprint-2 (tip below). **Next: 4e (the matrix UI), not started.**
 - 2026-10-25: 4e dispatched (Opus) at Avery's request, to finish step 4 for a full browser test.
 
+- 2026-10-25: 4e (UI) built on `step4/ui`. The lanes are the bar × part matrix (decision 8): six rows, a column a bar, lead cells a phrase, each cell a mini view with an alternates badge and edited / "retunes bars k–m" marks; a selected cell is ringed on the mirrored plot (`plot-overlay.js` `getFocus`); arrows and Enter. The typed field runs over the Chords row with each bar's resolution inline (applied on Enter or blur, the text kept). The inspector follows the cell (chords: 12 candidates; lead: 8 runner-ups, chords follow, smooth; bass/comping/inner: what they follow, the comp layer read-only; drums: the step grid, every preset, the prime strip) beside the four settings sections. Audition (held to the next bar boundary while performing) / keep / revert, with a controller helper so a reverted audition leaves no redo step. Undo/Redo buttons and ⌘Z / ⇧⌘Z. A bar picker under 600 px. `assert-page-matrix.mjs` added (67 suites). DESIGN_NOTES "Step 4e".
 ## Morning notes (Avery)
 
 **State:**
@@ -164,3 +165,33 @@ Merge, run the full suite, then write a browser list for Avery: swaps (chord, le
   - The glyph contact sheet is coming from another agent.
   - The improvise direction is recorded in `DIRECTIONS.md`.
 - **Elsewhere:** the two Cosmos fold fixes are still uncommitted in the composer-sprint worktree (not on this branch).
+- 2026-10-25: 4e merged (row conflict only); 67/0 suites. **Step 4 is complete.** The browser test is below.
+
+## Browser test: all of step 4 (Avery)
+
+Serve the **composer-sprint-2** worktree with caching off (the no-store server in the Morning notes above, or DevTools' Disable cache). Open `localhost:8000`.
+
+1. **The matrix.** Generate **41:42:43** with an 8 s cycle. Double-click the Playback header and pick the **Composer** tab. Under Lines, set Bars 8 and Slots 8, then Compose. Expect six rows × 8 columns, two lead cells (bars 1–4 and 5–8), a "Typed" row above Chords, and alternates badges on the Chords and Lead cells.
+2. **Selecting.** Click Chords bar 2: only that bar's violet nodes are ringed on the plot. The inspector reads "Bar 2 · Chords" with 12 candidates (● now, C Compose's, ✓/amber). Click lead bars 5–8: the whole phrase is ringed. Try ←/→/↑/↓ and Enter.
+3. **Chord swap.** Press Perform, then click an amber candidate: it changes at the next bar line. Click it again to keep it: the cell gets ✎ and Undo is enabled. Click another candidate and press Esc: it reverts, and Redo stays disabled.
+4. **Lead swap.** On Lead bars 5–8, keep a runner-up: the chords stay. Toggle "chords follow": the chord names re-choose. Then "smooth the phrase": the header says "applying in the worker…" (it needs a swapped lead first).
+5. **Undo/redo.** With the matrix focused, ⌘Z and ⇧⌘Z step through, and the buttons agree. Inside the typed field, ⌘Z only undoes text.
+6. **The typed field.**
+   - `G D#m A# Bb7`, then Enter: ✓ on D#m and A#, amber "no 5" on G, amber "no ♭7" on A#7, and the text keeps "Bb7".
+   - `G#` in bar 1: amber, −17.5¢, "may retune".
+   - Harmony → Modulation off, then Compose: `G#` says "offGrid".
+   - `D#m D#sus4`, then Compose: each bar keeps its own quality.
+7. **Re-compose.** With a swapped chord and a swapped lead, set Seed to 7 and Compose. The chord stays pinned, and the amber line says the lead swap was dropped.
+8. **The drum grid.** Drums bar 1: click a perc step through `.` → x → X → `.`, and the cell gets ✎. Try "son", then "grid". On **8:7:6:5** with Bars 8 and Slots 8, fill a whole perc row: dashed hollow "no onset here" steps appear.
+9. **Prime.** Click "prime": the strip shows p and its range, chosen lights tall, struck lights bright. Listen for a perc drift-and-reset of under half a slot against the backbeat. Its shape depends on p mod (N·S); see the prime revision's Log line.
+10. **Recall.** Close the window and press the header glyph: the edited composition plays with no Compose.
+11. **The main page.** The part strips follow the edits: the lead dot follows the swapped lead, and an edit in the window shows in the strips.
+12. **A big row.** **65536:65535** (131,070 onsets), Compose. Chord and lead swaps go through the worker ("applying…"), and Keep/Revert wait for them.
+13. **Narrow.** Shrink the window: below 600 px for the left half, a bar picker shows one bar at a time; wider than that, the matrix scrolls sideways.
+14. **Regression.** Re-run the steps 1–3 checks (the glyph, theater, tutorial, recall). Composing in the lab at `/Composer/lab/composer-lab.html` should work as before.
+
+**4e's open calls:**
+- Audition while performing always waits for the next bar boundary.
+- Another edit during an audition keeps the audition.
+- Should "smooth the phrase" also work on Compose's own line? That needs a controller action.
+- Dot height is pitch within the part's whole range.

@@ -133,7 +133,7 @@ console.log('Theater — "show the work" on the main page');
 await generate([8, 7, 6, 5]);
 const rowPlot = plotCalls(), before = snapshot();
 check('(8:7:6:5 generated and plotted; the glyph ready; no scrim)', win.lrcModule.currentGrid === 840 && lens.glyph() === 'ready' && !theater.up && bodyClass() === 'site-body');
-check('index.html links theater.css; the bridge has a new ?v=', (() => { const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8'); return /<link rel="stylesheet" href="Composer\/page\/theater\.css\?v=\d+">/.test(html) && /composer-bridge\.js\?v=20261023\.2"/.test(html); })());
+check('index.html links theater.css; the bridge has a new ?v=', (() => { const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8'); return /<link rel="stylesheet" href="Composer\/page\/theater\.css\?v=\d+">/.test(html) && Number(html.match(/composer-bridge\.js\?v=([\d.]+)"/)?.[1]) >= 20261023.2; })());   // STEP 4e bumped it (20261025.1)
 {
   const css = fs.readFileSync(path.join(ROOT, 'Composer/page/theater.css'), 'utf8');
   const dimmed = [...css.matchAll(/body\.composition-theater (#[\w-]+-div)/g)].map((m) => m[1]);
