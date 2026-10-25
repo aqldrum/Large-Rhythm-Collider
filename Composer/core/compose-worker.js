@@ -15,9 +15,44 @@
 // in row order (`sampleRowDust`), so a page can draw a rhythm's onsets without building a row of up to 1,048,576 on
 // its main thread. The row is built once here and handed to compose (`{ row }`, the prebuilt-row entry): the spec is
 // the same as without it. `dust` is not a compose option and never reaches compose.
+//
+// STEP 4d: a local edit of a big row runs here too (the controller's edits past MAIN_THREAD_ONSETS, and every
+// smoothPhrase; perform/composer-controller.js):
+//   worker.postMessage({ id, kind: 'rearrange', key, spec, edit, opts })   rearrange.js' rearrange(spec, row, cells,
+//                                                                          edit, opts), the row and cells built here
+//   ← { id, ok: true, result }  |  { id, ok: false, error }
+// The row and cells are kept per `key` (materialsKey(spec): the layers and the knobs the cells read), the last
+// REARRANGE_ROWS of them, so a second edit of the same composition builds nothing (the 524k row: ~250 ms once).
+// `edit.line` must be the line's record ({ notes }), not an id: the trace stays on the page.
 
 import { compose } from './compose.js';
 import { buildRow, isRow, ONSET_GATE } from './row.js';
+import { rearrange, materialsOf, materialsKey } from './rearrange.js';
+
+/** how many rows' materials the worker keeps for edits (proposed) */
+export const REARRANGE_ROWS = 3;
+const kept = new Map();
+function materialsFor(spec, key) {
+  let m = kept.get(key);
+  if (m) { kept.delete(key); kept.set(key, m); return m; }
+  m = materialsOf(spec);
+  kept.set(key, m);
+  while (kept.size > REARRANGE_ROWS) kept.delete(kept.keys().next().value);
+  return m;
+}
+/** how many rows' materials are kept now (for tests) */
+export const keptMaterials = () => kept.size;
+
+/** a rearrange message's answer (STEP 4d) */
+export function answerRearrange(data) {
+  const { id = null, key = null, spec, edit, opts = {} } = data || {};
+  try {
+    const { row, cells } = materialsFor(spec, key ?? materialsKey(spec));
+    return { id, ok: true, result: rearrange(spec, row, cells, edit, opts || {}) };
+  } catch (err) {
+    return { id, ok: false, error: String(err && err.message ? err.message : err) };
+  }
+}
 
 /**
  * k onsets of a row, evenly spaced in row order (all of them when the row has ≤ k): → { n (the row's onsets), grid,
@@ -35,6 +70,7 @@ export function sampleRowDust(row, k) {
 
 /** one message's answer: the reply a worker posts (exported so a page or a test can run it without a worker) */
 export function answer(data) {
+  if (data && data.kind === 'rearrange') return answerRearrange(data);
   const { id = null, layers, cycleSeconds, options = {} } = data || {};
   try {
     const { dust = 0, ...opts } = options || {};
