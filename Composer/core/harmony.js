@@ -145,16 +145,31 @@ export function chooseChord(tones, lead, { eachSide = DEFAULT_FRAME_CENTS_EACH_S
       }
     });
   }
-  const step = modulationStep(best.root.cents, offset, gridBase, eachSide, { fold: foldOffsets });
+  return pickFor(best.root, best.quality, { eachSide, gridBase, offset, modulation, foldOffsets, offGrid, violations: best.violations, held: best.held, support: best.support });
+}
+
+/**
+ * A chord on a given root and quality, as chooseChord hands its pick on (its tail, lifted out in step 4a so a chord
+ * swap builds the same pick): the modulation rule at the bar's incoming `offset`, the classes on the sounding grid,
+ * and the names on the folded one.
+ *   root     { tone, cents, node }   an entry of the bar's tones (barMaterial)
+ *   quality  an entry of CHORD_QUALITIES (or progression.js' FALLBACK_QUALITIES)
+ *   opts     { eachSide, gridBase, offset (the bar's incoming), modulation, foldOffsets, offGrid (no root of the bar was
+ *            on the grid, with modulation off), violations, held, support (as ranked; carried, not recomputed) }
+ * → chooseChord's pick: { root, quality, intervals, pcs, rootPc, violations, held, support, offGrid, modulate, dev, offset, named }
+ */
+export function pickFor(root, quality, { eachSide = DEFAULT_FRAME_CENTS_EACH_SIDE, gridBase = 0, offset = 0, modulation = true, foldOffsets = true, offGrid = false, violations = 0, held = 0, support = 0 } = {}) {
+  const intervals = [...quality.intervals], inPc = classOfCents(root.cents + offset - gridBase).pc;
+  const step = modulationStep(root.cents, offset, gridBase, eachSide, { fold: foldOffsets });
   const modulate = modulation && step.modulate, after = modulate ? step.offset : offset;
   // on the sounding grid (the base's, at the bar's offset): the root after the retune, and the chord's classes
-  const rootPc = modulate ? classOfCents(best.root.cents + after - gridBase).pc : best.rootPc;
-  const pcs = modulate ? best.intervals.map((i) => mod(rootPc + i, 12)).sort((a, b) => a - b) : best.pcs;
+  const rootPc = modulate ? classOfCents(root.cents + after - gridBase).pc : inPc;
+  const pcs = intervals.map((i) => mod(rootPc + i, 12)).sort((a, b) => a - b);
   // the names, on the folded grid: the same pitches, read `shift` classes lower
   const shift = foldOffsets ? namingShift(after) : 0, namedPc = mod(rootPc - shift, 12);
-  return { root: best.root, quality: best.quality, intervals: best.intervals, pcs, rootPc, violations: best.violations, held: best.held, support: best.support,
+  return { root, quality, intervals, pcs, rootPc, violations, held, support,
     offGrid: offGrid || (!modulation && step.modulate), modulate, dev: step.dev, offset: after,
-    named: { offset: after - 100 * shift, shift, rootPc: namedPc, pcs: best.intervals.map((i) => mod(namedPc + i, 12)).sort((a, b) => a - b) } };
+    named: { offset: after - 100 * shift, shift, rootPc: namedPc, pcs: intervals.map((i) => mod(namedPc + i, 12)).sort((a, b) => a - b) } };
 }
 
 /** the cycle's bars in phrases of as many bars as MAX_SLOTS slots hold: [{ from, bars }] */
@@ -166,8 +181,9 @@ export function phrasesOf(cells) {
   return out;
 }
 
-/** each bar's tones from the cells' windows: [Map tone → { tone, count, strikes, node }], in the order the slots hold them */
-function barMaterial(row, cells) {
+/** each bar's tones from the cells' windows: [Map tone → { tone, cents, count, strikes, weight, node }], in the order the
+ *  slots hold them (exported in step 4a: a chord swap reads a bar's tones as harmonize does) */
+export function barMaterial(row, cells) {
   const bars = Array.from({ length: cells.bars }, () => new Map());
   for (const s of cells.slots) for (const t of s.tones) {
     const m = bars[s.bar];
@@ -206,12 +222,51 @@ export const DEFAULT_SETTLE_PASSES = 3;
 export const MAX_SETTLE_PASSES = 3;
 
 /** the strong notes of a bar of S slots in a lead (passing tones left out): the downbeat and middle, else the first */
-function strongNotesOf(notes, bar, S) {
+export function strongNotesOf(notes, bar, S) {
   const inBar = notes.filter((n) => n.bar === bar && !n.outside);
   let strong = inBar.filter((n) => isStrongBeat(n.beat, S));
   if (!strong.length && inBar.length) strong = [inBar[0]];
   return { inBar, strong };
 }
+/**
+ * A bar's chord record, from a pick (chooseChord, pickFor or progression.js' chooseChordOnRoot): what harmonize hands
+ * Compose for every bar (lifted out of harmonize in step 4a, so a chord swap builds the same record).
+ *   opts { eachSide (the frame), referencePc (the base root's name: 0 for C), pinned (a progression's bar) }
+ * → { bar, name, quality, kind, intervals, pcs, rootPc, gridPcs, gridRootPc, rootTone, rootFraction, rootCents, rootNode,
+ *     offsetCents, rawOffsetCents, fundamentalRatio, firstPass, support, offGrid, frame, (pinned: targeted, fallback,
+ *     sounded, missing) } — harmonize adds `strong` and `exceptions` once the lead is kept
+ */
+export function chordRecord(row, bar, pick, { eachSide = DEFAULT_FRAME_CENTS_EACH_SIDE, referencePc = 0, pinned = false } = {}) {
+  const r = pick.root, offset = pick.offset;
+  return {
+    bar, name: `${PC_NAMES[mod(pick.named.rootPc + referencePc, 12)]}${pick.quality.suffix}`, quality: pick.quality.id, kind: pick.quality.kind,
+    intervals: pick.intervals, pcs: pick.named.pcs, rootPc: pick.named.rootPc, gridPcs: pick.pcs, gridRootPc: pick.rootPc, rootTone: r.tone, rootFraction: row.tones[r.tone], rootCents: r.cents, rootNode: r.node,
+    offsetCents: pick.named.offset, rawOffsetCents: offset, fundamentalRatio: 2 ** (offset / 1200), firstPass: { violations: pick.violations, held: pick.held }, support: pick.support, offGrid: pick.offGrid, frame: frameAt(row, r.tone, eachSide),
+    ...(pinned ? { targeted: true, fallback: pick.fallback, sounded: pick.sounded, missing: pick.missing } : {}),
+  };
+}
+/** one bar's target (lines.js' shape), its chord read in its own frame, the parent `scale` (on the sounding grid) moved there */
+export const targetOfBar = (c, scale) => ({ name: c.name, root: 0, chord: [...c.intervals], tone: c.rootFraction, anchor: c.rootCents, scale: scale.map((p) => mod(p - c.gridRootPc, 12)).sort((a, b) => a - b) });
+/** targets: a bar a chord, read in its own frame; the parent scale is the union of the chords' classes on the sounding grid (the names may fold) */
+export function targetsOf(chords) {
+  const scale = [...new Set(chords.flatMap((c) => c.gridPcs))].sort((a, b) => a - b);
+  return { scale, bars: chords.map((c) => targetOfBar(c, scale)) };
+}
+/**
+ * A chord's exceptions: the lead's strong notes in its bar (passing tones left out) that it does not hold, inside ±e.
+ * → { strong: [named class of each strong note], exceptions: [{ slot, node, fraction, pc, dev }] }
+ */
+export function exceptionsOfBar(c, notes, S, e) {
+  const { strong } = strongNotesOf(notes, c.bar, S), mine = [], strongPcs = [];
+  for (const n of strong) {
+    const { pc, dev } = classOfCents(n.cents - c.rootCents), held = Math.abs(dev) <= e + EPS && c.intervals.includes(pc);
+    const onGrid = mod(c.rootPc + pc, 12);   // named
+    strongPcs.push(onGrid);
+    if (!held) mine.push({ slot: n.slot, node: n.node, fraction: n.fraction, pc: onGrid, dev: Math.abs(dev) <= e + EPS ? dev : null });
+  }
+  return { strong: strongPcs, exceptions: mine };
+}
+
 /** what makes two derivations' chords the same: per bar, the root tone, the quality and the (sounding) offset */
 const chordKey = (chords) => chords.map((c) => `${c.rootTone}|${c.quality}|${c.rawOffsetCents}`);
 
@@ -312,17 +367,11 @@ export function harmonize(row, cells, opts = {}) {
       const { inBar, strong } = strongNotesOf(leadNotes, k, S);
       const lead = inBar.map((n) => ({ cents: n.cents, strong: strong.includes(n) }));
       const pin = pins ? pins[k] : null, how = { eachSide: e, gridBase, offset, modulation, prevPcs, foldOffsets, observe: rec?.candidates(round, k, (foldOffsets ? namingShift(offset) : 0) - refPc) };
-      const pick = pin != null ? progression.choose(tones, lead, { tone: pin, cents: row.toneCents[pin] }, how) : chooseChord(tones, lead, how);
+      const pick = pin != null ? progression.choose(tones, lead, { tone: pin, cents: row.toneCents[pin], ...(progression.qualities ? { quality: progression.qualities[k] } : {}) }, how) : chooseChord(tones, lead, how);
       if (!pick) { chords.push(null); continue; }
       if (pick.modulate) modulations.push({ bar: k, cents: pick.named.offset, rawCents: pick.offset, fundamentalRatio: 2 ** (pick.offset / 1200) });
       offset = pick.offset; prevPcs = pick.pcs;
-      const r = pick.root;
-      chords.push({
-        bar: k, name: `${PC_NAMES[mod(pick.named.rootPc + refPc, 12)]}${pick.quality.suffix}`, quality: pick.quality.id, kind: pick.quality.kind,
-        intervals: pick.intervals, pcs: pick.named.pcs, rootPc: pick.named.rootPc, gridPcs: pick.pcs, gridRootPc: pick.rootPc, rootTone: r.tone, rootFraction: row.tones[r.tone], rootCents: r.cents, rootNode: r.node,
-        offsetCents: pick.named.offset, rawOffsetCents: offset, fundamentalRatio: 2 ** (offset / 1200), firstPass: { violations: pick.violations, held: pick.held }, support: pick.support, offGrid: pick.offGrid, frame: frameAt(row, r.tone, e),
-        ...(pin != null ? { targeted: true, fallback: pick.fallback, sounded: pick.sounded, missing: pick.missing } : {}),
-      });
+      chords.push(chordRecord(row, k, pick, { eachSide: e, referencePc: refPc, pinned: pin != null }));
     }
     // a bar the windows left empty takes the chord before it (or after, for the first)
     for (let k = 0; k < chords.length; k++) if (!chords[k]) {
@@ -335,10 +384,7 @@ export function harmonize(row, cells, opts = {}) {
   };
 
   // 3. targets: a bar a chord, read in its own frame; the parent scale is the union of the chords' classes on the grid
-  const targetsOf = (chords) => {
-    const scale = [...new Set(chords.flatMap((c) => c.gridPcs))].sort((a, b) => a - b);   // on the sounding grid: the names may fold
-    return { scale, bars: chords.map((c) => ({ name: c.name, root: 0, chord: [...c.intervals], tone: c.rootFraction, anchor: c.rootCents, scale: scale.map((p) => mod(p - c.gridRootPc, 12)).sort((a, b) => a - b) })) };
-  };
+  // (targetsOf, exported above)
 
   // 4. the lead again over the chords; per phrase the cheaper per note under the harmony weights, the line held so far
   //    re-scored on the new targets
@@ -368,13 +414,7 @@ export function harmonize(row, cells, opts = {}) {
   const exceptionsOf = (chords, notes, write = false) => {
     let total = 0;
     for (const c of chords) {
-      const { strong } = strongNotesOf(notes, c.bar, S), mine = [], strongPcs = [];
-      for (const n of strong) {
-        const { pc, dev } = classOfCents(n.cents - c.rootCents), held = Math.abs(dev) <= e + EPS && c.intervals.includes(pc);
-        const onGrid = mod(c.rootPc + pc, 12);   // named
-        strongPcs.push(onGrid);
-        if (!held) mine.push({ slot: n.slot, node: n.node, fraction: n.fraction, pc: onGrid, dev: Math.abs(dev) <= e + EPS ? dev : null });
-      }
+      const { strong: strongPcs, exceptions: mine } = exceptionsOfBar(c, notes, S, e);
       if (write) { c.strong = strongPcs; c.exceptions = mine; }
       total += mine.length;
     }

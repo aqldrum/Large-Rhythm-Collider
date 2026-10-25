@@ -33,9 +33,10 @@
 //              then (the main page's cache); a change to that state while it runs drops the answer, as before.
 //   levels     setLevel notifies onLevel listeners (id, value), not onChange (a slider mid-drag is not re-rendered):
 //              the main page's part strips and the window's inspector keep each other's level in step.
-//   trace      compose({ trace: true }) asks Compose for its trace (core/trace.js) and keeps it apart from the spec, in
-//              `state.trace` (null otherwise): the spec, the lanes and JSON export are the same with it or without it.
-//              The main page's tab animates Compose from it (page/compose-animator.js).
+//   trace      every compose asks Compose for its trace (core/trace.js) and keeps it apart from the spec, in
+//              `state.trace` (STEP 4a: always, at ALTERNATE_CAPS, for the alternates; before, only for
+//              compose({ trace: true })): the spec, the lanes and JSON export are the same with it or without it.
+//              The main page's tab animates Compose from it (page/compose-animator.js) while "show the work" is on.
 
 import { compose, rearticulate, chooseMeter, PART_IDS } from '../core/compose.js';
 import { rootCandidates } from '../core/progression.js';
@@ -45,6 +46,7 @@ import { arrangeDrums, DRUM_MODES, DRUM_VOICES, DEFAULT_KIT } from '../core/drum
 import { DRUM_PATTERNS } from '../core/drum-patterns.js';
 import { MADE_DRUM_CHOICES } from '../../Audio/drums/index.js';
 import { newCompositionState, KNOB_NAMES } from '../store/composition-store.js';
+import { ALTERNATE_CAPS } from '../core/trace.js';   // STEP 4a
 
 export const LAB_VERSION = 'composer-lab-v1';
 /** a few rhythms across sizes; 41:42:43 first (tone-rich, mid-size) */
@@ -148,8 +150,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     /** may a knob change re-compose by itself? lean only, and only while it is quick */
     canAutoRecompose: () => state.table === 'lean' && state.lastMs != null && state.lastMs < AUTO_RECOMPOSE_MS,
 
-    /** opts { trace: true → also the compose trace, kept in state.trace }. One in flight per state: called again on
-     *  a state that is composing, it returns that compose's promise. */
+    /** opts { trace } (STEP 4a: no longer read; the trace is always asked for and kept in state.trace). One in flight
+     *  per state: called again on a state that is composing, it returns that compose's promise. */
     compose({ trace = false } = {}) {
       const st = state;
       if (st.status === 'composing' && flights.has(st)) return flights.get(st);
@@ -157,13 +159,15 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       if (player?.playing) player.stop();
       st.status = 'composing'; st.error = null;
       const options = { seed: st.input.seed, overrides: overrides(), worker: st.table === 'full', progression: api.progressionInput() };
-      if (trace) options.trace = true;
+      // STEP 4a: always ask for the trace, at the alternates' caps (12 chords a bar, 8 runner-up lines a phrase), so the
+      // alternates never depend on "show the work"; the show still obeys the setting (it reads state.trace only when on)
+      options.trace = { caps: { ...ALTERNATE_CAPS } };
       const flight = (async () => {
         try {
           const answer = await runCompose(st.input.layers, st.input.cycleSeconds, options);
           if (mine !== runs.get(st)) return st.spec;   // a change to this state took over
           let spec = answer;
-          if (answer && 'trace' in answer) { const { trace: tr, ...plain } = answer; spec = plain; st.trace = trace ? tr : null; } else st.trace = null;
+          if (answer && 'trace' in answer) { const { trace: tr, ...plain } = answer; spec = plain; st.trace = tr; } else st.trace = null;   // STEP 4a: kept whatever `trace` says
           st.spec = spec; st.lastMs = clock() - t0; st.dirty = false;
           if (spec.refused) { st.parts = {}; st.drums = null; st.status = 'refused'; }
           else { st.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); st.drums = arrangeDrums(spec, st.drumOptions); st.status = 'ready'; st.tempoBpm = spec.knobs.tempoBpm; }

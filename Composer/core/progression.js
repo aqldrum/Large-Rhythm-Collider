@@ -37,11 +37,9 @@
 //              class but at most one sounding, as above; a fallback dyad: its other tone sounding), and then the
 //              settle passes keep it too; otherwise the bar falls back as it always has, and says so (`forced`).
 //              No quality anywhere: every result here exactly as before (the ratio form's identity is tested).
-//              THE SEAM: harmonize hands `choose` the pin as { tone, cents } without its bar, so `harmonyPins` keys a
-//              quality by its root tone, which is exact unless one root is pinned with two qualities (or with one and
-//              none); those bars choose freely and are said (`ambiguous`), until harmony.js passes the bar's quality
-//              itself: `{ tone: pin, cents: row.toneCents[pin], ...(progression.qualities ? { quality:
-//              progression.qualities[k] } : {}) }` — then `pin.quality` wins, for every bar.
+//              THE SEAM (applied at the step 4a merge, 2026-10-25): harmonize passes each bar's own quality in the pin
+//              (`{ tone, cents, quality }`), so `pin.quality` wins on every bar, even with one root pinned with two
+//              qualities. `harmonyPins`' by-tone key and `ambiguous` remain only for a caller that passes no quality.
 
 import { buildRow, isRow, toneGate, ONSET_GATE, MIN_TONES } from './row.js';
 import { classOfCents, clusterPresence, defaultRoot, toneIndexOf, PRESENCE_MODES, DEFAULT_FRAME_CENTS_EACH_SIDE } from './frame.js';
@@ -231,13 +229,12 @@ export function describeProgression(read, chords, row) {
   const pinned = read.roots.flatMap((r, k) => (r == null ? [] : [k + 1])), auto = read.roots.length - pinned.length;
   const parts = [`bar${pinned.length > 1 ? 's' : ''} ${pinned.join(', ')} targeted: the root asked, the quality the best of those the bar's own tones support over it (all its classes but at most one sounding in the bar, the root among them), ranked as Compose ranks chords (proposed); the settle passes re-derive the quality, never the root`];
   if (auto) parts.push(`${auto} auto bar${auto > 1 ? 's' : ''} from the lead as always${pinned.length ? ' (the first lead mined only for phrases holding an auto bar)' : ''}`);
-  const qualities = read.qualities ?? [], seam = qualities.some((q) => q != null) ? harmonyPins(read).ambiguous : [];
+  const qualities = read.qualities ?? [];   // harmonize passes each bar's own quality (the seam, applied at the step 4a merge)
   for (const k of pinned) {
     const c = chords[k - 1], want = qualities[k - 1] ?? null;
     if (want != null) {
       const q = qualityById(want), sym = `${q.suffix || 'maj'} (${want})`;
-      if (seam.includes(k - 1) && c.quality !== want) parts.push(`bar ${k}: the quality asked, ${sym}, waits on harmonize passing a bar's own quality (its root is pinned elsewhere with another), so ${c.name}, Compose's (proposed)`);
-      else if (c.quality === want) parts.push(`bar ${k}: the quality asked, ${sym}, kept: the bar supports it`);
+      if (c.quality === want) parts.push(`bar ${k}: the quality asked, ${sym}, kept: the bar supports it`);
       else parts.push(`bar ${k}: the quality asked, ${sym}, is not supported by the bar's own tones, so ${c.name}, as Compose picks it (proposed)`);
     }
     if (c.fallback) parts.push(`bar ${k}: no chord quality has all but one of its tones in the bar over ${c.rootFraction} (the nearest lacks the ${c.missing.map((i) => INTERVAL_NAMES[i]).join(' and ')}), so ${c.name}, the ${c.fallback === 'root_only' ? 'root alone' : `${c.fallback.replace('_', ' ')} dyad`} (fallback, proposed)`);

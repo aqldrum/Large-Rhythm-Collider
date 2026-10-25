@@ -333,12 +333,13 @@ motionOn = true;
   glyphBtn.click();
   check('"show the work" off, a first compose: no shimmer, no scrim', lens.phase === 'composing' && !bridge.overlay.scene && !theater.up && lastOf('composing').showWork === false);
   await settle();
-  check('… straight to the landing, playing; no trace asked for', lens.phase === 'landed' && tab.state.status === 'playing' && !events.slice(n).some((e) => e.type === 'animating') && !tab.state.trace);
+  check('… straight to the landing, playing; the trace kept all the same (step 4a: always asked for, for the alternates)', lens.phase === 'landed' && tab.state.status === 'playing' && !events.slice(n).some((e) => e.type === 'animating') && !!tab.state.trace);
   glyphBtn.click();
   tab.setShowWork(true);
   const m = events.length;
   glyphBtn.click();
-  check('… recalled with the work shown again, but no trace to replay: straight to the landing', lens.phase === 'landed' && lastOf('landed').recalled && !events.slice(m).some((e) => e.type === 'animating'));
+  // STEP 4a: the trace is kept even when the work was hidden, so a recall with the work shown again plays the short version
+  check('… recalled with the work shown again: the short version of the kept trace (step 4a)', lens.phase === 'animating' && lastOf('animating')?.short === true && lastOf('animating').recalled === true && events.slice(m).some((e) => e.type === 'animating'));
   glyphBtn.click();
   check('(recallTimeline of nothing is null)', recallTimeline(null) === null && recallTimeline({ events: [] }) === null);
 }

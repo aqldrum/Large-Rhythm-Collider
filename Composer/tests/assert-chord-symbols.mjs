@@ -263,7 +263,11 @@ console.log('\n— resolving the field');
   // the seam: one root twice with two qualities
   r = resolveSymbols('F Cmaj7 Fsus4 F', M);
   spec = compose(L, 8, { seed: 1, progression: progressionOf(r), drums: false });
-  check('one root pinned with two qualities: the roots kept, the decisions say the seam', spec.chords[0].rootTone === '1/1' && spec.chords[3].rootTone === '1/1' && /waits on harmonize/.test(spec.decisions.find((x) => x.what === 'progression').why));
+  {
+    const why = spec.decisions.find((x) => x.what === 'progression').why, asked = progressionOf(r).map((p) => p && p.quality);
+    const each = asked.every((q, k) => q == null || spec.chords[k].quality === q || new RegExp(`bar ${k + 1}: the quality asked, [^;]*, is not supported`).test(why));
+    check('one root pinned with two qualities: the roots kept, and each bar honors its own quality where the bar supports it (the seam, applied)', spec.chords[0].rootTone === '1/1' && spec.chords[3].rootTone === '1/1' && !/waits on harmonize/.test(why) && each, why);
+  }
   // the Composer's qualities for other symbols
   r = resolveSymbols('C9 C6 C/E C13#11 Cadd9', M);
   check('a symbol the Composer has no quality for: the richest inside it, the rest dropped and said', r.perBar[0].pin.quality === 'dominant_7th' && r.perBar[0].quality.dropped.join() === '2' && r.perBar[1].pin.quality === 'major_triad' && r.perBar[2].pin.quality === 'major_triad' && r.perBar[2].quality.exact && r.perBar[0].amber.some((x) => /no quality with its 2/.test(x)), JSON.stringify(r.perBar.map((b) => b.quality)));

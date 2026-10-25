@@ -66,7 +66,8 @@ python3 -m http.server 8000
 
 - **`core/`:** pure ES modules (no DOM, fetch or clock) that run in a page, a worker or Node. `compose-worker.js` wraps `compose()` for a module worker. `superrow.js` lays many rhythms of one grid on one row for Cosmos's Grid-card Compose, and `superrow-worker.js` builds and composes one off the main thread ("Cosmos Compose mode" in `DESIGN_NOTES.md`).
 - **`core/chord-symbols.js`** (step 4b): the typed progression field. It ports the site's chord-symbol parser and tokenizer, then `barMaterials` (the row, the cells and the bars' tones before a compose), `resolveSymbols` (a symbol a bar → a root cluster and a quality, ✓ or amber, as `{ ratio, quality }` pins for `compose`'s progression) and `pinsToField` / `fieldToPins`. `progression.js` takes those pins. See "Step 4b: typed progression" in `DESIGN_NOTES.md`.
-- **`core/trace.js`:** the compose trace, `compose(..., { trace: true })` → `spec.trace`: every decision as ordered, untimed events pointing at the row's onsets, for the main-page and Cosmos animations; `traceTimeline()` paces it. `TRACE.md` is the contract.
+- **`core/trace.js`:** the compose trace, `compose(..., { trace: true })` (or `{ trace: { caps } }` for the alternates' longer lists, step 4a) → `spec.trace`: every decision as ordered, untimed events pointing at the row's onsets, for the main-page and Cosmos animations; `traceTimeline()` paces it. `TRACE.md` is the contract.
+- **`core/rearrange.js`** (step 4a): local edits to a composed spec, with Compose's own per-bar builders. `rearrange(spec, row, cells, { bar, chord })` swaps a chord; `{ phrase, line, chordsFollow }` swaps a lead for a runner-up. `materialsOf(spec)` rebuilds the row and cells. "Step 4a: core rearrange" in `DESIGN_NOTES.md`.
 - **`perform/`:** what the lab and the main page share, with no DOM:
   - `composer-controller.js`: state and actions
   - `composer-player.js`: a lookahead scheduler, with an optional destination, injectable timers and a public `tick()`
@@ -97,6 +98,7 @@ python3 -m http.server 8000
   - `assert-page-*.mjs` check the main page's tab, (`assert-page-lens.mjs`) the Composition lens and (`assert-page-theater.mjs`) its theater. They use `dom-stub.mjs` (a small DOM) and `site-scripts.mjs` (the site's classic scripts in a vm).
   - `assert-store.mjs` checks the composition store and the controller's binding to it.
   - `assert-tutorial.mjs` checks the guided tour (`Tutorial/`): the layer generator, the targets, the opening's time budget, and the driver end to end over the stub.
+  - (step 4a) `assert-trace-caps.mjs` checks the trace's caps option and the show cut back; `assert-refactor-identity.mjs` checks that Compose is byte for byte the frozen pre-refactor core (`fixtures/*-before.js`, never edited); `assert-rearrange.mjs` checks chord and lead swaps.
   - `rhythms.mjs` is the shared rhythm set, and `settle-baseline.mjs` pins the output from before settling.
   - `time-lines.mjs` is a timing table, not a check.
 - **`probe/`:** the 2026-10-21 cost probe (`FINDINGS.md`), the source of the onset gate.
@@ -109,7 +111,7 @@ Run every suite (the Composer's, the shared voices', Cosmos's and MIDI Out's):
 for t in Composer/tests/assert-*.mjs Cosmos/tests/assert-*.mjs Audio/tests/assert-*.mjs Playback/MIDIOut.test.mjs; do node "$t" >/dev/null 2>&1 || echo FAIL $t; done
 ```
 
-A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added; 55 at the end of that sprint; 57 with sprint 2's `assert-store.mjs` and `assert-page-lens.mjs`; 58 with step 2's `assert-page-theater.mjs`; 59 with step 3's `assert-tutorial.mjs`; 60 with step 4b's `assert-chord-symbols.mjs`; 61 with step 4c's `assert-drum-grid.mjs`. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
+A clean run prints nothing. There were 51 suites as of the night of 2026-10-22, with `assert-drums.mjs`, `assert-progression.mjs`, `assert-trace.mjs` and the four `assert-page-*.mjs` added; 55 at the end of that sprint; 57 with sprint 2's `assert-store.mjs` and `assert-page-lens.mjs`; 58 with step 2's `assert-page-theater.mjs`; 59 with step 3's `assert-tutorial.mjs`; 60 with step 4b's `assert-chord-symbols.mjs`; 61 with step 4c's `assert-drum-grid.mjs`; 64 with step 4a's `assert-trace-caps.mjs`, `assert-refactor-identity.mjs` and `assert-rearrange.mjs`. Some tests also read chunk-tunes in the Overworld project, read-only, to check the port; without it they skip with a message.
 
 ## Where it lives
 

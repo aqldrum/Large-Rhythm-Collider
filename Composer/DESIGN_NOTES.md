@@ -1194,6 +1194,67 @@ What the table says:
 5. **with / partition under an edit:** they re-land on the anchors' onsets (only 28 % and 34 % keep their onset). Should the store keep a `with` or `partition` perc row bound to its source until that row itself is edited?
 6. **A dark light, or an empty cell,** is silent and reported. Should it strike the cell's next light instead?
 
+## Step 4a: core rearrange (built 2026-10-25)
+
+The order: `STEP4_ORDER.md` "4a. Core", built on `STEP4_RECOMMENDATIONS.md` §1. Avery's decisions there are marked **decided**; everything else here is **proposed, not ruled**. Node only: nothing here has been seen in a browser.
+
+**1. The trace caps option** (`core/trace.js`, `TRACE.md` "Caps").
+- `compose(..., { trace: { caps } })` keeps a bar's 12 best chord candidates and a phrase's 8 runner-up lines (`ALTERNATE_CAPS`, with `caps` over them). `trace: true` is unchanged at `TRACE_CAPS` (6 and 3). **Proposed:** `true` stays the show's caps because Cosmos's dust asks for `true` and reads every candidate and runner-up it is given; this keeps the dust unchanged without a Cosmos edit.
+- `capTrace(trace, caps)` cuts a 12/8 trace back to the 6/3 trace, byte for byte (events, node and line tables, caps, stats). `trace-frames.js` `buildScene` reads the trace through it, so the main page's show is the same frame for frame (tested on 3 rhythms × 241 frames).
+- On the 16k row the trace grows 109 → 153 KB (lean) and 96 → 129 KB (full). Compose's time doesn't move.
+
+**2. The controller always asks for the trace** (`perform/composer-controller.js`, marked STEP 4a). Every compose sends `trace: { caps: ALTERNATE_CAPS }` and keeps `state.trace`, whatever "show the work" says. The show still reads it only while the setting is on.
+- `compose-runner.js` now passes the `trace` option through as given (it turned any truthy value into `true`).
+- **A behavior change:** a rhythm composed with the work hidden now has a trace. Recalled later with the work shown, it plays the short version, where before it landed at once. Five page-suite checks were updated to this contract.
+
+**3. The builder refactor** (byte-identical).
+- **`compose.js`** exports the part builders it now calls:
+  - `partContext(row, cells, { cycleSeconds, phase, frameCentsEachSide })`
+  - `leadNotesOf`, `chordVoicesOfBar(ctx, chord, k)`, `compChoicesOf(ctx, chords)` and `compOfBar(ctx, chord, k, layer)`
+  - `bassOfBar(ctx, chord, k, { table, scale, target })`, `leadAvoidOf` and `innerOf(ctx, { from, bars }, { chords, targets, lead, table, rules })`
+  - `partOf(ctx, id, notes, { sound, legato, enabled, baseHz, ratioOf, voice })` and `specChordOf`
+- **`harmony.js`** exports:
+  - `pickFor`: chooseChord's tail, the modulation rule and the names for a given root and quality;
+  - `chordRecord(row, bar, pick, { eachSide, referencePc, pinned })`;
+  - `targetOfBar` and `targetsOf`, `exceptionsOfBar`;
+  - `barMaterial` and `strongNotesOf`, now exported.
+- **The gate:** `tests/assert-refactor-identity.mjs` composes 729 cases with the live core and with a frozen pre-refactor copy, and the two JSON texts must be equal. The cases: every rhythm × 2 seeds, every override, progressions, every drum mode, the trace off/true/{caps}, and the 16k row.
+  - The copy is `tests/fixtures/{compose,harmony,lines}-before.js`, taken at ba590d5 and never to be edited. Row, cells, frame, progression, drums and trace are live in both, so 4b's and 4c's edits are checked by it too.
+- **One speed-up in `lines.js`:** a module-level memo of the close cost (a pure function of two fractions; same numbers, cleared at 2^18 entries). A bar-local re-mine on the 16k row went from a 17.8 to a 12.4 ms median.
+
+**4. `core/rearrange.js`.**
+- `rearrange(spec, row, cells, { bar, chord })` and `rearrange(spec, row, cells, { phrase, line, chordsFollow }, { trace, parts, drumOptions, smoothPhrase })`.
+  - They return `{ parts, drums, chords, modulations, changedBars, retunedBars, changed: { part: [bar] }, exceptions, stats }`.
+  - `applyRearrange(spec, r)` writes a result into a new spec.
+  - `materialsOf(spec)` rebuilds `{ row, cells }` from `spec.input.layers` and the knobs. It takes about 7 ms on the 16k row, and it isn't valid for Cosmos's superrow composes.
+- **Decided:**
+  - a chord swap keeps the lead (decision 1);
+  - lead alternates are the phrase's runner-ups (decision 2);
+  - the comp layer, `baseHz` and the lead's legato are pinned, and so are every part's sound, legato and on/off;
+  - `targets.scale` is fixed;
+  - the chords don't follow a lead swap unless asked;
+  - the inner is re-mined bar-locally.
+- **Proposed:**
+  - **The swapped bar's own target** reads scale ∪ its new chord's classes, so a chord tone is never "foreign" in its own bar. The parent scale and the other bars don't move.
+  - **The bar-local inner** uses `lines.js` `rules: { before, after }`, the inner's nearest notes either side of the bar as `{ pitch }`. Each move to them is priced as a move inside the line, `strict × interval × I`. There's no recovery flag and no wrap at bar 1. Absent, `pickLines` and `scoreLine` are unchanged, and the test checks that they agree on every boundary cost.
+  - **Exceptions of a changed bar** are its lead's strong notes off the new chord. A lead note foreign under the new chord's frame and target is a passing tone. A bar whose chord didn't change keeps the count Compose gave it.
+  - **"Unchanged" short-circuits.** A bar re-given its own chord keeps its inner, and a phrase re-given its own line keeps its inner and exceptions. That's what makes the identity test byte-exact. Its chord voices, comping, bass and every part's articulation are still rebuilt through the builders.
+  - **Chords follow** runs `chooseChord` bar by bar along the phrase over the new lead, walking the offset and the voice-leading. A pinned (`targeted`) bar keeps its chord. On a settled spec's own lead it chooses the spec's chords again (24/24 phrases).
+  - **The re-pitch.** Later bars keep their root and quality, and the modulation rule is re-run at their new incoming offset; `retunedBars` lists those whose `fundamentalRatio` moved.
+  - **An empty bar** that took the swapped bar's chord takes the new one.
+  - **The drums** are `arrangeDrums(rearranged spec, spec.drums.options)`, which reproduces the spec's own drums. Backbeat never moves, and `with` moves only in edited or retuned bars. **`against` can spill:** its seeded draws run in bar order, so a changed slot count re-draws later bars (52 of 336 swaps measured). A per-bar seed in `drums.js` (4c's file) would fix it.
+- **Measured** on the 16k row:
+  - a chord swap: lean 4.9 ms median, 6.7 max; full 10.9 ms median, 19.2 max; the first swap on a spec about 11 ms (the part context, cached per cells after that);
+  - a lead swap, bar-local: lean 11.7 ms, full 37.8 ms;
+  - `smoothPhrase` (the whole phrase): lean 68 ms, full 294 ms, so that one is for the worker.
+- **Kept, a Compose quirk:** a bass bar with no line plays its chord's root onset, with `slot` the onset's posSlot. That can be the previous bar's last slot when the root sounds in the bar's first window just before its downbeat. The refactor keeps it byte for byte.
+- **Tests:** `assert-trace-caps.mjs`, `assert-refactor-identity.mjs` and `assert-rearrange.mjs`. The rearrange suite covers:
+  - identity on 78 bars × 2 and 25 phrases;
+  - 927 candidate swaps and 200 runner-up swaps, every note a real onset in its bar and slot at its retune;
+  - only the dependent bars and parts moving;
+  - the boundaries;
+  - the costs.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

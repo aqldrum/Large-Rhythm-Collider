@@ -31,6 +31,17 @@ export const TRACE_CAPS = Object.freeze({
   partNotes: 256,       // notes a part event lists
   drumHits: 512,        // strokes the drums event lists
 });
+/** STEP 4a: the caps of `trace: { caps }` (the alternates by bar × part: STEP4_RECOMMENDATIONS.md §1), before its
+ *  own `caps`: a bar's 12 best chords and a phrase's 8 runner-up lines. `trace: true` keeps TRACE_CAPS (the show's,
+ *  which Cosmos's dust and the main page's animation read), so nothing that asks `true` sees a longer list (proposed). */
+export const ALTERNATE_CAPS = Object.freeze({ ...TRACE_CAPS, chordCandidates: 12, runnersUp: 8 });
+/** the caps the `trace` option of compose() asks for: true → TRACE_CAPS; { caps } → ALTERNATE_CAPS with `caps` over them */
+export function traceCapsOf(option) {
+  if (option === true) return { ...TRACE_CAPS };
+  const caps = option && typeof option === 'object' ? option.caps ?? {} : {};
+  for (const [k, v] of Object.entries(caps)) if (!(k in TRACE_CAPS) || !(Number.isInteger(v) && v >= 0)) throw new Error(`composer/trace: no cap ${k} = ${JSON.stringify(v)} (caps are ${Object.keys(TRACE_CAPS).join(', ')}, each an integer ≥ 0)`);
+  return { ...ALTERNATE_CAPS, ...caps };
+}
 
 const LAYER_NAMES = 'ABCD';
 const mod = (v, n) => ((v % n) + n) % n;
@@ -213,9 +224,45 @@ export function createTrace(row, { cycleSeconds, meter: M = null, caps = {} } = 
 }
 
 /** the trace of a refused compose: one event saying why */
-export function refusedTrace(spec, { cycleSeconds } = {}) {
-  return { version: COMPOSER_TRACE_VERSION, layers: [...spec.input.layers], grid: null, onsets: spec.detail?.onsets ?? null, cycleSeconds, phase: null, caps: { ...TRACE_CAPS },
+export function refusedTrace(spec, { cycleSeconds, caps = {} } = {}) {
+  return { version: COMPOSER_TRACE_VERSION, layers: [...spec.input.layers], grid: null, onsets: spec.detail?.onsets ?? null, cycleSeconds, phase: null, caps: { ...TRACE_CAPS, ...caps },
     nodes: {}, lines: {}, events: [{ kind: 'refused', reason: spec.reason, detail: JSON.parse(JSON.stringify(spec.detail ?? null)) }], stats: { events: 1, nodes: 0, lines: 0 } };
+}
+
+/** every onset (`node`, `samples`) and line id ('cl1:…') an event names, into the two sets */
+function refsOf(x, nodes, lines) {
+  if (Array.isArray(x)) { for (const y of x) refsOf(y, nodes, lines); return; }
+  if (typeof x === 'string') { if (x.startsWith('cl1:')) lines.add(x); return; }
+  if (!x || typeof x !== 'object') return;
+  for (const [k, v] of Object.entries(x)) {
+    if (k === 'node') { if (Number.isInteger(v)) nodes.add(v); }
+    else if (k === 'samples' && Array.isArray(v)) { for (const n of v) if (Number.isInteger(n)) nodes.add(n); }
+    else refsOf(v, nodes, lines);
+  }
+}
+/**
+ * STEP 4a: a trace cut back to smaller caps of `chordCandidates` and `runnersUp` (by default the show's, TRACE_CAPS):
+ * each chord event's candidates and each lead event's runners-up cut to their first k (a pick past the cut gets
+ * `pickIndex` −1), and the node and line tables cut to what the events still name. The result is the trace a compose
+ * with those caps makes, byte for byte (assert-trace-caps.mjs). A trace already within them comes back as it is.
+ */
+export function capTrace(trace, caps = TRACE_CAPS) {
+  if (!trace || !Array.isArray(trace.events) || !trace.caps) return trace;
+  const k = Math.min(caps.chordCandidates ?? Infinity, trace.caps.chordCandidates), r = Math.min(caps.runnersUp ?? Infinity, trace.caps.runnersUp);
+  if (k === trace.caps.chordCandidates && r === trace.caps.runnersUp) return trace;
+  const events = trace.events.map((ev) => {
+    if (ev.kind === 'chord' && ev.candidates.length > k) return { ...ev, pickIndex: ev.pickIndex < k ? ev.pickIndex : -1, candidates: ev.candidates.slice(0, k) };
+    if (ev.kind === 'lead' && ev.runnersUp.length > r) return { ...ev, runnersUp: ev.runnersUp.slice(0, r) };
+    return ev;
+  });
+  const usedNodes = new Set(), usedLines = new Set();
+  refsOf(events, usedNodes, usedLines);
+  const lines = {};
+  for (const [id, l] of Object.entries(trace.lines)) if (usedLines.has(id)) { lines[id] = l; for (const n of l.notes) if (n.node != null) usedNodes.add(n.node); }
+  const nodes = {};
+  for (const [i, v] of Object.entries(trace.nodes)) if (usedNodes.has(Number(i))) nodes[i] = v;
+  return { ...trace, caps: { ...trace.caps, chordCandidates: k, runnersUp: r }, nodes, lines, events,
+    stats: { ...trace.stats, events: events.length, nodes: Object.keys(nodes).length, lines: Object.keys(lines).length } };
 }
 
 // ── pacing ──
