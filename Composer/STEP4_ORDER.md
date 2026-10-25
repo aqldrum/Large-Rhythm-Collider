@@ -30,7 +30,7 @@ Also from the recommendations, taken as written:
 
 | Phase | Branch | Depends on | Edits | Status |
 | --- | --- | --- | --- | --- |
-| 4a. Core: trace caps → builder refactor (byte-identical) → `rearrange.js` | `step4/core` | — | `core/compose.js`, `core/harmony.js`, `core/lines.js`, `core/trace.js`, new `core/rearrange.js`, `page/trace-frames.js` (slice) | waiting |
+| 4a. Core: trace caps → builder refactor (byte-identical) → `rearrange.js` | `step4/core` | — | `core/compose.js`, `core/harmony.js`, `core/lines.js`, `core/trace.js`, new `core/rearrange.js`, `page/trace-frames.js` (slice) | built, for review |
 | 4b. Typed progression: `chord-symbols.js`, resolve, `barMaterials`, quality pins | `step4/typed` | — | new `core/chord-symbols.js`, `core/progression.js` | waiting |
 | 4c. Drum grid source, presets ⇄ grid, prime level 1 | `step4/drums` | — | `core/drums.js` | waiting |
 | 4d. Store: `edits`, pins, `drumOptions.grid`, invalidation, undo; the controller merge | `step4/store` | 4a, 4b, 4c merged | `store/`, `perform/composer-controller.js` | waiting |
@@ -113,3 +113,4 @@ Merge, run the full suite, then write a browser list for Avery: swaps (chord, le
 
 ## Log
 - 2026-10-25: order written; Avery took the proposed answers on all 8 questions. Not dispatched yet.
+- 2026-10-25: 4a (Core) built on `step4/core`: the trace caps option (`trace: { caps }`, ALTERNATE_CAPS 12/8, `capTrace`, the show cut back), the controller always asking for the trace, the builder refactor (byte-identical against a frozen copy, 729 cases), and `core/rearrange.js` (chord swap, lead swap, chords follow, the bar-local inner with `rules: { before, after }`). A chord swap is a 4.9 / 10.9 ms median (lean / full) on the 16k row. 62 suites clean. DESIGN_NOTES "Step 4a: core rearrange".
