@@ -49,13 +49,17 @@
 //              place's window, then one place wider, else silent: `silentCells`). Fills and crashes stay options over
 //              it. `gridOf(arrangement)` writes any arrangement back as a grid (a hit's `pos` → place round(pos·m)), so
 //              every mode and pattern is a preset of the grid.
-//   prime      the two-level prime partition (Avery's design). Level 1: p lights evenly over the cycle from the
-//              downbeat, each landed on its nearest onset (uneven in time: they are real onsets); p defaults to the
-//              prime nearest N·S (decided; N·S·m under 4 slots, proposed). Level 2: the bar grid's N·S·m cells treat
-//              the p lights as an even grid, cell j covering lights ⌊j·p/C⌋ up to the next cell's, and a lit cell
-//              strikes its first light. The cells lit are `selectLights(C, hits)` (Euclid from the downbeat; hits = C,
-//              every cell, by default, or N·hitsPerBar), or the grid's perc row when a grid is given. The prime line
-//              plays on the perc, over the backbeat (or over the grid's other voices) (proposed).
+//   prime      the two-level prime partition (Avery's design; revised in step 4c-prime, DESIGN_NOTES "Step 4c"). Level 1:
+//              p lights evenly over the cycle from the downbeat, each landed on its nearest onset (uneven in time: they
+//              are real onsets). p is a seeded random prime above the C = N·S cells (decided, Avery 2026-10-25; C =
+//              N·S·m under 4 slots, proposed), up to max(199, the smallest prime ≥ 2C) (proposed), drawn from the
+//              drums' own generator (`${seed}/drums/prime`), so Compose's draws and `against`'s never move. Level 2:
+//              Partitions' own distribution of C over p (getSecondaryAllowedSet: E(C, p) turned to start on a light,
+//              which for a prime p is exactly the live UI's computeL2Coverages cut) chooses C of the p lights, in
+//              order, one a cell; light 0 is always chosen, so the downbeat cell is the downbeat. A lit cell strikes
+//              its chosen light. The cells lit are `selectLights(C, hits)` (Euclid from the downbeat; hits = C, every
+//              cell, by default, or N·hitsPerBar), or the grid's perc row when a grid is given. The prime line plays on
+//              the perc, over the backbeat (or over the grid's other voices) (proposed).
 
 import { partitionSizes, euclidPattern } from './cells.js';
 import { phrasesOf, isStrongBeat } from './harmony.js';
@@ -186,11 +190,47 @@ export function selectLights(count, hits) {
 }
 
 export const isPrime = (n) => { if (!(Number.isSafeInteger(n) && n >= 2)) return false; for (let d = 2; d * d <= n; d++) if (n % d === 0) return false; return true; };
-/** the prime nearest n (decision 7); of two equally near, the larger (proposed: a cell then never lacks a light) */
+/** the prime nearest n; of two equally near, the larger. (Step 4c's first rule for p, decision 7 as first ruled, now
+ *  superseded by `primeRange` / `drawPrime`; kept as a helper) */
 export function nearestPrime(n) {
   if (!(Number.isFinite(n) && n >= 0)) fail(`bad count ${n}`);
   const c = Math.round(n);
   for (let d = 0; ; d++) { if (isPrime(c + d)) return c + d; if (c - d >= 2 && isPrime(c - d)) return c - d; }
+}
+
+/** the smallest prime ≥ n */
+export function nextPrime(n) { let c = Math.max(2, Math.ceil(n)); while (!isPrime(c)) c++; return c; }
+
+/** the low-triple-digit ceiling of p's range (proposed: Avery's "up to the low triple digits") */
+export const PRIME_CEILING = 199;
+
+/**
+ * Where p is drawn from (decision 7, re-ruled by Avery 2026-10-25: a random prime above N·S, up to the low triple
+ * digits): the primes in (C, U], U = max(PRIME_CEILING, the smallest prime ≥ 2C) (proposed: small meters reach the
+ * triple digits, and a large one still has primes from just above C to about 2C).
+ * → { above: C, upTo: U, primes: [ascending] }
+ */
+export function primeRange(C) {
+  if (!(Number.isInteger(C) && C >= 1)) fail(`bad cell count ${C}`);
+  const U = Math.max(PRIME_CEILING, nextPrime(2 * C)), primes = [];
+  for (let q = C + 1; q <= U; q++) if (isPrime(q)) primes.push(q);
+  return { above: C, upTo: U, primes };
+}
+
+/** the seeded random p over C cells: one of `primeRange(C).primes`, uniformly, drawn from the drums' own generator
+ *  `${seed}/drums/prime` (one draw), so no other part's draws and no bar of `against` move. The same seed, the same p */
+export function drawPrime(C, seed = 1) {
+  const { primes } = primeRange(C), x = seeded(`${seed}/drums/prime`)();
+  return primes[Math.min(primes.length - 1, Math.floor(x * primes.length))];
+}
+
+/** level 2 of the prime partition: the C of p lights that Partitions' own distribution chooses (its secondary pattern,
+ *  PartitionsPlayback.getSecondaryAllowedSet(p, C): E(C, p) turned to start on a light), ascending, cell j's light the
+ *  j-th; light 0 is always the first. For a prime p > C this is exactly the live UI's L2 cut too (computeL2Coverages,
+ *  the starts of calculatePartitionSizes(p, C)): assert-drum-prime.mjs checks both */
+export function primeSelection(p, C) {
+  if (!(Number.isInteger(p) && Number.isInteger(C) && C >= 1 && p >= C)) fail(`level 2 chooses C = ${C} of p = ${p} lights: p must be at least C`);
+  return selectLights(p, C);
 }
 
 /** the grid's places a bar and its cells over the cycle: S·m places a bar (decision 6), C = N·S·m cells */
@@ -217,20 +257,21 @@ export function primeLights(g, p) {
   return out;
 }
 
-/** level 2: the lights cell j of C covers, [from, to) — the p lights read as an even grid, whatever their timing;
- *  empty (from === to) only when p < C */
-export function cellLights(j, p, C) { return { from: Math.floor((j * p) / C), to: Math.floor(((j + 1) * p) / C) }; }
+/** level 2: the lights cell j of C covers, [from, to): from its chosen light (`primeSelection`) up to the next cell's,
+ *  Partitions' L2 group (computeL2Coverages), 1 or more lights, whatever their timing. `chosen` may be passed in */
+export function cellLights(j, p, C, chosen = primeSelection(p, C)) { return { from: chosen[j], to: j + 1 < C ? chosen[j + 1] : p }; }
 
 /**
  * Level 1 of the partition: the lights the selection chooses among, counted from the downbeat.
  *   source 'layer'   a layer that strikes the downbeat: its v pulses, light i at pulse (downbeat's + i) mod v
- *   source 'prime'   Avery's two-level prime partition: p lights spread evenly over the cycle (p a prime, by default
- *                    the prime nearest the grid's cells, N·S when S ≥ 4), each landed on an onset (`primeLights`)
+ *   source 'prime'   Avery's two-level prime partition: p lights spread evenly over the cycle (p a prime above the
+ *                    grid's cells, N·S when S ≥ 4: asked, or by default `drawPrime(cells, seed)`), each landed on an
+ *                    onset (`primeLights`)
  * → { source, count, tickAt(i) } (+ lights, for 'prime')
  */
-export function levelOneLights(g, { source = 'layer', layer, p = null } = {}) {
+export function levelOneLights(g, { source = 'layer', layer, p = null, seed = 1 } = {}) {
   if (source === 'prime') {
-    const count = p ?? nearestPrime(gridShape(g).cells), lights = primeLights(g, count);
+    const count = p ?? drawPrime(gridShape(g).cells, seed), lights = primeLights(g, count);
     return { source, count, lights, tickAt: (i) => lights[mod(i, count)].tick };
   }
   if (source !== 'layer') fail(`no partition source ${JSON.stringify(source)} (${PARTITION_SOURCES.join(', ')})`);
@@ -240,26 +281,38 @@ export function levelOneLights(g, { source = 'layer', layer, p = null } = {}) {
 }
 
 /**
- * The two-level prime partition: level 1's p lights, level 2's C cells, the cells lit and what each strikes.
+ * The two-level prime partition: level 1's p lights, level 2's C cells (the lights Partitions' distribution chooses),
+ * the cells lit and what each strikes.
+ *   p     null: `drawPrime(C, seed)`; else a prime above C (refused otherwise)
  *   lit   null: `selectLights(C, hits)` (Euclid from the downbeat; hits = C by default, or N·hitsPerBar);
  *         else the lit cells' indices (a grid's perc row)
- * → { p, cells, hits, lights (primeLights), selected: [cell], struck: [{ cell, light }], silent: [{ cell, why }],
- *     emptyCells (cells covering no light), perCell (lights a cell: min, max) }
+ * → { p, drawn (p was drawn, not asked), range: { above, upTo, primes (how many) }, cells, hits, lights (primeLights),
+ *     chosen: [light] (cell j's light, `primeSelection`), selected: [cell] (the cells lit),
+ *     struck: [{ cell, light, tick, snap }] (snap the light's own 'light' | 'wide', or 'cell' | 'cell-wide' for a dark
+ *     light landed within its cell's reach),
+ *     silent: [{ cell, why }], emptyCells (0: p > C), perCell (lights a cell, Partitions' L2 groups: min, max) }
  */
-export function primePartition(spec, g = drumGrid(spec), { p = null, hitsPerBar = null, lit = null } = {}) {
-  const C = gridShape(g).cells, L1 = levelOneLights(g, { source: 'prime', p }), P1 = L1.count;
+export function primePartition(spec, g = drumGrid(spec), { p = null, seed = spec?.input?.seed ?? 1, hitsPerBar = null, lit = null } = {}) {
+  const C = gridShape(g).cells, range = primeRange(C);
+  if (p != null && !(isPrime(p) && p > C)) fail(`p must be a prime above the ${C} cells (the prime partition's level 1), not ${JSON.stringify(p)}`);
+  const L1 = levelOneLights(g, { source: 'prime', p, seed }), P1 = L1.count, chosen = primeSelection(P1, C);
   const hits = lit ? lit.length : Math.max(1, Math.min(C, hitsPerBar != null ? Math.round(hitsPerBar * g.N) : C));
   const selected = lit ? [...lit].sort((a, b) => a - b) : selectLights(C, hits);
-  const struck = [], silent = [];
+  // a chosen light strikes its own onset; a dark one (no onset within a light of it: p runs to the triple digits, so
+  // a light is narrow on a sparse row) strikes the onset nearest its place within its cell's reach, half a cell either
+  // side, then a whole cell (snap 'cell' | 'cell-wide'), as land() widens a stroke's look (proposed); else silent
+  const struck = [], silent = [], w = 1 / C;
   for (const j of selected) {
-    const { from, to } = cellLights(j, P1, C);
-    if (from >= to) { silent.push({ cell: j, why: 'the cell covers no light (p < cells)' }); continue; }
-    if (L1.lights[from].tick == null) { silent.push({ cell: j, why: `its first light (${from}) found no onset` }); continue; }
-    struck.push({ cell: j, light: from });
+    const light = chosen[j], L = L1.lights[light];
+    if (L.tick != null) { struck.push({ cell: j, light, tick: L.tick, snap: L.snap }); continue; }
+    let on = g.nearest(L.at, L.at - w / 2, L.at + w / 2), snap = 'cell';
+    if (!on) { on = g.nearest(L.at, L.at - w, L.at + w); snap = 'cell-wide'; }
+    if (!on) { silent.push({ cell: j, why: `its light (${light}) found no onset within a cell` }); continue; }
+    struck.push({ cell: j, light, tick: on.tick, snap });
   }
-  let empty = 0, lo = Infinity, hi = 0;
-  for (let j = 0; j < C; j++) { const { from, to } = cellLights(j, P1, C), n = to - from; if (!n) empty++; lo = Math.min(lo, n); hi = Math.max(hi, n); }
-  return { p: P1, cells: C, hits: selected.length, lights: L1.lights, selected, struck, silent, emptyCells: empty, perCell: { min: lo, max: hi } };
+  let lo = Infinity, hi = 0;
+  for (let j = 0; j < C; j++) { const { from, to } = cellLights(j, P1, C, chosen), n = to - from; lo = Math.min(lo, n); hi = Math.max(hi, n); }
+  return { p: P1, drawn: p == null, range: { above: range.above, upTo: range.upTo, primes: range.primes.length }, cells: C, hits: selected.length, lights: L1.lights, chosen, selected, struck, silent, emptyCells: 0, perCell: { min: lo, max: hi } };
 }
 
 /**
@@ -361,7 +414,7 @@ export function gridOf(d) {
  *              'prime'), fills (true), kit: { voice: choice }, seed (the spec's), layer (partition: a layer striking
  *              the downbeat, by name or value), hitsPerBar (partition, prime), perBar: { bar: mode } (a bar's own mode),
  *              grid: { voice: [one string a bar] } (read by bars in mode 'grid', and as the lit cells of 'prime'),
- *              p (prime: level 1's light count, a prime; the prime nearest the cells by default) }
+ *              p (prime: level 1's light count, a prime above the cells; by default a seeded random one, `drawPrime`) }
  * → null for a refusal, else { version, enabled, mode, options, kit, beats, partition, bars: [{ bar, mode, fill, crash,
  *   why }], hits: [{ voice, bar, pos, slot, tick, time, velocity, strikes, snap }], decisions, stats }, and only when a
  *   bar is in mode 'grid' or 'prime': silentCells: [{ bar, voice, place }] (grid cells, and prime cells, no onset
@@ -495,18 +548,20 @@ export function arrangeDrums(spec, options = {}) {
     // the lit cells: the grid's perc row over the prime bars, or Euclid over every cell (each kept if its bar is prime)
     const lit = opt.grid ? [] : null;
     if (lit) for (let k = 0; k < N; k++) if (modes[k] === 'prime') { const line = opt.grid.perc?.[k] || ''; for (let u = 0; u < W; u++) if (line[u] && line[u] !== '.') lit.push(k * W + u); }
-    prime = primePartition(spec, g, { p: opt.p ?? null, hitsPerBar: opt.hitsPerBar, lit });
+    prime = primePartition(spec, g, { p: opt.p ?? null, seed, hitsPerBar: opt.hitsPerBar, lit });
     const accentOf = (cell) => (opt.grid ? opt.grid.perc[Math.floor(cell / W)][cell % W] === 'X' : cell === prime.selected[0]);
     for (const x of prime.silent) if (modes[Math.floor(x.cell / W)] === 'prime') { stats.silent++; silentCells.push({ bar: Math.floor(x.cell / W), voice: 'perc', place: x.cell % W }); }
-    for (const { cell, light } of prime.struck) {
+    for (const { cell, light, tick } of prime.struck) {
       if (modes[Math.floor(cell / W)] !== 'prime') continue;
-      const L1 = prime.lights[light];
-      push({ voice: 'perc', bar: L1.bar, pos: L1.pos, slot: L1.slot, tick: L1.tick, velocity: DRUM_VELOCITY.perc + (accentOf(cell) ? (opt.grid ? GRID_ACCENT.perc : ACCENT) : 0), snap: 'prime', cell, light });
+      const L1 = prime.lights[light].tick === tick ? prime.lights[light] : placeOf(g, g.relOf(tick));
+      push({ voice: 'perc', bar: L1.bar, pos: L1.pos, slot: L1.slot, tick, velocity: DRUM_VELOCITY.perc + (accentOf(cell) ? (opt.grid ? GRID_ACCENT.perc : ACCENT) : 0), snap: 'prime', cell, light });
     }
-    decide('drums.prime', prime.p, `the two-level prime partition: level 1 lights ${prime.p} even places of the cycle from the downbeat, each landed on its nearest onset${opt.p != null ? ' (p asked)' : ` (the prime nearest the ${prime.cells} cells)`}; level 2 reads them as ${prime.cells} even cells (${prime.perCell.min === prime.perCell.max ? prime.perCell.min : `${prime.perCell.min}–${prime.perCell.max}`} light${prime.perCell.max === 1 ? '' : 's'} a cell), ${opt.grid ? `${prime.hits} lit by the grid's perc row` : prime.hits === prime.cells ? 'every cell lit' : `${prime.hits} lit by Partitions' secondary pattern E(${prime.hits}, ${prime.cells}) from the downbeat`}, each striking its first light on the perc${prime.silent.length ? `; ${prime.silent.length} lit cell${prime.silent.length === 1 ? '' : 's'} silent (${prime.silent[0].why})` : ''}`);
+    const darkLanded = prime.struck.filter((x) => x.snap.startsWith('cell')).length, groups = prime.perCell.min === prime.perCell.max ? `${prime.perCell.min}` : `${prime.perCell.min}–${prime.perCell.max}`;
+    decide('drums.prime', prime.p, `the two-level prime partition: level 1 lights ${prime.p} even places of the cycle from the downbeat, each landed on its nearest onset${prime.drawn ? ` (p a seeded random prime above the ${prime.cells} cells, one of the ${prime.range.primes} in ${prime.cells + 1}–${prime.range.upTo})` : ' (p asked)'}; level 2 chooses ${prime.cells} of them by Partitions' own distribution (E(${prime.cells}, ${prime.p}) from the downbeat), a cell each (${groups} light${prime.perCell.max === 1 ? '' : 's'} a cell), ${opt.grid ? `${prime.hits} lit by the grid's perc row` : prime.hits === prime.cells ? 'every cell lit' : `${prime.hits} lit by Partitions' secondary pattern E(${prime.hits}, ${prime.cells}) from the downbeat`}, each striking its light on the perc${darkLanded ? ` (${darkLanded} dark light${darkLanded === 1 ? '' : 's'} landed within ${darkLanded === 1 ? 'its cell' : 'their cells'})` : ''}${prime.silent.length ? `; ${prime.silent.length} lit cell${prime.silent.length === 1 ? '' : 's'} silent (${prime.silent[0].why})` : ''}`);
   }
   decide('drums.kit', { ...opt.kit }, DRUM_VOICES.some((v) => opt.kit[v] !== DEFAULT_KIT[v]) ? 'asked' : 'the made kit of Audio/drums (chunk-tunes\' strokes)');
-  if (opt.mode === 'against' || Object.values(opt.perBar).includes('against')) decide('drums.seed', seed, 'the seed orders the empty slots `against` fills (a generator of its own: Compose\'s draws do not move)');
+  const seedsAgainst = opt.mode === 'against' || Object.values(opt.perBar).includes('against'), seedsPrime = !!prime?.drawn;
+  if (seedsAgainst || seedsPrime) decide('drums.seed', seed, `the seed ${seedsAgainst ? `orders the empty slots \`against\` fills${seedsPrime ? ' and ' : ''}` : ''}${seedsPrime ? 'draws the prime partition\'s p' : ''} (a generator of its own: Compose's draws do not move)`);
 
   // ── one stroke a voice an onset (the louder kept), in time order ──
   const keep = new Map();
