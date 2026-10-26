@@ -202,6 +202,30 @@ class LRCCollider {
     // ====================================
 
     calculateBoundingBox() {
+        // Finite map: once the arena exists, frame the whole arena, plus any chains
+        // still hanging open past the walls in the opening phase
+        const arena = this.battleController.arena;
+        if (arena) {
+            const padding = 20;
+            let minX = arena.minX, maxX = arena.maxX, minY = arena.minY, maxY = arena.maxY;
+            for (const player of this.battleController.players) {
+                if (!player.isAlive || (player.animationPhase !== 'hanging' && player.animationPhase !== 'connecting')) continue;
+                for (const node of player.nodes) {
+                    minX = Math.min(minX, node.x); maxX = Math.max(maxX, node.x);
+                    minY = Math.min(minY, node.y); maxY = Math.max(maxY, node.y);
+                }
+            }
+            minX -= padding; maxX += padding;
+            minY -= padding; maxY += padding;
+            return {
+                minX, maxX, minY, maxY,
+                width: maxX - minX,
+                height: maxY - minY,
+                centerX: (minX + maxX) / 2,
+                centerY: (minY + maxY) / 2
+            };
+        }
+
         let minX = Infinity, maxX = -Infinity;
         let minY = Infinity, maxY = -Infinity;
         let hasNodes = false;
@@ -298,7 +322,9 @@ class LRCCollider {
         this.ctx.save();
         this.ctx.translate(this.camera.x, this.camera.y);
         this.ctx.scale(this.camera.scale, this.camera.scale);
-        
+
+        this.drawArena();
+
         // Draw all players (only if they have rhythm data)
         for (const player of this.battleController.players) {
             if (player.isAlive && player.nodes.length > 0) {
@@ -318,6 +344,21 @@ class LRCCollider {
         this.drawBattleUI(width, height);
     }
     
+    drawArena() {
+        const arena = this.battleController.arena;
+        if (!arena) return;
+
+        // Solid walls for 'bounce', dashed edges for 'wrap'
+        this.ctx.save();
+        this.ctx.strokeStyle = arena.boundaryMode === 'bounce' ? '#555' : '#333';
+        this.ctx.lineWidth = 2 / this.camera.scale;
+        if (arena.boundaryMode !== 'bounce') {
+            this.ctx.setLineDash([12 / this.camera.scale, 8 / this.camera.scale]);
+        }
+        this.ctx.strokeRect(arena.minX, arena.minY, arena.width, arena.height);
+        this.ctx.restore();
+    }
+
     drawSetupIndicators() {
         // Draw corner markers showing where each player will start
         const configs = this.battleController.playerConfigs;
