@@ -330,6 +330,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (f) loadClip(f);
   };
   const DROP_EVENTS = [['dragenter', onDragEnter], ['dragover', onDragOver], ['dragleave', onDragLeave], ['drop', onDrop]];
+  // while the tab is shown, a file dropped just outside the window must not navigate the page to it (proposed)
+  const guardDrop = (e) => { if (isFiles(e)) e.preventDefault?.(); };
 
   // ── the matrix (STEP 4e) ──
   /** the grid of the drums as the mode the entry's grid came from plays them: the "edited" marks' reference */
@@ -936,6 +938,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       claimPlot();
       if (!was) {
         doc.addEventListener?.('keydown', onKey);
+        doc.addEventListener?.('dragover', guardDrop); doc.addEventListener?.('drop', guardDrop);
         plotEl = doc.getElementById?.('partitions-mirror-canvas') ?? null;   // the plot as the window shows it
         plotEl?.addEventListener?.('click', onPlotClick);
         raf(frame);
@@ -946,6 +949,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       shown = false;
       endAnimation(false);
       doc.removeEventListener?.('keydown', onKey);
+      doc.removeEventListener?.('dragover', guardDrop); doc.removeEventListener?.('drop', guardDrop);
       plotEl?.removeEventListener?.('click', onPlotClick); plotEl = null;
       tab.close();
       if (playheadEl) playheadEl.style.display = 'none';

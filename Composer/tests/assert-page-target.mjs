@@ -219,6 +219,8 @@ tab.setSection('cell');
 console.log('\n— a clip dropped on the window; chords reduced (P1); a nameless clip takes the file\'s name');
 dom.fire(left, 'dragenter', { dataTransfer: { types: ['Files'] } });
 check('dragging a file over the window marks it', left.classList.contains('ctab-dropping'));
+const stray = dom.fire(doc, 'drop', { dataTransfer: { types: ['Files'], files: [] }, prevented: false, preventDefault() { this.prevented = true; } });
+check('a file dropped just outside the window (on the page) is caught, so the page never navigates to it', stray.prevented);
 dom.fire(left, 'drop', { dataTransfer: { types: ['Files'], files: [fileOf('twinkle-chords.mid', bytesOf('twinkle-with-chords'))] } }); await settle();
 check(`dropped: Twinkle over block triads, its top line; "chords reduced to their top note: 12 notes dropped" (${text('.ctab-clip-decode')})`, !left.classList.contains('ctab-dropping') && tab.state.input.target.clip.name === 'twinkle-with-chords'
   && /chords reduced to their top note: 12 notes dropped/.test(text('.ctab-clip-decode')) && tab.state.spec.target.clip.notes.length === 14 && !tab.state.input.target.placement && !tab.state.edits.order.length);
