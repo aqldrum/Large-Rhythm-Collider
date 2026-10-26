@@ -58,8 +58,25 @@
 //   audition   (STEP 4e) audition(run) / keepAudition() / revertAudition() / auditioning(): an edit tried live (the
 //              window's alternates); kept, it is one undo step; reverted, the edits AND the undo/redo stacks are as
 //              they were before it (no redo step is left). Auditions in a row are one audition.
+//   target     (MIDI targets, phase B; DESIGN_NOTES "MIDI targets (phase B)") a clip as the composition's lead:
+//                setTarget(bytes | clip | null, { tonic, name })   decoded here (midi.js), placed and composed through
+//                              runCompose (compose.js' `target`: the search runs where Compose runs, P7); null clears it
+//                              (an ordinary Compose again). Setting or clearing one clears the pins, the field and the
+//                              edits (they were another meter's bars; proposed)
+//                setTargetTonic(pc | null)   the 12-way tonic override (P5): placed again, composed
+//                auditionPlacement(i) / keepPlacement() / revertPlacement() / placementAudition()   the search's
+//                              alternates (state.placements.list), auditioned as the matrix's are: composed with that
+//                              placement given (no search), played again from the top if it was playing; kept, it is
+//                              the entry's placement; reverted, the entry is exactly as it was (no re-compose)
+//              `state.input.target` holds the clip (as decoded: no bytes) and its tonic and kept placement, so the
+//              glyph's recall, undo and the store's LRU carry it. A target compose seeds the playback tempo from the
+//              clip's (spec.target.tempoBpm, decided 1/4), and `seedTempo()` is what Reset goes back to. A target spec
+//              takes no lead swaps (P6): `alternatesOf(bar, 'lead')` is null, `swapLead` refuses. The overrides a
+//              target sets itself (compose.js TARGET_SETS: bars, slots per bar, anchors, settle passes, presence) are
+//              left out of its compose. On the lean table a target compose of a row past MAIN_THREAD_ONSETS goes to
+//              the worker anyway (P7), its table kept lean.
 
-import { compose, rearticulate, chooseMeter, PART_IDS } from '../core/compose.js';
+import { compose, rearticulate, chooseMeter, PART_IDS, TARGET_SETS } from '../core/compose.js';
 import { rootCandidates, chooseChordOnRoot, qualityById } from '../core/progression.js';
 import { NOTE_INSTRUMENT_IDS, getInstrument } from '../../Audio/voices/recipes.js';
 import { createPlayer } from './composer-player.js';
@@ -72,6 +89,9 @@ import { ALTERNATE_CAPS } from '../core/trace.js';   // STEP 4a
 import { rearrange, applyRearrange, materialsOf, materialsKey } from '../core/rearrange.js';
 import { barMaterials, resolveSymbols, pinsToField } from '../core/chord-symbols.js';
 import { phrasesOf, isStrongBeat } from '../core/harmony.js';
+// MIDI targets (phase B)
+import { readMidi, decodeClip } from '../core/midi.js';
+import { onsetCount } from '../core/row.js';
 import { orderedEdits, setChordEdit, removeChordEdit, setLeadEdit, removeLeadEdit, sameRecord, hasEdits, snapshotOf, restoreSnapshot, pushUndo, pinOf, asksOf,
   rewriteToken, chordAlternates, leadAlternates, leadAlternatesOf, phraseOfBar } from '../store/composition-edits.js';
 
@@ -111,6 +131,21 @@ export const kitChoices = (voice, base = LAB_SAMPLES_BASE) => [{ value: '', labe
   ...[1, 2, 3, 4].map((i) => ({ value: `${base}${SAMPLE_KINDS[voice]}${i}.wav`, label: `${SAMPLE_KINDS[voice]}${i}.wav` }))];
 export const DRUM_LAB_VOICES = DRUM_VOICES;
 
+/**
+ * MIDI targets (phase B): a clip for setTarget → the clip as decoded (midi.js decodeClip). source: a .mid file's bytes
+ * (Uint8Array, ArrayBuffer or any typed array), or a decoded clip (copied). opts { name: the file's name, for a clip
+ * whose track names none }. Throws midi.js' own errors ("not a MIDI file", "no notes", …).
+ */
+export function readClip(source, { name = null } = {}) {
+  if (source && typeof source === 'object' && Array.isArray(source.notes) && Number.isInteger(source.S)) return JSON.parse(JSON.stringify(source));
+  const bytes = source instanceof Uint8Array ? source : source instanceof ArrayBuffer ? new Uint8Array(source)
+    : ArrayBuffer.isView(source) ? new Uint8Array(source.buffer, source.byteOffset, source.byteLength) : null;
+  if (!bytes) throw new Error('composer: a MIDI clip is a .mid file\'s bytes');
+  const clip = decodeClip(readMidi(bytes));
+  if (name && (!clip.name || clip.name === 'clip')) clip.name = String(name).replace(/\.midi?$/i, '');
+  return clip;
+}
+
 /** layers as typed: a number, blank or 0 (absent) → [a, b, c, d] */
 export function readLayers(values) {
   return [0, 1, 2, 3].map((i) => { const v = Number(values[i]); return Number.isInteger(v) && v > 0 ? v : 0; });
@@ -142,12 +177,17 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   const settled = (st = state) => (!st.spec ? 'idle' : st.spec.refused ? 'refused' : 'ready');
   const touch = () => {
     if (player?.playing) player.stop();
+    placementMarks.delete(state);   // MIDI targets: an input change keeps an auditioned placement
     state.dirty = true;
     if (state.status === 'playing') state.status = settled();
     if (state.status === 'composing') { bump(state); flights.delete(state); state.status = settled(); }   // the answer in flight is for the old input
     changed();
   };
   const sameLayers = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+  // MIDI targets: per state, the placement audition open on it: { snap (the entry before it), index, playing }
+  const placementMarks = new WeakMap();
+  /** new layers: a target's placement (and the search's list) belong to the old row */
+  const dropPlacement = (st) => { if (st.input.target?.placement) { const { placement, ...rest } = st.input.target; st.input.target = rest; } st.placements = null; };
 
   // ── STEP 4d: the edits ──────────────────────────────────────────────────────────────────────────────────────────
   // per composed spec: its row and cells (materialsOf, ~8 ms on the 16k row, once), and the field's bar materials
@@ -166,7 +206,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   function fieldMaterialsOf(st) {
     if (ready(st)) {
       let m = fieldMats.get(st.composed);
-      if (!m) { m = barMaterials(st.composed.input.layers, st.composed.knobs.cycleSeconds, st.composed.knobs, { row: materialsFor(st).row }); fieldMats.set(st.composed, m); }
+      // MIDI targets: a window's cells are cropped, so the spec's own (materialsOf) go in; the knobs alone can't rebuild them
+      if (!m) { const own = materialsFor(st); m = barMaterials(st.composed.input.layers, st.composed.knobs.cycleSeconds, st.composed.knobs, { row: own.row, ...(st.composed.knobs.cut ? { cells: own.cells } : {}) }); fieldMats.set(st.composed, m); }
       return m;
     }
     const knobs = { ...overrides(), seed: st.input.seed }, key = JSON.stringify([st.input.layers, st.input.cycleSeconds, knobs]);
@@ -354,6 +395,33 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     folds.delete(st);
   }
 
+  // ── MIDI targets (phase B) ──────────────────────────────────────────────────────────────────────────────────────
+  const clampTempo = (v) => Math.min(TEMPO_LIMITS[1], Math.max(TEMPO_LIMITS[0], v));
+  /** the playback tempo a compose lands with: a target's clip tempo (decided 1/4), else the spec's own */
+  const seedTempoOf = (spec) => (spec?.target?.tempoBpm > 0 ? clampTempo(spec.target.tempoBpm) : spec.knobs.tempoBpm);
+  /** as a compose lands: a search's placements become the list (current: the best); a compose given its placement
+   *  keeps the list it came from; no target, or a refusal, none */
+  function landPlacements(st, spec) {
+    const t = spec && !spec.refused ? spec.target : null;
+    if (!t || !st.input.target) { st.placements = null; return; }
+    if (t.search || !st.placements) st.placements = { tonic: t.tonic, list: [t.placement, ...(t.alternates ?? [])], current: 0, lanes: t.lanes ?? null };
+  }
+  /** the entry as a placement audition finds it (everything a target compose moves), to put back exactly */
+  const entrySnap = (st) => ({ target: st.input.target, placements: st.placements, spec: st.spec, composed: st.composed, trace: st.trace, parts: st.parts, drums: st.drums,
+    drumOptions: JSON.parse(JSON.stringify(st.drumOptions)), edits: JSON.parse(JSON.stringify(st.edits)), undo: st.undo.slice(), redo: st.redo.slice(), dropped: st.dropped,
+    progression: JSON.parse(JSON.stringify(st.progression)), field: st.field, tempoBpm: st.tempoBpm, lastMs: st.lastMs, dirty: st.dirty, error: st.error, status: settled(st) });
+  /** a compose in flight for this state is dropped (its answer is for another input), as touch() does */
+  const dropFlight = (st) => { if (st.status === 'composing') { bump(st); flights.delete(st); st.status = settled(st); } };
+  /** a new clip, or none: the pins, the field and the edits were another meter's bars (proposed) */
+  function freshTarget(st) {
+    st.progression = []; st.field = null; st.edits = emptyEdits(); st.undo = []; st.redo = []; st.dropped = null;
+    delete st.drumOptions.grid; if (st.drumOptions.mode === 'grid') st.drumOptions.mode = 'backbeat';
+    folds.delete(st); auditions.delete(st); placementMarks.delete(st);
+  }
+  /** a target action's answer once its compose lands */
+  const outcome = (st, spec, extra = {}) => (spec && !spec.refused && st.status !== 'error' ? { ok: true, spec, ...extra }
+    : { ok: false, spec, error: st.status === 'error' ? st.error : spec?.reason ?? 'nothing composed', ...extra });
+
   const api = {
     get state() { return state; },
     onChange(f) { listeners.add(f); return () => listeners.delete(f); },
@@ -371,7 +439,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     },
     /** is a compose in flight for this state (the bound one by default)? */
     composing: (st = state) => st.status === 'composing' && flights.has(st),
-    setLayers(values) { state.input.layers = readLayers(values); state.progression = []; state.field = null; touch(); },
+    setLayers(values) { state.input.layers = readLayers(values); state.progression = []; state.field = null; dropPlacement(state); touch(); },
     /** the rhythm from outside (the main page): { layers, cycleSeconds } → whether it changed. A change goes back to
      *  Compose (and stops playback) exactly as typing it would; new layers clear the progression, a new cycle doesn't. */
     setInput({ layers, cycleSeconds } = {}) {
@@ -379,15 +447,20 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       const newLayers = !sameLayers(L, state.input.layers), newCycle = T !== state.input.cycleSeconds;
       if (!newLayers && !newCycle) return false;
       state.input.layers = L; state.input.cycleSeconds = T;
-      if (newLayers) { state.progression = []; state.field = null; }
+      if (newLayers) { state.progression = []; state.field = null; dropPlacement(state); }
       touch();
       return true;
     },
     setCycle(seconds) { const v = Number(seconds); if (v > 0) state.input.cycleSeconds = v; touch(); },
     setSeed(seed) { state.input.seed = Number.isFinite(Number(seed)) ? Number(seed) : String(seed); touch(); },
-    setKnob(name, value) { if (!KNOBS.includes(name)) throw new Error(`lab: no knob ${name}`); state.knobs[name] = value === '' || value === undefined ? null : value; touch(); },
+    setKnob(name, value) {
+      if (!KNOBS.includes(name)) throw new Error(`lab: no knob ${name}`);
+      state.knobs[name] = value === '' || value === undefined ? null : value;
+      if (name === 'frameCentsEachSide') dropPlacement(state);   // MIDI targets: the frame decides what is in tune, so the clip is placed again
+      touch();
+    },
     setTable(table) { if (table !== 'full' && table !== 'lean') throw new Error(`lab: no table ${table}`); state.table = table; touch(); },
-    loadPreset(i) { const p = PRESETS[i]; state.input.layers = [...p.layers]; state.input.cycleSeconds = p.cycleSeconds; state.progression = []; state.field = null; touch(); },
+    loadPreset(i) { const p = PRESETS[i]; state.input.layers = [...p.layers]; state.input.cycleSeconds = p.cycleSeconds; state.progression = []; state.field = null; dropPlacement(state); touch(); },
     overrides,
     /** may a knob change re-compose by itself? lean only, and only while it is quick */
     canAutoRecompose: () => state.table === 'lean' && state.lastMs != null && state.lastMs < AUTO_RECOMPOSE_MS,
@@ -405,6 +478,14 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       bakePins(st);
       const sent = st.progression.map(pinOf);
       const options = { seed: st.input.seed, overrides: overrides(), worker: st.table === 'full', progression: api.progressionInput() };
+      // MIDI targets (phase B): the clip, its tonic and a kept placement; the overrides the target sets left out; on
+      // the lean table a row past mainThreadOnsets still searches in the worker (P7), its table kept lean
+      const tg = st.input.target ?? null;
+      if (tg) {
+        options.target = { clip: tg.clip, ...(tg.tonic != null ? { tonic: tg.tonic } : {}), ...(tg.placement ? { placement: tg.placement } : {}) };
+        for (const k of TARGET_SETS) delete options.overrides[k];
+        if (!options.worker && onsetCount(st.input.layers) > mainThreadOnsets) { options.worker = true; options.overrides.table = st.table; }
+      }
       // STEP 4a: always ask for the trace, at the alternates' caps (12 chords a bar, 8 runner-up lines a phrase), so the
       // alternates never depend on "show the work"; the show still obeys the setting (it reads state.trace only when on)
       options.trace = { caps: { ...ALTERNATE_CAPS } };
@@ -417,7 +498,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
           st.spec = spec; st.composed = spec; st.lastMs = clock() - t0; st.dirty = false;
           landEdits(st, spec, sent);   // STEP 4d: the edits baked or dropped (decision 5), the undo stack cleared
           if (spec.refused) { st.parts = {}; st.drums = null; st.status = 'refused'; }
-          else { st.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); st.drums = arrangeDrums(spec, st.drumOptions); st.status = 'ready'; st.tempoBpm = spec.knobs.tempoBpm; }
+          else { st.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); st.drums = arrangeDrums(spec, st.drumOptions); st.status = 'ready'; st.tempoBpm = seedTempoOf(spec); }
+          landPlacements(st, spec);   // MIDI targets: the search's list (kept when this compose was given its placement)
         } catch (err) {
           if (mine !== runs.get(st)) return st.spec;
           st.status = 'error'; st.error = String(err && err.message ? err.message : err);
@@ -477,8 +559,11 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     setGlide(ms) { state.glideMs = Math.max(0, Number(ms) || 0); player?.setGlide(state.glideMs / 1000); },   // portamento; no re-render
     /** the spec's own tempo (null without a spec) */
     specTempo: () => (state.spec && !state.spec.refused ? state.spec.knobs.tempoBpm : null),
-    /** the playback tempo, BPM (the spec's own until changed) */
-    tempo: () => (api.specTempo() == null ? null : state.tempoBpm ?? api.specTempo()),
+    /** the tempo a compose seeds playback with, and Reset goes back to: a MIDI target's clip tempo (decided 1/4), else
+     *  the spec's own (null without a spec) */
+    seedTempo: () => (state.spec && !state.spec.refused ? seedTempoOf(state.spec) : null),
+    /** the playback tempo, BPM (the seed until changed) */
+    tempo: () => (api.specTempo() == null ? null : state.tempoBpm ?? api.seedTempo()),
     /** what the player scales spec time by: the spec's tempo / the playback tempo */
     tempoFactor: () => { const s = api.specTempo(), t = api.tempo(); return s && t ? s / t : 1; },
     /** a playback tempo, clamped to TEMPO_LIMITS; live while playing (within the lookahead); no re-render */
@@ -488,8 +573,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       state.tempoBpm = Math.min(TEMPO_LIMITS[1], Math.max(TEMPO_LIMITS[0], v));
       player?.setTimeFactor(api.tempoFactor());
     },
-    /** back to the spec's own tempo */
-    resetTempo() { if (api.specTempo() == null) return; state.tempoBpm = api.specTempo(); player?.setTimeFactor(1); },
+    /** back to the seed tempo (the spec's own; a target's, the clip's) */
+    resetTempo() { if (api.specTempo() == null) return; state.tempoBpm = api.seedTempo(); player?.setTimeFactor(api.tempoFactor()); },
 
     perform() {
       if (!state.spec || state.spec.refused) return;
@@ -519,6 +604,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     },
     /** how many bars the editor shows: the bars knob, else what Compose's meter will choose (0 for a refused row) */
     progressionBars() {
+      if (state.input.target?.clip) return state.input.target.clip.B;   // MIDI targets: the clip's bars
       if (state.knobs.bars != null) return state.knobs.bars;
       const rc = api.rootChoices();
       return rc.refused ? 0 : chooseMeter(rc.onsets, state.input.cycleSeconds, { slotsPerBar: state.knobs.slotsPerBar ?? null }).bars;
@@ -570,7 +656,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     alternatesOf(bar, part = 'chords') {
       if (!ready(state) || !state.trace) return null;
       if (part === 'chords') return chordAlternates(state, bar);
-      if (part === 'lead') { const p = phraseOfBar(state.spec, bar); return p < 0 ? null : leadAlternates(state, p); }
+      if (part === 'lead') { if (state.spec.target) return null; const p = phraseOfBar(state.spec, bar); return p < 0 ? null : leadAlternates(state, p); }   // P6: a target's lead is the clip
       return null;
     },
     /** swap bar k's chord: a trace candidate ({ root: { ratio }, quality }) or { rootTone, quality } (decision 1: the
@@ -596,6 +682,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
      *  the inner re-mined over the whole phrase, in the worker }. Its own line again removes the edit. */
     swapLead(phrase, lineId, { chordsFollow = false, smooth = false } = {}) {
       requireSpec(state);
+      if (state.composed.target) throw new Error('composer: a MIDI target\'s lead is the clip: no lead swaps (P6)');
       const spans = phrasesOf({ bars: state.composed.knobs.bars, slotsPerBar: state.composed.knobs.slotsPerBar });
       if (!(Number.isInteger(phrase) && phrase >= 0 && phrase < spans.length)) throw new Error(`composer: no phrase ${phrase}`);
       if (!state.trace?.lines?.[lineId]) throw new Error(`composer: no line ${lineId} in the trace`);
@@ -779,6 +866,94 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
         st.undo = mark.undo; st.redo = mark.redo;
         return applyEdits(st, { kind: 'revert' });
       });
+    },
+    // ── MIDI targets (phase B; DESIGN_NOTES "MIDI targets (phase B)") ──
+    /**
+     * A clip as the composition's lead: source a .mid file's bytes (or a decoded clip), or null to clear it (an
+     * ordinary Compose again). opts { tonic (a pitch class; null: the clip's key estimate), name (the file's name) }.
+     * A file that won't decode leaves the entry as it was → Promise<{ ok, clip?, spec?, error?, cleared? }>
+     */
+    setTarget(source, { tonic = null, name = null } = {}) {
+      const st = state;
+      if (tonic != null && !(Number.isInteger(tonic) && tonic >= 0 && tonic < 12)) throw new Error(`composer: a tonic is a pitch class 0..11, not ${JSON.stringify(tonic)}`);
+      if (source == null) {
+        if (!st.input.target) return Promise.resolve({ ok: true, noop: true, cleared: true });
+        delete st.input.target; st.placements = null;
+        freshTarget(st); touch();
+        return api.compose().then((spec) => outcome(st, spec, { cleared: true }));
+      }
+      let clip;
+      try { clip = readClip(source, { name }); } catch (err) { return Promise.resolve({ ok: false, error: String(err && err.message ? err.message : err) }); }
+      st.input.target = { clip, tonic }; st.placements = null;
+      freshTarget(st); touch();
+      return api.compose().then((spec) => outcome(st, spec, { clip }));
+    },
+    /** the clip on the bound entry (as decoded), or null */
+    target: () => state.input.target ?? null,
+    /** the tonic override (P5): a pitch class, or null for the clip's key estimate; the clip is placed again */
+    setTargetTonic(tonic) {
+      const st = state, t = st.input.target;
+      if (!t) throw new Error('composer: no MIDI target to set a tonic for');
+      const pc = tonic === '' || tonic == null ? null : Number(tonic);
+      if (pc != null && !(Number.isInteger(pc) && pc >= 0 && pc < 12)) throw new Error(`composer: a tonic is a pitch class 0..11, not ${JSON.stringify(tonic)}`);
+      if (pc === (t.tonic ?? null) && !t.placement && st.spec?.target) return Promise.resolve({ ok: true, noop: true, spec: st.spec });
+      st.input.target = { clip: t.clip, tonic: pc }; st.placements = null;
+      touch();
+      return api.compose().then((spec) => outcome(st, spec, { tonic: pc }));
+    },
+    /** audition the search's placement i (state.placements.list: 0 the best, then the alternates): composed with it
+     *  given, played again from the top when it was playing. Auditions in a row are one: revert goes back to before
+     *  the first → Promise<{ ok, index, spec }> */
+    auditionPlacement(index) {
+      const st = state, list = st.placements?.list;
+      if (!st.input.target || !list) throw new Error('composer: no placements to audition (set a MIDI target first)');
+      if (!(Number.isInteger(index) && index >= 0 && index < list.length)) throw new Error(`composer: no placement ${index}`);
+      let mark = placementMarks.get(st);
+      if (index === st.placements.current && st.status !== 'composing') return Promise.resolve({ ok: true, noop: true, index, spec: st.spec });
+      // playing: it plays on (a compose in flight for an earlier audition counts as playing when that one was)
+      const live = st.status === 'playing' || (st.status === 'composing' && !!mark?.playing);
+      if (!mark) { mark = { snap: entrySnap(st), index: st.placements.current, playing: live }; placementMarks.set(st, mark); }
+      mark.playing = live;
+      dropFlight(st);
+      st.input.target = { ...st.input.target, placement: list[index] };
+      st.placements = { ...st.placements, current: index };
+      mark.index = index;
+      return api.compose().then((spec) => {
+        if (placementMarks.get(st) !== mark || mark.index !== index) return { ok: true, superseded: true, index };
+        if (spec && !spec.refused && mark.playing && st === state && st.status === 'ready') api.perform();
+        return outcome(st, spec, { index });
+      });
+    },
+    /** the placement audition open on the bound entry: { index (auditioned), from (the one before it) } | null */
+    placementAudition() { const m = placementMarks.get(state); return m ? { index: m.index, from: m.snap.placements?.current ?? 0 } : null; },
+    /** keep the auditioned placement: it is the entry's from now on (the best is kept as no placement: the search's
+     *  own) → Promise<{ ok, index }> */
+    keepPlacement() {
+      const st = state, mark = placementMarks.get(st);
+      if (!mark) return Promise.resolve({ ok: false, empty: true });
+      placementMarks.delete(st);
+      const flight = flights.get(st) ?? Promise.resolve(st.spec);
+      return flight.then(() => {
+        if (mark.index === 0 && st.input.target?.placement) { const { placement, ...rest } = st.input.target; st.input.target = rest; }
+        changed(st);
+        return { ok: true, index: mark.index };
+      });
+    },
+    /** take the audition back: the entry exactly as before the first one (no re-compose), playing again if it was */
+    revertPlacement() {
+      const st = state, mark = placementMarks.get(st);
+      if (!mark) return Promise.resolve({ ok: false, empty: true });
+      placementMarks.delete(st);
+      const live = st.status === 'playing' || (st.status === 'composing' && mark.playing);
+      dropFlight(st);
+      if (player?.playing && st === state) player.stop();
+      const x = mark.snap;
+      if (x.target) st.input.target = x.target; else delete st.input.target;
+      Object.assign(st, { placements: x.placements, spec: x.spec, composed: x.composed, trace: x.trace, parts: x.parts, drums: x.drums, drumOptions: x.drumOptions, edits: x.edits,
+        undo: x.undo, redo: x.redo, dropped: x.dropped, progression: x.progression, field: x.field, tempoBpm: x.tempoBpm, lastMs: x.lastMs, dirty: x.dirty, error: x.error, status: x.status });
+      folds.delete(st); auditions.delete(st);
+      if (live && st.spec && !st.spec.refused) api.perform(); else changed(st);
+      return Promise.resolve({ ok: true, index: x.placements?.current ?? 0 });
     },
     get player() { return player; },
     get context() { return ctx; },

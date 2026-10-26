@@ -44,6 +44,16 @@
 //              ratio form; a Compose bakes the chord edits in here as { ratio, quality })
 // A new cycle of the same row carries the chord edits as pins (into `progression`), the typed field and the drum
 // grid (the controller drops it on its next Compose if the meter moved); never the lead edits (decision 5).
+//
+// MIDI targets (phase B; DESIGN_NOTES "MIDI targets (phase B)"; the controller acts on these, the store only holds them):
+//   input.target  { clip (midi.js decodeClip, as decoded: no bytes), tonic (a pitch class, or null: the clip's key
+//                 estimate), placement? (a kept alternate placement; absent: the search's best) }, absent with no
+//                 target. It is the entry's INPUT, so the glyph's recall, undo (the edits apply over the target's
+//                 spec) and the LRU carry it with the rest of the entry.
+//   placements    the last search's answer, for the window's alternates: { tonic, list: [best, …alternates]
+//                 (target.js placements), current (the index playing), lanes } | null. A compose with a placement
+//                 given (an alternate auditioned or kept) doesn't search, so it keeps the list.
+// A new cycle of the same row carries both (proposed: a placement is the row's, its phase a share of the cycle).
 
 import { PART_IDS } from '../core/compose.js';
 import { DEFAULT_KIT } from '../core/drums.js';
@@ -80,6 +90,8 @@ export function newCompositionState({ layers = [0, 0, 0, 0], cycleSeconds = 10, 
     progression: [], trace: null,
     // STEP 4d
     composed: null, edits: emptyEdits(), field: null, undo: [], redo: [], dropped: null,
+    // MIDI targets (phase B): the last search's placements (input.target, when set, holds the clip)
+    placements: null,
   };
 }
 
@@ -99,6 +111,9 @@ function inheritEdits(to, from) {
   to.field = copy(from.field ?? null);
   to.levels = { ...from.levels };
   to.glideMs = from.glideMs;
+  // MIDI targets (phase B): the clip, its tonic and a kept placement, and the search's list (proposed)
+  if (from.input.target) to.input.target = copy(from.input.target);
+  to.placements = copy(from.placements ?? null);
   return to;
 }
 
