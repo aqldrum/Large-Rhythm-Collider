@@ -41,6 +41,10 @@ class BattleController {
         // The finite arena replaces it, so it is off by default.
         this.centerGravity = false;
 
+        // Experimental: bodies can't pass through themselves (see ColliderPlayer
+        // SELF-COLLISION). Off by default.
+        this.selfCollision = false;
+
         // Natural rebound (GRIDLOCK model): bodies separate along the contact
         // direction instead of following the striking layer's force heading. As in
         // the original, its strength is proportional to the striker's pulse force,

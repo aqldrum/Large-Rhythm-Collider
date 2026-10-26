@@ -3,6 +3,11 @@ class ColliderPlayer {
     // straight line is eliminated.
     static MIN_VERTICES = 3;
 
+    // Experimental self-collision (BattleController.selfCollision)
+    static SELF_COLLISION_MARGIN = 0.5;      // px a node is kept off its own segments
+    static SELF_COLLISION_RESTITUTION = 0.5; // share of closing speed a node rebounds with
+    static SELF_COLLISION_ROUNDS = 3;        // push-back / constraint alternations per frame
+
     constructor(playerId, startX, startY, color) {
         this.playerId = playerId;
         this.color = color;
@@ -656,6 +661,12 @@ class ColliderPlayer {
                 break;
         }
 
+        // Experimental self-collision: remember where every node started the frame
+        const selfCollide = this.isSelfCollisionActive();
+        if (selfCollide) {
+            this.selfCollisionStart = this.nodes.map(node => ({ x: node.x, y: node.y }));
+        }
+
         if (shouldApplyPhysics) {
             if (allowForces) {
                 this.updateRhythmicProgression();
@@ -684,6 +695,180 @@ class ColliderPlayer {
                 this.tensionStrength = originalStrength;
             }
         }
+
+        // Self-collision runs alongside the length constraints: push back any
+        // crossing, let the constraints settle, and repeat, ending on a push-back
+        if (selfCollide) {
+            for (let round = 0; round < ColliderPlayer.SELF_COLLISION_ROUNDS; round++) {
+                if (this.resolveSelfCollisions() === 0) break;
+                for (let i = 0; i < 5; i++) this.constrainSegments();
+            }
+            // A push-back moves the edge's ends, which can shove an already-checked
+            // node across another edge, so finish with passes until it comes up clean
+            for (let pass = 0; pass < ColliderPlayer.SELF_COLLISION_ROUNDS + 1; pass++) {
+                if (this.resolveSelfCollisions() === 0) break;
+            }
+        }
+    }
+
+    // ====================================
+    // SELF-COLLISION (experimental)
+    // ====================================
+    //
+    // Keeps a body from passing through itself: a node pushed across one of its
+    // own segments is put back on its side and rebounds. Crossings are found by
+    // which side of each segment a node was on at the start of the frame (the
+    // cloth-simulation approach), which also catches nodes moving fast enough to
+    // jump a segment in one frame. Because that preserves whatever shape the loop
+    // already has, it only arms once the body is an untangled loop, and disarms
+    // whenever a hit rebuilds the structure.
+
+    isSelfCollisionActive() {
+        if (!this.parent?.battleController?.selfCollision) return false;
+        if (this.animationPhase !== 'settling' || this.isInvulnerable) return false;
+
+        // Arm on an untangled loop. If a crossing slipped through anyway, disarm
+        // rather than preserve it, and re-arm once the body untangles.
+        const simple = this.isSimpleLoop();
+        if (this.selfCollisionArmed && !simple) {
+            this.selfCollisionLeaks = (this.selfCollisionLeaks || 0) + 1;
+        }
+        this.selfCollisionArmed = simple;
+        return simple;
+    }
+
+    // The loop's edges for self-collision: every real segment. The closing segment
+    // only joins the end node to the anchor it sits on, so it is skipped, and the
+    // two nodes it joins count as one ("glued").
+    getSelfCollisionEdges() {
+        const edges = [];
+        let glued = null;
+        for (const segment of this.segments) {
+            if (!this.nodes[segment.nodeA] || !this.nodes[segment.nodeB]) continue;
+            if (segment.spaceIndex === -1) glued = [segment.nodeA, segment.nodeB];
+            else edges.push([segment.nodeA, segment.nodeB]);
+        }
+        const same = (i, j) => i === j || (glued !== null &&
+            ((i === glued[0] && j === glued[1]) || (i === glued[1] && j === glued[0])));
+        const touches = (node, [a, b]) => same(node, a) || same(node, b);
+        return { edges, glued, touches };
+    }
+
+    // True when no two non-adjacent edges cross (the loop is untangled)
+    isSimpleLoop() {
+        const { edges, touches } = this.getSelfCollisionEdges();
+        const orient = (p, q, r) => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+        for (let i = 0; i < edges.length; i++) {
+            const p1 = this.nodes[edges[i][0]], p2 = this.nodes[edges[i][1]];
+            for (let j = i + 1; j < edges.length; j++) {
+                if (touches(edges[j][0], edges[i]) || touches(edges[j][1], edges[i])) continue;
+                const q1 = this.nodes[edges[j][0]], q2 = this.nodes[edges[j][1]];
+                if (orient(p1, p2, q1) * orient(p1, p2, q2) < 0 &&
+                    orient(q1, q2, p1) * orient(q1, q2, p2) < 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // Find every node that crossed (or came within the margin of) one of its own
+    // segments since the start of the frame, and resolve it. Returns the count.
+    resolveSelfCollisions() {
+        const start = this.selfCollisionStart;
+        if (!start || start.length !== this.nodes.length) return 0;
+
+        const { edges, touches } = this.getSelfCollisionEdges();
+        const margin = ColliderPlayer.SELF_COLLISION_MARGIN;
+        let resolved = 0;
+
+        for (let v = 0; v < this.nodes.length; v++) {
+            const p = this.nodes[v], p0 = start[v];
+
+            for (const edge of edges) {
+                if (touches(v, edge)) continue;
+                const [ia, ib] = edge;
+                const a = this.nodes[ia], b = this.nodes[ib];
+                const a0 = start[ia], b0 = start[ib];
+
+                // Cheap reject: the node's path and the edge's swept area don't meet
+                if (Math.max(p.x, p0.x) < Math.min(a.x, a0.x, b.x, b0.x) - margin ||
+                    Math.min(p.x, p0.x) > Math.max(a.x, a0.x, b.x, b0.x) + margin ||
+                    Math.max(p.y, p0.y) < Math.min(a.y, a0.y, b.y, b0.y) - margin ||
+                    Math.min(p.y, p0.y) > Math.max(a.y, a0.y, b.y, b0.y) + margin) continue;
+
+                // Position across and along the edge, at frame start and now
+                const before = this.edgeCoordinates(p0, a0, b0);
+                const now = this.edgeCoordinates(p, a, b);
+                if (!before || !now || before.across === 0) continue;
+                const side = Math.sign(before.across);
+                const distanceBefore = side * before.across;
+                const distanceNow = side * now.across;
+                if (distanceNow >= margin) continue;
+
+                // Where along the edge the node reached the margin: it must be
+                // within the edge's span, or it went round the end, not through
+                const reach = distanceBefore <= margin ? 0 :
+                    (distanceBefore - margin) / (distanceBefore - distanceNow);
+                const along = before.along + reach * (now.along - before.along);
+                if (along < 0 || along > 1) continue;
+
+                this.pushBackAcrossEdge(p, a, b, now, side, margin);
+                resolved++;
+            }
+        }
+
+        this.selfCollisionHits = (this.selfCollisionHits || 0) + resolved;
+        return resolved;
+    }
+
+    // Node p relative to edge a→b: `along` 0..1 over the edge, `across` its signed
+    // distance from the edge's line, plus the edge's unit normal
+    edgeCoordinates(p, a, b) {
+        const ex = b.x - a.x, ey = b.y - a.y;
+        const length = Math.hypot(ex, ey);
+        if (length < 1e-9) return null;
+        const rx = p.x - a.x, ry = p.y - a.y;
+        return {
+            along: (rx * ex + ry * ey) / (length * length),
+            across: (ex * ry - ey * rx) / length,
+            normal: { x: -ey / length, y: ex / length }
+        };
+    }
+
+    // Put node p back on its side of edge a-b (at the margin) and make it rebound.
+    // The correction is shared between the node and the edge's two ends in
+    // proportion to where it touched, so it adds no momentum to the body: a body
+    // can't push itself along by colliding with itself. Pinned nodes don't move.
+    pushBackAcrossEdge(p, a, b, coords, side, margin) {
+        const t = Math.max(0, Math.min(1, coords.along));
+        const nx = coords.normal.x * side, ny = coords.normal.y * side;
+        const wp = p.pinned ? 0 : 1, wa = a.pinned ? 0 : 1, wb = b.pinned ? 0 : 1;
+        const share = wp + wa * (1 - t) * (1 - t) + wb * t * t;
+        if (share === 0) return;
+
+        // Position: move along the normal so the gap returns to the margin. The
+        // previous positions move too, so the correction isn't read as velocity.
+        const gap = margin - side * coords.across;
+        const move = (node, amount) => {
+            node.x += nx * amount; node.y += ny * amount;
+            node.oldX += nx * amount; node.oldY += ny * amount;
+        };
+        move(p, gap * wp / share);
+        move(a, -gap * wa * (1 - t) / share);
+        move(b, -gap * wb * t / share);
+
+        // Velocity: reverse the closing speed along the normal, scaled by the
+        // restitution, with the same sharing
+        const vx = (node) => node.x - node.oldX, vy = (node) => node.y - node.oldY;
+        const closing = (vx(p) - (1 - t) * vx(a) - t * vx(b)) * nx +
+                        (vy(p) - (1 - t) * vy(a) - t * vy(b)) * ny;
+        if (closing >= 0) return;
+        const impulse = -(1 + ColliderPlayer.SELF_COLLISION_RESTITUTION) * closing / share;
+        const kick = (node, amount) => { node.oldX -= nx * amount; node.oldY -= ny * amount; };
+        kick(p, impulse * wp);
+        kick(a, -impulse * wa * (1 - t));
+        kick(b, -impulse * wb * t);
     }
 
     startConnectionPhase() {
@@ -1527,7 +1712,11 @@ class ColliderPlayer {
 
     rebuildStructureAfterFusion(destroyedSpaceIndex) {
         console.log(`🔄 REBUILDING STRUCTURE: ${this.nodes.length} nodes, ${this.spacesPlot.length} spaces`);
-        
+
+        // Fusion can leave the loop crossed: self-collision re-arms once it's untangled
+        this.selfCollisionArmed = false;
+        this.selfCollisionStart = null;
+
         // STEP 1: Rebuild segments to match new spaces plot
         this.segments = [];
         
@@ -1841,6 +2030,10 @@ class ColliderPlayer {
         this.pulseLayers = null;
         this.targetPlayerId = null;
         this.driftCache = null;
+        this.selfCollisionArmed = false;
+        this.selfCollisionStart = null;
+        this.selfCollisionHits = 0;
+        this.selfCollisionLeaks = 0;
         
         // Clear reconnection data
         this.reconnectionData = null;
