@@ -128,3 +128,17 @@ To be filled in at the end of phase B, from what was built.
 ## Log
 
 - 2026-10-26: order written; rulings 1–8 from Avery (this session); P1–P7 proposed. Phase A dispatched.
+- 2026-10-26: **phase A built** on `target/core` (A1–A4; "MIDI targets (phase A)" in `DESIGN_NOTES.md` has the detail).
+  - **Built:** `core/midi.js` (+ `dropped`, `tempoBpm`); `core/target.js` (`placeClip`, `laneReport`, `targetRoot`, `registerOf`, the probe's vote/refine/lattices); `cells.js` `cropCells`; harmony.js' pinned lead (`lead: { notes }`); Compose's `target` option (window cells, pinned lead with `endTime` note-offs, loop knobs, `spec.target`); `partContext` `rowCycleSeconds`; drums on a window; `materialsOf`/`materialsKey` with `knobs.cut`; no lead swap on a target (P6). `tests/assert-target.mjs` (46 checks) + `tests/fixtures/midi-clips.mjs`. Identity holds; every suite passes.
+  - **Measured** (`placeClip`, warm, M4 Max): 8:7:6:5 FJ 5 ms / Ode 3 ms; 768:769 553 / 257 ms; 2047:2048 955 / 459 ms; 275:1144:1260:234 41 / 27 ms; **4099:4093:4091:4079 187 / 148 ms** (was 4.4–9.7 s). A whole target compose on the 16k row ~0.3 s. Search best = probe best 108/108; = brute force 28/28; engine = search on all 108.
+  - **Calls the order didn't cover (proposed):**
+    1. **Drift ranks after hits, before tight hits** (hits, least drift, tight, cost; materialized: hits, least drift, note-off hits, tight, cost). P3's list puts tight hits before drift, which would let a phrase drift for timing alone against its own "drifts only when that gains notes". With this, drift fires only when it gains notes (4 cases in a scan of `rhythms.mjs` × Frère Jacques and Greensleeves; e.g. Greensleeves on 426:317:285, 18 → 19 at 6.4¢).
+    2. **Compose's own windows for the parts, not swing ½.** The order says swing ½ for the composition's cells; on the 16k row that put ~250 onsets in a slot and the bass/inner miners took 30 s. The anchors, slots and window are the placement's; the lead is pinned by node and needs no window. Swing ½ stays the search's and the placement's.
+    3. **A shift** stays inside the window, lands strictly between its sounding neighbours, and never on a slot another sounding note holds.
+    4. **Note-offs run on the loop** (circular, the window's onsets plus slot 0's pre-anchor ones): the last note's "next note" is the first, and an off is clamped to the next note-on (marked late when it had to be).
+    5. **Overrides a target sets** (`TARGET_SETS`: bars, slotsPerBar, anchors, phase, root, presence, settlePasses) are refused; a clip over 32 steps a bar is refused as `targetGrid`.
+    6. **`leader: 'target'`**; a progression under a clip gives `progression`/`mixed` as usual. **`beatsPerBar`** is the time signature's numerator (6/8 → 6). The drums still cut every bar in 4 beats (3/4 not yet honoured there).
+    7. **Chord names stay relative to C** (the root named C, as every composition): naming from the clip's tonic would move the typed progression's reading; left for B or later.
+    8. **`spec.target` also carries** `tonic`, `tonicAsked`, `maxDriftCents`, `lanes`, `alternates` (when Compose placed it) and `search: { ms, barCounts, stoppedAt }`; lead notes carry `endTime` and `clipNote`.
+    9. **The one clock read in core:** `placeClip`'s `ms` (globalThis.performance), which steers nothing.
+  - **Open:** rows with no full fit search every N (~1 s on 2047:2048); the skyline is the probe's (highest note at each start), so a lower note starting under a held higher one still enters the line; nothing seen in a browser yet.
