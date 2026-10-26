@@ -33,6 +33,13 @@
 //   seed       only `against` draws (a seeded generator of its own per bar, `${seed}/drums/${bar}`: STEP 4d), so the
 //              drums never move a draw Compose makes for the other parts, and an edit to one bar never re-draws another.
 //
+// A window (MIDI targets, phase A3: a spec whose knobs carry `cut`, the cycle cropped to the clip's bars): the drums'
+// cycle is the LOOP, W of the row's (W = knobs.cycleSeconds / knobs.rowCycleSeconds). Places run over [0, W) from the
+// downbeat, the landing searches the row's onsets around them as always, and a stroke's time is its LOOP time: an onset
+// just before the downbeat sounds at the loop's end, one just past the window's end at the loop's start. The partition
+// layer counts its pulses inside the window, and the prime partition spreads its lights over the window (proposed).
+// Without `cut` (W = 1) every expression here is the one it was.
+//
 // The partition layer, single level. Partitions' grid mode cuts the whole cycle from tick 0 in P blocks (P chosen per
 // layer, up to the grid) and its secondary count lights an Euclidean subset of them (getSecondaryAllowedSet). Here the
 // cycle starts at the composition's downbeat, the phase, which is one of the root's onsets, not tick 0: the layer is
@@ -115,26 +122,31 @@ export function beatsOf(S) {
 
 /**
  * The composition's time grid and its onsets, from the spec alone.
- * → { T, N, S, P, grid, phase, phaseX, layers: [{ layer, name, value, step }], starts (relative slot starts),
- *     barStarts, relOf(tick), rAt(g), nearest(r, lo, hi), strikesAt(tick) }
- *   r   a place in the cycle relative to the downbeat, as a share of the cycle (may run past [0, 1) at the ends)
+ * → { T, rowT, W, N, S, P, grid, phase, phaseX, layers: [{ layer, name, value, step }], starts (relative slot starts),
+ *     barStarts, relOf(tick), timeOf(tick), rAt(g), nearest(r, lo, hi), strikesAt(tick) }
+ *   r   a place in the cycle relative to the downbeat, as a share of the row's cycle (may run past [0, W) at the ends)
+ *   W   the loop's share of the row's cycle: 1, or a window's (knobs.cut)
  *   g   a place in slot units over the cycle (slot k's anchor is k; may run past [0, P))
  */
 export function drumGrid(spec) {
   const { knobs, input, stats, timeline } = spec;
   const T = knobs.cycleSeconds, N = knobs.bars, S = knobs.slotsPerBar, P = N * S, grid = stats.grid;
+  const rowT = knobs.rowCycleSeconds ?? T, W = knobs.cut ? T / rowT : 1;
   if (!(Number.isSafeInteger(grid) && grid >= 1)) fail(`bad grid ${grid}`);
   const [pn, pd] = knobs.phase, phaseX = pn / pd;
   const layers = [];
   input.layers.forEach((v, i) => { if (v > 0) layers.push({ layer: i, name: LAYER_NAMES[i], value: v, step: grid / v }); });
-  const starts = timeline.slotStarts.map((s) => s / T), barStarts = timeline.barStarts.map((s) => s / T);
+  const starts = timeline.slotStarts.map((s) => s / rowT), barStarts = timeline.barStarts.map((s) => s / rowT);
   if (starts.length !== P) fail(`the timeline has ${starts.length} slots, not ${P}`);
   // the very expression compose.js times a note by, so a stroke on a note's onset sounds with it
   const relOf = (tick) => mod(tick / grid - phaseX, 1);
+  /** a stroke's time on the loop: before the downbeat → the loop's end, past the window's end → the loop's start */
+  const timeOf = W === 1 ? (tick) => relOf(tick) * T
+    : (tick) => { const u = relOf(tick); return u < W ? u * rowT : u > (1 + W) / 2 ? T - (1 - u) * rowT : (u - W) * rowT; };
   const rAt = (g) => {
     const w = Math.floor(g / P), h = g - w * P, k = Math.min(P - 1, Math.floor(h)), frac = h - k;
-    const a = starts[k], b = k + 1 < P ? starts[k + 1] : 1;
-    return w + a + frac * (b - a);
+    const a = starts[k], b = k + 1 < P ? starts[k + 1] : W;
+    return w * W + a + frac * (b - a);
   };
   const strikesAt = (tick) => { let n = 0, owners = 0; for (const L of layers) if (tick % L.step === 0) { n++; owners |= 1 << L.layer; } return { strikes: n, owners }; };
   /** the onset nearest r with lo < its place ≤ hi: { tick, d } (d its signed distance from r), or null */
@@ -151,14 +163,14 @@ export function drumGrid(spec) {
     }
     return best;
   };
-  return { T, N, S, P, grid, phase: [pn, pd], phaseX, layers, starts, barStarts, relOf, rAt, strikesAt, nearest };
+  return { T, rowT, W, N, S, P, grid, phase: [pn, pd], phaseX, layers, starts, barStarts, relOf, timeOf, rAt, strikesAt, nearest };
 }
 
 /** the bar a relative place falls in, and its place in slot units inside it */
 function placeOf(g, r) {
   let j = 0, lo = 0, hi = g.P - 1;
   while (lo <= hi) { const mid = (lo + hi) >> 1; if (g.starts[mid] <= r + EPS) { j = mid; lo = mid + 1; } else hi = mid - 1; }
-  const next = j + 1 < g.P ? g.starts[j + 1] : 1, bar = Math.floor(j / g.S);
+  const next = j + 1 < g.P ? g.starts[j + 1] : g.W, bar = Math.floor(j / g.S);
   return { bar, slot: j, pos: (j - bar * g.S) + (next > g.starts[j] ? (r - g.starts[j]) / (next - g.starts[j]) : 0) };
 }
 
@@ -245,14 +257,14 @@ export function gridShape(g) { const m = beatsOf(g.S).m; return { m, places: g.S
  */
 export function primeLights(g, p) {
   if (!isPrime(p)) fail(`the prime partition's p must be a prime, not ${p}`);
-  const out = [], w = 1 / p;
+  const out = [], w = g.W / p;
   for (let i = 0; i < p; i++) {
-    const at = i / p;
+    const at = (i / p) * g.W;
     let on = g.nearest(at, at - w / 2, at + w / 2), snap = 'light';
     if (!on) { on = g.nearest(at, at - w, at + w); snap = 'wide'; }
     if (!on) { out.push({ i, at, tick: null, time: null, r: null, bar: null, pos: null, slot: null, snap: null }); continue; }
     const r = g.relOf(on.tick), where = placeOf(g, r);
-    out.push({ i, at, tick: on.tick, time: r * g.T, r, bar: where.bar, pos: where.pos, slot: where.slot, snap });
+    out.push({ i, at, tick: on.tick, time: g.timeOf(on.tick), r, bar: where.bar, pos: where.pos, slot: where.slot, snap });
   }
   return out;
 }
@@ -277,7 +289,8 @@ export function levelOneLights(g, { source = 'layer', layer, p = null, seed = 1 
   if (source !== 'layer') fail(`no partition source ${JSON.stringify(source)} (${PARTITION_SOURCES.join(', ')})`);
   const L = g.layers.find((x) => x.layer === layer.layer);
   if (!L) fail(`layer ${layer.name} is not in the rhythm`);
-  return { source, count: L.value, tickAt: (i) => mod(layer.pulse + i, L.value) * L.step };
+  // a window counts the layer's pulses inside it, from the downbeat's
+  return { source, count: g.W === 1 ? L.value : Math.max(1, Math.ceil(g.W * L.value - 1e-9)), tickAt: (i) => mod(layer.pulse + i, L.value) * L.step };
 }
 
 /**
@@ -301,7 +314,7 @@ export function primePartition(spec, g = drumGrid(spec), { p = null, seed = spec
   // a chosen light strikes its own onset; a dark one (no onset within a light of it: p runs to the triple digits, so
   // a light is narrow on a sparse row) strikes the onset nearest its place within its cell's reach, half a cell either
   // side, then a whole cell (snap 'cell' | 'cell-wide'), as land() widens a stroke's look (proposed); else silent
-  const struck = [], silent = [], w = 1 / C;
+  const struck = [], silent = [], w = g.W / C;
   for (const j of selected) {
     const light = chosen[j], L = L1.lights[light];
     if (L.tick != null) { struck.push({ cell: j, light, tick: L.tick, snap: L.snap }); continue; }
@@ -328,7 +341,7 @@ export function partitionLine(spec, g = drumGrid(spec), { layer = null, hitsPerB
     pick = owners.find((o) => o.name === layer || o.value === layer);
     if (!pick) fail(`layer ${layer} does not strike the downbeat (${owners.map((o) => `${o.name} ${o.value}`).join(', ')} do)`);
   } else {
-    const off = (o) => Math.abs(o.value / g.N - g.S);
+    const off = (o) => Math.abs((o.value * g.W) / g.N - g.S);
     pick = owners.reduce((a, b) => (off(b) < off(a) - EPS || (Math.abs(off(b) - off(a)) <= EPS && b.value < a.value) ? b : a));
   }
   const lights = levelOneLights(g, { source: 'layer', layer: pick });
@@ -426,7 +439,7 @@ export function gridOf(d) {
  */
 export function arrangeDrums(spec, options = {}) {
   if (!spec || spec.refused) return null;
-  const opt = readDrumOptions(options), g = drumGrid(spec), { N, S, P, T } = g;
+  const opt = readDrumOptions(options), g = drumGrid(spec), { N, S, P } = g;
   // STEP 4d: `against` draws from a generator of its bar's own (`${seed}/drums/${bar}`), so an edit to one bar (a chord
   // swap rebuilds its comping) never re-draws a later bar's strokes; before 4d one generator ran in bar order
   const seed = opt.seed ?? spec.input?.seed ?? 1, rngOfBar = (k) => seeded(`${seed}/drums/${k}`);
@@ -440,7 +453,7 @@ export function arrangeDrums(spec, options = {}) {
     : `${S} slot${S === 1 ? '' : 's'} a bar is under 4 beats: cut on 1/${m} slots (${beats.sizes.map((s) => `${s}/${m}`).join(', ')}), a beat between anchors landing on a real onset inside its slot`);
 
   const hits = [], stats = { silent: 0, wide: 0 }, silentCells = [];
-  const push = (hit) => { const s = g.strikesAt(hit.tick); hits.push({ ...hit, time: g.relOf(hit.tick) * T, velocity: Math.min(1, hit.velocity + STRIKE_ACCENT * Math.max(0, s.strikes - 1)), strikes: s.strikes }); };
+  const push = (hit) => { const s = g.strikesAt(hit.tick); hits.push({ ...hit, time: g.timeOf(hit.tick), velocity: Math.min(1, hit.velocity + STRIKE_ACCENT * Math.max(0, s.strikes - 1)), strikes: s.strikes }); };
   /** a stroke at place q (slot units) of bar `bar`, landed on the onset nearest it */
   const land = (voice, bar, q, velocity, cell = false) => {
     const gq = bar * S + q, r = g.rAt(gq);

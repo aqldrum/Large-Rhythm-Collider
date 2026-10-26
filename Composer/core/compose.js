@@ -54,14 +54,16 @@
 // is byte-identical to the one composed with the trace off, and off (the default) nothing of it runs.
 
 import { buildRow, toneGate, isRow, ONSET_GATE, MIN_TONES } from './row.js';
-import { buildCells, ANCHOR_MODES } from './cells.js';
-import { defaultRoot, toneIndexOf, classOfCents, clusterPresence, PRESENCE_MODES, DEFAULT_FRAME_CENTS_EACH_SIDE } from './frame.js';
-import { mineLines, downbeats, TABLES } from './lines.js';
+import { buildCells, cropCells, ANCHOR_MODES } from './cells.js';
+import { defaultRoot, toneIndexOf, classOfCents, clusterPresence, frameAt, PRESENCE_MODES, DEFAULT_FRAME_CENTS_EACH_SIDE } from './frame.js';
+import { mineLines, downbeats, TABLES, MAX_SLOTS } from './lines.js';
 import { harmonize, phrasesOf, isStrongBeat, DEFAULT_SETTLE_PASSES, MAX_SETTLE_PASSES } from './harmony.js';
 import { getInstrument } from '../../Audio/voices/recipes.js';
 import { readProgression, harmonyPins, describeProgression } from './progression.js';
 import { arrangeDrums } from './drums.js';
 import { createTrace, refusedTrace, traceCapsOf } from './trace.js';
+import { placeClip, targetRoot, registerOf, DEFAULTS as TARGET_DEFAULTS } from './target.js';
+import { pcName } from './midi.js';
 
 export const COMPOSER_SPEC_VERSION = 'composer-spec-v1';
 export const BEATS_PER_BAR = 4;
@@ -76,6 +78,9 @@ export const LEAD_TARGET_HZ = Math.sqrt(440 * 660);
 const REGISTER = Object.freeze({ inner: -1200, bass: -2400, chords: -1200 });
 const COMP_SHARE = Object.freeze([0.25, 0.5]);
 const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses']);
+/** MIDI targets: the overrides a target sets itself (the meter, the phase and the cells from the placement, the root from the tonic, the lead pinned) */
+export const TARGET_SETS = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'root', 'presence', 'settlePasses']);
+
 
 const EPS = 1e-9;
 const mod = (v, n) => ((v % n) + n) % n;
@@ -124,13 +129,14 @@ export const isStruck = (sound) => getInstrument(sound)?.roles?.note?.amp?.kind 
 /**
  * Times and lengths for one voice's notes (each with `time` and `slotSeconds`), in place, in time order:
  * legato on, a note holds until the next; off, it lasts its slot or the gap to the next if shorter; the last runs
- * to the cycle's end. A note retriggers unless the voice is legato on a held sound and it is not the first.
+ * to the cycle's end. A note with its own `endTime` (a MIDI target's lead: its note-off onset, P4) lasts until then,
+ * whatever the legato. A note retriggers unless the voice is legato on a held sound and it is not the first.
  */
 export function articulate(notes, { legato, struck, cycleSeconds }) {
   notes.sort((a, b) => a.time - b.time || a.node - b.node);
   notes.forEach((n, i) => {
     const gap = (i + 1 < notes.length ? notes[i + 1].time : cycleSeconds) - n.time;
-    n.duration = Math.max(0, legato ? gap : Math.min(n.slotSeconds, gap));
+    n.duration = Math.max(0, n.endTime != null ? n.endTime - n.time : legato ? gap : Math.min(n.slotSeconds, gap));
     n.retrigger = !legato || struck || i === 0;
   });
   return notes;
@@ -158,33 +164,41 @@ export function rearticulate(part, { sound = part.sound, legato = part.legato, e
 /**
  * The geometry every part is read through: the cycle's time from the phase, each onset's slot and bar, the slots' onsets
  * in time order (built on first use), and the chord-class test.
- *   opts { cycleSeconds, phase ([num, den]: bar 1's downbeat), frameCentsEachSide }
- * → { row, cells, T, S, N, P, e, phaseX, timeOf, slotSeconds, starts, posSlot, inBar, inSlot, pitchAtLeast, chordClass }
+ *   opts { cycleSeconds, phase ([num, den]: bar 1's downbeat), frameCentsEachSide,
+ *          rowCycleSeconds (MIDI targets: the row's cycle when the cells are cropped to a window, cells.js `cropCells`;
+ *          `cycleSeconds` is then the LOOP, the window's span) }
+ * → { row, cells, T, rowT, S, N, P, e, phaseX, timeOf, slotSeconds, starts, posSlot, inBar, inSlot, pitchAtLeast, chordClass }
+ * Cropped cells (a window): an onset inside the window sounds at its own time on the row's cycle; one before the window's
+ * first anchor that slot 0's window holds sounds at the loop's end (as one before the cycle's first anchor sounds at the
+ * cycle's end), in the last slot; any other onset outside the window is in no slot (posSlot −1) and no bar.
  */
-export function partContext(row, cells, { cycleSeconds: T, phase, frameCentsEachSide: e }) {
+export function partContext(row, cells, { cycleSeconds: T, phase, frameCentsEachSide: e, rowCycleSeconds: rowT = T }) {
   const S = cells.slotsPerBar, N = cells.bars, P = N * S, phaseX = phase[0] / phase[1];
-  const timeOf = (tick) => mod(tick / row.grid - phaseX, 1) * T;
-  const slotSeconds = (cell) => cells.slots[cell].length * T;
+  const crop = cells.crop ?? null, W = crop ? crop.end : 1;
+  const timeOf = crop ? (tick) => { const u = mod(tick / row.grid - phaseX, 1); return u < W ? u * rowT : T - (1 - u) * rowT; }
+    : (tick) => mod(tick / row.grid - phaseX, 1) * T;
+  const slotSeconds = (cell) => cells.slots[cell].length * rowT;
   // every onset's bar and slot by its place from the phase (a bar runs from its first anchor to the next bar's)
   const starts = cells.slots.map((s) => mod(s.anchor - phaseX, 1));
   const posSlot = new Int32Array(row.n);
   for (let i = 0; i < row.n; i++) {
     const x = mod(row.x[i] - phaseX, 1); let lo = 0, hi = P - 1;
+    if (crop && x >= W) { posSlot[i] = cells.slotOfNode[i] === 0 ? P - 1 : -1; continue; }
     while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= x + EPS) lo = mid; else hi = mid - 1; }
     posSlot[i] = lo;
   }
   const inBar = Array.from({ length: N }, () => []);
-  for (let i = 0; i < row.n; i++) inBar[Math.floor(posSlot[i] / S)].push(i);
+  for (let i = 0; i < row.n; i++) if (posSlot[i] >= 0) inBar[Math.floor(posSlot[i] / S)].push(i);
   let inSlot = null;
   const pitchAtLeast = (tone, floor) => { const c = row.toneCents[tone], octave = Math.ceil((floor - c) / 1200 - EPS); return { octave, pitch: c + 1200 * octave }; };
   const chordClass = (c, tone) => { const k = classOfCents(row.toneCents[tone] - c.rootCents); return Math.abs(k.dev) <= e + EPS && c.intervals.includes(k.pc) ? k.pc : -1; };
   return {
-    row, cells, T, S, N, P, e, phaseX, timeOf, slotSeconds, starts, posSlot, inBar, pitchAtLeast, chordClass,
+    row, cells, T, rowT, S, N, P, e, phaseX, timeOf, slotSeconds, starts, posSlot, inBar, pitchAtLeast, chordClass,
     /** each slot's onsets, in time order (then row order) */
     get inSlot() {
       if (!inSlot) {
         inSlot = Array.from({ length: P }, () => []);
-        for (let i = 0; i < row.n; i++) inSlot[posSlot[i]].push(i);
+        for (let i = 0; i < row.n; i++) if (posSlot[i] >= 0) inSlot[posSlot[i]].push(i);
         for (const list of inSlot) list.sort((a, b) => timeOf(row.tick[a]) - timeOf(row.tick[b]) || a - b);
       }
       return inSlot;
@@ -318,6 +332,7 @@ export function partOf(ctx, id, notes, { sound, legato, enabled, baseHz, ratioOf
       return {
         node: n.node, tick: row.tick[n.node], time: n.time, ratio: row.tones[n.tone], octave: n.octave, hz: baseHz * (num / den) * 2 ** n.octave * ratioOf(n.bar),
         duration: n.duration, velocity: Math.min(1, VELOCITY[id] + accent), bar: n.bar, slot: n.slot, slotSeconds: n.slotSeconds, retrigger: n.retrigger, ...(voice ? { voice: n.voice } : {}),
+        ...(n.endTime != null ? { endTime: n.endTime } : {}), ...(n.clipNote != null ? { clipNote: n.clipNote } : {}),
       };
     }),
   };
@@ -327,6 +342,73 @@ export function partOf(ctx, id, notes, { sound, legato, enabled, baseHz, ratioOf
 export const specChordOf = (c, { fundamentalRatio, targeted }) => ({ bar: c.bar, name: c.name, quality: c.quality, intervals: [...c.intervals], pcs: [...c.pcs], rootPc: c.rootPc, rootTone: c.rootFraction, rootNode: c.rootNode,
   offsetCents: c.offsetCents, rawOffsetCents: c.rawOffsetCents, fundamentalRatio, offGrid: !!c.offGrid, exceptions: c.exceptions.length, empty: !!c.empty,
   ...(targeted !== undefined ? { targeted, fallback: targeted ? c.fallback ?? null : null } : {}) });
+
+// ── MIDI targets (phase A3, Composer/TARGET_ORDER.md) ──
+//
+// `compose(layers, T, { target: { clip, placement?, tonic?, maxDriftCents? } })`: the clip (midi.js `decodeClip`) is the
+// lead and everything else is composed around it (decided, Avery: rulings 1–8; the rest proposed):
+//   placement  target.js `placeClip` when none is given (it runs where Compose runs: the worker for a big row, P7)
+//   cells      N bars × S slots (the clip's) from the placement's phase, partitioned, CROPPED to the B bars the clip
+//              occupies (cells.js `cropCells`; decided: a window crops the cycle). Every part is composed inside. The
+//              windows are Compose's own (about 12 onsets a slot), not the search's swing ½ (the order's; proposed: on
+//              the 16k row swing ½ made the bass and inner miners take 30 s).
+//   lead       pinned: the placement's notes (hits and the P2 substitutes; a hard miss is silent), each in the register
+//              that follows the clip's own octave contour (target.js `registerOf`), each lasting to its note-off onset
+//              (P4: `endTime`, which `articulate` honours). harmonize derives the chords from it once (no mining, no
+//              settling: `settlePasses` 0, "pinned lead").
+//   root       target.js `targetRoot` (P5): the tone of the tonic's class nearest the first phrase's lattice.
+//   time       knobs.cycleSeconds is the LOOP (the window's span; all of T when N = B), knobs.rowCycleSeconds is T,
+//              knobs.cut = { bars: N }; knobs.tempoBpm is the spec's natural tempo (60 × B × beats a bar /
+//              the loop) and knobs.beatsPerBar the clip's time signature's numerator. spec.target holds the clip, the
+//              placement, its misses and the clip's own tempo (playback's seed, decided 1/4).
+//   overrides  TARGET_SETS are the target's own (refused); the rest apply as usual. A progression pins chords under the
+//              clip as it pins them under a mined lead.
+
+/**
+ * A MIDI target's materials: the clip checked, its placement (given, or placeClip's), the tonic, the root (P5), the
+ * N-bar cells from the placement's phase cropped to the window, the loop, the lead's registers.
+ * → { clip, placement, alternates, lanes, search, tonic, tonicAsked, maxDriftCents, e, rootTone, N, B, S, beatsPerBar,
+ *     phase, cells, loop, windowOnsets, octaves, why } | { refused: 'targetGrid', detail }
+ */
+function targetMaterials(row, T, target, ov) {
+  const clip = target.clip, e = ov.frameCentsEachSide ?? DEFAULT_FRAME_CENTS_EACH_SIDE;
+  if (!(Number.isInteger(clip.S) && clip.S >= 1 && Number.isInteger(clip.B) && clip.B >= 1 && Array.isArray(clip.timeSig))) fail('a target clip needs its grid (S, B, timeSig): midi.js decodeClip');
+  if (clip.S > MAX_SLOTS) return { refused: 'targetGrid', detail: { slotsPerBar: clip.S, max: MAX_SLOTS, why: `a bar of ${clip.S} steps is past the ${MAX_SLOTS} slots a line may hold` } };
+  const tonicAsked = target.tonic != null, tonic = target.tonic ?? clip.key?.tonic ?? 0;
+  if (!(Number.isInteger(tonic) && tonic >= 0 && tonic < 12)) fail(`a target's tonic is a pitch class 0..11, not ${JSON.stringify(target.tonic)}`);
+  const maxDriftCents = target.maxDriftCents ?? TARGET_DEFAULTS.maxDriftCents;
+  let placement = target.placement ?? null, found = null;
+  if (!placement) { found = placeClip(row, clip, { e, tonic, maxDriftCents }); placement = found.placement; }
+  if (!placement || placement.S !== clip.S || placement.B !== clip.B || placement.notes?.length !== clip.notes.length || !(placement.N >= placement.B) || !Array.isArray(placement.phase)) fail('the target\'s placement is not one of this clip (target.js placeClip)');
+  const { N, B } = placement, S = clip.S;
+  // Compose's own windows (about 12 onsets a slot), not the search's swing ½: on the 16k row a slot then holds ~250
+  // onsets and the line miner (bass, inner) runs ~40× longer (30 s; proposed, Log). The lead is pinned by node, so its
+  // notes need no window; the anchors, and so the slots and the window, are the placement's.
+  const cells = cropCells(buildCells(row, { bars: N, slotsPerBar: S, anchors: 'partitioned', phase: placement.phase }), B);
+  const loop = (cells.crop ? cells.crop.end : 1) * T;
+  const rootTone = targetRoot(row, placement, tonic, e);
+  const sounding = placement.notes.filter((x) => x.on.node != null).length;
+  const why = `${found ? `placed by target.js (${found.searched.barCounts.length} bar count${found.searched.barCounts.length > 1 ? 's' : ''} searched${found.searched.stoppedAt != null ? `, stopped at the first full fit, N = ${found.searched.stoppedAt}` : ''})` : 'the placement given'}: `
+    + `${placement.hits} hits (${placement.tight} tight), ${placement.misses.fringe} fringe and ${placement.misses.shift} shifted substitutes, ${placement.misses.hard} silent; ${placement.offHits}/${sounding} note-offs on an onset near their anchor`
+    + `${placement.drift ? `; the lattice drifts ${placement.drift.toFixed(1)}¢ over its phrases` : ''}${placement.missing.length ? `; the row can't play ${placement.missing.map(pcName).join(', ')}` : ''}`;
+  return {
+    clip, placement, alternates: found ? found.alternates : [], lanes: found ? found.lanes : null, search: found ? { ms: found.ms, barCounts: found.searched.barCounts, stoppedAt: found.searched.stoppedAt } : null,
+    tonic, tonicAsked, maxDriftCents, e, rootTone, N, B, S, beatsPerBar: clip.timeSig[0], phase: [...placement.phase], cells, loop,
+    windowOnsets: cells.slots.reduce((n, s) => n + s.nodes, 0), octaves: registerOf(row, placement, clip, tonic, row.toneCents[rootTone]), why,
+  };
+}
+
+/** a target's sounding notes as harmonize's pinned lead (lines.js' note shape), with the clip note, its kind and its on/off places */
+function targetLeadNotes(row, cells, tg, base) {
+  const S = cells.slotsPerBar, out = [];
+  tg.placement.notes.forEach((x, j) => {
+    if (x.on.node == null) return;
+    const node = x.on.node, tone = row.tone[node], cell = x.on.slot, octave = tg.octaves[j];
+    out.push({ slot: cell, cell, bar: Math.floor(cell / S), beat: cell % S, node, tick: row.tick[node], tone, fraction: row.tones[tone], cents: row.toneCents[tone], octave, pitch: row.toneCents[tone] + 1200 * octave,
+      pc: base.pc[tone], outside: x.on.kind === 'fringe', clipNote: j, kind: x.on.kind, onPos: x.on.pos, offPos: x.off.pos });
+  });
+  return out;
+}
 
 /**
  * Compose.
@@ -340,16 +422,24 @@ export const specChordOf = (c, { fundamentalRatio, targeted }) => ({ bar: c.bar,
  *                  drums (drums.js `arrangeDrums` options, or false: no `drums` in the spec),
  *                  trace (true: `spec.trace`, the compose trace of trace.js, at TRACE_CAPS; { caps }: the same at
                   ALTERNATE_CAPS (12 chord candidates a bar, 8 runner-up lines a phrase) with `caps` over them, STEP
-                  4a; off by default) }
+                  4a; off by default),
+                  target ({ clip, placement?, tonic?, maxDriftCents? }: a MIDI target, above; absent: Compose exactly as
+                  without it) }
  * → the spec (see the head of this file and Composer/DESIGN_NOTES.md "Phase 4"), or a refusal
  */
-export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker = false, progression = null, drums = {}, trace = false } = {}) {
+export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker = false, progression = null, drums = {}, trace = false, target = null } = {}) {
   const input = { layers: [...layers], cycleSeconds, seed, overrides: JSON.parse(JSON.stringify(overrides ?? {})) };
   // ── a targeted progression (progression.js): recorded in the input only when it asks for a root ──
   if (progression != null && !Array.isArray(progression)) fail(`progression must be a list, one root a bar (a ratio or null)`);
   if (progression && progression.some((x) => x != null && x !== '' && x !== 'auto')) input.progression = JSON.parse(JSON.stringify(progression));
   if (!(Number.isFinite(cycleSeconds) && cycleSeconds > 0)) fail(`cycleSeconds must be a positive number, not ${cycleSeconds}`);
   for (const k of Object.keys(overrides || {})) if (!OVERRIDES.includes(k)) fail(`no override "${k}" (overrides are ${OVERRIDES.join(', ')})`);
+  // ── a MIDI target (phase A3): recorded in the input only when given ──
+  if (target != null) {
+    if (typeof target !== 'object' || !target.clip?.notes?.length) fail('a target is { clip (midi.js decodeClip), placement?, tonic?, maxDriftCents? }');
+    for (const k of Object.keys(overrides || {})) if (TARGET_SETS.includes(k)) fail(`the override "${k}" is set by the target`);
+    input.target = JSON.parse(JSON.stringify(target));
+  }
   const ov = overrides || {}, T = cycleSeconds;
 
   const traceCaps = trace ? traceCapsOf(trace) : null;   // STEP 4a: true → TRACE_CAPS; { caps } → ALTERNATE_CAPS + caps
@@ -359,69 +449,112 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   if (!isRow(row)) return refusal({ version: COMPOSER_SPEC_VERSION, input, refused: true, reason: row.tooDense ? 'tooDense' : 'tooLarge', detail: row });
   const few = toneGate(row, MIN_TONES);
   if (few) return refusal({ version: COMPOSER_SPEC_VERSION, input, refused: true, reason: 'tooFewTones', detail: few });
+  // a MIDI target: the clip placed (target.js) and its window's cells, before anything is recorded
+  const tg = target != null ? targetMaterials(row, T, input.target, ov) : null;
+  if (tg?.refused) return refusal({ version: COMPOSER_SPEC_VERSION, input, refused: true, reason: tg.refused, detail: tg.detail });
   // the trace's recorder (trace.js), or null: every `rec?.` below is skipped, arguments and all, when it is off
-  const rec = trace ? createTrace(row, { cycleSeconds: T, meter: { bars: BAR_CHOICES, slots: SLOT_CHOICES, tempoRange: TEMPO_RANGE, beatsPerBar: BEATS_PER_BAR }, caps: traceCaps }) : null;
+  const rec = trace ? createTrace(row, { cycleSeconds: tg ? tg.loop : T, meter: { bars: BAR_CHOICES, slots: SLOT_CHOICES, tempoRange: TEMPO_RANGE, beatsPerBar: BEATS_PER_BAR }, caps: traceCaps }) : null;
   rec?.row();
 
   const rng = seededRandom(seed), decisions = [];
   const decide = (what, value, why) => { decisions.push({ what, value, why }); return value; };
 
   // ── knobs ──
-  const e = decide('frameCentsEachSide', ov.frameCentsEachSide ?? DEFAULT_FRAME_CENTS_EACH_SIDE, ov.frameCentsEachSide != null ? 'asked' : 'the default (decided): ±15¢, as the Progression Solver');
-  const presence = decide('presence', ov.presence ?? 'cluster', ov.presence != null ? 'asked' : `a root is heard as its ±${e}¢ cluster: every tone of its class within ±${e}¢ of it (decided, Avery)`);
-  if (!PRESENCE_MODES.includes(presence)) fail(`presence must be one of ${PRESENCE_MODES.join(', ')}`);
-  const rootTone = ov.root != null ? toneIndexOf(row, ov.root) : defaultRoot(row, e, { presence });
-  const heardAs = presence === 'cluster' ? clusterPresence(row, e).presence[rootTone] : null;
-  rec?.root(e, presence, rootTone, ov.root != null);
-  decide('root', row.tones[rootTone], ov.root != null ? 'asked' : presence === 'exact'
-    ? `the tone heard at least max(2, 1%) of the onsets (or half the most heard) whose ±${e}¢ frame holds the most onsets; heard ${row.toneCount[rootTone]} times`
-    : `the loudest tone of its ±${e}¢ cluster, the cluster heard at least max(2, 1%) of the onsets (or half the largest cluster), whose ±${e}¢ frame holds the most onsets; heard ${row.toneCount[rootTone]} times, its cluster ${heardAs}`);
-  const meter = chooseMeter(row.n, T, { bars: ov.bars ?? null, slotsPerBar: ov.slotsPerBar ?? null });
-  decide('bars', meter.bars, ov.bars != null ? 'asked' : meter.notes.filter((x) => /bar|BPM/.test(x) && !/slot/.test(x)).join('; '));
-  decide('slotsPerBar', meter.slotsPerBar, ov.slotsPerBar != null ? 'asked' : meter.notes.filter((x) => /slot|onsets/.test(x)).join('; '));
-  decide('tempoBpm', meter.tempoBpm, `60 × ${meter.bars} bars × ${BEATS_PER_BAR} beats / ${T} s`);
-  rec?.meter(meter, { bars: ov.bars, slotsPerBar: ov.slotsPerBar });
-  const anchors = decide('anchors', ov.anchors ?? 'partitioned', ov.anchors ? 'asked' : 'partitioned pulses first (decided: "it starts with partitioned anchors")');
-  if (!ANCHOR_MODES.includes(anchors)) fail(`anchors must be one of ${ANCHOR_MODES.join(', ')}`);
-  const P = meter.bars * meter.slotsPerBar;
-  let phase;
-  if (ov.phase) { phase = ov.phase; decide('phase', phase, 'asked'); rec?.phase(null, null, phase); }
-  else {
-    const beats = downbeats(row, P, 3, rootTone, { anchors, cluster: presence === 'cluster' ? e : null }), at = Math.floor(rng() * beats.length);
-    phase = beats[at];
-    decide('phase', phase, `downbeat ${at + 1} of the root's first ${beats.length} (where it first sounds, then ${presence === 'cluster' ? `the heaviest onsets of its ±${e}¢ cluster` : 'its heaviest onsets'}), by the seed`);
-    rec?.phase(beats, at, phase);
-  }
-  const cells = buildCells(row, { bars: meter.bars, slotsPerBar: meter.slotsPerBar, anchors, phase });
-  rec?.cells(cells);
-  const modulation = decide('modulation', ov.modulation ?? true, ov.modulation != null ? 'asked' : 'on by default (Sprint default 3): a jump at a bar where a root is off the grid');
-  const table = decide('table', ov.table ?? (worker ? 'full' : 'lean'), ov.table ? 'asked' : worker ? 'in a worker: the full table' : 'on the main thread: the lean table (the cost probe)');
-  if (!TABLES.includes(table)) fail(`table must be one of ${TABLES.join(', ')}`);
-  // ── a targeted progression: the asked roots per bar, read against the row and the bars ──
-  const prog = input.progression ? readProgression(input.progression, row, meter.bars) : null, targeted = !!prog?.targeted;
-  const leader = !targeted ? 'lead' : prog.roots.every((r) => r != null) ? 'progression' : 'mixed';
-  decide('leader', leader, leader === 'lead' ? 'v1 is lead-led: the lead is mined first and the chords follow it'
-    : leader === 'progression' ? 'a progression asked a root for every bar: the chords first, from those roots, and the lead over them'
-    : 'a progression asked roots for some bars: those kept, the rest of the chords following the lead');
-  if (prog) rec?.progression(prog, leader);
+  let e, rootTone, meter, anchors, P, phase, cells, modulation, table, prog, targeted, leader, h;
+  if (tg) {
+    // ── a MIDI target (phase A3): the meter, the phase and the window from the placement, the lead pinned ──
+    e = tg.e;
+    decide('frameCentsEachSide', e, ov.frameCentsEachSide != null ? 'asked' : 'the default (decided): ±15¢, as the Progression Solver');
+    decide('target', `${tg.clip.name}: ${tg.placement.hits}/${tg.placement.J} notes hit, bars ${tg.placement.B} of ${tg.placement.N}`, tg.why);
+    rootTone = tg.rootTone;
+    rec?.root(e, 'cluster', rootTone, true);
+    decide('root', row.tones[rootTone], `the tone of the clip's tonic (${pcName(tg.tonic)}${tg.tonicAsked ? ', asked' : ', its key estimate'}) in the first phrase's lattice nearest that lattice (P5, proposed)`);
+    meter = { bars: tg.B, slotsPerBar: tg.S, tempoBpm: (60 * tg.B * tg.beatsPerBar) / tg.loop, notes: [`${tg.B} bar${tg.B > 1 ? 's' : ''}: the clip's, from the placement (decided: the bar count comes from the placement)`, `${tg.S} slots a bar: the clip's steps a bar`] };
+    decide('bars', meter.bars, tg.N > tg.B ? `the window: bars 1–${tg.B} of a ${tg.N}-bar cut of the cycle (decided: a window crops the cycle)` : `the clip over the whole cycle (${tg.N} bars)`);
+    decide('slotsPerBar', meter.slotsPerBar, `the clip's steps a bar (${tg.clip.timeSig.join('/')} on 1/${tg.clip.d}-quarter steps)`);
+    decide('tempoBpm', meter.tempoBpm, `60 × ${tg.B} bars × ${tg.beatsPerBar} beats / the ${tg.loop} s loop: the spec's natural tempo; playback is seeded from the clip's own, ${tg.clip.tempoBpm} BPM (decided)`);
+    rec?.meter(meter, { bars: tg.B, slotsPerBar: tg.S });
+    anchors = decide('anchors', 'partitioned', 'partitioned, from the placement\'s phase: the anchors the placement was found on (the windows Compose\'s own, about 12 onsets a slot; the search\'s swing-½ windows are its alone)');
+    P = meter.bars * meter.slotsPerBar;
+    phase = tg.phase;
+    decide('phase', phase, `the placement's: the clip's bar 1 on the cycle, its phase centred among its hits and rounded to a tick`);
+    rec?.phase(null, null, phase);
+    cells = tg.cells;
+    rec?.cells(cells);
+    modulation = decide('modulation', ov.modulation ?? true, ov.modulation != null ? 'asked' : 'on by default (Sprint default 3): a jump at a bar where a root is off the grid');
+    table = decide('table', ov.table ?? (worker ? 'full' : 'lean'), ov.table ? 'asked' : worker ? 'in a worker: the full table' : 'on the main thread: the lean table (the cost probe)');
+    if (!TABLES.includes(table)) fail(`table must be one of ${TABLES.join(', ')}`);
+    prog = input.progression ? readProgression(input.progression, row, meter.bars) : null; targeted = !!prog?.targeted;
+    leader = !targeted ? 'target' : prog.roots.every((r) => r != null) ? 'progression' : 'mixed';
+    decide('leader', leader, leader === 'target' ? 'a MIDI target: the lead is the clip, and the chords follow it'
+      : leader === 'progression' ? 'a progression asked a root for every bar: those chords, under the clip'
+      : 'a progression asked roots for some bars: those kept, the rest of the chords following the clip');
+    if (prog) rec?.progression(prog, leader);
+    const foldOffsets = ov.foldOffsets ?? true;
+    if (ov.foldOffsets != null) decide('foldOffsets', foldOffsets, 'asked');
+    decide('settlePasses', 0, 'pinned lead: the lead is the clip, so the chords are derived from it once (no mining, no settling)');
+    const leadNotes = targetLeadNotes(row, cells, tg, frameAt(row, rootTone, e));
+    h = harmonize(row, cells, { root: rootTone, frameCentsEachSide: e, modulation, table, foldOffsets, settlePasses: 0, lead: { notes: leadNotes }, ...(targeted ? { progression: harmonyPins(prog) } : {}), trace: rec });
+    rec?.harmony(h);
+    if (prog) { const d = targeted ? describeProgression(prog, h.chords, row) : { value: prog.roots.map(() => 'auto'), why: `no root of the progression could be used, so every bar is auto: ${prog.notes.join('; ')}` }; decide('progression', d.value, d.why); }
+  } else {
+    e = decide('frameCentsEachSide', ov.frameCentsEachSide ?? DEFAULT_FRAME_CENTS_EACH_SIDE, ov.frameCentsEachSide != null ? 'asked' : 'the default (decided): ±15¢, as the Progression Solver');
+    const presence = decide('presence', ov.presence ?? 'cluster', ov.presence != null ? 'asked' : `a root is heard as its ±${e}¢ cluster: every tone of its class within ±${e}¢ of it (decided, Avery)`);
+    if (!PRESENCE_MODES.includes(presence)) fail(`presence must be one of ${PRESENCE_MODES.join(', ')}`);
+    rootTone = ov.root != null ? toneIndexOf(row, ov.root) : defaultRoot(row, e, { presence });
+    const heardAs = presence === 'cluster' ? clusterPresence(row, e).presence[rootTone] : null;
+    rec?.root(e, presence, rootTone, ov.root != null);
+    decide('root', row.tones[rootTone], ov.root != null ? 'asked' : presence === 'exact'
+      ? `the tone heard at least max(2, 1%) of the onsets (or half the most heard) whose ±${e}¢ frame holds the most onsets; heard ${row.toneCount[rootTone]} times`
+      : `the loudest tone of its ±${e}¢ cluster, the cluster heard at least max(2, 1%) of the onsets (or half the largest cluster), whose ±${e}¢ frame holds the most onsets; heard ${row.toneCount[rootTone]} times, its cluster ${heardAs}`);
+    meter = chooseMeter(row.n, T, { bars: ov.bars ?? null, slotsPerBar: ov.slotsPerBar ?? null });
+    decide('bars', meter.bars, ov.bars != null ? 'asked' : meter.notes.filter((x) => /bar|BPM/.test(x) && !/slot/.test(x)).join('; '));
+    decide('slotsPerBar', meter.slotsPerBar, ov.slotsPerBar != null ? 'asked' : meter.notes.filter((x) => /slot|onsets/.test(x)).join('; '));
+    decide('tempoBpm', meter.tempoBpm, `60 × ${meter.bars} bars × ${BEATS_PER_BAR} beats / ${T} s`);
+    rec?.meter(meter, { bars: ov.bars, slotsPerBar: ov.slotsPerBar });
+    anchors = decide('anchors', ov.anchors ?? 'partitioned', ov.anchors ? 'asked' : 'partitioned pulses first (decided: "it starts with partitioned anchors")');
+    if (!ANCHOR_MODES.includes(anchors)) fail(`anchors must be one of ${ANCHOR_MODES.join(', ')}`);
+    P = meter.bars * meter.slotsPerBar;
+    if (ov.phase) { phase = ov.phase; decide('phase', phase, 'asked'); rec?.phase(null, null, phase); }
+    else {
+      const beats = downbeats(row, P, 3, rootTone, { anchors, cluster: presence === 'cluster' ? e : null }), at = Math.floor(rng() * beats.length);
+      phase = beats[at];
+      decide('phase', phase, `downbeat ${at + 1} of the root's first ${beats.length} (where it first sounds, then ${presence === 'cluster' ? `the heaviest onsets of its ±${e}¢ cluster` : 'its heaviest onsets'}), by the seed`);
+      rec?.phase(beats, at, phase);
+    }
+    cells = buildCells(row, { bars: meter.bars, slotsPerBar: meter.slotsPerBar, anchors, phase });
+    rec?.cells(cells);
+    modulation = decide('modulation', ov.modulation ?? true, ov.modulation != null ? 'asked' : 'on by default (Sprint default 3): a jump at a bar where a root is off the grid');
+    table = decide('table', ov.table ?? (worker ? 'full' : 'lean'), ov.table ? 'asked' : worker ? 'in a worker: the full table' : 'on the main thread: the lean table (the cost probe)');
+    if (!TABLES.includes(table)) fail(`table must be one of ${TABLES.join(', ')}`);
+    // ── a targeted progression: the asked roots per bar, read against the row and the bars ──
+    prog = input.progression ? readProgression(input.progression, row, meter.bars) : null; targeted = !!prog?.targeted;
+    leader = !targeted ? 'lead' : prog.roots.every((r) => r != null) ? 'progression' : 'mixed';
+    decide('leader', leader, leader === 'lead' ? 'v1 is lead-led: the lead is mined first and the chords follow it'
+      : leader === 'progression' ? 'a progression asked a root for every bar: the chords first, from those roots, and the lead over them'
+      : 'a progression asked roots for some bars: those kept, the rest of the chords following the lead');
+    if (prog) rec?.progression(prog, leader);
 
-  // ── harmony and the lead ──
-  const foldOffsets = ov.foldOffsets ?? true;
-  if (ov.foldOffsets != null) decide('foldOffsets', foldOffsets, 'asked');
-  const settlePasses = decide('settlePasses', ov.settlePasses ?? DEFAULT_SETTLE_PASSES, ov.settlePasses != null ? 'asked'
-    : `up to ${DEFAULT_SETTLE_PASSES} more rounds of chords from the kept lead and the lead over them, until the chords settle or repeat (asked for by Avery; the cap and the stopping rules proposed, not ruled)`);
-  if (!(Number.isInteger(settlePasses) && settlePasses >= 0 && settlePasses <= MAX_SETTLE_PASSES)) fail(`settlePasses must be an integer 0..${MAX_SETTLE_PASSES}`);
-  const h = harmonize(row, cells, { root: rootTone, frameCentsEachSide: e, modulation, table, foldOffsets, settlePasses, ...(targeted ? { progression: harmonyPins(prog) } : {}), trace: rec });
-  rec?.harmony(h);
-  if (prog) { const d = targeted ? describeProgression(prog, h.chords, row) : { value: prog.roots.map(() => 'auto'), why: `no root of the progression could be used, so every bar is auto: ${prog.notes.join('; ')}` }; decide('progression', d.value, d.why); }
+    // ── harmony and the lead ──
+    const foldOffsets = ov.foldOffsets ?? true;
+    if (ov.foldOffsets != null) decide('foldOffsets', foldOffsets, 'asked');
+    const settlePasses = decide('settlePasses', ov.settlePasses ?? DEFAULT_SETTLE_PASSES, ov.settlePasses != null ? 'asked'
+      : `up to ${DEFAULT_SETTLE_PASSES} more rounds of chords from the kept lead and the lead over them, until the chords settle or repeat (asked for by Avery; the cap and the stopping rules proposed, not ruled)`);
+    if (!(Number.isInteger(settlePasses) && settlePasses >= 0 && settlePasses <= MAX_SETTLE_PASSES)) fail(`settlePasses must be an integer 0..${MAX_SETTLE_PASSES}`);
+    h = harmonize(row, cells, { root: rootTone, frameCentsEachSide: e, modulation, table, foldOffsets, settlePasses, ...(targeted ? { progression: harmonyPins(prog) } : {}), trace: rec });
+    rec?.harmony(h);
+    if (prog) { const d = targeted ? describeProgression(prog, h.chords, row) : { value: prog.roots.map(() => 'auto'), why: `no root of the progression could be used, so every bar is auto: ${prog.notes.join('; ')}` }; decide('progression', d.value, d.why); }
+  }
   // ── the parts (STEP 4a: built by the exported per-bar builders below, which a rearrange calls too) ──
-  const ctx = partContext(row, cells, { cycleSeconds: T, phase, frameCentsEachSide: e });
+  const ctx = partContext(row, cells, tg ? { cycleSeconds: tg.loop, phase, frameCentsEachSide: e, rowCycleSeconds: T } : { cycleSeconds: T, phase, frameCentsEachSide: e });
   const { S, N } = ctx;
   const ratioOf = (bar) => h.chords[bar].fundamentalRatio;   // the sounding retune: a folded name never moves it
 
   const parts = {};
   // lead
   parts.lead = leadNotesOf(ctx, h.lead.notes);
+  // a MIDI target's lead: each note ends on its note-off onset (P4), and knows its clip note
+  if (tg) parts.lead.forEach((b, i) => { const n = h.lead.notes[i]; b.clipNote = n.clipNote; b.endTime = b.time + (n.offPos - n.onPos) * T; });
   // chords: a voice a chord class
   const voices = [];
   for (let k = 0; k < N; k++) for (const n of chordVoicesOfBar(ctx, h.chords[k], k)) (voices[n.voice] ||= []).push(n);
@@ -487,7 +620,10 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   const counts = Object.fromEntries(partList.map((p) => [p.id, p.notes.length]));
   const spec = {
     version: COMPOSER_SPEC_VERSION, input,
-    knobs: {
+    knobs: tg ? {
+      bars: N, slotsPerBar: S, beatsPerBar: tg.beatsPerBar, anchors, phase: [...phase], frameCentsEachSide: e, root: row.tones[rootTone], modulation, table,
+      tempoBpm: meter.tempoBpm, leader, baseHz, cycleSeconds: tg.loop, rowCycleSeconds: T, cut: { bars: tg.N },
+    } : {
       bars: N, slotsPerBar: S, beatsPerBar: BEATS_PER_BAR, anchors, phase: [...phase], frameCentsEachSide: e, root: row.tones[rootTone], modulation, table,
       tempoBpm: meter.tempoBpm, leader, baseHz, cycleSeconds: T,
     },
@@ -497,14 +633,19 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     parts: partList,
     decisions,
     stats: {
-      onsets: row.n, tones: row.tones.length, grid: row.grid, onsetsPerSlot: row.n / P, notes: counts,
+      onsets: row.n, tones: row.tones.length, grid: row.grid, onsetsPerSlot: (tg ? tg.windowOnsets : row.n) / P, notes: counts,
       leadPhrases: h.passes.phrases.length, secondPassWins: h.passes.secondWins, exceptions: h.exceptions,
       chordVoices: voices.reduce((n, v) => n + (v ? v.length : 0), 0) / N, bassRooted: `${bassRooted}/${N}`, innerOnLeadSlots: innerOnLead,
       compLayer: { layer: 'ABCD'[comp.layer], value: comp.value, score: comp.score },
       settle: { rounds: h.settle.rounds, converged: h.settle.converged, oscillated: h.settle.oscillated, changedBarsPerRound: [...h.settle.changedBarsPerRound],
-        exceptionsPerRound: [...h.settle.exceptionsPerRound], chosenRound: h.settle.chosenRound },
+        exceptionsPerRound: [...h.settle.exceptionsPerRound], chosenRound: h.settle.chosenRound, ...(h.settle.pinned ? { pinned: true } : {}) },
     },
   };
+  // ── a MIDI target: the clip, its placement and how it fits, and the clip's own tempo (playback's seed: decided) ──
+  if (tg) {
+    spec.target = { clip: JSON.parse(JSON.stringify(tg.clip)), placement: tg.placement, misses: { ...tg.placement.misses }, tempoBpm: tg.clip.tempoBpm ?? tg.clip.bpm ?? null,
+      tonic: tg.tonic, tonicAsked: tg.tonicAsked, maxDriftCents: tg.maxDriftCents, lanes: tg.lanes, alternates: tg.alternates, search: tg.search };
+  }
   // ── drums (drums.js): from the spec alone, so the lab re-arranges them without composing again; `drums: false` leaves them out ──
   if (drums !== false) spec.drums = arrangeDrums(spec, drums === true ? {} : drums);
   if (rec) { rec.drums(spec); rec.done(spec); spec.trace = rec.finish(); }

@@ -11,6 +11,11 @@
 //   materialsOf(spec) → { row, cells }: the row and cells a spec was composed over, rebuilt from its input and knobs
 //   materialsKey(spec) → the key they can be kept under (STEP 4d)
 //
+// A MIDI target's spec (phase A3, compose.js "MIDI targets") rearranges as any other: its cells are the N-bar cut
+// cropped to the window (knobs.cut), its part context runs on the loop (knobs.rowCycleSeconds), and its
+// lead's notes keep their note-off ends (`endTime`). It takes no lead swap (P6: the lead is the clip); a chord swap and
+// the drums work as usual.
+//
 // What is decided (Avery, STEP4_ORDER.md "Decisions") and what is proposed:
 //   pinned      the comp layer (spec.stats.compLayer), baseHz (spec.knobs) and every part's sound, legato and on/off
 //               (the parts given): a local edit never becomes a global one. (decided, from the recommendations)
@@ -39,7 +44,7 @@
 // whose fundamentalRatio moved.
 
 import { buildRow, isRow, ONSET_GATE } from './row.js';
-import { buildCells } from './cells.js';
+import { buildCells, cropCells } from './cells.js';
 import { frameOf, classOfCents } from './frame.js';
 import { CHORD_QUALITIES, pickFor, chordRecord, targetOfBar, barMaterial, chooseChord, exceptionsOfBar, phrasesOf, isStrongBeat } from './harmony.js';
 import { FALLBACK_QUALITIES } from './progression.js';
@@ -51,27 +56,31 @@ const EPS = 1e-9;
 const fail = (what) => { throw new Error(`composer/rearrange: ${what}`); };
 const QUALITY = new Map([...CHORD_QUALITIES, ...FALLBACK_QUALITIES].map((q) => [q.id, q]));
 
-/** the row and cells a spec was composed over: buildRow(input.layers) and buildCells from its knobs (not for a spec
- *  composed over a prebuilt row, as Cosmos's superrow composes are) → { row, cells } */
+/** the row and cells a spec was composed over: buildRow(input.layers) and buildCells from its knobs — a MIDI target's
+ *  N-bar cut (knobs.cut) cropped to its bars (not for a spec composed over a prebuilt row, as Cosmos's
+ *  superrow composes are) → { row, cells } */
 export function materialsOf(spec) {
   if (!spec || spec.refused) fail('no materials for a refused spec');
   const row = buildRow(spec.input.layers, { gate: ONSET_GATE });
   if (!isRow(row)) fail('the spec\'s row is past the gate');
   const k = spec.knobs;
+  if (k.cut) return { row, cells: cropCells(buildCells(row, { bars: k.cut.bars, slotsPerBar: k.slotsPerBar, anchors: k.anchors, phase: k.phase }), k.bars) };
   return { row, cells: buildCells(row, { bars: k.bars, slotsPerBar: k.slotsPerBar, anchors: k.anchors, phase: k.phase }) };
 }
 
 /** the key a composition's row and cells can be kept under (STEP 4d: the controller's and the worker's caches): its
- *  layers and the knobs materialsOf builds the cells from */
-export const materialsKey = (spec) => JSON.stringify([spec.input.layers, spec.knobs.bars, spec.knobs.slotsPerBar, spec.knobs.anchors, spec.knobs.phase]);
+ *  layers and the knobs materialsOf builds the cells from (a target's cut too, only when there is one) */
+export const materialsKey = (spec) => JSON.stringify([spec.input.layers, spec.knobs.bars, spec.knobs.slotsPerBar, spec.knobs.anchors, spec.knobs.phase,
+  ...(spec.knobs.cut ? [{ cut: spec.knobs.cut.bars }] : [])]);
 
 // per cells (one compose's materials): the part context and the bars' tones, built once for every edit of that spec
 const cache = new WeakMap();
 function materialCache(row, cells, spec) {
   let c = cache.get(cells);
-  const key = `${spec.knobs.cycleSeconds}|${spec.knobs.phase.join('/')}|${spec.knobs.frameCentsEachSide}`;
+  const key = `${spec.knobs.cycleSeconds}|${spec.knobs.phase.join('/')}|${spec.knobs.frameCentsEachSide}|${spec.knobs.rowCycleSeconds ?? ''}`;
   if (!c || c.row !== row || c.key !== key) {
-    c = { row, key, ctx: partContext(row, cells, { cycleSeconds: spec.knobs.cycleSeconds, phase: spec.knobs.phase, frameCentsEachSide: spec.knobs.frameCentsEachSide }), material: barMaterial(row, cells) };
+    const rowT = spec.knobs.rowCycleSeconds;
+    c = { row, key, ctx: partContext(row, cells, { cycleSeconds: spec.knobs.cycleSeconds, phase: spec.knobs.phase, frameCentsEachSide: spec.knobs.frameCentsEachSide, ...(rowT != null ? { rowCycleSeconds: rowT } : {}) }), material: barMaterial(row, cells) };
     c.toneIndex = new Map(row.tones.map((t, i) => [t, i]));
     cache.set(cells, c);
   }
@@ -118,7 +127,8 @@ const givenOf = (m, chords) => chords.map((c) => ({ tone: toneOf(m, c.rootTone),
 function builderNotes(m, part) {
   const { row, cells, S } = m.ctx;
   return part.notes.map((n) => ({ node: n.node, tone: row.tone[n.node], octave: n.octave, pitch: row.toneCents[row.tone[n.node]] + 1200 * n.octave, bar: n.bar, slot: n.slot, time: n.time, slotSeconds: n.slotSeconds,
-    ...(n.voice != null ? { voice: n.voice } : {}), ...(part.id === 'comp' ? { strikes: row.strikes[n.node] } : {}), ...(part.id === 'lead' ? { strong: isStrongBeat(cells.slots[n.slot].beat, S) } : {}) }));
+    ...(n.voice != null ? { voice: n.voice } : {}), ...(part.id === 'comp' ? { strikes: row.strikes[n.node] } : {}), ...(part.id === 'lead' ? { strong: isStrongBeat(cells.slots[n.slot].beat, S) } : {}),
+    ...(n.endTime != null ? { endTime: n.endTime } : {}), ...(n.clipNote != null ? { clipNote: n.clipNote } : {}) }));
 }
 /** a line's notes ({ slot (the cells' slot), node, octave }) as the lead part's builder notes */
 function leadLineNotes(m, notes) {
@@ -214,6 +224,7 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
     swap(next, new Set([k]));
   } else {
     // ── a lead swap ──
+    if (spec.target) fail('a MIDI target composition takes no lead swaps: its lead is the clip (P6)');
     const span = phrasesOf(cells)[edit.phrase] ?? fail(`no phrase ${edit.phrase}`);
     const line = typeof edit.line === 'string' ? (opts.trace?.lines?.[edit.line] ?? fail(`no line ${edit.line} in the trace`)) : edit.line;
     if (!line || !Array.isArray(line.notes)) fail('a lead swap needs { line } (an id in opts.trace.lines, or a record with notes)');

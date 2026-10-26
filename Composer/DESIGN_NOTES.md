@@ -1438,6 +1438,58 @@ The order: `STEP4_ORDER.md` "4e. UI", the layout of `STEP4_RECOMMENDATIONS.md` �
 5. **The narrow fallback** at 600 px of the left half (one bar and a picker), or always scroll?
 6. **The dots' height** is pitch within the part's whole range. Would a fixed pitch window (an octave band) read better across parts?
 
+## MIDI targets (phase A; built 2026-10-26, branch `target/core`)
+
+The order: `TARGET_ORDER.md` phase A (A1–A4); the probe: `probe/midi-target/FINDINGS.md`. Avery's rulings 1–8 there are **decided**; P1–P7 are the planner's, followed as written except where marked; everything else here is **proposed, not ruled**. Node only: nothing here has a UI yet (phase B).
+
+**1. `core/midi.js`** (A1): the probe's `midi.mjs`, ported as a pure module.
+- `readMidi(bytes)`, `writeMidi({ ppq, bpm, timeSig, tracks })`, `decodeClip(file, { track, tolerance })`, `skyline(notes)`, `estimateKey(notes)`, `pcName(pc)`, `describeClip(clip)`.
+- `decodeClip` → `{ version, name, ppq, bpm, tempoBpm, timeSig, d, S, B, pickup, residual, exact, notes: [{ step, until, midi, pc, velocity }], dropped, key: { tonic, mode, r }, stepSeconds }`.
+  - `dropped` (P1): the track's notes not in the line, the skyline's lower notes and the graces two note-ons rounded onto one step.
+  - `tempoBpm`: the file's first tempo (120 with none), the seed of a target's playback tempo (decided 1/4).
+  - The step-relative tolerance (`EXACT_SHARE`) and the unquantized guess (`UNQUANTIZED_SHARE`) are the probe's.
+
+**2. `core/target.js`** (A2): the search, `placeClip(row, clip, { e, tonic, maxDriftCents, alternates, … })` → `{ placement, alternates, lanes, searched, ms }`.
+- **The vote, the refine and the lattices** are the probe's. The search's best equals brute force on the small rows (28/28), and on all 12 probe rows × 9 clips it equals the probe's best (108/108); the engine's materialized hits equal the search's in every one of those cases.
+- **Prune (P7):** N from B up; the first N at which some candidate fits every note ends the search, its lattices all tried, best first. A row without a full fit is searched to the probe's top N. Every N's vote buffers are reused.
+- **Drift (P3; ruling 6):** per phrase of the clip (harmony.js' 32-slot phrases), a Viterbi over the phrases at the best 8 distinct φ of each N. A state is (ψ, k) (12 lattices × 12 = 144), scored on the phrase's notes; adjacent phrases' tonics, at their realized cents (the lattice tone + 100 × its lane), at most `maxDriftCents` apart (30; 0 turns it off). The drift candidates join the no-drift ones, so drift never makes the best worse.
+  - **A call beyond the order:** ranked hits, then the least total drift, then tight hits, then cost. P3 lists tight hits before drift, but then a phrase would drift for timing alone, which its first clause ("drifts only when that gains notes") forbids. With the ranking as built, a placement drifts only when it gains notes: on the probe's 6 test rows × 7 clips never; scanning `rhythms.mjs` (rows under 3,000 onsets × Frère Jacques and Greensleeves), 4 cases (e.g. Greensleeves on 426:317:285, 18 → 19, 6.4¢).
+- **Materialized:** the best 16 distinct candidates are built as Compose plays them: φ rounded to a tick, `buildCells` (N × S, partitioned, swing ½), each phrase's frame centred on its lattice tone. Then ranked hits, least drift, note-off hits (P4), tight hits, cost; the best is the placement, the next 8 distinct the alternates.
+- **Misses (P2):** fringe (the class in the slot outside the frame), shift (an in-frame onset of the class one slot over), hard (silent). **Calls beyond the order:** a shift stays inside the window, lands strictly between its sounding neighbours, and never on a slot another sounding note holds (one note a slot).
+- **Note-offs (P4; ruling 7)** on the loop's own onsets (the window's, and those slot 0 holds before the first anchor, which sound at the loop's end), circular: the next note's note-on when the note-off is its step; else the onset nearest the note-off slot's anchor in its ±½-slot window, after the note-on and no later than the next note-on; else the next onset after the anchor, else the next note-on ("late"). The last note's next is the first (the loop wraps).
+- **The placement:** `{ N, B, S, P, phase, tick, window, share (W, the window's share of the cycle), band, phrases: [{ from, bars, psiTone, psiRatio, k, tonicCents, driftCents }], notes: [{ step, until, midi, pc, on: { node, kind, slot, offSlots, dev, pos }, off: { node, late, pos } | null }], hits, tight, offHits, cost, drift, misses, missing, J, search }`. `pos` is LOOP time as a share of the row's cycle; an off's `pos` is after its on's and may pass the loop's end.
+- **`laneReport(row, psiTone)`** → `{ psiTone, ratio, cents, counts: [12], empty }`; `placement.missing` and `lanes.missing` are the clip's classes whose lane is empty in their phrase's lattice (ruling 5).
+- **`targetRoot`** (P5) and **`registerOf`** (the lead's octaves: the clip's own contour, the tonic just above the root).
+- **The one clock read in core:** `ms`, a measurement that steers nothing.
+
+**3. Compose target mode** (A3): `compose(layers, T, { target: { clip, placement?, tonic?, maxDriftCents? } })`.
+- **Cells:** N × S from the placement's phase, partitioned, then `cells.js` `cropCells(cells, B)` (slots 0..B·S−1 with their own windows; `slotOfNode` −1 outside; `crop: { bars, P, end }`).
+  - **A call beyond the order:** the windows are Compose's own (about 12 onsets a slot), not swing ½. With swing ½ a slot on the 16k row holds ~250 onsets and the bass and inner miners took 30 s (`pickLines` 34 s of a 34 s profile); with the default windows the whole target compose takes ~0.3 s. The lead is pinned by node, so it needs no window; the anchors, slots and window are the placement's.
+- **`partContext`** takes `rowCycleSeconds`: with cropped cells, `cycleSeconds` is the loop, an onset in the window sounds at its own time on the row's cycle, one before the first anchor that slot 0 holds sounds at the loop's end (in the last slot), and any other is in no slot (`posSlot` −1) and no bar. Uncropped, every expression is the one it was.
+- **The lead:** harmony.js `harmonize(…, { lead: { notes } })` derives the chords from the pinned notes once: no mining, no second pass, no settling (`settle: { rounds: 0, pinned: true }`), each phrase a line record (`pl1:` ids, band `pinned`) for the trace and the rearrange. Each lead note carries `endTime` (its note-off onset) and `clipNote`; `articulate` and `partOf` honour `endTime` over the legato rule, and the rearrange keeps both.
+- **Knobs:** `bars` B, `slotsPerBar` S, `beatsPerBar` the clip's numerator, `cycleSeconds` the loop (W × T), `rowCycleSeconds` T, `cut: { bars: N }`, `tempoBpm` 60 × B × beats / loop, `leader: 'target'` (or `progression` / `mixed` with a progression).
+- **`spec.target`:** `{ clip, placement, misses, tempoBpm (the clip's), tonic, tonicAsked, maxDriftCents, lanes, alternates, search: { ms, barCounts, stoppedAt } | null }`; `input.target` is the target as given.
+- **Overrides:** `TARGET_SETS` (bars, slotsPerBar, anchors, phase, root, presence, settlePasses) are refused; the rest apply. A progression pins chords under the clip.
+- **Refusal:** a clip with more than 32 steps a bar (a line's limit) → `{ refused: true, reason: 'targetGrid' }`.
+- **`rearrange.js`:** `materialsOf` rebuilds the cut and crops it; `materialsKey` carries the cut (only when there is one); a chord swap works; a lead swap is refused (P6).
+- **`drums.js`** on a window: the drums' cycle is the loop (W = cycleSeconds / rowCycleSeconds); places run over [0, W); a stroke's time is its loop time (before the downbeat → the loop's end, past the window's end → its start); the partition layer counts its pulses inside the window and the prime partition spreads its lights over it. Without `cut`, every expression is the one it was (`drums-baseline.mjs` still matches).
+- **Identity:** with no target, Compose is byte for byte as before (`assert-refactor-identity.mjs`, 7/7).
+- **Trace:** a target compose's trace records the pinned lead as skipped mining (`skipped: 'pinned'`) and the pinned phrases as lines.
+
+**4. Measured** (Node 24, Apple M4 Max; `placeClip`, drift on, warm; then a target compose with that placement given, lean table):
+
+| row | onsets | Frère Jacques (32 notes, B 8) | Ode to Joy (15 notes, B 4) |
+|---|--:|---|---|
+| 8:7:6:5 | 22 | 5 ms: 5/32, N 8; compose 10 ms | 3 ms: 4/15, N 4; compose 4 ms |
+| 768:769 | 1,536 | 553 ms: 17/32, N 9 (66 N tried); compose 93 ms | 257 ms: 12/15, N 4 (70 tried); compose 23 ms |
+| 2047:2048 | 4,094 | 955 ms: 18/32, N 9 (66 tried); compose 77 ms | 459 ms: 13/15, N 5 (70 tried); compose 28 ms |
+| 275:1144:1260:234 | 2,852 | 41 ms: 32/32, N 8 (1 tried); compose 88 ms | 27 ms: 15/15, N 4 (1 tried); compose 79 ms |
+| 4099:4093:4091:4079 | 16,359 | 187 ms: 32/32, N 8 (1 tried); compose 127 ms | 148 ms: 15/15, N 4 (1 tried); compose 41 ms |
+
+The probe took 4.4–9.7 s on the 16k row; the prune (a full fit at N = B ends the search) is all of the gain there. The slowest rows now are the ones with no full fit, which search every N (up to ~1 s on 2047:2048); pruning those further (an upper bound from the vote's counts, a coarse N grid first) is left for when it's felt.
+
+**Tests:** `tests/assert-target.mjs` (46 checks; clips in `tests/fixtures/midi-clips.mjs`, ported from the probe's).
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

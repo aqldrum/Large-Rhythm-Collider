@@ -320,7 +320,8 @@ export function pickLines(lattice, rules = {}) {
   return out;
 }
 
-function fnv1aHex(text) {
+/** FNV-1a, 32 bits, as hex (the lines' ids; harmony.js' pinned lead reuses it) */
+export function fnv1aHex(text) {
   let hash = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 0x01000193); }
   return (hash >>> 0).toString(16).padStart(8, '0');
