@@ -26,6 +26,20 @@ A progression version of the vote:
 
 `target.js` (lattices, lanes, the vote, the refine, `cropCells`) is the starting point.
 
+**Raised at the MIDI-target browser pass (Avery, 2026-10-26):**
+- **Lead over a progression already exists as a full re-solve.** Type the progression, then Compose: re-composing makes the typed chords pins, and the lead is mined over them (`leader: 'progression'`).
+  - Live, a typed chord or a chord swap keeps the lead (step 4's decision 1). Avery: "the Compose just has to be fully re-solved after typing the progression."
+  - A live "lead follows the changes" switch would re-mine just the affected phrases' lead over the new chords. That's rearrange's machinery, ~12–38 ms a phrase on the 16k row, the mirror of `chordsFollow` on a lead swap.
+- **Why harmony follows melody** (DESIGN_NOTES: "Harmony follows melody (leaning, Avery)", Sprint default 4):
+  - **The objective.** The line miner (from chunk-lines) is the engine's real search, an exact DP with a full cost (contour, intervals, accents, closure). A chord a bar from a known lead is a cheap, always-answerable ranking of each bar's candidates.
+  - **The opposite order** needs a progression before anything sounds. The row offers no objective for choosing one ("searching a tone set for the most parsimonious progression" was the noted fallback), and the frame moves with each chord's root.
+  - **Not one-way in practice.** The second pass and the settle rounds mine the lead over the chords too, and a typed progression turns it fully around.
+- **A key, not just a home.** The clip's tonic picker renames and re-grounds the harmony but never transposes; `baseHz` normalizes the lead to ~539 Hz.
+  - Proposed: anchor `baseHz` to the clip's written MIDI pitches, so a clip sounds in its own key.
+  - Then either make the picker a key (it moves the fundamental, so everything transposes together), or keep it as "home" (naming) and add a key control.
+  - This ties into how typed symbols are read: relative to C, the base root.
+- **Timeline (later):** real-time voice changes without resetting on the loop (mostly legato) and scrubbing. Today an audition plays from the top (ruled).
+
 **Open questions for that thread:**
 - Do typed symbols stay relative to C (step 4b's ruling 3), or does a solved progression name its own key?
 - Does a solver progression crop to a window, as a clip does (ruling 2)?

@@ -241,9 +241,11 @@ check('targetError words the rest', /no notes/.test(targetError('composer/midi: 
 console.log('\n— Clear');
 const cC = composes;
 q(left, '.ctab-clip-clear').click(); await settle();
+check('Clear composes nothing (Avery, 2026-10-26): no target, the lines gone, the entry dirty, the button Compose', composes === cC && !tab.state.input.target && tab.state.placements === null && tab.state.dirty
+  && tab.button() === 'Compose' && q(left, '.ctab-clip-decode').style.display === 'none' && q(left, '.ctab-clip-clear').style.display === 'none');
+q(left, '.ctab-go').click(); await settle();
 const clearedSpec = tab.state.spec;
-check('Clear: an ordinary Compose again (no target anywhere), the lines gone', composes === cC + 1 && !tab.state.input.target && !tab.state.spec.target && tab.state.placements === null && tab.state.spec.knobs.leader !== 'target'
-  && q(left, '.ctab-clip-decode').style.display === 'none' && q(left, '.ctab-clip-clear').style.display === 'none' && Math.abs(core.tempo() - core.specTempo()) < 1e-9);
+check('…then Compose: an ordinary composition, at its own tempo', composes === cC + 1 && !tab.state.spec.target && tab.state.spec.knobs.leader !== 'target' && Math.abs(core.tempo() - core.specTempo()) < 1e-9);
 
 console.log('\n— too few tones');
 setRhythm([3, 0, 0, 0], 4);

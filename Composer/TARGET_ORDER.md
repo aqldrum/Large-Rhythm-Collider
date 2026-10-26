@@ -142,7 +142,7 @@ Served at http://localhost:8779/ from the composer-sprint-2 worktree once `targe
 12. **A full fit through the worker.** **4099:4093:4091:4079**, cycle **16 s**, `frere-jacques.mid`: `32/32 notes hit · 32 tight · 32/32 note-offs on onsets · whole cycle` in ~0.6 s; all of Frère Jacques at 112 BPM (8 bars, ~17 s a loop). Every chip is a full fit too (32/32, another phase or lattice).
 13. **3/4 and drift.** **426:317:285**, cycle **8 s**, `greensleeves.mid`: `3/4 on eighths (6 a bar) · 9 bars · 19 notes`, `19/19 notes hit · 12 tight · … · window: 9 of 10 bars, from 0.766 of the cycle · the lattice drifts 6.4¢ over 2 phrases`. Known: the drums still play 4 beats a bar under 3/4.
 14. **A one-bar window.** **768:769**, cycle **8 s**, `chromatic-run.mid`: `13/13 notes hit · 6 tight · 13/13 note-offs on onsets · window: 1 of 2 bars` — the run, every class, on 16ths.
-15. **Clear.** Clear: an ordinary composition again (the lines go, the tempo back to Compose's own).
+15. **Clear.** Clear: the lines go and the button reads Compose; nothing composes until you press it (ruled 2026-10-26). Compose: an ordinary composition at its own tempo.
 
 Also worth a look: the amber rings, red hollow dots and late-off tails at real sizes; chord names, which stay relative to C (phase A's call 7), so "Am" can sit beside "the row can't play A".
 
@@ -191,3 +191,20 @@ Also worth a look: the amber rings, red hollow dots and late-off tails at real s
     - pruning rows with no full fit (~1 s in the worker);
     - polyphony (ruled out of v1).
   - **Merged worktrees left to prune:** `target-core`, `target-ui`. 8779 was being served from `target-ui` at the time of the pass, so restart the server from composer-sprint-2 before pruning it.
+- 2026-10-26: **Avery's full checklist pass.** Items 1–12, 14 and 15 confirmed.
+  - **Item 13 (Greensleeves):** the clip opens with a pickup, so the composition's first bar is the pickup's bar. The accompaniment gets an extra bar at the start, mostly before the lead enters. The 9 bars are as the checklist predicted.
+    - **Ruled: no pickup editor.** The UI is already complicated enough, so a pickup stays as decoded.
+  - **Rulings on phase B's open calls:**
+    - **An audition plays from the top (kept).** Later, the timeline may get real-time voice changes without the loop reset (mostly a legato matter) and scrubbing; recorded in DIRECTIONS.
+    - **Clear composes nothing (changed).** The entry goes dirty and Compose waits.
+    - Still unruled: whether a new clip clears the pins and the typed field.
+  - **The tonic picker, as built (Avery asked what it's for).** It never transposes.
+    - The lead is pinned to the row's onsets.
+    - `baseHz` puts the lead's median at ~539 Hz whatever the tonic.
+    - The placement is unchanged too: drift is measured between phrases, and the tonic cancels out of it.
+    - What it moves:
+      - the composition's root (`targetRoot`), hence the chord names (relative, C = the root);
+      - the grid the harmony reads its roots on (which roots count as off the grid, so where it retunes);
+      - the chord ranking's tie-breaks;
+      - the lead's register reference (`registerOf`).
+    - So it is a "home" picker, not a key. Avery: a key change needs the fundamental retuned so the composition sounds in that key. Carried to the next thread (DIRECTIONS, "The Composer as a solver").

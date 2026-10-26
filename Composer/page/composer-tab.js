@@ -162,7 +162,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const clipChoose = button('Choose a .mid…', 'ctab-btn ctab-clip-choose', 'a monophonic 12EDO MIDI clip: the Composer finds where the row can play it, and composes everything else around it (or drop a .mid on the window)', () => clipFile.click());
     const clipTonic = el('select', { className: 'ctab-tonic', title: "the clip's tonic (P5): the key estimate, or any of the 12; the clip is placed again, and the chords' root follows it" });
     clipTonic.addEventListener('change', () => { audition.reset(); tab.setTargetTonic(clipTonic.value === '' ? null : Number(clipTonic.value)); });
-    const clipClear = button('Clear', 'ctab-btn ctab-clip-clear', 'no clip: an ordinary Compose again', () => { audition.reset(); tab.setTarget(null); });
+    const clipClear = button('Clear', 'ctab-btn ctab-clip-clear', 'drop the clip; Compose again for an ordinary composition', () => { audition.reset(); tab.setTarget(null); });
     const clipTonicLabel = el('span', { className: 'ctab-muted', textContent: 'Tonic' });
     const clipHint = el('span', { className: 'ctab-muted ctab-clip-hint' }), clipError = el('div', { className: 'ctab-clip-error' });
     const clipDecode = el('div', { className: 'ctab-clip-line ctab-clip-decode' }), clipFit = el('div', { className: 'ctab-clip-line ctab-clip-fit' }), clipAlts = el('div', { className: 'ctab-clip-alts' });

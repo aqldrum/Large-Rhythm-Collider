@@ -1512,7 +1512,7 @@ The order: `TARGET_ORDER.md` phase B (B1–B5), on phase A's core ("MIDI targets
 - **The tonic** (P5): a select, "auto (F# minor)" then the 12 classes; a pick re-places and composes.
 - **The fit line** (`fitLine`): "8/15 notes hit" (amber unless all), "4 tight", "11/11 note-offs on onsets (n late)", "whole cycle" or "window: 4 of 5 bars, from 0.075 of the cycle", amber "3 substituted (2 off the frame, 1 a slot over)", red "4 silent", "the lattice drifts 6.4¢ over 2 phrases", red "the row can't play A" (decided 5). Shown once the target's compose has landed.
 - **The placements:** a chip per placement ("best · 8/15", "#2 · 9/15"…, where it sits, tight, substitutes, silent, drift; its lattice path in the tooltip), the current one outlined. A first click auditions it, a second click or Keep keeps it, Esc or Revert takes it back; the line under them says which is being heard.
-- **Clear** composes an ordinary composition. **Errors** in plain words (`targetError`): not a MIDI file, cut short, SMPTE, a format past 1, no notes, a time signature the grid can't hold. A refusal (a grid too fine for a line, `targetGrid`; too few tones) is said by the refusal line (`readouts.js refusalText` words `targetGrid` now).
+- **Clear** drops the clip and composes nothing: the entry goes dirty, and the next Compose is an ordinary one (Avery, 2026-10-26; it composed at once as first built). **Errors** in plain words (`targetError`): not a MIDI file, cut short, SMPTE, a format past 1, no notes, a time signature the grid can't hold. A refusal (a grid too fine for a line, `targetGrid`; too few tones) is said by the refusal line (`readouts.js refusalText` words `targetGrid` now).
 - The readouts add "clip ode-to-joy · 8/15 hit · 108.0 BPM", and the tempo readout says "(the loop as composed)" on a target. Reset's tooltip says "back to the clip's own tempo".
 - The Lines and Harmony knobs the clip sets are disabled, "chose 4 · the clip's".
 
@@ -1530,7 +1530,7 @@ The order: `TARGET_ORDER.md` phase B (B1–B5), on phase A's core ("MIDI targets
 
 **Calls beyond the order (proposed):**
 1. **A new clip (or Clear) clears the pins, the typed field, the edits and the drum grid:** they were another meter's bars. The tonic and the placements keep them (the same clip, the same bars).
-2. **Clear composes at once** (an ordinary composition), as setting a clip does.
+2. ~~**Clear composes at once**~~ — overruled by Avery (2026-10-26): Clear composes nothing; Compose waits.
 3. **A placement audition plays from the top,** not at the next bar boundary: another placement can change the loop's length (N), and it is a whole compose (~0.1–0.6 s). Revert restores the entry without composing.
 4. **The best kept is no placement in the input,** so a later compose searches again (deterministic: the same best). An alternate kept is given on every later compose (no search).
 5. **A frame (±¢) change or new layers drop a kept placement** and the list (the frame decides what is in tune; the placement is the row's). **A new cycle of the same row carries** the clip, the tonic, the placement and the list (a placement's phase is a share of the cycle).
@@ -1551,7 +1551,7 @@ The order: `TARGET_ORDER.md` phase B (B1–B5), on phase A's core ("MIDI targets
 **Open, for Avery:**
 1. **Audition from the top** (built), or at the next bar boundary when the loop's length doesn't change?
 2. **Clearing the pins on a new clip** (built), or keep a typed progression across clips?
-3. **Clear** composes at once (built), or goes back to Compose and waits?
+3. **Clear** composes at once, or goes back to Compose and waits? **Ruled (Avery, 2026-10-26): it waits.**
 
 ## Layout (agreed earlier, 2026-10-21)
 

@@ -61,7 +61,7 @@
 //   target     (MIDI targets, phase B; DESIGN_NOTES "MIDI targets (phase B)") a clip as the composition's lead:
 //                setTarget(bytes | clip | null, { tonic, name })   decoded here (midi.js), placed and composed through
 //                              runCompose (compose.js' `target`: the search runs where Compose runs, P7); null clears it
-//                              (an ordinary Compose again). Setting or clearing one clears the pins, the field and the
+//                              and composes nothing (the entry goes dirty; Compose again for an ordinary one: Avery). Setting or clearing one clears the pins, the field and the
 //                              edits (they were another meter's bars; proposed)
 //                setTargetTonic(pc | null)   the 12-way tonic override (P5): placed again, composed
 //                auditionPlacement(i) / keepPlacement() / revertPlacement() / placementAudition()   the search's
@@ -869,8 +869,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     },
     // ── MIDI targets (phase B; DESIGN_NOTES "MIDI targets (phase B)") ──
     /**
-     * A clip as the composition's lead: source a .mid file's bytes (or a decoded clip), or null to clear it (an
-     * ordinary Compose again). opts { tonic (a pitch class; null: the clip's key estimate), name (the file's name) }.
+     * A clip as the composition's lead: source a .mid file's bytes (or a decoded clip), or null to clear it (nothing
+     * composed: the entry goes dirty, and the next Compose is an ordinary one; Avery, 2026-10-26). opts { tonic (a pitch class; null: the clip's key estimate), name (the file's name) }.
      * A file that won't decode leaves the entry as it was → Promise<{ ok, clip?, spec?, error?, cleared? }>
      */
     setTarget(source, { tonic = null, name = null } = {}) {
@@ -878,9 +878,10 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       if (tonic != null && !(Number.isInteger(tonic) && tonic >= 0 && tonic < 12)) throw new Error(`composer: a tonic is a pitch class 0..11, not ${JSON.stringify(tonic)}`);
       if (source == null) {
         if (!st.input.target) return Promise.resolve({ ok: true, noop: true, cleared: true });
+        // Clear does not compose (Avery, 2026-10-26): the entry goes dirty, as any input change, and Compose waits
         delete st.input.target; st.placements = null;
         freshTarget(st); touch();
-        return api.compose().then((spec) => outcome(st, spec, { cleared: true }));
+        return Promise.resolve({ ok: true, cleared: true });
       }
       let clip;
       try { clip = readClip(source, { name }); } catch (err) { return Promise.resolve({ ok: false, error: String(err && err.message ? err.message : err) }); }
