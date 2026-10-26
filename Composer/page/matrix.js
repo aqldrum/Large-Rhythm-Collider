@@ -16,11 +16,16 @@
 //   fieldStrip(resolution) → per bar: { text, detail, mark, status, title }   the typed field's inline resolution
 //   candidateRow(c) / lineRow(l)                                 an alternate as the inspector lists it
 //   primeStrip(prime, T, bar, barStarts) → the level-1 lights at their real times (0..1), chosen and struck marked
+//
+// MIDI targets (phase B, B3): on a target spec the lead row IS the clip. Its dots are the clip's notes (y by the clip's
+// own pitch), each with its kind (target-lines.js clipMarks): a hit, an amber substitute (fringe or shift), a red hard
+// miss (silent: drawn hollow at its step, it has no onset), a late note-off marked. It has no alternates (P6).
 
 import { phrasesOf } from '../core/harmony.js';
 import { DRUM_VOICES, GRID_CHARS } from '../core/drums.js';
 import { PART_LABELS, PART_COLORS } from './plot-highlights.js';
 import { barColumns } from '../perform/readouts.js';
+import { clipMarks, clipCounts } from './target-lines.js';
 
 export const MATRIX_VERSION = 'composer-matrix-v1';
 /** the matrix's rows, top to bottom (the lanes' order) */
@@ -68,7 +73,8 @@ export const barsLabel = ({ from, to }) => (from === to ? `bar ${from + 1}` : `b
  *   alternates (bar, part) → how many alternates the cell has (0: no badge)
  *   retuned   the bars re-pitched from Compose's (controller retunedBars())
  * → null without a composition, else { bars, cols, starts, lens, spans, rows: [{ id, label, color, enabled, cells }] }
- *   cell: { part, bar, from, to, phrase, dots: [{ x, y, accent }], name?, badge, edited, editKind, retuned, retune
+ *   cell: { part, bar, from, to, phrase, dots: [{ x, y, accent, kind?, late?, j? }], clip? (a target's lead: its counts),
+ *           name?, badge, edited, editKind, retuned, retune
  *           ({ from, to } on the cell whose edit re-pitched those later bars), steps? (drums: { voice: string }),
  *           silent? (drums: Set of `${voice}:${place}`), title }
  */
@@ -105,9 +111,20 @@ export function matrixModel(state, { grid = null, composedGrid = null, alternate
     for (const n of part?.notes ?? []) { const v = Math.log2(n.hz); if (v < lo) lo = v; if (v > hi) hi = v; }
     const yOf = (hz) => (hi > lo ? 1 - (Math.log2(hz) - lo) / (hi - lo) : 0.5);
     const cellsOf = id === 'lead' ? spans.map((s) => ({ from: s.from, to: s.from + s.bars })) : Array.from({ length: N }, (_, k) => ({ from: k, to: k + 1 }));
+    // MIDI targets: the lead row is the clip, its notes by kind (silent ones too), its height the clip's own pitch
+    const marks = id === 'lead' && spec.target ? clipMarks(spec) : null;
+    if (marks) { lo = Math.min(...marks.map((m) => m.midi)); hi = Math.max(...marks.map((m) => m.midi)); }
+    const clipDots = (from, to, t0, len) => {
+      const S = spec.knobs.slotsPerBar, byClip = new Map((part?.notes ?? []).map((n) => [n.clipNote, n]));
+      return marks.filter((m) => m.step >= from * S && m.step < to * S).map((m) => {
+        const n = m.sounding ? byClip.get(m.j) : null, slotT = spec.timeline.slotStarts[m.step] ?? t0;
+        const t = n && n.time >= t0 - 1e-9 && n.time < t0 + len ? n.time : slotT;   // a note before slot 0's anchor sounds at the loop's end: drawn at its slot
+        return { x: Math.min(1, Math.max(0, (t - t0) / len)), y: hi > lo ? (hi - m.midi) / (hi - lo) : 0.5, accent: n ? !!n.retrigger : true, kind: m.kind, late: m.late, j: m.j };
+      });
+    };
     const cells = cellsOf.map(({ from, to }, idx) => {
       const t0 = starts[from], len = endOf(to) - t0;
-      const dots = (part?.notes ?? []).filter((n) => n.bar >= from && n.bar < to).map((n) => ({ x: Math.min(1, Math.max(0, (n.time - t0) / len)), y: yOf(n.hz), accent: !!n.retrigger }));
+      const dots = marks ? clipDots(from, to, t0, len) : (part?.notes ?? []).filter((n) => n.bar >= from && n.bar < to).map((n) => ({ x: Math.min(1, Math.max(0, (n.time - t0) / len)), y: yOf(n.hz), accent: !!n.retrigger }));
       let edited = false;
       for (let k = from; k < to; k++) if (notesSig(own[id], k) !== notesSig(base[id], k)) edited = true;
       const cell = { part: id, bar: from, from, to, phrase: id === 'lead' ? idx : cellSpan(id, from, spans).phrase, dots, badge: alternates(from, id) || 0, edited, editKind: null, retuned: false, retune: null, title: '' };
@@ -115,6 +132,11 @@ export function matrixModel(state, { grid = null, composedGrid = null, alternate
         const e = state.edits?.lead?.[idx];
         if (e) { cell.edited = true; cell.editKind = e.chordsFollow ? 'swap + chords' : 'swap'; if (e.smooth) cell.editKind += ' + smooth'; }
         cell.title = `${label}, ${barsLabel({ from, to: to - 1 })} (phrase ${idx + 1}): ${dots.length} notes`;
+        if (marks) {
+          const c = cellClip(dots);
+          cell.clip = c;
+          cell.title = `${label} (the clip), ${barsLabel({ from, to: to - 1 })}: ${c.notes} notes, ${c.hits} hit${c.sub ? `, ${c.sub} substituted (amber)` : ''}${c.hard ? `, ${c.hard} silent (red)` : ''}${c.late ? `, ${c.late} late note-off${c.late === 1 ? '' : 's'}` : ''}`;
+        }
       } else if (id === 'chords') {
         const ch = spec.chords[from], e = state.edits?.chords?.[from];
         cell.name = ch.empty ? '—' : ch.name;
@@ -135,6 +157,9 @@ export function matrixModel(state, { grid = null, composedGrid = null, alternate
   });
   return { version: MATRIX_VERSION, bars: N, cycleSeconds: T, cols, starts, lens, spans, rows, retuneRanges: ranges };
 }
+
+/** a target lead cell's dots counted by kind (target-lines.js clipCounts' shape) */
+const cellClip = (dots) => clipCounts(dots.map((d) => ({ kind: d.kind, sub: d.kind === 'fringe' || d.kind === 'shift', miss: d.kind === 'hard', late: d.late })));
 
 /** the cell an arrow key moves to: left/right a bar (a lead cell: a phrase), up/down a part */
 export function moveCell({ part, bar }, key, { bars, spans }) {

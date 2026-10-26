@@ -33,6 +33,15 @@
 // it back with no redo step left), undo/redo (⌘Z / ⇧⌘Z, Ctrl on other systems, while focus is in the window, and the
 // header's buttons), the keyboard on the matrix (arrows move, Enter opens the cell), and the narrow fallback (below
 // ~600 px of the left half the matrix shows one bar and a bar picker: a container query in composer-tab.css).
+//
+// MIDI targets (phase B; DESIGN_NOTES "MIDI targets (phase B)"): the MIDI clip control under the header. Choose a .mid
+// or drop one anywhere on the window: it is decoded, placed in the row and composed around (the controller's
+// setTarget). The decode line (name, grid, bars, notes, the tonic with its 12-way override, the notes the skyline
+// dropped), the fit line (target-lines.js: hits, tight, note-offs, whole cycle or the window, substitutes, silent
+// notes, drift, the classes the row can't play), the placements to audition (the search's best and its alternates: a
+// first click hears one, a second click or Keep keeps it, Esc or Revert takes it back), Clear, and errors in plain
+// words. The matrix's lead row is the clip with its marks (matrix.js); the lead's context lists the clip's notes and
+// their kinds instead of runner-up lines (P6: no lead swaps on a target).
 
 import { soundChoices, drumModeChoices, DRUM_LAB_VOICES, TEMPO_LIMITS } from '../perform/composer-controller.js';
 import { KNOB_FIELDS, TABLE_FIELD, fieldValue, refusalText, readoutItems, knobChosen, decisionRows, rootGroups, strayRootOption, chordGot, progressionNote,
@@ -44,6 +53,9 @@ import { createComposeAnimator, paintFrame, paintShimmer, readShowWork, writeSho
 import { matrixModel, moveCell, nextStep, fieldStrip, candidateRow, lineRow, primeStrip, barsLabel, retuneRanges, barAt, qualityName, phraseSpans } from './matrix.js';
 import { createAudition } from './audition.js';
 import { arrangeDrums, gridOf, DRUM_VOICES, beatsOf } from '../core/drums.js';
+// MIDI targets (phase B)
+import { TARGET_SETS } from '../core/compose.js';
+import { decodeLine, fitLine, placementRow, tonicChoices, clipMarks, noteName, KIND_WORDS, targetError } from './target-lines.js';
 
 const KNOBS_OF = Object.freeze({ harmony: ['modulation', 'settlePasses', 'presence'], lines: ['bars', 'slotsPerBar', 'anchors'], tuning: ['frameCentsEachSide'] });
 /** the caption's names for the trace's beats */
@@ -143,16 +155,31 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const barPick = el('div', { className: 'ctab-barpick' });
     const table = el('table', { className: 'ctab-decisions-table' });
     const decisions = el('details', { className: 'ctab-decisions' }, el('summary', { textContent: 'Decisions — what Compose chose, and why' }), table);
+    // MIDI targets (phase B): the MIDI clip control (a hidden file input behind a button; a drop anywhere on the window)
+    const clipFile = el('input', { type: 'file', accept: '.mid,.midi,audio/midi,audio/x-midi', className: 'ctab-clip-file' });
+    clipFile.style.display = 'none';
+    clipFile.addEventListener('change', () => { const f = clipFile.files?.[0]; loadClip(f); clipFile.value = ''; });
+    const clipChoose = button('Choose a .mid…', 'ctab-btn ctab-clip-choose', 'a monophonic 12EDO MIDI clip: the Composer finds where the row can play it, and composes everything else around it (or drop a .mid on the window)', () => clipFile.click());
+    const clipTonic = el('select', { className: 'ctab-tonic', title: "the clip's tonic (P5): the key estimate, or any of the 12; the clip is placed again, and the chords' root follows it" });
+    clipTonic.addEventListener('change', () => { audition.reset(); tab.setTargetTonic(clipTonic.value === '' ? null : Number(clipTonic.value)); });
+    const clipClear = button('Clear', 'ctab-btn ctab-clip-clear', 'no clip: an ordinary Compose again', () => { audition.reset(); tab.setTarget(null); });
+    const clipTonicLabel = el('span', { className: 'ctab-muted', textContent: 'Tonic' });
+    const clipHint = el('span', { className: 'ctab-muted ctab-clip-hint' }), clipError = el('div', { className: 'ctab-clip-error' });
+    const clipDecode = el('div', { className: 'ctab-clip-line ctab-clip-decode' }), clipFit = el('div', { className: 'ctab-clip-line ctab-clip-fit' }), clipAlts = el('div', { className: 'ctab-clip-alts' });
+    const target = el('div', { className: 'ctab-target' },
+      el('div', { className: 'ctab-row' }, el('b', { className: 'ctab-target-label', textContent: 'MIDI clip' }), clipChoose, clipFile, clipTonicLabel, clipTonic, clipClear, clipHint),
+      clipError, clipDecode, clipFit, clipAlts);
     left.replaceChildren(
       el('div', { className: 'ctab-head' },
         el('div', { className: 'ctab-row' }, rhythm, el('label', { className: 'ctab-muted', textContent: 'Seed' }), seed, go, undoBtn, redoBtn, json, work, status),
         el('div', { className: 'ctab-row' }, el('label', { className: 'ctab-muted', textContent: 'Tempo', title: 'playback tempo: the composed cycle faster or slower, live (pitch unchanged)' }), tempo, tempoBpm, tempoReset,
           el('label', { className: 'ctab-muted', textContent: 'Glide' }), glide, glideOut)),
-      note, refusal, dropped, caption, readouts,
+      target, note, refusal, dropped, caption, readouts,
       el('div', { className: 'ctab-scroll' }, barPick, el('div', { className: 'ctab-matrix-wrap' }, lanes), decisions));
     // a click anywhere in the tab skips the animation (the button and the toggle do their own thing)
     left.addEventListener('click', (e) => { if (anim.status === 'playing' && !e.target?.closest?.('.ctab-go, .ctab-work')) skipAnimation(); });
-    return { seed, go, undoBtn, redoBtn, json, work, tempo, tempoBpm, tempoReset, glide, glideOut, rhythm, status, note, refusal, dropped, caption, capLabel, capDetail, capBeats, readouts, lanes, barPick, table };
+    return { seed, go, undoBtn, redoBtn, json, work, tempo, tempoBpm, tempoReset, glide, glideOut, rhythm, status, note, refusal, dropped, caption, capLabel, capDetail, capBeats, readouts, lanes, barPick, table,
+      target, clipFile, clipChoose, clipTonic, clipTonicLabel, clipClear, clipHint, clipError, clipDecode, clipFit, clipAlts };
   }
   function showTempo() {
     if (!ui) return;
@@ -161,7 +188,10 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (off) { ui.tempoBpm.value = ''; return; }
     ui.tempo.value = bpm;
     if (doc.activeElement !== ui.tempoBpm) ui.tempoBpm.value = Number(bpm.toFixed(1));
-    ui.tempoBpm.classList.toggle('changed', Math.abs(bpm - spec) > 1e-9);
+    // MIDI targets: the seed is the clip's tempo (decided 1/4), and Reset goes back to it
+    const seed = core.seedTempo() ?? spec, clip = !!tab.state.spec?.target;
+    ui.tempoBpm.classList.toggle('changed', Math.abs(bpm - seed) > 1e-9);
+    ui.tempoReset.title = clip ? "back to the clip's own tempo (its MIDI file's)" : 'back to the tempo Compose chose';
   }
   function exportJSON() {
     if (!tab.state.spec) return;
@@ -213,9 +243,93 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     ui.dropped.style.display = drop.length ? '' : 'none';
     ui.readouts.replaceChildren(...readoutItems(s, { lastMs: tab.state.lastMs, drums: tab.state.drums }).map(([k, val]) => el('span', {}, `${k} `, el('b', { textContent: val }))));
     ui.table.replaceChildren(...decisionRows(s, tab.state.drums).map((d) => el('tr', {}, el('td', { textContent: d.what }), el('td', { textContent: d.value }), el('td', { textContent: d.why }))));
+    renderTarget();
     renderMatrix();
     showTempo();
   }
+
+  // ── MIDI targets (phase B): the MIDI clip control ──
+  let clipBusy = null;   // the name of a file being read
+  const readBytes = (file) => (typeof file.arrayBuffer === 'function' ? file.arrayBuffer().then((b) => new Uint8Array(b))
+    : new Promise((resolve, reject) => { const r = new globalThis.FileReader(); r.onload = () => resolve(new Uint8Array(r.result)); r.onerror = () => reject(r.error); r.readAsArrayBuffer(file); }));
+  /** a .mid chosen or dropped: read, then decoded, placed and composed (tab.setTarget) → its answer */
+  function loadClip(file) {
+    if (!file) return Promise.resolve(null);
+    clipBusy = file.name || 'the file';
+    audition.reset();
+    if (shown) render();
+    return readBytes(file).then((bytes) => tab.setTarget(bytes, { name: file.name ?? null }),
+      (err) => { tab.view.targetError = `Couldn't read ${file.name ?? 'the file'}: ${err?.message ?? err}`; return { ok: false, error: tab.view.targetError }; })
+      .then((r) => { clipBusy = null; if (shown) render(); return r; });
+  }
+  /** a placement clicked: the first click auditions it, a second (or Keep) keeps it */
+  function tryPlacement(i) {
+    const pa = core.placementAudition();
+    if (pa && pa.index === i) return keepPlacement();
+    audition.reset();
+    const p = tab.auditionPlacement(i).catch((err) => { tab.view.targetError = targetError(err?.message ?? err); return { ok: false }; });
+    if (shown) render();
+    return p.then((r) => { if (shown) render(); return r; });
+  }
+  const keepPlacement = () => tab.keepPlacement().then((r) => { if (shown) render(); return r; });
+  const revertPlacement = () => tab.revertPlacement().then((r) => { if (shown) render(); return r; });
+  /** a line of the control: its items, each toned (ok, amber, red) */
+  function clipLine(host, line) {
+    const items = line?.items ?? [];
+    host.replaceChildren(...items.map((it, i) => el('span', { className: `ctab-clip-item${it.tone ? ` ${it.tone}` : ''}${it.name ? ' name' : ''}`, textContent: `${i ? '· ' : ''}${it.text}` })));
+    host.title = line?.title ?? '';
+    host.style.display = items.length ? '' : 'none';
+  }
+  function renderTarget() {
+    const t = tab.state.input.target ?? null, s = tab.state.spec, composing = tab.state.status === 'composing';
+    const fit = t && !composing && s && !s.refused && s.target ? s.target : null;
+    ui.clipChoose.disabled = !tab.view.hasRhythm;
+    ui.clipChoose.textContent = t ? 'Another .mid…' : 'Choose a .mid…';
+    ui.clipHint.textContent = clipBusy ? `reading ${clipBusy}…` : composing && t ? 'placing the clip in the row…'
+      : t ? '' : tab.view.hasRhythm ? 'or drop one on the window: the clip becomes the lead, and everything else is composed around it' : 'generate a rhythm first';
+    for (const e of [ui.clipTonic, ui.clipTonicLabel, ui.clipClear]) e.style.display = t ? '' : 'none';
+    if (t) {
+      ui.clipTonic.replaceChildren(...tonicChoices(t.clip).map((o) => el('option', { value: o.value, textContent: o.label })));
+      ui.clipTonic.value = t.tonic == null ? '' : String(t.tonic);
+      ui.clipTonic.disabled = composing;
+    }
+    const err = tab.view.targetError;
+    ui.clipError.textContent = err ?? '';
+    ui.clipError.style.display = err ? '' : 'none';
+    clipLine(ui.clipDecode, t ? decodeLine(t.clip, { tonic: t.tonic }) : null);
+    clipLine(ui.clipFit, fit ? fitLine(fit) : null);
+    // the placements: the search's best and its alternates, auditioned as the matrix's alternates are
+    const pl = t ? tab.state.placements : null, pa = core.placementAudition();
+    if (!pl || pl.list.length < 2) { ui.clipAlts.replaceChildren(); ui.clipAlts.style.display = 'none'; return; }
+    ui.clipAlts.style.display = '';
+    const chips = pl.list.map((p, i) => {
+      const r = placementRow(p, i, { current: i === pl.current });
+      const b = el('button', { className: `ctab-place${r.current ? ' current' : ''}${pa?.index === i ? ' auditioning' : ''}`, title: r.title, disabled: composing && pa?.index !== i },
+        el('b', { textContent: r.label }), el('span', { className: 'ctab-place-where', textContent: r.where }), r.detail ? el('span', { className: 'ctab-muted', textContent: r.detail }) : null);
+      b.dataset.index = String(i);
+      b.addEventListener('click', () => tryPlacement(i));
+      return b;
+    });
+    const text = pa ? (composing ? 'composing it…' : `auditioning ${pa.index === 0 ? 'the best' : `#${pa.index + 1}`}${tab.state.status === 'playing' ? '' : ' (Perform to hear it)'} — click it again, or Keep`)
+      : 'placements: click one to hear it (it plays from the top)';
+    ui.clipAlts.replaceChildren(el('div', { className: 'ctab-places' }, ...chips),
+      el('div', { className: `ctab-audition${pa ? ' on' : ''}` }, el('span', { className: 'ctab-muted', textContent: text }),
+        button('Keep', 'ctab-btn ctab-keep ctab-place-keep', 'keep this placement', () => keepPlacement(), { disabled: !pa }),
+        button('Revert', 'ctab-btn ctab-revert ctab-place-revert', 'back to the placement before (Esc)', () => revertPlacement(), { disabled: !pa })));
+  }
+  // a .mid dropped anywhere on the window (the left half or the inspector)
+  let dragDepth = 0;
+  const isFiles = (e) => { const types = e?.dataTransfer?.types; return !types || [...types].includes('Files'); };
+  const onDragEnter = (e) => { if (!isFiles(e)) return; e.preventDefault?.(); dragDepth++; hosts?.left.classList?.add('ctab-dropping'); };
+  const onDragOver = (e) => { if (!isFiles(e)) return; e.preventDefault?.(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; };
+  const onDragLeave = () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) hosts?.left.classList?.remove('ctab-dropping'); };
+  const onDrop = (e) => {
+    e.preventDefault?.();
+    dragDepth = 0; hosts?.left.classList?.remove('ctab-dropping');
+    const f = e.dataTransfer?.files?.[0];
+    if (f) loadClip(f);
+  };
+  const DROP_EVENTS = [['dragenter', onDragEnter], ['dragover', onDragOver], ['dragleave', onDragLeave], ['drop', onDrop]];
 
   // ── the matrix (STEP 4e) ──
   /** the grid of the drums as the mode the entry's grid came from plays them: the "edited" marks' reference */
@@ -280,9 +394,10 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       cell.append(mini, el('span', { className: 'ctab-dlabel', textContent: c.name, title: c.title }));
     } else {
       for (const d of c.dots) {
-        const dot = el('span', { className: `ctab-dot${d.accent ? '' : ' held'}` });
+        // MIDI targets: a clip note's kind (amber substitute, red silent) and a late note-off
+        const dot = el('span', { className: `ctab-dot${d.accent ? '' : ' held'}${d.kind ? ` clip ${d.kind}` : ''}${d.late ? ' late' : ''}` });
         dot.style.left = `${(100 * d.x).toFixed(2)}%`; dot.style.top = `${(8 + 76 * d.y).toFixed(1)}%`;
-        dot.style.background = row.color;
+        if (d.kind !== 'hard') dot.style.background = row.color;
         cell.append(dot);
       }
       if (c.part === 'chords') {
@@ -405,7 +520,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const a = doc.activeElement;
     if (e.key === 'Escape') {
       if (anim.status === 'playing') { e.preventDefault?.(); skipAnimation(); return; }
-      if (audition.state !== 'idle' && !typing(a)) { e.preventDefault?.(); audition.revert().then(said); }
+      if (audition.state !== 'idle' && !typing(a)) { e.preventDefault?.(); audition.revert().then(said); return; }
+      if (core.placementAudition() && !typing(a)) { e.preventDefault?.(); revertPlacement(); }   // MIDI targets: a placement auditioned
       return;
     }
     const k = String(e.key || '').toLowerCase();
@@ -467,8 +583,9 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     return el('div', { className: 'ctab-knobs' }, ...names.map((name) => {
       const f = KNOB_FIELDS.find((x) => x.name === name), input = field(f, fieldValue(name, tab.state.knobs[name]));
       input.addEventListener('change', () => { core.setKnob(name, f.read(input.value)); recomposeIfQuick(); });
-      const c = chosen[name];
-      return el('div', { className: 'ctab-knob' }, el('label', { textContent: f.label, title: f.title || '' }), input, el('span', { className: `ctab-chosen${c.over ? ' over' : ''}`, textContent: c.text }));
+      const c = chosen[name], byClip = !!tab.state.input.target && TARGET_SETS.includes(name);   // MIDI targets: the clip sets it
+      if (byClip) { input.disabled = true; input.title = 'set by the MIDI clip (its meter, its placement, its pinned lead)'; }
+      return el('div', { className: 'ctab-knob' }, el('label', { textContent: f.label, title: f.title || '' }), input, el('span', { className: `ctab-chosen${c.over && !byClip ? ' over' : ''}`, textContent: byClip ? `${c.text.replace(/^asked: /, 'chose ')} · the clip's` : c.text }));
     }));
   }
   function progressionEditor() {
@@ -577,6 +694,28 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (a.pinned) notes.push(el('div', { className: 'ctab-muted', textContent: 'a pinned bar: its candidates keep the asked root' }));
     return [head, el('div', { className: 'ctab-muted ctab-legend', textContent: '● plays now · C Compose\'s · ✓ holds the lead\'s strong notes' }), list, ...notes, auditionBar(), editNote()];
   }
+  /** MIDI targets (B3): a target's lead cell is the clip's phrase: its notes, their kinds, its lattice (no lead swaps, P6) */
+  function clipContext(bar) {
+    const s = tab.state.spec, c = tab.cell(), S = s.knobs.slotsPerBar, p = s.target.placement;
+    const ph = p.phrases.find((x) => bar >= x.from && bar < x.from + x.bars) ?? p.phrases[0];
+    const marks = clipMarks(s).filter((m) => m.step >= c.from * S && m.step < c.to * S);
+    const byClip = new Map((tab.state.parts.lead?.notes ?? []).map((n) => [n.clipNote, n]));
+    const head = ctxHead(`${c.to - c.from > 1 ? `Bars ${c.from + 1}–${c.to}` : `Bar ${c.from + 1}`} · Lead (the clip)`, el('span', { className: 'ctab-tag ctab-clip-tag', textContent: s.target.clip.name }));
+    const lattice = el('div', { className: 'ctab-muted', textContent: `this phrase's lattice: ${ph.psiRatio} (lane +${ph.k}), the tonic at ${ph.tonicCents.toFixed(1)}¢${ph.driftCents ? `, drifted ${ph.driftCents >= 0 ? '+' : '−'}${Math.abs(ph.driftCents).toFixed(1)}¢` : ''}` });
+    const rows = marks.map((m) => {
+      const n = byClip.get(m.j);
+      const tr = el('tr', { className: `ctab-clip-note ${m.kind}${m.late ? ' late' : ''}`, title: `clip note ${m.j + 1}: ${noteName(m.midi)} at bar ${Math.floor(m.step / S) + 1}, step ${(m.step % S) + 1} — ${KIND_WORDS[m.kind]}${m.late ? '; its note-off found no onset near its anchor (late)' : ''}` },
+        el('td', { textContent: noteName(m.midi) }), el('td', { textContent: `${Math.floor(m.step / S) + 1}.${(m.step % S) + 1}` }), el('td', { className: 'ctab-clip-kind', textContent: m.kind }),
+        el('td', { textContent: n ? n.ratio : '—' }), el('td', { textContent: m.dev == null ? '' : `${m.dev >= 0 ? '+' : '−'}${Math.abs(m.dev).toFixed(1)}¢` }), el('td', { textContent: m.late ? 'late off' : '' }));
+      tr.dataset.clipNote = String(m.j);
+      return tr;
+    });
+    return [head, lattice,
+      el('div', { className: 'ctab-muted ctab-legend', textContent: 'hit · amber: played off the frame (fringe) or a slot over (shift) · red: silent (the row has no onset of its class there) · late off: its end found no onset near its anchor' }),
+      rows.length ? el('table', { className: 'ctab-decisions-table ctab-notes ctab-clip-notes' }, el('tr', {}, ...['note', 'bar.step', 'kind', 'ratio', 'dev', ''].map((h) => el('td', { textContent: h }))), ...rows)
+        : el('div', { className: 'ctab-muted', textContent: 'no clip notes in this phrase' }),
+      el('div', { className: 'ctab-muted', textContent: 'no lead alternates: the lead is the clip (its other placements are in the MIDI clip control)' })];
+  }
   function leadContext(bar) {
     const a = core.alternatesOf(bar, 'lead');
     if (!a) return [ctxHead(`Bar ${bar + 1} · Lead`), el('span', { className: 'ctab-muted', textContent: 'no runner-ups for this phrase' })];
@@ -617,7 +756,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (id === 'inner') {
       const p = core.alternatesOf(bar, 'lead'), e = p?.edit;
       out.push(el('div', { className: 'ctab-row' }, el('span', { className: 'ctab-muted', textContent: 'the inner is re-mined bar by bar with its chord; smoothing re-mines the whole phrase (the worker)' }),
-        button(e?.smooth ? 'smoothed ✓' : 'smooth the phrase', 'ctab-btn ctab-smooth', e ? 'smooth the inner over the whole phrase' : 'available once the phrase\'s lead is swapped (the Lead row)', () => { if (e) doEdit(() => core.swapLead(p.phrase, p.currentId, { chordsFollow: !!e.chordsFollow, smooth: !e.smooth })); }, { disabled: !e || core.applying() })));
+        button(e?.smooth ? 'smoothed ✓' : 'smooth the phrase', 'ctab-btn ctab-smooth', e ? 'smooth the inner over the whole phrase' : s.target ? 'no lead swaps on a MIDI target (its lead is the clip), so no smoothing' : 'available once the phrase\'s lead is swapped (the Lead row)', () => { if (e) doEdit(() => core.swapLead(p.phrase, p.currentId, { chordsFollow: !!e.chordsFollow, smooth: !e.smooth })); }, { disabled: !e || core.applying() })));
     }
     if (id === 'bass' || id === 'comp') out.push(el('div', { className: 'ctab-muted', textContent: `re-mined with its chord: swap bar ${bar + 1}'s chord to move it` }));
     out.push(notes.length ? el('table', { className: 'ctab-decisions-table ctab-notes' }, el('tr', {}, ...['slot', 'ratio', 'oct', 'Hz'].map((h) => el('td', { textContent: h }))),
@@ -676,7 +815,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (!s || s.refused) return [el('span', { className: 'ctab-muted', textContent: 'Compose first: then click a cell of the matrix — its alternates, its notes, its drum steps are here' })];
     const c = tab.cell();
     if (c.part === 'chords') return chordsContext(c.bar);
-    if (c.part === 'lead') return leadContext(c.bar);
+    if (c.part === 'lead') return s.target ? clipContext(c.bar) : leadContext(c.bar);
     if (c.part === 'drums') return drumsContext(c.bar);
     return partContext(c.part, c.bar);
   }
@@ -774,11 +913,15 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     get shown() { return shown; },
     /** STEP 4e: the keyboard handler (the document's keydown while shown), for a look */
     onKey,
+    /** MIDI targets: a .mid File (or a Blob with a name) read, decoded, placed and composed, as a drop does */
+    loadClip,
     undo, redo,
     /** fill the two hosts (again if the window was rebuilt) */
     mount({ left, inspector }) {
       if (hosts && hosts.left === left && hosts.inspector === inspector) return;
+      for (const h of [hosts?.left, hosts?.inspector]) for (const [type, fn] of DROP_EVENTS) h?.removeEventListener?.(type, fn);
       hosts = { left, inspector };
+      for (const h of [left, inspector]) for (const [type, fn] of DROP_EVENTS) h.addEventListener?.(type, fn);   // MIDI targets: a .mid dropped
       left.classList?.add('ctab-left');
       inspector.classList?.add('ctab-inspector');
       ui = buildLeft(left);

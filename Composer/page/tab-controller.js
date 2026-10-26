@@ -23,11 +23,16 @@
 //              context section ('cell', the default) follows it; selectCell(part, bar) picks one (a lead cell is its
 //              phrase). select(part) keeps the bar. cellFocus(plot) → the cell's lit nodes, which the overlay rings
 //              on the mirrored plot while the context section is shown (its getFocus seam).
+//   target     (MIDI targets, phase B) setTarget(bytes | null, { name, tonic }) → the shared controller's, on the
+//              page's rhythm (no rhythm: refused, said); setTargetTonic(pc | null); auditionPlacement(i),
+//              keepPlacement(), revertPlacement(). A file that won't decode leaves the entry as it was and says why
+//              in view.targetError (target-lines.js targetError); a target compose is the window's (store.made).
 
 import { createComposerController, kitChoices as sharedKitChoices } from '../perform/composer-controller.js';
 import { highlightsOf, plotOf, indexOfTick, HIGHLIGHT_PARTS } from './plot-highlights.js';
 import { phraseSpans, cellSpan } from './matrix.js';
 import { createCompositionStore } from '../store/composition-store.js';
+import { targetError } from './target-lines.js';
 
 export const TAB_VERSION = 'composer-tab-v1';
 /** the site's samples, relative to index.html */
@@ -49,7 +54,7 @@ export const kitChoices = (voice) => sharedKitChoices(voice, PAGE_SAMPLES_BASE);
  */
 export function createTabController({ host = {}, runCompose, createContext, timers, clock, store = createCompositionStore(), keepPlaying = () => false } = {}) {
   const core = createComposerController({ runCompose, createContext, timers, clock, beforePerform: () => host.stopMain?.() });
-  const view = { open: false, selected: 'lead', bar: 0, section: CONTEXT_SECTION, hasRhythm: false, showWork: true };
+  const view = { open: false, selected: 'lead', bar: 0, section: CONTEXT_SECTION, hasRhythm: false, showWork: true, targetError: null };
   const listeners = new Set(), mainListeners = new Set();
   const changed = () => { for (const f of listeners) f(core.state, view); };
   // a change to any entry the controller acts on (the bound one, or one whose compose just landed) is the store's too
@@ -71,6 +76,7 @@ export function createTabController({ host = {}, runCompose, createContext, time
       view.hasRhythm = has;
       if (!has) { store.select(null); if (flipped) { core.stop(); changed(); } return flipped; }
       const { state } = store.select(r);
+      if (state !== core.state) view.targetError = null;   // MIDI targets: a decode error was the other rhythm's
       const moved = core.bind(state);   // a bind stops playback and re-renders itself
       if (flipped && !moved) changed();
       return moved || flipped;
@@ -90,6 +96,29 @@ export function createTabController({ host = {}, runCompose, createContext, time
       }
       return core.press();
     },
+    // ── MIDI targets (phase B) ──
+    /** a clip (a .mid file's bytes) as the lead of the page's rhythm's composition, or null to clear it → the
+     *  controller's answer ({ ok, error? }); a decode error is said in view.targetError and changes nothing */
+    async setTarget(source, opts = {}) {
+      api.syncRhythm();
+      if (source != null && !view.hasRhythm) {
+        view.targetError = 'Generate a rhythm on the main page first: the clip is placed in its row.';
+        changed();
+        return { ok: false, error: view.targetError };
+      }
+      view.targetError = null;
+      const key = api.key(), had = !!core.state.input.target;
+      const r = await core.setTarget(source, opts);
+      if (!r.ok && !r.spec) view.targetError = targetError(r.error);   // a refused compose says why in the refusal line
+      else if (r.spec && (source != null || had) && store.keyOfState(core.state) === key) store.made(key, 'window');
+      changed();
+      return r;
+    },
+    /** the tonic override (P5): a pitch class, or null (the estimate); the clip placed again */
+    async setTargetTonic(tonic) { const key = api.key(), r = await core.setTargetTonic(tonic); if (r.spec && store.keyOfState(core.state) === key) store.made(key, 'window'); return r; },
+    auditionPlacement: (i) => core.auditionPlacement(i),
+    keepPlacement: () => core.keepPlacement(),
+    revertPlacement: () => core.revertPlacement(),
     /** "show the work": animate Compose from its trace, or not */
     setShowWork(on) { const v = !!on; if (v === view.showWork) return; view.showWork = v; changed(); },
     /** the main page started playing: the Composer gives way (and so does an animation of Compose) */
