@@ -27,6 +27,7 @@ export function refusalText(spec) {
   const d = spec.detail;
   return spec.reason === 'tooDense' ? `Too dense: ${d.onsets.toLocaleString()} onsets is over the ${d.gate.toLocaleString()}-onset gate.`
     : spec.reason === 'tooLarge' ? `Grid too large: ${d.grid} is past 2^53, which v1 does not support.`
+      : spec.reason === 'targetGrid' ? `The MIDI clip's grid is too fine: ${d.slotsPerBar} steps a bar is past the ${d.max} a line may hold.`   // MIDI targets (phase B)
       : `Too few tones: ${d.tones} distinct tone${d.tones === 1 ? '' : 's'}; Compose needs at least ${d.min}.`;
 }
 
@@ -34,8 +35,9 @@ export function refusalText(spec) {
 export function readoutItems(spec, { lastMs = null, drums = null } = {}) {
   if (!spec || spec.refused) return [];
   const k = spec.knobs;
-  return [['tempo', `${fmt(k.tempoBpm)} BPM`], ['meter', `${k.bars} × ${k.slotsPerBar}`], ['root', k.root], ['baseHz', fmt(k.baseHz, 2)], ['onsets', spec.stats.onsets.toLocaleString()],
+  return [['tempo', `${fmt(k.tempoBpm)} BPM${spec.target ? ' (the loop as composed)' : ''}`], ['meter', `${k.bars} × ${k.slotsPerBar}`], ['root', k.root], ['baseHz', fmt(k.baseHz, 2)], ['onsets', spec.stats.onsets.toLocaleString()],
     ['tones', spec.stats.tones.toLocaleString()], ['table', k.table], ['composed in', `${fmt(lastMs, 0)} ms`], ['chords', spec.chords.map((c) => c.name).join(' ')],
+    ...(spec.target ? [['clip', `${spec.target.clip.name} · ${spec.target.placement.hits}/${spec.target.placement.J} hit · ${fmt(spec.target.tempoBpm)} BPM`]] : []),   // MIDI targets (phase B)
     ...(spec.input.progression ? [['progression', `${spec.chords.filter((c) => c.targeted).length}/${spec.chords.length} targeted (${k.leader})${spec.chords.some((c) => c.fallback) ? `, fallback on bar ${spec.chords.filter((c) => c.fallback).map((c) => c.bar + 1).join(', ')}` : ''}`]] : []),
     ...(drums ? [['drums', `${drums.mode}${drums.enabled ? '' : ' (off)'} · ${drums.stats.total} strokes`]] : [])];
 }

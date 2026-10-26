@@ -104,7 +104,7 @@ export function createPlotOverlay({ getHighlights, getSelected = () => null, get
       const ctx = ctxOf;
       ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(snap, 0, 0); ctx.restore();
       if (!at) return true;
-      const ph = playheadAt(lit.plot, lit.phaseX, at.p), x = playheadX(view.positions, ph);
+      const ph = playheadAt(lit.plot, lit.phaseX, at.p, lit.share ?? 1), x = playheadX(view.positions, ph);   // a window walks its share
       if (x == null) return true;
       const r = litRadius(view);
       ctx.save();

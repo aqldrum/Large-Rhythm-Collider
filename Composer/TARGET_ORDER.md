@@ -123,7 +123,28 @@ The search, ported from the probe's `target.mjs` and extended:
 
 ## Browser checklist (for Avery, after B)
 
-To be filled in at the end of phase B, from what was built.
+Served at http://localhost:8779/ from the composer-sprint-2 worktree once `target/ui` is merged. Hard-reload first: a stale module shows as "does not provide an export named …". Clips are in `Composer/probe/midi-target/clips/`. The Composer window: double-click the Playback panel's header, then the **Composer** tab. Expected lines below are what Node prints for these rows (the window's text, give or take spacing).
+
+1. **The control.** Generate **41:42:43** (C and D blank), Playback cycle **8 s**, open the Composer window. Under the header: "MIDI clip · Choose a .mid… · or drop one on the window…". With no rhythm generated, Choose is greyed.
+2. **A clip chosen.** Choose `ode-to-joy.mid`. Expect "placing the clip in the row…", then:
+   - decode: `ode-to-joy · 4/4 on eighths (8 a bar) · 4 bars · 15 notes · tonic F# minor (estimated, r 0.57) · 108 BPM`
+   - fit: `8/15 notes hit · 4 tight · 11/11 note-offs on onsets · window: 4 of 5 bars, from 0.075 of the cycle · 3 substituted (2 off the frame, 1 a slot over) · 4 silent · the row can't play A` (the substitutes amber, "4 silent" and "can't play A" red)
+   - Tempo **108**; the readouts add "clip ode-to-joy · 8/15 hit · 108.0 BPM"; the matrix has 4 bars; the Lead row shows 15 dots: 4 hollow red (silent), 3 with an amber ring.
+3. **Perform.** The Ode's line (8 notes exactly, 3 nearby substitutes, 4 gaps) at 108 BPM, looping on 4 bars (~8.9 s a loop), chords under it. **Look hardest at the plot's playhead:** it should walk only the window, from ~7.5 % across the plot to ~87.5 %, then jump back, never crossing the last fifth; each lit white (lead) dot glows as its note sounds. Same on the Partitions mirror and, later, on the main canvas.
+4. **Tempo.** Drag the Tempo slider: the loop speeds up or slows, pitch unchanged. Reset → 108 (its tooltip: "back to the clip's own tempo").
+5. **Placements.** Chips "best · 8/15", "#2 · …", … Click #2: it re-composes and plays from the top (amber chip, "auditioning #2 — click it again, or Keep"). Esc: back to the best, exactly as before, still playing. Click #2 twice: kept (outlined green). A new seed + Compose keeps #2.
+6. **Tonic.** Pick **D**: re-placed and composed; the decode line says "tonic D (asked; the estimate F# minor)"; the root moves (21/16 → 21/20) and so do the chords. Back to auto.
+7. **The lead's context.** Click a Lead cell: the inspector lists the clip's notes (name, bar.step, kind, ratio, deviation, late off), silent rows red; "no lead alternates: the lead is the clip". Chords cells still offer their 12 alternates; a swap and ⌘Z work. The Lines knobs Bars, Slots / bar, Anchors are greyed ("… · the clip's").
+8. **A drop.** Drag `twinkle-with-chords.mid` over the window (the left half outlines green) and drop: decode ends in amber `chords reduced to their top note: 12 notes dropped`; fit `11/14 notes hit · 7 tight · 11/11 note-offs on onsets · whole cycle · 3 silent`. **Look hard:** that the drop works inside the real Partitions window (it may swallow drag events), and that a file dropped just outside the window does nothing (the page must not navigate to it).
+9. **Errors.** Drop a non-MIDI file (e.g. `FINDINGS.md`): red "Not a MIDI file: drop a Standard MIDI File (.mid).", nothing else changes.
+10. **The glyph.** With the Ode on 41:42:43, close the window and press the header glyph: the composition is recalled at once (no Compose), plays on the main canvas, its playhead walking the window; the Playback div's Play/Stop stops and plays it; the part strips' Lead is the clip. Glyph again → the row.
+11. **A tone-poor row (ruling 5).** **8:7:6:5**, cycle **4 s**, `frere-jacques.mid`: `5/32 notes hit · 2 tight · 4/6 note-offs on onsets (2 late) · whole cycle · 1 substituted (1 a slot over) · 26 silent · the row can't play D, G, Bb`. Sparse by design; the Lead row shows 26 hollow red dots and 2 amber late-off tails. `twinkle.mid` there: `window: 4 of 7 bars`, 4/14.
+12. **A full fit through the worker.** **4099:4093:4091:4079**, cycle **16 s**, `frere-jacques.mid`: `32/32 notes hit · 32 tight · 32/32 note-offs on onsets · whole cycle` in ~0.6 s; all of Frère Jacques at 112 BPM (8 bars, ~17 s a loop). Every chip is a full fit too (32/32, another phase or lattice).
+13. **3/4 and drift.** **426:317:285**, cycle **8 s**, `greensleeves.mid`: `3/4 on eighths (6 a bar) · 9 bars · 19 notes`, `19/19 notes hit · 12 tight · … · window: 9 of 10 bars, from 0.766 of the cycle · the lattice drifts 6.4¢ over 2 phrases`. Known: the drums still play 4 beats a bar under 3/4.
+14. **A one-bar window.** **768:769**, cycle **8 s**, `chromatic-run.mid`: `13/13 notes hit · 6 tight · 13/13 note-offs on onsets · window: 1 of 2 bars` — the run, every class, on 16ths.
+15. **Clear.** Clear: an ordinary composition again (the lines go, the tempo back to Compose's own).
+
+Also worth a look: the amber rings, red hollow dots and late-off tails at real sizes; chord names, which stay relative to C (phase A's call 7), so "Am" can sit beside "the row can't play A".
 
 ## Log
 
@@ -142,3 +163,18 @@ To be filled in at the end of phase B, from what was built.
     8. **`spec.target` also carries** `tonic`, `tonicAsked`, `maxDriftCents`, `lanes`, `alternates` (when Compose placed it) and `search: { ms, barCounts, stoppedAt }`; lead notes carry `endTime` and `clipNote`.
     9. **The one clock read in core:** `placeClip`'s `ms` (globalThis.performance), which steers nothing.
   - **Open:** rows with no full fit search every N (~1 s on 2047:2048); the skyline is the probe's (highest note at each start), so a lower note starting under a held higher one still enters the line; nothing seen in a browser yet.
+- 2026-10-26: **phase B built** on `target/ui` (off composer-sprint-2 at 1298129; B1–B5; "MIDI targets (phase B)" in `DESIGN_NOTES.md` has the detail). Node only; the browser checklist is above.
+  - **Built:** the controller's `setTarget` / `setTargetTonic` / placement auditions (`auditionPlacement`, `keepPlacement`, `revertPlacement`), `readClip`, `seedTempo`; `state.input.target` (the clip as decoded, its tonic, a kept placement) and `state.placements` (the search's list) in the store; `target` through the runner; the MIDI clip control in the window (choose or drop, the decode and fit lines, the tonic, the placements, Clear, errors; `page/target-lines.js`); the lead row as the clip with its marks (`matrix.js`); the lead's context as the clip's notes; the window playhead (`plot-highlights.js` `loopShare`, `playheadAt(…, share)`, the overlay). `tests/assert-page-target.mjs` (61 checks). Every suite passes.
+  - **Calls beyond the order (proposed):**
+    1. **A new clip, or Clear, clears the pins, the typed field, the edits and the drum grid** (another meter's bars). The tonic and the placements keep them.
+    2. **Clear composes at once,** as setting a clip does.
+    3. **A placement audition plays from the top** (another placement can change the loop's length, and it is a whole compose); Revert restores the entry exactly with no compose; Esc reverts.
+    4. **The best kept is no placement in the input** (a later compose searches again, deterministically); an alternate kept is given every time.
+    5. **A frame (±¢) change or new layers drop a kept placement;** a new cycle of the same row carries the clip, the tonic, the placement and the list.
+    6. **P7 on the lean table:** a target compose of a row past `MAIN_THREAD_ONSETS` goes to the worker, its table kept lean. (On the page's default full table every Compose is in the worker already.)
+    7. **The one core change:** `chord-symbols.js` `barMaterials` takes `{ cells }`, so the typed field on a window reads the cropped cells. Identity holds.
+    8. **The knobs the clip sets** (bars, slots per bar, anchors, settle passes, presence) are greyed in the inspector and left out of a target's compose.
+    9. **No "show the work" animation** for a clip composed from the control; the Compose button and the glyph animate theirs.
+    10. **The lead row's dots are placed by the clip's pitch,** so a silent note has a height; a decode error changes nothing; a file dropped just outside the window is caught (the page never navigates to it).
+  - **Follow-ups:** the drums still cut 4 beats a bar (3/4 and 6/8 not honoured; phase A's); the animation's drum strokes are put in bars by the loop's seconds, so on a window they can land a bar off (the trace would need the row's cycle); chord names relative to C beside the clip's classes; no clip control in the lab; rows with no full fit still search every N (~1 s, in the worker).
+  - **Open (for Avery):** audition from the top or at the next bar boundary; clear the pins on a new clip, or keep a typed progression across clips; Clear composing at once.

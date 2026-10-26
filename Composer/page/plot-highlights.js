@@ -8,10 +8,14 @@
 // is plotted, and a spec of another rhythm maps to nothing (null).
 //
 //   highlightsOf({ spec, parts, drums }, plot) → { parts: { [id]: { indices, notes, enabled, color } }, … } | null
-//   playheadAt(plot, phaseX, p)               → { index, frac, tick }: where spec time p (0..1 of the cycle) is
+//   playheadAt(plot, phaseX, p, share)        → { index, frac, tick }: where spec time p (0..1 of the cycle) is
 //   soundingAt(highlights, t)                 → [{ part, index }]: the dots sounding at spec time t (seconds)
 //
 // A later sprint animates Compose from its trace on this same canvas: a trace step is just another highlight set.
+//
+// MIDI targets (phase B): a WINDOW composition loops on a window of the row's cycle (knobs.cycleSeconds the loop,
+// knobs.rowCycleSeconds the row's cycle; target.js' window share W = loop / row cycle), from the phase. Its playhead
+// walks the window on the full-cycle plot: phase + p × W (p the share of the loop). `share` is 1 for every other spec.
 
 import { PART_IDS } from '../core/compose.js';
 
@@ -46,13 +50,16 @@ export function nodeAtOrBefore(ticks, tick) {
 /** is this spec a composition of the plotted rhythm? (same grid, same onset count) */
 export const matchesPlot = (spec, plot) => !!(spec && !spec.refused && plot && spec.stats && spec.stats.grid === plot.grid && spec.stats.onsets === plot.n);
 
+/** the share of the row's cycle a spec's loop spans: a window's W (MIDI targets), else 1 */
+export const loopShare = (spec) => (spec?.knobs?.rowCycleSeconds > 0 ? spec.knobs.cycleSeconds / spec.knobs.rowCycleSeconds : 1);
+
 /**
  * The Composer's selections as a lit-node layer a part.
  *   spec    a Compose spec; parts: the parts as they play now (default the spec's); drums: as they play now (default
  *           the spec's)
  *   plot    plotOf(...) of the rhythm on the plot
  * → null when there is nothing to light (no spec, a refusal, or a spec of another rhythm), else
- *   { grid, n, cycleSeconds, phaseX, plot, missed, total,
+ *   { grid, n, cycleSeconds, phaseX, share (the loop's share of the row's cycle: loopShare), plot, missed, total,
  *     parts: { [id]: { id, color, enabled, indices (sorted, unique), notes: [{ index, time, end }] (by time) } } }
  *   `missed` counts notes or strokes whose tick is not a plotted onset (never, for a matching spec).
  */
@@ -79,17 +86,17 @@ export function highlightsOf({ spec, parts = null, drums = undefined } = {}, plo
   }
   const d = drums === undefined ? spec.drums : drums;
   if (d && d.hits) lane('drums', PART_COLORS.drums, d.enabled !== false, d.hits, () => DRUM_LIT_SECONDS);
-  return { grid: plot.grid, n: plot.n, cycleSeconds: T, phaseX: phase[0] / phase[1], plot, parts: out, missed, total };
+  return { grid: plot.grid, n: plot.n, cycleSeconds: T, phaseX: phase[0] / phase[1], share: loopShare(spec), plot, parts: out, missed, total };
 }
 
 /**
  * Where the playhead is on the plot: spec time p (0..1 of the cycle, counted from the composition's downbeat, as the
  * player's playhead() is) → the absolute tick, the onset at or before it (`index`, a dot) and how far into that onset's
  * gap it is (`frac`, 0..1). The plot's x is by index, so the playhead steps evenly from dot to dot, however uneven
- * the gaps.
+ * the gaps. `share` (MIDI targets: a window's W) scales the loop onto the row's cycle: phase + p × share.
  */
-export function playheadAt(plot, phaseX, p) {
-  const x = mod(phaseX + mod(p, 1), 1), tick = x * plot.grid;
+export function playheadAt(plot, phaseX, p, share = 1) {
+  const x = mod(phaseX + mod(p, 1) * share, 1), tick = x * plot.grid;
   // a time computed from a tick (tick / grid − phase) × T comes back a hair under it: a relative 1e-12 of the grid
   // finds the onset itself (the smallest gap of any row Compose takes is far wider)
   const index = nodeAtOrBefore(plot.ticks, tick + plot.grid * 1e-12), start = plot.ticks[index];

@@ -1490,6 +1490,69 @@ The probe took 4.4–9.7 s on the 16k row; the prune (a full fit at N = B ends t
 
 **Tests:** `tests/assert-target.mjs` (46 checks; clips in `tests/fixtures/midi-clips.mjs`, ported from the probe's).
 
+## MIDI targets (phase B; built 2026-10-26, branch `target/ui`)
+
+The order: `TARGET_ORDER.md` phase B (B1–B5), on phase A's core ("MIDI targets (phase A)" above). Avery's rulings 1–8 are **decided**; P1–P7 are the planner's, followed as written; everything else here is **proposed, not ruled**. Node only: nothing here has been seen or heard in a browser (the checklist is in `TARGET_ORDER.md`).
+
+**1. The controller and the store** (B1; `perform/composer-controller.js`, `store/composition-store.js`).
+- **The entry's input:** `state.input.target = { clip, tonic, placement? }`. The clip is held as `decodeClip` gives it (plain JSON: the bytes never reach the store); `tonic` is the override (a pitch class) or null (the key estimate); `placement` is a kept alternate (absent: the search's best). Since it is the input, the glyph's recall, undo (the edits apply over the target's spec) and the LRU carry it with the rest of the entry.
+- **`state.placements`** (new): the last search's `{ tonic, list: [best, …alternates], current, lanes }`. A compose given its placement doesn't search and returns no alternates, so the list is kept from the compose that searched.
+- **`setTarget(bytes | clip | null, { tonic, name })`** decodes here (`readClip`, exported; midi.js' own errors), sets the input and composes (`compose(…, { target })` through the runner). A file that won't decode leaves the entry untouched and answers `{ ok: false, error }`. `null` clears the target and composes an ordinary composition at once.
+- **`setTargetTonic(pc | null)`** drops the placement and the list, and composes (placed again: the drift path and the root follow the tonic, P5).
+- **Placement auditions:** `auditionPlacement(i)` composes with `list[i]` given (no search) and, when it was playing, plays it again from the top; auditions in a row are one. `keepPlacement()` makes it the entry's (`input.target.placement`; the best kept is no placement, the search's own). `revertPlacement()` puts the entry back exactly as it was before the first audition (the spec object, the trace, the parts, the edits and stacks, the pins, the tempo) with no re-compose, and plays on if it was playing. `placementAudition()` → `{ index, from } | null`. An input change (`touch`) keeps an open audition.
+- **Tempo (decided 1/4):** a target compose seeds `state.tempoBpm` from `spec.target.tempoBpm` (clamped to `TEMPO_LIMITS`); `seedTempo()` is that seed (the spec's own tempo without a target), and Reset goes back to it. The player's factor is still the spec's natural tempo over the playback tempo, so the loop plays at the clip's own tempo.
+- **P6:** `alternatesOf(bar, 'lead')` is null on a target spec and `swapLead` throws ("the lead is the clip"). Chord swaps, the typed field and the drums work as usual.
+- **The knobs a target sets itself** (`TARGET_SETS` ∩ the knobs: bars, slots per bar, anchors, settle passes, presence) are left out of a target's compose (core refuses them), and `progressionBars()` is the clip's B.
+- **Where it runs (P7):** with `target`, the search runs inside `compose`, so it runs where Compose runs. The page's default table is full, so the worker. On the lean table, a target compose of a row past `mainThreadOnsets` (`onsetCount`, no row built) goes to the worker anyway, with `overrides.table` kept lean.
+- **The runner** (`compose-runner.js`) passes `target` both ways; the worker needed nothing new (it hands its options to `compose` whole).
+
+**2. The window** (B2; `page/composer-tab.js`, the pure `page/target-lines.js`, `page/tab-controller.js`).
+- **The control,** under the header: "MIDI clip", Choose a .mid… (a hidden file input, `.mid,.midi`), and a drop anywhere on the window (the left half or the inspector; the left half lights while a file is over it). While the tab is shown, a file dropped just outside the window is caught so the page never navigates to it. With no rhythm on the page, Choose is disabled and a clip is refused ("Generate a rhythm…").
+- **The decode line** (`decodeLine`): name (a nameless track takes the file's name), "4/4 on eighths (8 a bar)", bars, notes, "tonic F# minor (estimated, r 0.57)" or "tonic D (asked; …)", the clip's BPM; amber "chords reduced to their top note: n notes dropped" (P1) and "unquantized: the grid is a guess (off by up to x of a quarter)".
+- **The tonic** (P5): a select, "auto (F# minor)" then the 12 classes; a pick re-places and composes.
+- **The fit line** (`fitLine`): "8/15 notes hit" (amber unless all), "4 tight", "11/11 note-offs on onsets (n late)", "whole cycle" or "window: 4 of 5 bars, from 0.075 of the cycle", amber "3 substituted (2 off the frame, 1 a slot over)", red "4 silent", "the lattice drifts 6.4¢ over 2 phrases", red "the row can't play A" (decided 5). Shown once the target's compose has landed.
+- **The placements:** a chip per placement ("best · 8/15", "#2 · 9/15"…, where it sits, tight, substitutes, silent, drift; its lattice path in the tooltip), the current one outlined. A first click auditions it, a second click or Keep keeps it, Esc or Revert takes it back; the line under them says which is being heard.
+- **Clear** composes an ordinary composition. **Errors** in plain words (`targetError`): not a MIDI file, cut short, SMPTE, a format past 1, no notes, a time signature the grid can't hold. A refusal (a grid too fine for a line, `targetGrid`; too few tones) is said by the refusal line (`readouts.js refusalText` words `targetGrid` now).
+- The readouts add "clip ode-to-joy · 8/15 hit · 108.0 BPM", and the tempo readout says "(the loop as composed)" on a target. Reset's tooltip says "back to the clip's own tempo".
+- The Lines and Harmony knobs the clip sets are disabled, "chose 4 · the clip's".
+
+**3. The matrix** (B3; `page/matrix.js`, CSS).
+- **The lead row is the clip:** a dot per clip note, silent ones too. Its height is the clip's own MIDI pitch (the row's pitch can't place a silent note); x is the note's own time (a note sounding before slot 0's anchor, at the loop's end, is drawn at its slot).
+- **Marks:** amber ring for a substitute (fringe, shift); hollow red for a hard miss (silent: no onset, nothing lit on the plot); an amber tail for a late note-off. The cell's title counts them. No badge (no lead alternates).
+- **The lead's context** (the inspector) lists the phrase's clip notes: name and octave, bar.step, kind, the ratio it plays, its deviation, "late off"; the phrase's lattice (ψ, lane, the tonic's cents, the drift). It says the lead has no alternates and points at the placements.
+
+**4. The plot, the lens, the strips** (B4; `page/plot-highlights.js`, `page/plot-overlay.js`).
+- The lead's lit nodes are the clip's sounding nodes (hits and substitutes), with no change of the overlay: they are the lead part's notes.
+- **The window playhead:** `highlightsOf` carries `share` (`loopShare(spec)`: the loop over the row's cycle, 1 without a window), and `playheadAt(plot, phaseX, p, share)` maps the loop's p to phase + p × share on the full-cycle plot. The overlay's frame passes it, so the tab's and the lens's playheads both walk the window. The matrix's own playhead already ran over the loop's bars.
+- The glyph's recall plays the cached target composition with no re-solve; Play/Stop (the one transport) plays and stops it; the part strips and the Scale readout read it as any composition.
+
+**5. Tests:** `tests/assert-page-target.mjs` (61 checks): B1–B4 over the DOM stub and the site's composite rhythm, plus a big row (4099:4093:4091:4079) through a mocked worker and the lean table past `MAIN_THREAD_ONSETS`. Every suite passes.
+
+**Calls beyond the order (proposed):**
+1. **A new clip (or Clear) clears the pins, the typed field, the edits and the drum grid:** they were another meter's bars. The tonic and the placements keep them (the same clip, the same bars).
+2. **Clear composes at once** (an ordinary composition), as setting a clip does.
+3. **A placement audition plays from the top,** not at the next bar boundary: another placement can change the loop's length (N), and it is a whole compose (~0.1–0.6 s). Revert restores the entry without composing.
+4. **The best kept is no placement in the input,** so a later compose searches again (deterministic: the same best). An alternate kept is given on every later compose (no search).
+5. **A frame (±¢) change or new layers drop a kept placement** and the list (the frame decides what is in tune; the placement is the row's). **A new cycle of the same row carries** the clip, the tonic, the placement and the list (a placement's phase is a share of the cycle).
+6. **The lean table past `MAIN_THREAD_ONSETS`** goes to the worker for a target compose (P7's reading), its table kept lean (`overrides.table`).
+7. **The one core change:** `chord-symbols.js` `barMaterials` takes `{ cells }`, so the typed field reads a window's cropped cells (`materialsOf`'s) rather than rebuilding uncropped ones from the knobs. Identity and every suite unaffected.
+8. **No "show the work" animation on a clip's compose** from the control (the Compose button and the glyph still animate theirs). A target's trace builds a scene without errors (checked in Node, not in the suite).
+9. **The lead row's dots by the clip's pitch,** not the sounding pitch (so a silent note has a height).
+10. **A decode error changes nothing;** a refusal is the refusal line's (the control doesn't repeat it).
+
+**Follow-ups:**
+1. **The drums cut 4 beats a bar** (phase A): 3/4 (Greensleeves) and 6/8 are not honoured there.
+2. **The animation's drum bars on a window:** `trace-frames.js` places drum strokes in bars with `trace.cycleSeconds` (the loop), while a window's positions are shares of the row's cycle; the per-bar flashes can land a bar off. The trace would need the row's cycle (a one-field core change).
+3. **Chord names stay relative to C** (phase A's call 7): "Am" beside "the row can't play A" reads oddly. Naming from the clip's tonic is open.
+4. **The lab has no clip control** (the controller has it all).
+5. **Rows with no full fit** search every N (~1 s on 2047:2048), in the worker.
+6. **JSON export** carries `spec.target` whole (the clip and the placement).
+
+**Open, for Avery:**
+1. **Audition from the top** (built), or at the next bar boundary when the loop's length doesn't change?
+2. **Clearing the pins on a new clip** (built), or keep a typed progression across clips?
+3. **Clear** composes at once (built), or goes back to Compose and waits?
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

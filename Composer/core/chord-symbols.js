@@ -229,12 +229,13 @@ const devLabel = (d) => (Math.abs(d) < 0.05 ? '' : ` ${d > 0 ? '+' : '−'}${Mat
  *   knobs  { seed (1), bars, slotsPerBar, anchors ('partitioned'), phase, frameCentsEachSide (15), root, presence
  *          ('cluster'), modulation (true) }: a spec's `knobs` reproduce its cells; Compose's overrides + seed the
  *          cells that compose would build
- *   opts   { row: a row already built for these layers (skips the build) }
+ *   opts   { row: a row already built for these layers (skips the build), cells: the spec's own cells (MIDI targets,
+ *          phase B: a window spec's are cropped, rearrange.js materialsOf; the knobs alone can't rebuild them) }
  * → { version, row, meter, rootTone, root (ratio), baseCents, frameCentsEachSide, presence, modulation, anchors, phase,
  *     cells, bars: [[{ tone, cents, count, strikes, weight, node }] in the order the slots hold them] × N, candidates }
  *   | { version, refused: true, reason }
  */
-export function barMaterials(layers, cycleSeconds, knobs = {}, { row: given = null } = {}) {
+export function barMaterials(layers, cycleSeconds, knobs = {}, { row: given = null, cells: givenCells = null } = {}) {
   const k = knobs ?? {};
   const row = given ?? buildRow(layers, { gate: ONSET_GATE });
   if (!isRow(row)) return { version: COMPOSER_CHORD_SYMBOLS_VERSION, refused: true, reason: row?.tooDense ? 'tooDense' : 'tooLarge' };
@@ -250,7 +251,7 @@ export function barMaterials(layers, cycleSeconds, knobs = {}, { row: given = nu
     const beats = downbeats(row, P, 3, rootTone, { anchors, cluster: presence === 'cluster' ? e : null });
     phase = beats[Math.floor(seededRandom(k.seed ?? 1)() * beats.length)];
   }
-  const cells = buildCells(row, { bars: meter.bars, slotsPerBar: meter.slotsPerBar, anchors, phase });
+  const cells = givenCells ?? buildCells(row, { bars: meter.bars, slotsPerBar: meter.slotsPerBar, anchors, phase });
   // each bar's tones from the cells' windows, as harmony.js' bar material reads them
   const maps = Array.from({ length: cells.bars }, () => new Map());
   for (const s of cells.slots) for (const t of s.tones) {
