@@ -458,6 +458,26 @@ class LRCCollider {
                 this.ctx.arc(node.x, node.y, radius + (baseLineWidth * 0.5), 0, Math.PI * 2); // Scale ring offset
                 this.ctx.stroke();
             }
+
+            // Tie flash: a node that touched an enemy node brightens and throws a
+            // ring in its player's color that expands as it fades (~400ms)
+            if (node.tieGlow > 0) {
+                const glow = node.tieGlow;
+                this.ctx.fillStyle = `rgba(255, 255, 255, ${glow})`;
+                this.ctx.beginPath();
+                this.ctx.arc(node.x, node.y, radius * (1 + glow), 0, Math.PI * 2);
+                this.ctx.fill();
+
+                this.ctx.globalAlpha = glow;
+                this.ctx.strokeStyle = player.color;
+                this.ctx.lineWidth = Math.max(1, baseLineWidth * 0.5);
+                this.ctx.beginPath();
+                this.ctx.arc(node.x, node.y, radius + (1 - glow) * baseLineWidth * 6, 0, Math.PI * 2);
+                this.ctx.stroke();
+                this.ctx.globalAlpha = 1;
+
+                node.tieGlow = Math.max(0, glow - 1 / 24);
+            }
         }
         
         // Reset shadow effects for next draw

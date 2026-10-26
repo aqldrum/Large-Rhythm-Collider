@@ -1123,6 +1123,13 @@ class ColliderPlayer {
         }
     }
 
+    // Light a node up after it ties with an enemy node. The glow lives on the node
+    // itself, so it follows the node through fusions, and fades as it is drawn.
+    flashNode(nodeIndex) {
+        const node = this.nodes[nodeIndex];
+        if (node) node.tieGlow = 1;
+    }
+
     // Zero the Verlet velocity (oldPos := pos) so the rebound kick is the only
     // momentum left; otherwise a fast body carries straight through what it hit.
     cancelMomentum() {

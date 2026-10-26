@@ -24,6 +24,9 @@ class ColliderAudio {
             sustain: 0.0,    // 0% (no sustain)
             release: 0.001   // 1ms
         };
+
+        // Node-to-node ties ring a little longer so the two-note harmony is heard
+        this.tieEnvelope = { ...this.envelope, decay: 0.700 };
         
         // Spatial audio settings
         this.battleCenter = { x: 400, y: 300 }; // Will be updated by battle controller
@@ -154,11 +157,27 @@ class ColliderAudio {
         this.createAndPlayNote(noteData.frequency, player.playerId, panning);
     }
 
+    // A node sounds the tone of the gap it opens (node k opens gap k; the closing
+    // node is pulse 0 coming round again, so it opens gap 0). Played for both nodes
+    // of a node-to-node tie, so the contact is heard as a harmony.
+    playNodeNote(player, nodeIndex) {
+        const gapCount = player.spacesPlot.length;
+        if (gapCount === 0) return;
+
+        const spaceValue = player.spacesPlot[nodeIndex % gapCount];
+        if (!spaceValue) return;
+
+        const noteData = this.calculateNoteFrequency(spaceValue, player);
+        if (noteData.isMuted) return;
+
+        this.createAndPlayNote(noteData.frequency, player.playerId, this.calculateSpatialPanning(player), this.tieEnvelope);
+    }
+
     // ====================================
     // WEB AUDIO NOTE CREATION
     // ====================================
 
-    async createAndPlayNote(frequency, playerId, panning = 0) {
+    async createAndPlayNote(frequency, playerId, panning = 0, envelopeSettings = this.envelope) {
         try {
             // Ensure audio context is initialized
             await this.initAudioContext();
@@ -185,7 +204,7 @@ class ColliderAudio {
             panner.connect(this.masterGain);
             
             // Apply ADSR envelope (your exact specification)
-            const { attack, decay, sustain, release } = this.envelope;
+            const { attack, decay, sustain, release } = envelopeSettings;
             const totalDuration = attack + decay + release;
             
             // Attack phase (0 to 1)

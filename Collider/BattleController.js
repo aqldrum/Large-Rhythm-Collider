@@ -47,6 +47,10 @@ class BattleController {
         // so it scales with Force Amplitude and with the rhythm's space sizes.
         this.reboundScale = 5.6;            // px/frame kick per unit of average pulse force (original 80 × 0.07)
         this.defenderReboundFraction = 0.5; // struck body recoils at this fraction
+
+        // Node-to-node ties flash and sound once per contact, not on every check
+        this.tieCooldownMs = 250;
+        this.tieCooldowns = new Map(); // player-pair key -> time the pair may tie again
         this.wallReboundSpeed = 4;          // px/frame kick off a hard wall
 
         // Initialize players with base positions (will be updated when rhythms are set)
@@ -417,7 +421,24 @@ class BattleController {
         playerA.applyRebound(nx, ny, speed);
         playerB.applyRebound(-nx, -ny, speed);
 
+        this.announceTie(playerA, collision.nodeA.index, playerB, collision.nodeB.index);
+
         console.log(`🤝 Node collision: Player ${collision.playerA} <-> Player ${collision.playerB}`);
+    }
+
+    // A tie does no damage, but both touching nodes light up and sound their tones
+    // together, so the contact is heard as a two-note harmony. A short per-pair
+    // cooldown keeps a contact that lasts a few checks from retriggering.
+    announceTie(playerA, nodeIndexA, playerB, nodeIndexB) {
+        const key = [playerA.playerId, playerB.playerId].sort().join('-');
+        const now = Date.now();
+        if (now < (this.tieCooldowns.get(key) || 0)) return;
+        this.tieCooldowns.set(key, now + this.tieCooldownMs);
+
+        playerA.flashNode(nodeIndexA);
+        playerB.flashNode(nodeIndexB);
+        this.colliderAudio.playNodeNote(playerA, nodeIndexA);
+        this.colliderAudio.playNodeNote(playerB, nodeIndexB);
     }
 
     getPlayer(playerId) {
@@ -670,6 +691,7 @@ class BattleController {
         this.arenaBase = null;
         this.initialGapTotal = 0;
         this.collisionDetector.arena = null;
+        this.tieCooldowns.clear();
 
         // Reset master clock system completely
         this.masterSpeed = 1.0; // Reset to default 1x speed
