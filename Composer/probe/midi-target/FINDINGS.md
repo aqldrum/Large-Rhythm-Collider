@@ -90,7 +90,7 @@ This is the entanglement you described, made concrete. The fix belongs in Compos
 
 Once N is found, the slot length is fixed: cycle ÷ P.
 - **At the preset cycles the tempos are often silly.** The chromatic run on the 16k row (one bar over 16 s) plays at 15 BPM, and Greensleeves on 2047:2048 at 360 BPM.
-- **The report gives the cycle that plays the clip at its own tempo.** Typically that's 5–30 s, so targeting has to set the Playback cycle as well.
+- **The report gives the cycle that plays the clip at its own tempo.** Typically that's 5–30 s. *Superseded by ruling 1:* the composition's tempo is decoupled from the cycle, so targeting sets its own tempo and leaves the Playback cycle alone.
 
 ### 6. Grid decode
 
@@ -132,11 +132,22 @@ Voting dominates. The search is not pruned yet. It tries 12 lattices and every N
    - the tempo, and the cycle the placement needs.
 
    On rows under ~1k onsets most placements are partial. A partial reading could fill its misses from the miner's own candidates, or with fringe tones.
-7. **Time-clustered rows are where windows matter.** Offer windows there, and say what they cost in cycle length.
+7. **Time-clustered rows are where windows matter.** Offer windows there. Per rulings 1–2, a window is cropped and plays at its own tempo, so its cost in cycle length no longer applies.
 
-## Open questions for Avery
+## Avery's rulings (2026-10-26)
 
-1. **A window placement:** what plays in the other N − B bars? Mined parts (the clip quoted inside a composition), or rests? Or should the cycle be cropped to the window?
-2. **Partial fits:** show the best partial reading with its misses marked, or refuse below some share?
-3. **The tempo/cycle coupling:** may targeting set the Playback cycle, or should it only report it?
-4. **Pitch-class-set fit on tone-poor rows:** worth exposing (e.g. "this row plays these 4 classes")? Or is "use a richer row" the answer?
+1. **Decouple a composition's tempo from the row's cycle (decided).** These are different playback applications. The cycle is how fast the row plays; a composition's tempo is its own. The tempos in result 5 only look silly because the probe coupled them.
+   - Today the player is already decoupled: it runs on spec time scaled by a factor, and the live Tempo knob is independent of the cycle.
+   - Compose is not: `meterOf` derives the spec's tempo as 60·N·4 / T and picks N to land near 110 BPM.
+   - What changes for targeting:
+     - the bar count comes from the placement, not from a tempo target;
+     - the spec's own tempo becomes a playback default, not a property of the cycle;
+     - beats a bar come from the clip's time signature, not a fixed 4.
+2. **A window placement crops the cycle to the window (decided).** The composition loops on the B bars the clip occupies, which is B/N of the cycle, from the phase φ. Every part is composed over those bars only, with notes timed from the window's start. The cells for that span already exist: they are the N-bar cells, bars 0..B−1 from φ. The line miner already takes `from`/`bars` spans. The new part is that the spec's loop length becomes the window, not the whole cycle.
+3. **Partial fits: show the best reading with its misses marked (decided).** Each miss shows its class: fringe, shift or hard.
+4. **Targeting sets its own speed (decided):** by default the clip's own tempo, i.e. the MIDI file's tempo. The user is expected to tweak it once the window is found. This is the live Tempo knob, now seeded from the clip.
+5. **Expose tone-poor fit (decided).** It dovetails with partial fits: say which classes the row can't play. Avery: every Composition method does better with more options (more unique tones), so this is worth surfacing beyond targeting too.
+
+Still open from the design (not asked in this round):
+- **Drifting lattice:** may ψ drift from phrase to phrase (retune modulation)?
+- **Purist note-offs:** must note-offs land on onsets too?
