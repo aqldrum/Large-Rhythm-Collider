@@ -1,5 +1,37 @@
 # Composer: directions recorded for later (not scheduled)
 
+## The Composer as a solver: typed progressions next (Avery, 2026-10-26)
+
+MIDI targets (`TARGET_ORDER.md`) made the Composer solve for a given melody, not only generate one. Avery called it "a good step making the Composer not just generative but a solver as well". The next thread works on **targeting typed progressions**.
+
+**Where typed progressions stand (step 4b):**
+- `chord-symbols.js` resolves one symbol a bar against `barMaterials`.
+- `barMaterials` fixes the meter, the phase (the seed's first draw) and the cells first, then reads each bar's tones.
+- `progression.js` keeps the asked root and quality where the bar supports them (all classes but at most one); otherwise it falls back and says so.
+
+That is the forward direction: cut the row, then ask what each bar can hold.
+
+**The solver direction,** by analogy with MIDI targets: the progression is given, and the meter, the phase and the lattice are the unknowns.
+
+What the MIDI-target probe found that should carry over (`probe/midi-target/FINDINGS.md`):
+- **Fit is a property of the row, not of the music.** It depends on in-tune lane density per region of the cycle.
+- **Pair and consecutive rows have lanes clustered in time.** Each class sounds only in part of the cycle, so which bar lands where (N, phase) should matter more for chords than it did for melodies.
+- **The root splits into a tuning lattice ψ and a transposition k.** The engine's frame must centre on the lattice, not on a root off it. A third of placements lost notes otherwise.
+
+A progression version of the vote:
+- each bar's evidence is its chord's classes sounding in that bar's window (bar-length windows, not slot windows);
+- vote over (N, φ, ψ, k);
+- refine exactly against `chooseChordOnRoot`'s support rule;
+- let ψ drift by phrase, which ruling 6 already allows for melodies, as modulation by retune.
+
+`target.js` (lattices, lanes, the vote, the refine, `cropCells`) is the starting point.
+
+**Open questions for that thread:**
+- Do typed symbols stay relative to C (step 4b's ruling 3), or does a solved progression name its own key?
+- Does a solver progression crop to a window, as a clip does (ruling 2)?
+- How do a clip and a typed progression combine? They're both pins on the same bars.
+- Should a typed progression survive a new clip? (Open from phase B.)
+
 ## Improvise: anchors, and the next-best option on each loop (Avery, 2026-10-25)
 
 Any part can become an **anchor** that the system "improvises" around: on successive loops, the other parts change. A background worker solves ahead of playback. Mostly it walks to the next-best option for one or more parts while the music plays, so each loop arrives ready.

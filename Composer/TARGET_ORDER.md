@@ -178,3 +178,16 @@ Also worth a look: the amber rings, red hollow dots and late-off tails at real s
     10. **The lead row's dots are placed by the clip's pitch,** so a silent note has a height; a decode error changes nothing; a file dropped just outside the window is caught (the page never navigates to it).
   - **Follow-ups:** the drums still cut 4 beats a bar (3/4 and 6/8 not honoured; phase A's); the animation's drum strokes are put in bars by the loop's seconds, so on a window they can land a bar off (the trace would need the row's cycle); chord names relative to C beside the clip's classes; no clip control in the lab; rows with no full fit still search every N (~1 s, in the worker).
   - **Open (for Avery):** audition from the top or at the next bar boundary; clear the pins on a new clip, or keep a typed progression across clips; Clear composing at once.
+- 2026-10-26: **Avery's browser pass: "this works well".** Avery is testing it with their own MIDI clips too, and calls it a step toward the Composer as a solver, not just a generator. Phases A and B are merged on composer-sprint-2 (a29b8d1). Not pushed, not on main.
+  - **Still open (Avery hasn't ruled):**
+    - should an audition play from the top or at the next bar boundary?
+    - should a new clip clear the pins, the typed progression, the edits and the drum grid?
+    - should Clear compose at once?
+  - **Follow-ups, unscheduled:**
+    - the drums under 3/4 and 6/8 (they still cut 4 beats a bar);
+    - the animation's drum bar flashes on a window (the trace needs the row's cycle);
+    - chord names relative to C beside the clip's tonic;
+    - a clip control in the lab;
+    - pruning rows with no full fit (~1 s in the worker);
+    - polyphony (ruled out of v1).
+  - **Merged worktrees left to prune:** `target-core`, `target-ui`. 8779 was being served from `target-ui` at the time of the pass, so restart the server from composer-sprint-2 before pruning it.
