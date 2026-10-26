@@ -42,10 +42,16 @@
 //               a bar with a pinned root tone takes its chord from `choose` (chooseChordOnRoot) in every derivation,
 //               so the settle rounds re-derive its quality and never its root; a phrase whose bars are all pinned
 //               skips the first, unharmonized lead. No progression: everything above, unchanged.
+//   pinned lead (`lead: { notes }`, MIDI targets phase A3, Composer/TARGET_ORDER.md; proposed) the lead is given (a
+//               clip placed on the row: target.js): nothing is mined for it. The chords are derived from those notes
+//               once, by the same rules (a progression's pins too); there is no first mining, no second pass and no
+//               settle round (settle.rounds = 0, `pinned: true`). Each phrase's line is a record of the given notes
+//               (type 'lead', band 'pinned'), so the trace and the rearrange read it as any line. No `lead`: everything
+//               above, unchanged.
 
 import { toneGate, MIN_TONES } from './row.js';
 import { frameAt, frameOf, classOfCents, DEFAULT_FRAME_CENTS_EACH_SIDE } from './frame.js';
-import { mineLines, buildLattice, scoreLine, rulesOf, LINE_TYPES, MOTIONS, MAX_SLOTS, HARMONY_WEIGHTS, TABLES } from './lines.js';
+import { mineLines, buildLattice, scoreLine, rulesOf, fnv1aHex, LINE_TYPES, MOTIONS, MAX_SLOTS, HARMONY_WEIGHTS, TABLES } from './lines.js';
 
 export const COMPOSER_HARMONY_VERSION = 'composer-harmony-v1';
 /** triads, sevenths and sus chords, simplest first: intervals as QualityCatalog (Playback/AdvancedPlayback) has them;
@@ -267,6 +273,23 @@ export function exceptionsOfBar(c, notes, S, e) {
   return { strong: strongPcs, exceptions: mine };
 }
 
+/** a pinned lead's notes ({ notes }), checked against the cells and put in slot order (copies) */
+function pinnedNotes(lead, cells) {
+  if (!Array.isArray(lead.notes)) fail('a pinned lead is { notes: [note] }');
+  const out = lead.notes.map((n) => ({ ...n }));
+  for (const n of out) {
+    if (!(Number.isInteger(n.cell) && n.cell >= 0 && n.cell < cells.P)) fail(`a pinned lead note's cell ${n.cell} is not one of the ${cells.P} slots`);
+    if (!(Number.isInteger(n.node) && Number.isFinite(n.cents))) fail('a pinned lead note needs its node and cents');
+  }
+  return out.sort((a, b) => a.cell - b.cell || a.node - b.node);
+}
+/** a pinned lead's phrase as a line record (lines.js' shape, as far as the trace and the rearrange read one) */
+function pinnedLine(notes, from, bars, S) {
+  const serial = `pinned|${from}+${bars}x${S}|${notes.map((x) => `${x.cell}:${x.node}:${x.octave}`).join(',')}`;
+  return { id: `pl1:${fnv1aHex(serial)}`, serial, type: 'lead', band: 'pinned', motion: null, contour: null, root: null, over: [],
+    from, bars, slotsPerBar: S, slots: bars * S, n: notes.length, cost: 0, perNote: 0, notes };
+}
+
 /** what makes two derivations' chords the same: per bar, the root tone, the quality and the (sounding) offset */
 const chordKey = (chords) => chords.map((c) => `${c.rootTone}|${c.quality}|${c.rawOffsetCents}`);
 
@@ -309,7 +332,9 @@ export function settleRounds(start, cap, { derive, key, advance }) {
  *   opts = { root (a tone, default the frame's default root), frameCentsEachSide (15), modulation (true), foldOffsets (true),
  *            table ('full' | 'lean'), referenceName ('C': the base root's name, for chord names), minTones,
  *            settlePasses (0..3, default 3: extra rounds of chords ↔ lead, below), progression (progression.js
- *            `harmonyPins`), trace (a trace.js recorder, or null: it is shown every decision and steers none) }
+ *            `harmonyPins`), trace (a trace.js recorder, or null: it is shown every decision and steers none),
+ *            lead ({ notes }: a pinned lead, lines.js' note shape — slot, cell, bar, beat, node, tick, tone, fraction,
+ *            cents, octave, pitch, pc, outside — the chords derived from it once; see the head of this file) }
  * → { version, root, frameCentsEachSide, modulation, table, lead, chords, targets, modulations, passes, exceptions, settle }
  *   | { tooFewTones, tones, min }
  *   lead     { phrases: [line], notes: [note], kept: ['first' | 'second' | 'round1'.. per phrase: the pass its line is from] }
@@ -347,9 +372,11 @@ export function harmonize(row, cells, opts = {}) {
   const pins = progression ? progression.roots : null;
   if (pins && (pins.length !== cells.bars || typeof progression.choose !== 'function')) fail(`a progression is { roots: [tone | null] × ${cells.bars} bars, choose }`);
   const allPinned = (from, bars) => !!pins && pins.slice(from, from + bars).every((t) => t != null);
+  // a pinned lead (MIDI targets): its notes in slot order, read as a line's
+  const given = opts.lead ? pinnedNotes(opts.lead, cells) : null;
 
-  // 1. the lead, rooted, no harmony (not for a phrase whose every bar is pinned)
-  const firstLines = phrases.map(({ from, bars }, i) => {
+  // 1. the lead, rooted, no harmony (not for a phrase whose every bar is pinned, nor a pinned lead)
+  const firstLines = given ? null : phrases.map(({ from, bars }, i) => {
     if (allPinned(from, bars)) { rec?.lead('first', i, from, bars, null); return null; }
     const mined = mineLines(row, cells, base, { from, bars, types: ['lead'], table }).lines;
     rec?.lead('first', i, from, bars, mined);
@@ -420,6 +447,20 @@ export function harmonize(row, cells, opts = {}) {
     }
     return total;
   };
+
+  // a pinned lead: the chords from its notes once, no second pass, no settling
+  if (given) {
+    phrases.forEach(({ from, bars }, i) => rec?.lead('first', i, from, bars, null));
+    const d = chordsFrom(given), targets = targetsOf(d.chords), exceptions = exceptionsOf(d.chords, given, true);
+    const lines = phrases.map(({ from, bars }) => pinnedLine(given.filter((n) => n.bar >= from && n.bar < from + bars), from, bars, S));
+    const passes = { phrases: phrases.map(({ from, bars }) => ({ from, bars, first: null, second: null, kept: 'pinned' })), secondWins: 0, rounds: [] };
+    rec?.settled({ rounds: [] }, passes);
+    return {
+      version: COMPOSER_HARMONY_VERSION, root: base.rootFraction, frameCentsEachSide: e, modulation, table,
+      lead: { phrases: lines, notes: given, kept: phrases.map(() => 'pinned'), pinned: true }, chords: d.chords, targets, modulations: d.modulations, passes, exceptions,
+      settle: { cap: 0, rounds: 0, converged: true, oscillated: false, cycle: null, chosenRound: 0, changedBarsPerRound: [], exceptionsPerRound: [exceptions], leadCostPerRound: [], pinned: true },
+    };
+  }
 
   // round 0: the chords of the rooted lead, and the lead over them
   const firstTags = phrases.map(() => 'first');

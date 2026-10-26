@@ -226,6 +226,23 @@ export function buildCells(row, opts = {}) {
   };
 }
 
+/**
+ * The cells cropped to their first `bars` bars (MIDI targets, phase A3: decided, Avery — a window placement crops the
+ * cycle; the composition loops on the B bars the clip occupies, from the phase). The slots of bars 0..bars−1 are the
+ * N-bar cells' own, windows and all, so slot 0 still reaches back before the first anchor and the last slot halfway to
+ * the window's end. `slotOfNode` is −1 for a node no kept slot holds. `crop` records the cut: { bars (N), P (N·S),
+ * end (the window's end, the anchor of slot bars·S, as a share of the cycle from the phase) }. Cropping to every bar
+ * hands the cells back as they are. → cells
+ */
+export function cropCells(cells, bars) {
+  if (!(Number.isInteger(bars) && bars >= 1 && bars <= cells.bars)) fail(`cannot crop ${cells.bars} bars to ${bars}`);
+  if (bars === cells.bars) return cells;
+  const P = bars * cells.slotsPerBar, phaseX = cells.phase[0] / cells.phase[1];
+  const end = (((cells.slots[P].anchor - phaseX) % 1) + 1) % 1;
+  const slotOfNode = Int32Array.from(cells.slotOfNode, (k) => (k >= 0 && k < P ? k : -1));
+  return { ...cells, bars, P, slots: cells.slots.slice(0, P), slotOfNode, crop: { bars: cells.bars, P: cells.P, end } };
+}
+
 function lowerTick(row, tick) {
   let lo = 0, hi = row.n;
   while (lo < hi) { const mid = (lo + hi) >> 1; if (row.tick[mid] < tick) lo = mid + 1; else hi = mid; }
