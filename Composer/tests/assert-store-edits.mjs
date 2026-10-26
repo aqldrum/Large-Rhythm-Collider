@@ -145,7 +145,7 @@ console.log('\n— the typed progression field');
   check('… the lab\'s root editor reads the same list as ratios', F.c.progression()[0] === s.progression[0].ratio && F.c.progression()[1] === null);
   await F.c.compose();
   check('Compose honors it: bars 1 and 3 targeted on the field\'s roots; the field kept as typed (flats stay flats)', s.spec.chords[0].targeted && s.spec.chords[0].rootTone === s.progression[0].ratio && s.spec.chords[2].targeted && F.c.progressionField().text === 'Bb7 - Dm');
-  const text = 'Bb7 | Am7, Dm7 G7';
+  const text = 'Bb7, Am7, Dm7 G7';   // a plain field: a bar line would make it a chart (CHART_ORDER.md P2)
   const t = await F.c.setProgressionField(text);
   const res = t.resolution;
   check(`with a composition the field is live: its typed bars are typed chord edits (${Object.keys(s.edits.chords).length}), nothing re-solved, not dirty`, t.live && t.ok && F.solves() === 1 && !s.dirty && Object.values(s.edits.chords).every((e) => e.from === 'typed'));
@@ -157,7 +157,7 @@ console.log('\n— the typed progression field');
   const a2 = F.c.alternatesOf(2, 'chords'), c2 = a2.candidates.find((x) => !x.current);
   await F.c.swapChord(2, c2);
   const toks = tokenizeField(s.field.text);
-  check(`a swap rewrites only its own bar's symbol: "${s.field.text}"`, toks.length === 4 && toks[0].text === 'Bb7' && toks[1].text === 'Am7' && toks[3].text === 'G7' && s.field.text.includes('|') && s.field.text.includes(',') && s.edits.chords[2].from === 'swap');
+  check(`a swap rewrites only its own bar's symbol: "${s.field.text}"`, toks.length === 4 && toks[0].text === 'Bb7' && toks[1].text === 'Am7' && toks[3].text === 'G7' && s.field.text.split(',').length === 3 && s.edits.chords[2].from === 'swap');
   await F.c.undo();
   check('undo brings the text back too', s.field.text === text);
   await F.c.setProgressionField('Bb7 - Dm7');

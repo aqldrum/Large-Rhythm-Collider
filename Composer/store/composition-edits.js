@@ -99,6 +99,21 @@ export function rewriteToken(text, bar, word) {
   return out;
 }
 
+/**
+ * A chord chart's text (chart.js parseChart's `chart`) with the given chords' words, `wordAt(k)` for chord k: each written
+ * in place when its chord is written once in the text (not a hold, no repeat or form plays that writing again), else the
+ * whole chart is `unrolled()` (the chart written out played: Composer/CHART_ORDER.md P9, proposed). → string
+ */
+export function rewriteChart(text, chart, units, wordAt, unrolled) {
+  const s = String(text ?? ''), uses = new Map();
+  for (const sp of chart.spans) uses.set(sp.token.start, (uses.get(sp.token.start) ?? 0) + 1);
+  const own = [...new Set(units)].map((k) => chart.spans[k]);
+  if (own.some((sp) => !sp || sp.hold || uses.get(sp.token.start) > 1)) return unrolled();
+  let out = s;
+  for (const sp of own.sort((a, b) => b.token.start - a.token.start)) out = out.slice(0, sp.token.start) + wordAt(sp.index) + out.slice(sp.token.end);
+  return out;
+}
+
 // ── the alternates: pure reads of the kept trace (STEP 4a: 12 candidates a bar, 8 runner-ups a phrase) ──
 const chordMemo = new WeakMap(), leadMemo = new WeakMap();
 /** the chosen round's chord events, by bar */
@@ -108,7 +123,7 @@ export function chordEventsOf(trace) {
   if (!v) {
     const h = trace.events.find((e) => e.kind === 'harmony');
     v = [];
-    if (h) for (const e of trace.events) if (e.kind === 'chord' && e.round === h.chosenRound) v[e.bar] = e;
+    if (h) for (const e of trace.events) if (e.kind === 'chord' && e.round === h.chosenRound) v[e.span ?? e.bar] = e;   // a chart's split bars: by span
     chordMemo.set(trace, v);
   }
   return v;

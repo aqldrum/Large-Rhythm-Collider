@@ -48,6 +48,13 @@
 //               settle round (settle.rounds = 0, `pinned: true`). Each phrase's line is a record of the given notes
 //               (type 'lead', band 'pinned'), so the trace and the rearrange read it as any line. No `lead`: everything
 //               above, unchanged.
+//   spans       (`spans`, a chart's split bars: Composer/CHART_ORDER.md P5–P6; proposed) a chord a SPAN, not a bar: a span
+//               is { bar, from (slot of the cycle), slots }, within its bar, the spans in order covering every slot. Each
+//               span's chord reads the span's own tones; a lead note is strong on its bar's strong beats or on its span's
+//               first slot (else the span's first note); targets and frames are per span (lines.js reads a target's
+//               `slots`, and frames one per slot); a modulation may land at a span boundary. A progression's pins are
+//               then one a span. Each chord record adds { span, from, slots }. No `spans`, or one a bar: everything above,
+//               byte for byte.
 
 import { toneGate, MIN_TONES } from './row.js';
 import { frameAt, frameOf, classOfCents, DEFAULT_FRAME_CENTS_EACH_SIDE } from './frame.js';
@@ -199,6 +206,33 @@ export function barMaterial(row, cells) {
   return bars;
 }
 
+/** each span's tones (a chart's split bars, P6): as barMaterial reads a bar's, from the span's own slots */
+export function spanMaterial(row, cells, spans) {
+  const out = spans.map(() => new Map()), of = new Int32Array(cells.P).fill(-1);
+  spans.forEach((sp, i) => { for (let j = sp.from; j < sp.from + sp.slots; j++) of[j] = i; });
+  for (const s of cells.slots) for (const t of s.tones) {
+    const m = out[of[s.index]];
+    if (!m.has(t.tone)) m.set(t.tone, { tone: t.tone, cents: row.toneCents[t.tone], count: 0, strikes: 0, weight: 0, node: t.node });
+    const e = m.get(t.tone); e.count += t.count; e.strikes += t.strikes; e.weight = e.count + e.strikes;
+  }
+  return out;
+}
+/** spans checked against the cells: in order, each inside its bar, every slot covered once → copies */
+function checkSpans(spans, cells) {
+  const S = cells.slotsPerBar;
+  let at = 0;
+  const out = spans.map((sp) => {
+    const { bar, from, slots } = sp;
+    if (!(Number.isInteger(bar) && Number.isInteger(from) && Number.isInteger(slots) && slots >= 1 && from === at && from >= bar * S && from + slots <= (bar + 1) * S)) fail('spans are { bar, from, slots }, in order, each inside its bar, covering every slot');
+    at += slots;
+    return { bar, from, slots };
+  });
+  if (at !== cells.P) fail(`spans cover ${at} of the ${cells.P} slots`);
+  return out;
+}
+/** a chord record of a span: its bar's record with the span's place (P5) */
+export const spanRecord = (rec, sp, k) => ({ ...rec, span: k, from: sp.from, slots: sp.slots });
+
 /** a line's rules as mineLines gave them, from its tags, under other targets (the second pass's scoring of the first) */
 function rulesOfLine(line, targets, anchor, weights) {
   const type = LINE_TYPES.find((t) => t.type === line.type), band = type.bands.find((b) => b.band === line.band);
@@ -252,18 +286,42 @@ export function chordRecord(row, bar, pick, { eachSide = DEFAULT_FRAME_CENTS_EAC
   };
 }
 /** one bar's target (lines.js' shape), its chord read in its own frame, the parent `scale` (on the sounding grid) moved there */
-export const targetOfBar = (c, scale) => ({ name: c.name, root: 0, chord: [...c.intervals], tone: c.rootFraction, anchor: c.rootCents, scale: scale.map((p) => mod(p - c.gridRootPc, 12)).sort((a, b) => a - b) });
+export const targetOfBar = (c, scale) => ({ name: c.name, root: 0, chord: [...c.intervals], tone: c.rootFraction, anchor: c.rootCents, scale: scale.map((p) => mod(p - c.gridRootPc, 12)).sort((a, b) => a - b),
+  ...(c.slots != null ? { slots: c.slots } : {}) });
+/**
+ * The chords, frames and targets over bars [from, from + bars): a bar a chord and its frame, or, where the chords are a
+ * chart's spans, every span in the bars and its frame once a slot (lines.js reads either). → { chords, frames, targets }
+ */
+export function harmonyOver(chords, targets, from, bars, S) {
+  if (chords.length === targets.bars.length && chords.every((c) => c.slots == null)) {
+    const own = chords.slice(from, from + bars);
+    return { chords: own, frames: own.map((c) => c.frame), targets: { scale: targets.scale, bars: targets.bars.slice(from, from + bars) } };
+  }
+  const idx = chords.flatMap((c, i) => (c.bar >= from && c.bar < from + bars ? [i] : [])), own = idx.map((i) => chords[i]);
+  return { chords: own, frames: own.flatMap((c) => Array.from({ length: c.slots ?? S }, () => c.frame)), targets: { scale: targets.scale, bars: idx.map((i) => targets.bars[i]) } };
+}
 /** targets: a bar a chord, read in its own frame; the parent scale is the union of the chords' classes on the sounding grid (the names may fold) */
 export function targetsOf(chords) {
   const scale = [...new Set(chords.flatMap((c) => c.gridPcs))].sort((a, b) => a - b);
   return { scale, bars: chords.map((c) => targetOfBar(c, scale)) };
 }
+/** the strong notes of a span ({ from, slots }) of a chart's split bar: on its bar's strong beats or its first slot, else the first (P6) */
+export function strongNotesOfSpan(notes, span, S) {
+  const inBar = notes.filter((n) => n.cell >= span.from && n.cell < span.from + span.slots && !n.outside);
+  let strong = inBar.filter((n) => isStrongBeat(n.beat, S) || n.cell === span.from);
+  if (!strong.length && inBar.length) strong = [inBar[0]];
+  return { inBar, strong };
+}
+/** a split bar's spans, or none: is this a chart's split (CHART_ORDER.md P5)? */
+export const isSplit = (spans, bars) => Array.isArray(spans) && spans.length !== bars;
+/** a chord's lead notes and its strong ones: its bar's, or its span's when it has one */
+const strongOfChord = (c, notes, S) => (c.slots != null ? strongNotesOfSpan(notes, c, S) : strongNotesOf(notes, c.bar, S));
 /**
  * A chord's exceptions: the lead's strong notes in its bar (passing tones left out) that it does not hold, inside ±e.
  * → { strong: [named class of each strong note], exceptions: [{ slot, node, fraction, pc, dev }] }
  */
 export function exceptionsOfBar(c, notes, S, e) {
-  const { strong } = strongNotesOf(notes, c.bar, S), mine = [], strongPcs = [];
+  const { strong } = strongOfChord(c, notes, S), mine = [], strongPcs = [];
   for (const n of strong) {
     const { pc, dev } = classOfCents(n.cents - c.rootCents), held = Math.abs(dev) <= e + EPS && c.intervals.includes(pc);
     const onGrid = mod(c.rootPc + pc, 12);   // named
@@ -368,10 +426,12 @@ export function harmonize(row, cells, opts = {}) {
   const refPc = PC_NAMES.indexOf(referenceName);
   if (refPc < 0) fail(`no note ${referenceName}`);
   const base = frameOf(row, root, e), S = cells.slotsPerBar, phrases = phrasesOf(cells);
-  // a targeted progression (progression.js): a pinned root tone per bar, or null for a bar derived as below
+  // a chart's split bars (CHART_ORDER.md P5): a chord a span; none, or one a bar: a chord a bar, as ever
+  const spans = isSplit(opts.spans, cells.bars) ? checkSpans(opts.spans, cells) : null, units = spans ? spans.length : cells.bars;
+  // a targeted progression (progression.js): a pinned root tone per bar (per span), or null for one derived as below
   const pins = progression ? progression.roots : null;
-  if (pins && (pins.length !== cells.bars || typeof progression.choose !== 'function')) fail(`a progression is { roots: [tone | null] × ${cells.bars} bars, choose }`);
-  const allPinned = (from, bars) => !!pins && pins.slice(from, from + bars).every((t) => t != null);
+  if (pins && (pins.length !== units || typeof progression.choose !== 'function')) fail(`a progression is { roots: [tone | null] × ${units} ${spans ? 'spans' : 'bars'}, choose }`);
+  const allPinned = (from, bars) => !!pins && (spans ? spans.every((sp, i) => sp.bar < from || sp.bar >= from + bars || pins[i] != null) : pins.slice(from, from + bars).every((t) => t != null));
   // a pinned lead (MIDI targets): its notes in slot order, read as a line's
   const given = opts.lead ? pinnedNotes(opts.lead, cells) : null;
 
@@ -384,27 +444,28 @@ export function harmonize(row, cells, opts = {}) {
   });
   const leadNotesOf = (lines) => lines.flatMap((l) => (l ? l.notes : []));
 
-  // 2. a chord a bar, from a lead: the offset walked from bar 1
-  const material = barMaterial(row, cells), gridBase = base.rootCents;
+  // 2. a chord a bar (a span), from a lead: the offset walked from bar 1
+  const material = spans ? spanMaterial(row, cells, spans) : barMaterial(row, cells), gridBase = base.rootCents;
   const chordsFrom = (leadNotes, round = 0) => {
     const chords = [], modulations = [];
     let offset = 0, prevPcs = null;
-    for (let k = 0; k < cells.bars; k++) {
+    for (let k = 0; k < units; k++) {
       const tones = [...material[k].values()];
-      const { inBar, strong } = strongNotesOf(leadNotes, k, S);
+      const { inBar, strong } = spans ? strongNotesOfSpan(leadNotes, spans[k], S) : strongNotesOf(leadNotes, k, S);
       const lead = inBar.map((n) => ({ cents: n.cents, strong: strong.includes(n) }));
       const pin = pins ? pins[k] : null, how = { eachSide: e, gridBase, offset, modulation, prevPcs, foldOffsets, observe: rec?.candidates(round, k, (foldOffsets ? namingShift(offset) : 0) - refPc) };
       const pick = pin != null ? progression.choose(tones, lead, { tone: pin, cents: row.toneCents[pin], ...(progression.qualities ? { quality: progression.qualities[k] } : {}) }, how) : chooseChord(tones, lead, how);
       if (!pick) { chords.push(null); continue; }
-      if (pick.modulate) modulations.push({ bar: k, cents: pick.named.offset, rawCents: pick.offset, fundamentalRatio: 2 ** (pick.offset / 1200) });
+      if (pick.modulate) modulations.push({ bar: spans ? spans[k].bar : k, ...(spans ? { span: k, from: spans[k].from } : {}), cents: pick.named.offset, rawCents: pick.offset, fundamentalRatio: 2 ** (pick.offset / 1200) });
       offset = pick.offset; prevPcs = pick.pcs;
-      chords.push(chordRecord(row, k, pick, { eachSide: e, referencePc: refPc, pinned: pin != null }));
+      chords.push(spans ? spanRecord(chordRecord(row, spans[k].bar, pick, { eachSide: e, referencePc: refPc, pinned: pin != null }), spans[k], k)
+        : chordRecord(row, k, pick, { eachSide: e, referencePc: refPc, pinned: pin != null }));
     }
-    // a bar the windows left empty takes the chord before it (or after, for the first)
+    // a bar (span) the windows left empty takes the chord before it (or after, for the first)
     for (let k = 0; k < chords.length; k++) if (!chords[k]) {
       const near = chords.slice(0, k).reverse().find(Boolean) ?? chords.slice(k + 1).find(Boolean);
       if (!near) fail('no bar of the cycle holds a tone');
-      chords[k] = { ...near, bar: k, empty: true };
+      chords[k] = spans ? { ...near, bar: spans[k].bar, span: k, from: spans[k].from, slots: spans[k].slots, empty: true } : { ...near, bar: k, empty: true };
     }
     rec?.chords(round, chords, modulations);
     return { chords, modulations };
@@ -419,7 +480,7 @@ export function harmonize(row, cells, opts = {}) {
     const lines = [], tags = [], info = [];
     let newerWins = 0, cost = 0, count = 0;
     phrases.forEach(({ from, bars }, i) => {
-      const frames = chords.slice(from, from + bars).map((c) => c.frame), sub = { scale: targets.scale, bars: targets.bars.slice(from, from + bars) };
+      const { frames, targets: sub } = harmonyOver(chords, targets, from, bars, S);
       const mined = mineLines(row, cells, frames, { from, bars, types: ['lead'], table, targets: sub }).lines, newer = mined[0] ?? null;
       const cur = held[i];
       let under = Infinity;

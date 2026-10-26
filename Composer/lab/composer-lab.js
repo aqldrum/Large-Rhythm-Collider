@@ -52,7 +52,7 @@ $('export').addEventListener('click', () => {
 // ── knobs ──
 const field = (f) => (f.kind === 'select'
   ? el('select', f.title ? { title: f.title } : {}, ...f.options.map(([value, label]) => el('option', { value, textContent: label })))
-  : el('input', { type: 'number', ...f.attrs }));
+  : el('input', { type: 'number', ...f.attrs, ...(f.title ? { title: f.title } : {}) }));
 const chosenSpans = {};
 for (const k of KNOB_FIELDS) {
   const input = field(k), chosen = el('span', { className: 'chosen' });

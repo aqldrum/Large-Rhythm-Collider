@@ -3,7 +3,7 @@
 // 2026-10-22). No DOM; it needs `Worker` only for the full table.
 //
 //   const runCompose = createComposeRunner();
-//   runCompose(layers, cycleSeconds, { seed, overrides, worker, progression, trace, target }) → Promise<spec>   (trace: true →
+//   runCompose(layers, cycleSeconds, { seed, overrides, worker, progression, trace, target, changes }) → Promise<spec>   (trace: true →
 //     spec.trace, the compose trace, both ways; trace: { caps } passed through as it is: STEP 4a)
 //     worker: true    the module worker (Composer/core/compose-worker.js), made on first use and kept
 //     worker: false   compose() itself, a tick later (so the page can say "Composing…" first)
@@ -13,6 +13,7 @@
 //     module worker (compose-worker.js keeps the row and cells per key); the controller sends the edits of big rows
 //     and every smoothPhrase here
 //
+// Chord charts (Composer/CHART_ORDER.md): `changes` ([[shares] × bars]) goes through as it is, both ways.
 // MIDI targets (phase B): `target` ({ clip, placement?, tonic?, maxDriftCents? }, compose.js) goes through as it is,
 // both ways, so the search (target.js placeClip, inside compose) runs where Compose runs (P7). The clip travels as
 // decoded (plain JSON: no bytes); the worker needs nothing new, since it hands its options to compose whole.
@@ -41,10 +42,10 @@ export function createComposeRunner({ makeWorker = () => new Worker(new URL('../
     const id = ++seq;
     return new Promise((resolve, reject) => { pending.set(id, { resolve, reject, pick }); worker.postMessage({ id, ...message }); });
   }
-  const viaWorker = (layers, cycleSeconds, { seed, overrides, progression, trace, target }) => post({ layers, cycleSeconds, options: { seed, overrides, progression, ...(trace ? { trace } : {}), ...(target ? { target } : {}) } }, (d) => d.spec);
+  const viaWorker = (layers, cycleSeconds, { seed, overrides, progression, trace, target, changes }) => post({ layers, cycleSeconds, options: { seed, overrides, progression, ...(trace ? { trace } : {}), ...(target ? { target } : {}), ...(changes ? { changes } : {}) } }, (d) => d.spec);
   const run = (layers, cycleSeconds, options = {}) => (options.worker
     ? viaWorker(layers, cycleSeconds, options)
-    : new Promise((resolve, reject) => defer(() => { try { resolve(compose(layers, cycleSeconds, { seed: options.seed, overrides: options.overrides, progression: options.progression, ...(options.trace ? { trace: options.trace } : {}), ...(options.target ? { target: options.target } : {}) })); } catch (err) { reject(err); } })));
+    : new Promise((resolve, reject) => defer(() => { try { resolve(compose(layers, cycleSeconds, { seed: options.seed, overrides: options.overrides, progression: options.progression, ...(options.trace ? { trace: options.trace } : {}), ...(options.target ? { target: options.target } : {}), ...(options.changes ? { changes: options.changes } : {}) })); } catch (err) { reject(err); } })));
   /** STEP 4d: a local edit in the worker → rearrange's result */
   run.rearrange = ({ key = null, spec, edit, opts = {} }) => post({ kind: 'rearrange', key, spec, edit, opts }, (d) => d.result);
   return run;

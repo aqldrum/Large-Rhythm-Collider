@@ -112,7 +112,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   const field = (f, value) => {
     const e = f.kind === 'select'
       ? el('select', f.title ? { title: f.title } : {}, ...f.options.map(([v, label]) => el('option', { value: v, textContent: label })))
-      : el('input', { type: 'number', ...f.attrs });
+      : el('input', { type: 'number', ...f.attrs, ...(f.title ? { title: f.title } : {}) });
     e.value = value;
     return e;
   };
@@ -341,7 +341,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     try { return gridOf(arrangeDrums(st.spec, { ...rest, mode: from === 'grid' ? 'backbeat' : from })); } catch { return null; }
   }
   const alternatesCount = (bar, part) => {
-    if (part === 'chords') { const a = core.alternatesOf(bar, 'chords'); return a ? a.candidates.filter((c) => !c.current).length : 0; }
+    // a chord chart's split bar: every chord's alternates (CHART_ORDER.md P10)
+    if (part === 'chords') return core.unitsOfBar(bar).reduce((n, u) => { const a = core.alternatesOf(u, 'chords'); return n + (a ? a.candidates.filter((c) => !c.current).length : 0); }, 0);
     if (part === 'lead') { const a = core.alternatesOf(bar, 'lead'); return a ? a.lines.filter((l) => !l.current).length : 0; }
     return 0;
   };
@@ -349,8 +350,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   let fieldInput = null, fieldApplied = '', rebuilding = false;
   function theFieldInput() {
     if (fieldInput) return fieldInput;
-    const input = el('input', { type: 'text', className: 'ctab-field', placeholder: 'type a progression: Cmaj7 Am7 Dm7 G7 (a symbol a bar; - leaves a bar to Compose)', spellcheck: false,
-      title: 'the typed progression: C is the composition\'s base root. Enter (or leaving the field) applies it; with a composition each typed bar is a live chord edit, and a pin for the next Compose' });
+    const input = el('input', { type: 'text', className: 'ctab-field', placeholder: 'type a progression: Cmaj7 Am7 Dm7 G7 (a symbol a bar), or a chart: | C | Am F | G . . C |×2', spellcheck: false,
+      title: 'the typed progression: C is the composition\'s base root; - leaves a bar to Compose. With a bar line it is a chord chart, and sets the bars: the chords in a bar share it, . holds the chord before, % is the bar before again, ×n repeats a section, ‖ ends one, |: :| repeats (×n after :|), A: | … | lines and form: A A B A+2 name and move sections. Enter (or leaving the field) applies it; with a composition each typed chord is a live chord edit (a chart of other bars waits for Compose), and a pin for the next Compose' });
     const apply = () => { if (rebuilding || input.value === fieldApplied) return; fieldApplied = input.value; doEdit(() => core.setProgressionField(input.value)); };
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault?.(); apply(); } if (e.key === 'Escape') { input.value = fieldApplied; input.blur(); } });
     input.addEventListener('change', apply);
@@ -402,7 +403,18 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
         if (d.kind !== 'hard') dot.style.background = row.color;
         cell.append(dot);
       }
-      if (c.part === 'chords') {
+      if (c.part === 'chords' && c.spans) {
+        // a chord chart's split bar: each chord at its span's place, a rule between them
+        for (const x of c.spans) {
+          const lab = el('span', { className: `ctab-chord ctab-chord-span${x.targeted ? ' targeted' : ''}${x.fallback ? ' fallback' : ''}`, textContent: x.name, title: x.title });
+          lab.style.left = `calc(${(100 * x.x).toFixed(2)}% + 4px)`; lab.style.maxWidth = `calc(${(100 * x.w).toFixed(2)}% - 6px)`;
+          if (x.x > 0) { const rule = el('span', { className: 'ctab-span-rule' }); rule.style.left = `${(100 * x.x).toFixed(2)}%`; cell.append(rule); }
+          cell.append(lab);
+        }
+        const m = tab.state.spec.modulations.find((x) => x.bar === c.from);
+        if (m) { const ml = modulationLabel(m); cell.append(el('span', { className: 'ctab-mod', textContent: ml.text, title: ml.title })); }
+        if (c.retune) cell.append(el('span', { className: 'ctab-retune', textContent: `↻ retunes ${barsLabel(c.retune)}`, title: `this edit's modulation re-pitches ${barsLabel(c.retune)}: their notes stay, their tuning moves` }));
+      } else if (c.part === 'chords') {
         cell.append(el('span', { className: `ctab-chord${c.targeted ? ' targeted' : ''}${c.fallback ? ' fallback' : ''}`, textContent: c.name }));
         const m = tab.state.spec.modulations.find((x) => x.bar === c.from);
         if (m) { const ml = modulationLabel(m); cell.append(el('span', { className: 'ctab-mod', textContent: ml.text, title: ml.title })); }
@@ -587,7 +599,11 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       input.addEventListener('change', () => { core.setKnob(name, f.read(input.value)); recomposeIfQuick(); });
       const c = chosen[name], byClip = !!tab.state.input.target && TARGET_SETS.includes(name);   // MIDI targets: the clip sets it
       if (byClip) { input.disabled = true; input.title = 'set by the MIDI clip (its meter, its placement, its pinned lead)'; }
-      return el('div', { className: 'ctab-knob' }, el('label', { textContent: f.label, title: f.title || '' }), input, el('span', { className: `ctab-chosen${c.over && !byClip ? ' over' : ''}`, textContent: byClip ? `${c.text.replace(/^asked: /, 'chose ')} · the clip's` : c.text }));
+      // a typed chord chart sets the bars (decided, CHART_ORDER.md)
+      const chart = name === 'bars' && !byClip ? core.chartShape() : null, byChart = !!chart && !chart.error;
+      if (byChart) { input.disabled = true; input.title = 'set by the typed chord chart: its bars, every repeat played'; }
+      const said = byClip ? `${c.text.replace(/^asked: /, 'chose ')} · the clip's` : byChart ? `${chart.bars} · the chart's` : c.text;
+      return el('div', { className: 'ctab-knob' }, el('label', { textContent: f.label, title: f.title || '' }), input, el('span', { className: `ctab-chosen${c.over && !byClip && !byChart ? ' over' : ''}`, textContent: said }));
     }));
   }
   function progressionEditor() {
@@ -596,19 +612,26 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     take.addEventListener('click', () => { if (core.takeProgression()) recomposeIfQuick(); });
     const clear = el('button', { className: 'ctab-btn', textContent: 'clear', title: 'every bar back to auto' });
     clear.addEventListener('click', () => { core.clearProgression(); recomposeIfQuick(); });
-    const headRow = el('div', { className: 'ctab-row' }, el('span', { className: 'ctab-sub', textContent: 'Progression — a root a bar from the row; auto leaves the bar to Compose (or type chords above the Chords row)' }));
+    const headRow = el('div', { className: 'ctab-row' }, el('span', { className: 'ctab-sub', textContent: 'Progression — a root a bar (a chord, where a typed chart splits a bar) from the row; auto leaves it to Compose (or type chords above the Chords row)' }));
+    // a typed chart's split bars: each chord's bar, for its label (CHART_ORDER.md P10)
+    const shape = core.chartShape(), split = !!shape && !shape.error && roots.length > shape.bars;
+    const labelOf = (k) => {
+      if (!split) return `Bar ${k + 1}`;
+      const sp = shape.spans[k], mine = shape.spans.filter((x) => x.bar === sp.bar);
+      return mine.length === 1 ? `Bar ${sp.bar + 1}` : `Bar ${sp.bar + 1}·${mine.indexOf(sp) + 1}`;
+    };
     if (!tab.view.hasRhythm) return el('div', {}, headRow, el('span', { className: 'ctab-muted', textContent: 'no rhythm yet' }));
     if (rc.refused) return el('div', {}, headRow, el('span', { className: 'ctab-muted', textContent: 'no roots: this row is refused' }));
     const opt = (o) => el('option', { value: o.value, textContent: o.text, title: o.title });
     const groups = rootGroups(rc), got = s && !s.refused && !tab.state.dirty ? s.chords : null;
     const bars = roots.map((ratio, k) => {
-      const sel = el('select', { title: `bar ${k + 1}: its chord's root` }, el('option', { value: '', textContent: 'auto' }),
+      const sel = el('select', { title: `${labelOf(k).toLowerCase()}: its chord's root` }, el('option', { value: '', textContent: 'auto' }),
         el('optgroup', { label: 'most heard' }, ...groups.heard.map(opt)), el('optgroup', { label: 'all, by pitch from the root' }, ...groups.all.map(opt)));
       if (ratio && !rc.candidates.some((c) => c.ratio === ratio)) sel.prepend(opt(strayRootOption(ratio)));
       sel.value = ratio ?? '';
       sel.addEventListener('change', () => { core.setProgressionRoot(k, sel.value || null); recomposeIfQuick(); });
       const g = chordGot(got?.[k]);
-      return el('div', { className: 'ctab-knob' }, el('label', { textContent: `Bar ${k + 1}` }), sel, el('span', { className: `ctab-chosen${g.over ? ' over' : ''}`, textContent: g.text }));
+      return el('div', { className: 'ctab-knob' }, el('label', { textContent: labelOf(k) }), sel, el('span', { className: `ctab-chosen${g.over ? ' over' : ''}`, textContent: g.text }));
     });
     return el('div', {}, headRow, el('div', { className: 'ctab-knobs ctab-prog' }, ...bars), el('div', { className: 'ctab-row' }, take, clear, el('span', { className: 'ctab-muted', textContent: progressionNote(roots) })));
   }
@@ -675,11 +698,18 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (r.silentCells?.length) parts.push(`${r.silentCells.length} silent cell${r.silentCells.length === 1 ? '' : 's'} (no onset there)`);
     return parts.length ? el('div', { className: 'ctab-editnote', textContent: parts.join(' · ') }) : null;
   }
+  /** bar k's chords: one, or each chord of a chart's split bar in turn (CHART_ORDER.md P10); the audition bar once */
   function chordsContext(bar) {
-    const s = tab.state.spec, ch = s.chords[bar], a = core.alternatesOf(bar, 'chords'), e = tab.state.edits?.chords?.[bar];
-    const head = ctxHead(`Bar ${bar + 1} · Chords`, el('span', { className: 'ctab-muted', textContent: ch.empty ? 'an empty bar' : `now ${ch.name} · root ${ch.rootTone} · ${qualityName(ch.quality)}` }),
-      e ? el('span', { className: 'ctab-tag', textContent: e.from === 'typed' ? `typed${e.asked && e.asked !== e.quality ? ` (asked ${qualityName(e.asked)})` : ''}` : 'swapped' }) : null, retuneNote());
-    if (!a) return [head, el('span', { className: 'ctab-muted', textContent: 'no alternates for this bar (Compose kept none)' })];
+    const units = core.unitsOfBar(bar);
+    if (units.length === 1) { const one = chordUnitContext(units[0], `Bar ${bar + 1} · Chords`); return core.alternatesOf(units[0], 'chords') ? [...one, auditionBar(), editNote()] : one; }
+    return [...units.flatMap((u, i) => chordUnitContext(u, `Bar ${bar + 1} · chord ${i + 1} of ${units.length}`, i > 0)), auditionBar(), editNote()];
+  }
+  /** chord u's alternates (u: its index in spec.chords; a bar's, unless a chart splits it) */
+  function chordUnitContext(u, title, more = false) {
+    const bar = u, s = tab.state.spec, ch = s.chords[bar], a = core.alternatesOf(bar, 'chords'), e = tab.state.edits?.chords?.[bar];
+    const head = ctxHead(title, el('span', { className: 'ctab-muted', textContent: ch.empty ? 'an empty bar' : `now ${ch.name} · root ${ch.rootTone} · ${qualityName(ch.quality)}` }),
+      e ? el('span', { className: 'ctab-tag', textContent: e.from === 'typed' ? `typed${e.asked && e.asked !== e.quality ? ` (asked ${qualityName(e.asked)})` : ''}` : 'swapped' }) : null, more ? null : retuneNote());
+    if (!a) return [head, el('span', { className: 'ctab-muted', textContent: 'no alternates for this chord (Compose kept none)' })];
     const key = (c) => `chord:${bar}:${c.root.ratio}:${c.quality}`;
     const list = el('div', { className: 'ctab-alts' }, ...a.candidates.map((c) => {
       const r = candidateRow(c), k = key(c), trying = audition.key === k;
@@ -694,7 +724,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const notes = [];
     if (a.currentIndex < 0 && !ch.empty) notes.push(el('div', { className: 'ctab-muted', textContent: `plays ${ch.name}, which isn't among Compose's candidates (typed)` }));
     if (a.pinned) notes.push(el('div', { className: 'ctab-muted', textContent: 'a pinned bar: its candidates keep the asked root' }));
-    return [head, el('div', { className: 'ctab-muted ctab-legend', textContent: '● plays now · C Compose\'s · ✓ holds the lead\'s strong notes' }), list, ...notes, auditionBar(), editNote()];
+    return [head, more ? null : el('div', { className: 'ctab-muted ctab-legend', textContent: '● plays now · C Compose\'s · ✓ holds the lead\'s strong notes' }), list, ...notes].filter(Boolean);
   }
   /** MIDI targets (B3): a target's lead cell is the clip's phrase: its notes, their kinds, its lattice (no lead swaps, P6) */
   function clipContext(bar) {

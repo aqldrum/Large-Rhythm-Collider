@@ -74,7 +74,8 @@ export const barsLabel = ({ from, to }) => (from === to ? `bar ${from + 1}` : `b
  *   retuned   the bars re-pitched from Compose's (controller retunedBars())
  * → null without a composition, else { bars, cols, starts, lens, spans, rows: [{ id, label, color, enabled, cells }] }
  *   cell: { part, bar, from, to, phrase, dots: [{ x, y, accent, kind?, late?, j? }], clip? (a target's lead: its counts),
- *           name?, badge, edited, editKind, retuned, retune
+ *           name?, spans? (a chord chart's split bar: [{ unit (the chord's index), name, x, w (0..1 of the bar), targeted,
+ *           fallback, edited, title }]), badge, edited, editKind, retuned, retune
  *           ({ from, to } on the cell whose edit re-pitched those later bars), steps? (drums: { voice: string }),
  *           silent? (drums: Set of `${voice}:${place}`), title }
  */
@@ -137,19 +138,34 @@ export function matrixModel(state, { grid = null, composedGrid = null, alternate
           cell.clip = c;
           cell.title = `${label} (the clip), ${barsLabel({ from, to: to - 1 })}: ${c.notes} notes, ${c.hits} hit${c.sub ? `, ${c.sub} substituted (amber)` : ''}${c.hard ? `, ${c.hard} silent (red)` : ''}${c.late ? `, ${c.late} late note-off${c.late === 1 ? '' : 's'}` : ''}`;
         }
+      } else if (id === 'chords' && spec.chords.some((c) => c.slots != null) && spec.chords.filter((c) => c.bar === from).length > 1) {
+        // a chord chart's split bar (CHART_ORDER.md P10): its chords, each at its span's place in the bar
+        const units = spec.chords.flatMap((c, i) => (c.bar === from ? [i] : []));
+        cell.spans = units.map((u) => {
+          const ch = spec.chords[u], e = state.edits?.chords?.[u], x0 = spec.timeline.slotStarts[ch.from] ?? t0, x1 = ch.from + ch.slots < spec.timeline.slotStarts.length ? spec.timeline.slotStarts[ch.from + ch.slots] : t0 + len;
+          const edited = chordSig(ch) !== chordSig(composed?.chords?.[u]) || !!e;
+          if (edited) { cell.edited = true; cell.editKind = e?.from ?? cell.editKind; }
+          return { unit: u, name: ch.empty ? '—' : ch.name, x: Math.min(1, Math.max(0, (x0 - t0) / len)), w: Math.min(1, Math.max(0, (x1 - x0) / len)), targeted: !!ch.targeted, fallback: !!ch.fallback, edited,
+            title: `${ch.empty ? 'an empty span' : `${ch.name}: ${qualityName(ch.quality)}, root ${ch.rootTone}`}${ch.offsetCents ? `, ${fmtCents(ch.offsetCents)} retuned` : ''}${e ? ` (${e.from === 'typed' ? 'typed' : 'swapped'})` : ''}` };
+        });
+        cell.name = cell.spans.map((x) => x.name).join(' ');
+        cell.targeted = cell.spans.every((x) => x.targeted); cell.fallback = cell.spans.some((x) => x.fallback);
+        cell.retuned = retunedSet.has(from);
+        cell.retune = sourceOf.get(from) ?? null;
+        cell.title = `${barsLabel({ from, to: from })}, ${units.length} chords: ${cell.spans.map((x) => x.title).join('; ')}`;
       } else if (id === 'chords') {
-        const ch = spec.chords[from], e = state.edits?.chords?.[from];
+        const ch = spec.chords.find((c) => c.bar === from) ?? spec.chords[from], u = spec.chords.indexOf(ch), e = state.edits?.chords?.[u];
         cell.name = ch.empty ? '—' : ch.name;
         cell.targeted = !!ch.targeted; cell.fallback = !!ch.fallback;
-        if (chordSig(ch) !== chordSig(composed?.chords?.[from])) cell.edited = true;
+        if (chordSig(ch) !== chordSig(composed?.chords?.[u])) cell.edited = true;
         if (e) { cell.edited = true; cell.editKind = e.from; }
         cell.retuned = retunedSet.has(from);
         cell.retune = sourceOf.get(from) ?? null;
         cell.title = `${ch.empty ? 'an empty bar' : `${ch.name}: ${qualityName(ch.quality)}, root ${ch.rootTone}`}${ch.offsetCents ? `, ${fmtCents(ch.offsetCents)} retuned` : ''}${e ? ` (${e.from === 'typed' ? 'typed' : 'swapped'})` : ''}`;
       } else {
-        const ch = spec.chords[from];
+        const over = spec.chords.filter((c) => c.bar === from).map((c) => (c.empty ? 'no chord' : c.name)).join(', ');
         if (cell.edited) cell.editKind = 'follows';
-        cell.title = `${label}, bar ${from + 1}: ${dots.length} notes, over ${ch.empty ? 'no chord' : ch.name}`;
+        cell.title = `${label}, bar ${from + 1}: ${dots.length} notes, over ${over}`;
       }
       return cell;
     });
@@ -180,13 +196,14 @@ export function waitToBoundary(t, barStarts, T) {
 export function barAt(t, barStarts) { let k = 0; while (k + 1 < barStarts.length && barStarts[k + 1] <= t + 1e-9) k++; return k; }
 
 /**
- * The typed field's inline resolution, a bar a column (chord-symbols.js resolveSymbols' perBar):
+ * The typed field's inline resolution, a bar a column (chord-symbols.js resolveSymbols' perBar; a chord chart's split
+ * bar is one column, its chords' names in a row and `chords` the parts):
  * → [{ bar, text (the symbol's name), detail (the root's cents, the quality's mark), mark ('✓' | '' ), status
  *     ('auto' | 'ok' | 'amber' | 'error'), offGrid, mayRetune, title (every amber reason) }]
  */
 export function fieldStrip(resolution) {
   if (!resolution || resolution.refused) return [];
-  return resolution.perBar.map((b) => {
+  const per = resolution.perBar.map((b) => {
     if (b.kind === 'auto') return { bar: b.bar, text: '·', detail: 'auto', mark: '', status: 'auto', offGrid: false, mayRetune: false, title: 'auto: Compose chooses this bar' };
     if (b.kind === 'error') return { bar: b.bar, text: b.token?.text ?? '?', detail: 'not a chord', mark: '', status: 'error', offGrid: false, mayRetune: false, title: b.error };
     const q = b.quality, detail = [b.root.label.replace(/^[A-G]♯?/, '').trim() || '±0¢', q.support === 'whole' ? '' : q.label].filter(Boolean).join(' · ');
@@ -194,6 +211,21 @@ export function fieldStrip(resolution) {
     return { bar: b.bar, text: b.name, detail: [detail, flag].filter(Boolean).join(' · '), mark: b.status === 'ok' ? '✓' : '', status: b.status, offGrid: !!b.root.offGrid, mayRetune: !!b.root.mayRetune,
       title: b.status === 'ok' ? `${b.name}: root ${b.root.ratio} (${b.root.label}), supported` : b.amber.join('; ') };
   });
+  // a chord chart's split bar (CHART_ORDER.md P10): its chords in one column, the worst status the column's
+  if (!resolution.spans) return per;
+  const rank = { error: 3, amber: 2, ok: 1, auto: 0 }, out = [];
+  for (const b of per) {
+    const at = out.find((x) => x.bar === b.bar);
+    if (!at) { out.push({ ...b, chords: [b] }); continue; }
+    at.chords.push(b);
+    at.text = at.chords.map((x) => x.text).join(' ');
+    at.detail = at.chords.map((x) => x.detail).filter(Boolean).join(' / ');
+    at.mark = at.chords.every((x) => x.mark) ? '✓' : '';
+    if (rank[b.status] > rank[at.status]) at.status = b.status;
+    at.offGrid ||= b.offGrid; at.mayRetune ||= b.mayRetune;
+    at.title = at.chords.map((x) => `${x.text}: ${x.title}`).join(' · ');
+  }
+  return out;
 }
 
 /** a chord candidate as the inspector lists it */

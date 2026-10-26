@@ -160,12 +160,12 @@ export function buildLattice(row, cells, frame, { from = 0, bars = cells.bars - 
   const S = cells.slotsPerBar, P = bars * S;
   if (!(Number.isInteger(from) && from >= 0 && Number.isInteger(bars) && bars >= 1 && from + bars <= cells.bars)) fail(`bars ${from}..${from + bars} are not in the cells' ${cells.bars}`);
   if (P > MAX_SLOTS) fail(`a line is at most ${MAX_SLOTS} slots, not ${bars} × ${S}`);
-  const frames = framesFor(frame, bars);
+  const frames = framesFor(frame, bars, S);
   const own = cells.slots.slice(from * S, from * S + P);
   let heaviest = 0; for (const s of own) if (s.strikes > heaviest) heaviest = s.strikes;
   const median = own.map((s) => s.strikes).sort((a, b) => a - b)[P >> 1];
   const slots = own.map((s, k) => {
-    const frame = frames[Math.floor(k / S)];
+    const frame = frames.length === P ? frames[k] : frames[Math.floor(k / S)];
     let most = 0; for (const t of s.tones) if (t.count > most) most = t.count;
     const cands = [];
     for (const t of s.tones) {
@@ -180,10 +180,11 @@ export function buildLattice(row, cells, frame, { from = 0, bars = cells.bars - 
   });
   return { P, S, bars, from, mode: cells.mode, phase: cells.phase, swing: cells.swing, moments: cells.moments, low, width, frame: frameSummary(frames), slots };
 }
-/** one frame for every bar of a span, or one per bar (phase 3: each bar's frame centred on its chord's root tone) */
-function framesFor(frame, bars) {
+/** one frame for every bar of a span, one per bar (phase 3: each bar's frame centred on its chord's root tone), or one per
+ *  slot (a chart's split bars, CHART_ORDER.md P6: each span's slots in its own chord's frame) */
+function framesFor(frame, bars, S = null) {
   if (!Array.isArray(frame)) return Array.from({ length: bars }, () => frame);
-  if (frame.length !== bars) fail(`${frame.length} frames for ${bars} bars`);
+  if (frame.length !== bars && !(S != null && frame.length === bars * S)) fail(`${frame.length} frames for ${bars} bars`);
   return frame;
 }
 const frameSummary = (frames) => (frames.every((f) => f === frames[0])
@@ -204,8 +205,11 @@ function closeOver(fraction, tone) {
 /** each candidate's part under the targets: [slot][cand] → { role, bar, foreign, chord (its chord cost, unweighted), close } */
 export function rolesOf(lattice, r) {
   const t = r.targets, P = lattice.P;
+  // a target with its own `slots` (a chart's span, CHART_ORDER.md P6) holds that many slots in turn; else the slots are shared evenly
+  const at = t && t.bars[0]?.slots != null ? t.bars.flatMap((b, i) => Array.from({ length: b.slots }, () => i)) : null;
+  if (at && at.length !== P) fail(`targets of ${at.length} slots for a line of ${P}`);
   return lattice.slots.map((slot, k) => {
-    const g = t ? t.bars[Math.floor(k * t.bars.length / P)] : null;
+    const g = t ? t.bars[at ? at[k] : Math.floor(k * t.bars.length / P)] : null;
     return slot.cands.map((c) => {
       if (!t) return { role: c.outside ? 'foreign' : 'tone', bar: null, foreign: c.outside, chord: 0, close: c.close };
       const scale = g.scale ?? t.scale, foreign = c.outside || (scale ? !scale.includes(c.pc) : false), onChord = !foreign && (!g.chord || g.chord.includes(c.pc));
@@ -412,6 +416,6 @@ export function mineLines(row, cells, frame, opts = {}) {
   lines.sort((a, b) => a.perNote - b.perNote || a.cost - b.cost || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return {
     version: COMPOSER_LINES_VERSION, table, from, bars, slotsPerBar: cells.slotsPerBar, root: first.tone, over: targets.bars.map((b) => b.name),
-    frame: frameSummary(framesFor(frame, bars)), runs, lines,
+    frame: frameSummary(framesFor(frame, bars, cells.slotsPerBar)), runs, lines,
   };
 }

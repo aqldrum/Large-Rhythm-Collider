@@ -213,7 +213,7 @@ check('the typed progression on a window spec: a live chord edit on bar 1', type
 await core.undo();
 tab.setSection('lines');
 const barsKnob = qa(inspector, '.ctab-knob').find((k) => k.textContent.startsWith('Bars'));
-check('the knobs the clip sets are disabled, "the clip\'s"', barsKnob && q(barsKnob, 'select').disabled && /the clip's/.test(barsKnob.textContent));
+check('the knobs the clip sets are disabled, "the clip\'s"', barsKnob && q(barsKnob, 'input').disabled && /the clip's/.test(barsKnob.textContent));
 tab.setSection('cell');
 
 console.log('\n— a clip dropped on the window; chords reduced (P1); a nameless clip takes the file\'s name');

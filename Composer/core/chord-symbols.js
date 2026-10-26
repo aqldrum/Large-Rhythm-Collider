@@ -16,7 +16,8 @@ import { buildRow, isRow, toneGate, ONSET_GATE, MIN_TONES } from './row.js';
 import { buildCells } from './cells.js';
 import { defaultRoot, toneIndexOf, classOfCents, PRESENCE_MODES, DEFAULT_FRAME_CENTS_EACH_SIDE } from './frame.js';
 import { downbeats } from './lines.js';
-import { chooseMeter, seededRandom } from './compose.js';
+import { chooseMeter, chartMeter, checkChanges, seededRandom } from './compose.js';
+import { isChart, readChart, isPlain, writeChart } from './chart.js';
 import { CHORD_QUALITIES, PC_NAMES } from './harmony.js';
 import { rootCandidates, chooseChordOnRoot, qualityById, isFallbackQuality, FALLBACK_QUALITIES, MAX_MISSING, COMPOSER_PROGRESSION_VERSION } from './progression.js';
 
@@ -215,6 +216,12 @@ export function readToken(text) {
 //   display    `pinsToField(pins, materials)`: a pin list → the field, in the Composer's chord names (the base root
 //              C, sharps, CHORD_QUALITIES' suffixes; a root without a quality 'D*', an auto bar '-', trailing autos
 //              cut). With `keep`, field → pins → field and pins → field → pins are both the identity (tested).
+//   charts     (Composer/CHART_ORDER.md) a field with a bar line is a chord chart (chart.js): several chords to a bar,
+//              holds, repeats, sections, forms. A chart sets the bars (decided), so it is resolved against materials
+//              built for its own `changes` (`barMaterials(…, { changes })`): a chord a SPAN, each read on its span's own
+//              tones, `perBar` then one entry a span ({ bar, span, from, slots, hold }) and `pins` one a span. Materials
+//              of another shape give `{ mismatch }` (the chart needs a Compose). `pinsToField` writes a chart back
+//              for materials made from one (a held share '.', a bar again '%').
 
 export const COMPOSER_CHORD_SYMBOLS_VERSION = 'composer-chord-symbols-v1';
 /** a class above a root, as the field names what a bar lacks ('no ♭7'; proposed) */
@@ -230,12 +237,16 @@ const devLabel = (d) => (Math.abs(d) < 0.05 ? '' : ` ${d > 0 ? '+' : '−'}${Mat
  *          ('cluster'), modulation (true) }: a spec's `knobs` reproduce its cells; Compose's overrides + seed the
  *          cells that compose would build
  *   opts   { row: a row already built for these layers (skips the build), cells: the spec's own cells (MIDI targets,
- *          phase B: a window spec's are cropped, rearrange.js materialsOf; the knobs alone can't rebuild them) }
+ *          phase B: a window spec's are cropped, rearrange.js materialsOf; the knobs alone can't rebuild them),
+ *          changes: a chart's ([[shares] × bars]; a spec's own are `knobs.changes`): the chart's meter (compose.js
+ *          `chartMeter`) and its spans }
  * → { version, row, meter, rootTone, root (ratio), baseCents, frameCentsEachSide, presence, modulation, anchors, phase,
- *     cells, bars: [[{ tone, cents, count, strikes, weight, node }] in the order the slots hold them] × N, candidates }
+ *     cells, bars: [[{ tone, cents, count, strikes, weight, node }] in the order the slots hold them] × N, candidates,
+ *     changes (a chart's, or null), spans ([{ bar, from, slots }] where a bar is split, else null), units (each span's
+ *     tones where split, else `bars`) }
  *   | { version, refused: true, reason }
  */
-export function barMaterials(layers, cycleSeconds, knobs = {}, { row: given = null, cells: givenCells = null } = {}) {
+export function barMaterials(layers, cycleSeconds, knobs = {}, { row: given = null, cells: givenCells = null, changes: givenChanges = null } = {}) {
   const k = knobs ?? {};
   const row = given ?? buildRow(layers, { gate: ONSET_GATE });
   if (!isRow(row)) return { version: COMPOSER_CHORD_SYMBOLS_VERSION, refused: true, reason: row?.tooDense ? 'tooDense' : 'tooLarge' };
@@ -244,7 +255,8 @@ export function barMaterials(layers, cycleSeconds, knobs = {}, { row: given = nu
   const e = k.frameCentsEachSide ?? DEFAULT_FRAME_CENTS_EACH_SIDE, presence = k.presence ?? 'cluster';
   if (!PRESENCE_MODES.includes(presence)) fail(`presence must be one of ${PRESENCE_MODES.join(', ')}`);
   const rootTone = k.root != null ? toneIndexOf(row, k.root) : defaultRoot(row, e, { presence });
-  const meter = chooseMeter(row.n, cycleSeconds, { bars: k.bars ?? null, slotsPerBar: k.slotsPerBar ?? null });
+  const changes = givenChanges ?? k.changes ?? null, chart = changes ? checkChanges(changes) : null;
+  const meter = chart ? chartMeter(row.n, cycleSeconds, chart, { slotsPerBar: k.slotsPerBar ?? null }) : chooseMeter(row.n, cycleSeconds, { bars: k.bars ?? null, slotsPerBar: k.slotsPerBar ?? null });
   const anchors = k.anchors ?? 'partitioned', P = meter.bars * meter.slotsPerBar;
   let phase = k.phase;
   if (!phase) {   // Compose's own draw: the seed's first, over the root's first three downbeats
@@ -260,8 +272,21 @@ export function barMaterials(layers, cycleSeconds, knobs = {}, { row: given = nu
     const x = m.get(t.tone); x.count += t.count; x.strikes += t.strikes; x.weight = x.count + x.strikes;
   }
   const candidates = rootCandidates(row, { frameCentsEachSide: e, presence, root: rootTone });
+  // a chart's split bars: each span's tones, from its own slots (harmony.js spanMaterial's reading)
+  const spans = chart && !isPlain(chart) ? meter.spans : null, bars = maps.map((m) => [...m.values()]);
+  let units = bars;
+  if (spans) {
+    const of = new Int32Array(cells.P).fill(-1), own = spans.map(() => new Map());
+    spans.forEach((sp, i) => { for (let j = sp.from; j < sp.from + sp.slots; j++) of[j] = i; });
+    for (const s of cells.slots) for (const t of s.tones) {
+      const m = own[of[s.index]];
+      if (!m.has(t.tone)) m.set(t.tone, { tone: t.tone, cents: row.toneCents[t.tone], count: 0, strikes: 0, weight: 0, node: t.node });
+      const x = m.get(t.tone); x.count += t.count; x.strikes += t.strikes; x.weight = x.count + x.strikes;
+    }
+    units = own.map((m) => [...m.values()]);
+  }
   return { version: COMPOSER_CHORD_SYMBOLS_VERSION, row, meter, rootTone, root: row.tones[rootTone], baseCents: row.toneCents[rootTone], frameCentsEachSide: e, presence,
-    modulation: k.modulation ?? true, anchors, phase, cells, bars: maps.map((m) => [...m.values()]), candidates: candidates.candidates };
+    modulation: k.modulation ?? true, anchors, phase, cells, bars, candidates: candidates.candidates, changes: chart, spans, units };
 }
 
 /**
@@ -320,18 +345,30 @@ function classesOver(tones, rootCents, e) {
  *       amber: [why], pin }] }
  *   | { version, refused: true, reason }
  */
+/** two charts' changes, the same shape? */
+const sameChanges = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 export function resolveSymbols(field, materials, { frameCentsEachSide = null, modulation = null, keep = null } = {}) {
   if (!materials || materials.refused) return { version: COMPOSER_CHORD_SYMBOLS_VERSION, refused: true, reason: materials?.reason ?? 'noMaterials' };
-  const { row, baseCents, candidates } = materials, N = materials.cells.bars;
+  const { row, baseCents, candidates } = materials, spans = materials.spans ?? null, units = materials.units ?? materials.bars, N = units.length;
   const e = frameCentsEachSide ?? materials.frameCentsEachSide, mods = modulation ?? materials.modulation;
-  const tokens = typeof field === 'string' || field == null ? tokenizeField(field) : field;
-  const notes = [], extras = tokens.slice(N);
-  if (extras.length) notes.push(`${tokens.length} symbols for ${N} bars: ${extras.map((t) => `"${t.text}"`).join(', ')} dropped`);
-  else if (tokens.length && tokens.length < N) notes.push(`${tokens.length} symbol${tokens.length === 1 ? '' : 's'} for ${N} bars: bar${N - tokens.length > 1 ? 's' : ''} ${tokens.length + 1}${N - tokens.length > 1 ? `–${N}` : ''} auto`);
+  // a chord chart (chart.js): read whole, a chord a span; it must be what the materials were built for
+  let chart = null;
+  if (typeof field === 'string' && isChart(field)) {
+    chart = readChart(field);
+    if (chart.error) return { version: COMPOSER_CHORD_SYMBOLS_VERSION, chart: { error: chart.error }, bars: 0, ok: false, pins: [], notes: [`chart: ${chart.error}`], extras: [], perBar: [] };
+    if (!sameChanges(chart.changes, materials.changes)) return { version: COMPOSER_CHORD_SYMBOLS_VERSION, chart: { bars: chart.bars, changes: chart.changes }, mismatch: { want: chart.changes, have: materials.changes ?? null }, bars: chart.bars, ok: false, pins: [], notes: [`the chart is ${chart.bars} bar${chart.bars === 1 ? '' : 's'} of other changes than these materials': Compose to hear it`], extras: [], perBar: [] };
+  }
+  const tokens = chart ? chart.spans.map((sp) => ({ ...sp.token, symbol: sp.symbol })) : typeof field === 'string' || field == null ? tokenizeField(field) : field;
+  const notes = [], extras = chart ? [] : tokens.slice(N), word = spans ? 'chord' : 'bar';
+  if (extras.length) notes.push(`${tokens.length} symbols for ${N} ${word}s: ${extras.map((t) => `"${t.text}"`).join(', ')} dropped`);
+  else if (tokens.length && tokens.length < N) notes.push(`${tokens.length} symbol${tokens.length === 1 ? '' : 's'} for ${N} ${word}s: ${word}${N - tokens.length > 1 ? 's' : ''} ${tokens.length + 1}${N - tokens.length > 1 ? `–${N}` : ''} auto`);
+  // a span's place, when the bars are split (or a chart's hold, when not)
+  const placeOf = (k) => ({ ...(spans ? { span: k, from: spans[k].from, slots: spans[k].slots } : {}), ...(chart?.spans[k].hold ? { hold: true } : {}) });
+  const barOf = (k) => (spans ? spans[k].bar : k);
   const perBar = Array.from({ length: N }, (_, k) => {
-    const token = tokens[k] ?? null, read = readToken(token?.text);
-    if (read.kind === 'auto') return { bar: k, token, kind: 'auto', status: 'auto', name: '', amber: [], pin: null };
-    if (read.kind === 'error') { notes.push(`bar ${k + 1}: ${read.error}, so auto`); return { bar: k, token, kind: 'error', status: 'error', error: read.error, name: '', amber: [read.error], pin: null }; }
+    const token = tokens[k] ?? null, read = readToken(token?.symbol ?? token?.text), bar = barOf(k), place = placeOf(k);
+    if (read.kind === 'auto') return { bar, ...place, token, kind: 'auto', status: 'auto', name: '', amber: [], pin: null };
+    if (read.kind === 'error') { notes.push(`${word} ${k + 1}: ${read.error}, so auto`); return { bar, ...place, token, kind: 'error', status: 'error', error: read.error, name: '', amber: [read.error], pin: null }; }
     const sym = read.parsed, keepTone = keep?.[k]?.ratio != null ? row.tones.indexOf(keep[k].ratio) : -1;
     const { cand, dev, kept } = rootFor(sym.rootPc, candidates, keepTone >= 0 ? keepTone : null, row, baseCents);
     const amber = [], inFrame = Math.abs(dev) <= e + EPS;
@@ -339,7 +376,7 @@ export function resolveSymbols(field, materials, { frameCentsEachSide = null, mo
       offGrid: !inFrame && !mods, mayRetune: !inFrame && mods };
     if (!inFrame) amber.push(`${root.label}: off the ±${e}¢ frame${mods ? ', so Compose may retune there' : ' and modulation is off, so it stays unretuned (offGrid)'}`);
     // the quality: a chord's own, or Compose's for a bare root ('D*')
-    const tones = materials.bars[k], w = classesOver(tones, cand.cents, e), lacks = (q) => q.intervals.filter((i) => !(w[i] > 0));
+    const tones = units[k], w = classesOver(tones, cand.cents, e), lacks = (q) => q.intervals.filter((i) => !(w[i] > 0));
     let quality;
     if (read.kind === 'root') quality = { asked: null, exact: true, dropped: [], support: 'free', missing: [], label: '' };
     else {
@@ -361,10 +398,10 @@ export function resolveSymbols(field, materials, { frameCentsEachSide = null, mo
       }
     }
     const name = `${PC_NAMES[sym.rootPc]}${quality.asked ? suffixOf(quality.asked) : read.kind === 'root' ? FREE_QUALITY_MARK : ''}`;
-    return { bar: k, token, kind: read.kind, status: amber.length ? 'amber' : 'ok', symbol: sym, name, root, quality, amber, pin: { ratio: cand.ratio, quality: quality.asked } };
+    return { bar, ...place, token, kind: read.kind, status: amber.length ? 'amber' : 'ok', symbol: sym, name, root, quality, amber, pin: { ratio: cand.ratio, quality: quality.asked } };
   });
-  return { version: COMPOSER_CHORD_SYMBOLS_VERSION, progressionVersion: COMPOSER_PROGRESSION_VERSION, bars: N, ok: !extras.length && perBar.every((b) => b.status === 'ok' || b.status === 'auto'),
-    pins: perBar.map((b) => b.pin), notes, extras, perBar };
+  return { version: COMPOSER_CHORD_SYMBOLS_VERSION, progressionVersion: COMPOSER_PROGRESSION_VERSION, bars: spans ? materials.cells.bars : N, ok: !extras.length && perBar.every((b) => b.status === 'ok' || b.status === 'auto'),
+    pins: perBar.map((b) => b.pin), notes, extras, perBar, ...(chart ? { chart: { bars: chart.bars, changes: chart.changes, sections: chart.sections } } : {}), ...(spans ? { spans: spans.length } : {}) };
 }
 
 /** the field's pins as `compose`'s progression (null when every bar is auto) */
@@ -385,6 +422,12 @@ export function pinsToField(pins, materials) {
     const pc = classOfCents(row.toneCents[t] - baseCents).pc, q = typeof p === 'object' ? p.quality ?? null : null;
     return `${PC_NAMES[pc]}${q != null ? suffixOf(q) : FREE_QUALITY_MARK}`;
   });
+  // materials made from a chart: a chart back, each chord over its shares (a held share '.'), every bar written
+  if (materials.changes) {
+    let k = 0;
+    const bars = materials.changes.map((shares) => shares.flatMap((n) => { const w = words[k++] ?? '-'; return [w, ...Array(n - 1).fill(null)]; }));
+    return writeChart(bars);
+  }
   while (words.length && words[words.length - 1] === '-') words.pop();
   return words.join(' ');
 }

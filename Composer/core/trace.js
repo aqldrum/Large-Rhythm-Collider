@@ -157,10 +157,11 @@ export function createTrace(row, { cycleSeconds, meter: M = null, caps = {} } = 
     chords(round, chords, modulations) {
       const keys = chords.map((c) => `${c.rootTone}|${c.quality}|${c.rawOffsetCents}`);
       chords.forEach((c, k) => {
-        const buf = chordBuf.get(k) ?? { tested: 0, top: [], shift: 0, unsupported: [] }, m = modulations.find((x) => x.bar === k);
+        // a chart's split bar (CHART_ORDER.md): the chord is a span's; the event names its bar and its span
+        const split = c.slots != null, buf = chordBuf.get(k) ?? { tested: 0, top: [], shift: 0, unsupported: [] }, m = modulations.find((x) => (split ? x.span === k : x.bar === k));
         const cands = c.empty ? [] : buf.top.map((x) => ({ root: { ...toneRef(x.root.tone), node: ref(x.root.node) }, quality: x.quality.id, label: `${PC_NAMES[mod(x.rootPc - buf.shift, 12)]}${x.quality.suffix}`,
           violations: x.violations, held: x.held, support: r4(x.support), voiceLeading: x.key[3] }));
-        emit('chord', { stage: round === 0 ? 'chords' : 'settle', round, bar: k, pinned: !!c.targeted, empty: !!c.empty,
+        emit('chord', { stage: round === 0 ? 'chords' : 'settle', round, bar: split ? c.bar : k, ...(split ? { span: k } : {}), pinned: !!c.targeted, empty: !!c.empty,
           pick: { root: { ...toneRef(c.rootTone), node: ref(c.rootNode) }, name: c.name, quality: c.quality, intervals: [...c.intervals], pcs: [...c.pcs], violations: c.firstPass.violations, held: c.firstPass.held, support: r4(c.support) },
           pickIndex: cands.findIndex((x) => x.root.tone === c.rootTone && x.quality === c.quality), candidates: cands, tested: c.empty ? 0 : buf.tested,
           offsetCents: r3(c.offsetCents), retune: m ? { cents: r3(m.cents), rawCents: r3(m.rawCents), fundamentalRatio: m.fundamentalRatio } : null, offGrid: !!c.offGrid,

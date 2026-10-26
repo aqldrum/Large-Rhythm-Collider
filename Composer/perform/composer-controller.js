@@ -75,6 +75,13 @@
 //              target sets itself (compose.js TARGET_SETS: bars, slots per bar, anchors, settle passes, presence) are
 //              left out of its compose. On the lean table a target compose of a row past MAIN_THREAD_ONSETS goes to
 //              the worker anyway (P7), its table kept lean.
+//   charts     (Composer/CHART_ORDER.md, phase B) a typed field with a bar line is a chord chart (core/chart.js): it sets
+//              the bars (decided) and may split a bar among chords. Compose is sent its `changes`; the progression is
+//              then one pin a CHORD (a span), and so are the chord edits, swaps and alternates (`bar` there is the
+//              chord's index; unitsOfBar(bar) lists a bar's). A chart of the composed spec's shape is live, as a typed
+//              chord is; another shape (bars, or a bar split anew) waits for Compose (P9): the pins go to the next
+//              Compose, the edits of the old shape are dropped, the entry goes dirty. A swap writes its chord into the
+//              chart where the chord is written once, else the chart is written out played (repeats and holds unrolled).
 
 import { compose, rearticulate, chooseMeter, PART_IDS, TARGET_SETS } from '../core/compose.js';
 import { rootCandidates, chooseChordOnRoot, qualityById } from '../core/progression.js';
@@ -88,12 +95,13 @@ import { ALTERNATE_CAPS } from '../core/trace.js';   // STEP 4a
 // STEP 4d: the edits
 import { rearrange, applyRearrange, materialsOf, materialsKey } from '../core/rearrange.js';
 import { barMaterials, resolveSymbols, pinsToField } from '../core/chord-symbols.js';
+import { isChart, readChart, isPlain } from '../core/chart.js';
 import { phrasesOf, isStrongBeat } from '../core/harmony.js';
 // MIDI targets (phase B)
 import { readMidi, decodeClip } from '../core/midi.js';
 import { onsetCount } from '../core/row.js';
 import { orderedEdits, setChordEdit, removeChordEdit, setLeadEdit, removeLeadEdit, sameRecord, hasEdits, snapshotOf, restoreSnapshot, pushUndo, pinOf, asksOf,
-  rewriteToken, chordAlternates, leadAlternates, leadAlternatesOf, phraseOfBar } from '../store/composition-edits.js';
+  rewriteToken, rewriteChart, chordAlternates, leadAlternates, leadAlternatesOf, phraseOfBar } from '../store/composition-edits.js';
 
 export const LAB_VERSION = 'composer-lab-v1';
 /** a few rhythms across sizes; 41:42:43 first (tone-rich, mid-size) */
@@ -202,36 +210,61 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   const ready = (st) => !!(st.composed && !st.composed.refused && st.spec && !st.spec.refused);
   const requireSpec = (st) => { if (!ready(st)) throw new Error('composer: nothing composed to edit'); };
   const materialsFor = (st) => { let m = mats.get(st.composed); if (!m) { m = materialsOf(st.composed); mats.set(st.composed, m); } return m; };
-  /** the field's materials: the composed spec's bars (its knobs reproduce its cells), else Compose's for the knobs now */
-  function fieldMaterialsOf(st) {
-    if (ready(st)) {
+  // ── charts: the typed field read as a chord chart (null: not a chart; { error }: one that can't be read) ──
+  let chartMemo = { text: null, value: null };
+  const chartOfText = (text) => {
+    if (text == null || !isChart(text)) return null;
+    if (chartMemo.text !== text) chartMemo = { text, value: readChart(text) };
+    return chartMemo.value;
+  };
+  const chartOf = (st) => chartOfText(st.field?.text);
+  /** the shape a field asks for: a readable chart's changes, else null (Compose's own bars) */
+  const shapeOfText = (text) => { const c = chartOfText(text); return c && !c.error ? c.changes : null; };
+  const sameShape = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  /** a spec whose chords are a chart's spans (a bar split among chords)? */
+  const splitSpec = (spec) => !!spec?.chords?.some((c) => c.slots != null);
+  /** the chord indices of bar k (one a bar, unless split) */
+  const unitsOf = (spec, k) => (splitSpec(spec) ? spec.chords.flatMap((c, i) => (c.bar === k ? [i] : [])) : [k]);
+  const barOfUnit = (spec, u) => (splitSpec(spec) ? spec.chords[u].bar : u);
+  /** the field's materials: the composed spec's bars (its knobs reproduce its cells) when the field asks for the composed
+   *  shape, else Compose's for the knobs now and the field's chart (CHART_ORDER P9) */
+  function fieldMaterialsOf(st, text = st.field?.text) {
+    const want = shapeOfText(text);
+    if (ready(st) && sameShape(want, st.composed.knobs.changes)) {
       let m = fieldMats.get(st.composed);
       // MIDI targets: a window's cells are cropped, so the spec's own (materialsOf) go in; the knobs alone can't rebuild them
       if (!m) { const own = materialsFor(st); m = barMaterials(st.composed.input.layers, st.composed.knobs.cycleSeconds, st.composed.knobs, { row: own.row, ...(st.composed.knobs.cut ? { cells: own.cells } : {}) }); fieldMats.set(st.composed, m); }
       return m;
     }
-    const knobs = { ...overrides(), seed: st.input.seed }, key = JSON.stringify([st.input.layers, st.input.cycleSeconds, knobs]);
+    const knobs = { ...overrides(), seed: st.input.seed }, key = JSON.stringify([st.input.layers, st.input.cycleSeconds, knobs, want]);
     if (looseField.key !== key) {
       let value;
-      try { value = barMaterials(st.input.layers, st.input.cycleSeconds, knobs); } catch (err) { value = { refused: true, reason: String(err && err.message ? err.message : err) }; }
+      try { value = barMaterials(st.input.layers, st.input.cycleSeconds, knobs, want ? { changes: want } : {}); } catch (err) { value = { refused: true, reason: String(err && err.message ? err.message : err) }; }
       looseField = { key, value };
     }
     return looseField.value;
   }
-  /** the field's word for a bar's ask (a pin or null) */
-  const wordOf = (m, ask) => (ask ? pinsToField([ask], m) || '-' : '-');
-  /** keep a typed field in step with a bar's ask after an edit (the user's text elsewhere untouched) */
+  /** the field's word for a bar's (a chord's) ask (a pin or null): a bare word, never a chart */
+  const wordOf = (m, ask) => (ask ? pinsToField([ask], { ...m, changes: null }) || '-' : '-');
+  /** the field's text with the given bars' (chords') words, `wordAt(k)`: a plain field token by token; a chart where each
+   *  chord is written once, else written out played (P9) */
+  function rewriteField(st, m, units, wordAt) {
+    const ch = chartOf(st);
+    if (ch && !ch.error) return rewriteChart(st.field.text, ch, units, wordAt, () => pinsToField(asksOf(st, m.units.length), m));
+    let text = st.field.text;
+    for (const k of units) text = rewriteToken(text, k, wordAt(k));
+    return text;
+  }
+  /** keep a typed field in step with a bar's (a chord's) ask after an edit (the user's text elsewhere untouched) */
   function syncField(st, bars) {
-    if (!st.field) return;
+    if (!st.field || !bars.length) return;
     const m = fieldMaterialsOf(st);
     if (!m || m.refused) return;
-    const asks = asksOf(st, st.composed?.knobs?.bars ?? m.cells.bars);
-    let text = st.field.text;
-    for (const k of bars) text = rewriteToken(text, k, wordOf(m, asks[k]));
-    st.field = { text };
+    const asks = asksOf(st, m.units.length);
+    st.field = { text: rewriteField(st, m, bars, (k) => wordOf(m, asks[k])) };
   }
-  /** is bar k inside a phrase whose lead edit has the chords follow? */
-  const followed = (st, k) => Object.entries(st.edits.lead).some(([p, e]) => e.chordsFollow && phraseOfBar(st.composed, k) === Number(p));
+  /** is bar (chord) k inside a phrase whose lead edit has the chords follow? */
+  const followed = (st, k) => Object.entries(st.edits.lead).some(([p, e]) => e.chordsFollow && phraseOfBar(st.composed, barOfUnit(st.composed, k)) === Number(p));
   /** where an edit runs */
   function onWorker(st, e) {
     if (!runRearrange) return false;
@@ -241,7 +274,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   }
   /** an edit record → rearrange's edit and options */
   function jobOf(st, e) {
-    if (e.kind === 'chord') return { edit: { bar: e.bar, chord: { rootTone: e.rootTone, quality: e.quality } }, opts: {} };
+    if (e.kind === 'chord') return { edit: { [splitSpec(st.composed) ? 'span' : 'bar']: e.bar, chord: { rootTone: e.rootTone, quality: e.quality } }, opts: {} };
     const line = st.trace?.lines?.[e.lineId];
     if (!line) throw new Error(`composer: no line ${e.lineId} in the trace`);
     return { edit: { phrase: e.phrase, line: { notes: line.notes }, chordsFollow: !!e.chordsFollow }, opts: e.smooth ? { smoothPhrase: true } : {} };
@@ -251,9 +284,12 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     const N = b.knobs.bars, changedBars = [], retunedBars = [];
     const chordOf = (c) => { const { name, pcs, rootPc, offsetCents, rawOffsetCents, fundamentalRatio, offGrid, ...rest } = c; return JSON.stringify(rest); };
     const notesOf = (spec, k) => spec.parts.map((p) => p.notes.filter((n) => n.bar === k).map(({ duration, retrigger, hz, ...rest }) => JSON.stringify(rest)).join('|')).join('/');
+    // a bar's chords (a chart's split bar has several)
+    const own = (spec, k) => unitsOf(spec, k).map((u) => spec.chords[u]);
     for (let k = 0; k < N; k++) {
-      if (chordOf(a.chords[k]) !== chordOf(b.chords[k]) || notesOf(a, k) !== notesOf(b, k)) changedBars.push(k);
-      else if (Math.abs(a.chords[k].fundamentalRatio - b.chords[k].fundamentalRatio) > 1e-12) retunedBars.push(k);
+      const ca = own(a, k), cb = own(b, k);
+      if (ca.map(chordOf).join('/') !== cb.map(chordOf).join('/') || notesOf(a, k) !== notesOf(b, k)) changedBars.push(k);
+      else if (ca.some((c, i) => Math.abs(c.fundamentalRatio - cb[i].fundamentalRatio) > 1e-12)) retunedBars.push(k);
     }
     return { changedBars, retunedBars };
   }
@@ -357,11 +393,11 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     const dropped = { pins: [], unhonored: [], lead: [], grid: null, p: null };
     for (const [phrase, e] of Object.entries(st.edits?.lead ?? {})) dropped.lead.push({ phrase: Number(phrase), lineId: e.lineId });
     if (!spec.refused) {
-      const N = spec.knobs.bars, p = [...st.progression];
+      const N = spec.knobs.bars, U = spec.chords.length, p = [...st.progression];
       sent.forEach((pin, k) => {
         if (!pin) return;
         const c = spec.chords[k];
-        if (k >= N || !c?.targeted) { dropped.pins.push({ bar: k, ratio: pin.ratio, quality: pin.quality, reason: k >= N ? 'pastBars' : 'notInRow' }); if (k < p.length) p[k] = null; }
+        if (k >= U || !c?.targeted) { dropped.pins.push({ bar: k, ratio: pin.ratio, quality: pin.quality, reason: k >= U ? 'pastBars' : 'notInRow' }); if (k < p.length) p[k] = null; }
         else if (pin.quality && c.quality !== pin.quality) dropped.unhonored.push({ bar: k, ratio: pin.ratio, asked: pin.quality, got: c.quality });
       });
       while (p.length && pinOf(p[p.length - 1]) == null) p.pop();
@@ -384,9 +420,9 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
         if (!(st.drumOptions.p > cells)) { dropped.p = { was: st.drumOptions.p, cells }; delete st.drumOptions.p; }
       }
       if (st.field && dropped.pins.some((x) => x.reason === 'notInRow')) {
-        let text = st.field.text;
-        for (const x of dropped.pins) if (x.reason === 'notInRow') text = rewriteToken(text, x.bar, '-');
-        st.field = { text };
+        const units = dropped.pins.filter((x) => x.reason === 'notInRow').map((x) => x.bar), m = chartOf(st) && !chartOf(st).error ? barMaterials(spec.input.layers, spec.knobs.cycleSeconds, spec.knobs) : null;
+        st.field = { text: m && !m.refused ? rewriteChart(st.field.text, chartOf(st), units, () => '-', () => pinsToField(asksOf({ ...st, edits: emptyEdits() }, m.units.length), m))
+          : units.reduce((text, k) => rewriteToken(text, k, '-'), st.field.text) };
       }
     }
     st.edits = { ...emptyEdits(), grid: st.drumOptions.grid ? st.edits?.grid ?? null : null };
@@ -478,6 +514,9 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       bakePins(st);
       const sent = st.progression.map(pinOf);
       const options = { seed: st.input.seed, overrides: overrides(), worker: st.table === 'full', progression: api.progressionInput() };
+      // a typed chord chart (CHART_ORDER.md): its bars and changes (not with a MIDI target: the two together are not built)
+      const shape = st.input.target ? null : shapeOfText(st.field?.text);
+      if (shape) options.changes = shape;
       // MIDI targets (phase B): the clip, its tonic and a kept placement; the overrides the target sets left out; on
       // the lean table a row past mainThreadOnsets still searches in the worker (P7), its table kept lean
       const tg = st.input.target ?? null;
@@ -602,18 +641,34 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       }
       return choices;
     },
-    /** how many bars the editor shows: the bars knob, else what Compose's meter will choose (0 for a refused row) */
+    /** how many bars the editor shows: a typed chart's, the bars knob, else what Compose's meter will choose (0 for a refused row) */
     progressionBars() {
       if (state.input.target?.clip) return state.input.target.clip.B;   // MIDI targets: the clip's bars
+      const ch = chartOf(state);
+      if (ch && !ch.error) return ch.bars;   // decided: a chart sets the bars
       if (state.knobs.bars != null) return state.knobs.bars;
       const rc = api.rootChoices();
       return rc.refused ? 0 : chooseMeter(rc.onsets, state.input.cycleSeconds, { slotsPerBar: state.knobs.slotsPerBar ?? null }).bars;
     },
-    /** the editor's roots, one a bar (null: auto), cut or padded to progressionBars() (STEP 4d: a pin with a quality
-     *  shows as its ratio here) */
-    progression: () => Array.from({ length: api.progressionBars() }, (_, k) => pinOf(state.progression[k])?.ratio ?? null),
-    /** what Compose is sent: the pins, one a bar (a ratio, or { ratio, quality }: STEP 4d), or null when every bar is auto */
-    progressionInput: () => { const p = Array.from({ length: api.progressionBars() }, (_, k) => state.progression[k] ?? null); return p.some((x) => pinOf(x) != null) ? p : null; },
+    /** how many chords the editor shows: a typed chart's (a split bar has several), else one a bar */
+    progressionUnits() {
+      const ch = chartOf(state);
+      return ch && !ch.error && !state.input.target?.clip && !isPlain(ch.changes) ? ch.spans.length : api.progressionBars();
+    },
+    /** the typed chart's shape, for the window (the Bars knob is set by it): { bars, changes, spans: [{ bar, share, shares }] }
+     *  | { error } | null (no chart) */
+    chartShape() {
+      const ch = chartOf(state);
+      if (!ch) return null;
+      return ch.error ? { error: ch.error } : { bars: ch.bars, changes: ch.changes, spans: ch.spans.map((sp) => ({ bar: sp.bar, share: sp.share, shares: sp.shares })) };
+    },
+    /** the chord indices of bar k in the composition as it plays (a chart's split bar has several; else [k]) */
+    unitsOfBar: (bar) => (state.spec && !state.spec.refused ? unitsOf(state.spec, bar) : [bar]),
+    /** the editor's roots, one a chord (a bar, unless a chart splits it; null: auto), cut or padded to
+     *  progressionUnits() (STEP 4d: a pin with a quality shows as its ratio here) */
+    progression: () => Array.from({ length: api.progressionUnits() }, (_, k) => pinOf(state.progression[k])?.ratio ?? null),
+    /** what Compose is sent: the pins, one a chord (a ratio, or { ratio, quality }: STEP 4d), or null when every one is auto */
+    progressionInput: () => { const p = Array.from({ length: api.progressionUnits() }, (_, k) => state.progression[k] ?? null); return p.some((x) => pinOf(x) != null) ? p : null; },
     setProgressionRoot(bar, ratio) {
       if (!(Number.isInteger(bar) && bar >= 0)) throw new Error(`lab: no bar ${bar}`);
       const p = [...state.progression]; while (p.length <= bar) p.push(null);
@@ -641,7 +696,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     /** an edit applied: f(result, state), result { ok, kind, changedBars, retunedBars, … } */
     onEdit(f) { editListeners.add(f); return () => editListeners.delete(f); },
     /** the bars whose fundamental differs from Compose's (a swap's modulation re-pitching later bars) */
-    retunedBars: () => (ready(state) ? state.spec.chords.flatMap((c, k) => (Math.abs(c.fundamentalRatio - state.composed.chords[k].fundamentalRatio) > 1e-12 ? [k] : [])) : []),
+    retunedBars: () => (ready(state) ? [...new Set(state.spec.chords.flatMap((c, k) => (Math.abs(c.fundamentalRatio - state.composed.chords[k].fundamentalRatio) > 1e-12 ? [c.bar] : [])))] : []),
     /** the edits as JSON export carries them (null with none) */
     editsExport() {
       const e = state.edits, grid = state.drumOptions.grid && (state.drumOptions.mode === 'grid' || state.drumOptions.mode === 'prime');
@@ -659,12 +714,12 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       if (part === 'lead') { if (state.spec.target) return null; const p = phraseOfBar(state.spec, bar); return p < 0 ? null : leadAlternates(state, p); }   // P6: a target's lead is the clip
       return null;
     },
-    /** swap bar k's chord: a trace candidate ({ root: { ratio }, quality }) or { rootTone, quality } (decision 1: the
-     *  lead stays). A swap to Compose's own chord removes the bar's edit. */
+    /** swap bar k's chord (a chart's split bar: chord k's, unitsOfBar): a trace candidate ({ root: { ratio }, quality })
+     *  or { rootTone, quality } (decision 1: the lead stays). A swap to Compose's own chord removes the bar's edit. */
     swapChord(bar, chord) {
       requireSpec(state);
-      const N = state.composed.knobs.bars;
-      if (!(Number.isInteger(bar) && bar >= 0 && bar < N)) throw new Error(`composer: no bar ${bar}`);
+      const N = state.composed.chords.length;
+      if (!(Number.isInteger(bar) && bar >= 0 && bar < N)) throw new Error(`composer: no ${splitSpec(state.composed) ? 'chord' : 'bar'} ${bar}`);
       const rootTone = chord?.root?.ratio ?? chord?.rootTone, quality = chord?.quality?.id ?? chord?.quality;
       if (typeof rootTone !== 'string') throw new Error('composer: a chord swap needs a root (a candidate, or { rootTone })');
       if (!qualityById(quality)) throw new Error(`composer: no quality ${quality}`);
@@ -694,7 +749,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
         else setLeadEdit(st.edits, phrase, want);
         if (chordsFollow && lineId !== kept) {
           const span = spans[phrase], bars = [];
-          for (let k = span.from; k < span.from + span.bars; k++) if (removeChordEdit(st.edits, k)) bars.push(k);
+          for (let b = span.from; b < span.from + span.bars; b++) for (const k of unitsOf(st.composed, b)) if (removeChordEdit(st.edits, k)) bars.push(k);
           syncField(st, bars);
         }
         return true;
@@ -708,19 +763,24 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
      * field's source either way. → Promise<{ ok, resolution, live, … }>
      */
     setProgressionField(text) {
-      const st = state, value = String(text ?? ''), m = fieldMaterialsOf(st);
+      const st = state, value = String(text ?? ''), m = fieldMaterialsOf(st, value);
       if (!m || m.refused) { st.field = { text: value }; changed(); return Promise.resolve({ ok: false, error: m?.reason ?? 'no materials', resolution: null, live: false }); }
-      const N = m.cells.bars, resolution = resolveSymbols(value, m, { keep: asksOf(st, N) });
-      if (!ready(st)) {
+      // a chart of another shape than the composed spec's (CHART_ORDER P9): not live, it waits for Compose
+      const reshape = ready(st) && !sameShape(shapeOfText(value), st.composed.knobs.changes);
+      const N = m.units.length, resolution = resolveSymbols(value, m, { keep: reshape ? null : asksOf(st, N) });
+      if (!ready(st) || reshape) {
         const pins = resolution.pins.map((x) => (x ? { ...x } : null));
         while (pins.length && pins[pins.length - 1] == null) pins.pop();
         st.progression = pins; st.field = { text: value };
+        // the edits were the old shape's bars: dropped (proposed); the grid is kept or dropped by the Compose, as ever
+        if (reshape && hasEdits(st)) { st.edits = { ...emptyEdits(), grid: st.edits.grid ?? null }; st.undo = []; st.redo = []; folds.delete(st); settleState(st, null); }
         touch();
-        return Promise.resolve({ ok: true, resolution, live: false });
+        return Promise.resolve({ ok: true, resolution, live: false, ...(reshape ? { reshape: true } : {}) });
       }
-      const S = st.composed.knobs.slotsPerBar, { row } = m;
-      const leadIn = (k) => (st.spec.parts.find((x) => x.id === 'lead')?.notes ?? []).filter((n) => n.bar === k)
-        .map((n) => ({ cents: row.toneCents[row.tone[n.node]], strong: isStrongBeat(m.cells.slots[n.slot].beat, S) }));
+      const S = st.composed.knobs.slotsPerBar, { row } = m, spans = m.spans;
+      // a chord's lead notes: its bar's, or its span's (strong on the bar's strong beats or the span's first slot)
+      const leadIn = (k) => (st.spec.parts.find((x) => x.id === 'lead')?.notes ?? []).filter((n) => (spans ? n.slot >= spans[k].from && n.slot < spans[k].from + spans[k].slots : n.bar === k))
+        .map((n) => ({ cents: row.toneCents[row.tone[n.node]], strong: isStrongBeat(m.cells.slots[n.slot].beat, S) || (!!spans && n.slot === spans[k].from) }));
       return edit('field', {}, (s2) => {
         let any = value !== s2.field?.text;
         for (let k = 0; k < N; k++) {
@@ -731,7 +791,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
             continue;
           }
           const tone = row.tones.indexOf(pin.ratio);
-          const pick = chooseChordOnRoot(m.bars[k], leadIn(k), { tone, cents: row.toneCents[tone], quality: pin.quality ?? null }, { eachSide: m.frameCentsEachSide, gridBase: m.baseCents, modulation: m.modulation });
+          const pick = chooseChordOnRoot(m.units[k], leadIn(k), { tone, cents: row.toneCents[tone], quality: pin.quality ?? null }, { eachSide: m.frameCentsEachSide, gridBase: m.baseCents, modulation: m.modulation });
           const rec = { rootTone: pin.ratio, quality: pick.quality.id, from: 'typed', asked: pin.quality ?? null };
           const prog = pinOf(s2.progression[k]), own = s2.composed.chords[k];
           // already pinned so, and composed over the pin: nothing to edit
@@ -748,7 +808,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     progressionField() {
       const m = fieldMaterialsOf(state);
       if (!m || m.refused) return { text: state.field?.text ?? '', typed: !!state.field, resolution: null };
-      const asks = asksOf(state, m.cells.bars), text = state.field ? state.field.text : pinsToField(asks, m);
+      const asks = asksOf(state, m.units.length), text = state.field ? state.field.text : pinsToField(asks, m);
       return { text, typed: !!state.field, resolution: resolveSymbols(text, m, { keep: asks }) };
     },
     /** the drum grid as it plays now (the entry's own, else the arrangement written as one: gridOf) */

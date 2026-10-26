@@ -39,6 +39,11 @@
 //               same keeps its inner and exceptions. So an edit to what is already there is the spec byte for byte.
 //   drums       arrangeDrums(the rearranged spec, the spec's own drum options), called as Compose calls it.
 //
+// A chart's split bars (Composer/CHART_ORDER.md P10; proposed): the spec's chords are a span's each (spec.chords[i].span),
+// and a chord swap is `{ span, chord }`. The walk, the targets and the exceptions are per span; a swapped span rebuilds
+// its whole BAR (every span's chord voices and comping, the bar's bass over each span's target), and the inner of that
+// bar is re-mined as above. `changedBars` and `retunedBars` stay bars. A lead swap with chordsFollow re-derives each span.
+//
 // `changedBars`: the bars whose material was rebuilt. `changed`: per part, the bars whose notes differ other than in
 // their durations (a legato note before an edit may hold to a new next note). `retunedBars`: the bars after the edit
 // whose fundamentalRatio moved.
@@ -46,7 +51,7 @@
 import { buildRow, isRow, ONSET_GATE } from './row.js';
 import { buildCells, cropCells } from './cells.js';
 import { frameOf, classOfCents } from './frame.js';
-import { CHORD_QUALITIES, pickFor, chordRecord, targetOfBar, barMaterial, chooseChord, exceptionsOfBar, phrasesOf, isStrongBeat } from './harmony.js';
+import { CHORD_QUALITIES, pickFor, chordRecord, spanRecord, spanMaterial, harmonyOver, targetOfBar, barMaterial, chooseChord, exceptionsOfBar, phrasesOf, isStrongBeat } from './harmony.js';
 import { FALLBACK_QUALITIES } from './progression.js';
 import { arrangeDrums } from './drums.js';
 import { partContext, chordVoicesOfBar, compOfBar, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, PART_IDS } from './compose.js';
@@ -80,7 +85,7 @@ function materialCache(row, cells, spec) {
   const key = `${spec.knobs.cycleSeconds}|${spec.knobs.phase.join('/')}|${spec.knobs.frameCentsEachSide}|${spec.knobs.rowCycleSeconds ?? ''}`;
   if (!c || c.row !== row || c.key !== key) {
     const rowT = spec.knobs.rowCycleSeconds;
-    c = { row, key, ctx: partContext(row, cells, { cycleSeconds: spec.knobs.cycleSeconds, phase: spec.knobs.phase, frameCentsEachSide: spec.knobs.frameCentsEachSide, ...(rowT != null ? { rowCycleSeconds: rowT } : {}) }), material: barMaterial(row, cells) };
+    c = { row, key, ctx: partContext(row, cells, { cycleSeconds: spec.knobs.cycleSeconds, phase: spec.knobs.phase, frameCentsEachSide: spec.knobs.frameCentsEachSide, ...(rowT != null ? { rowCycleSeconds: rowT } : {}) }), material: barMaterial(row, cells), spanMaterial: new Map() };
     c.toneIndex = new Map(row.tones.map((t, i) => [t, i]));
     cache.set(cells, c);
   }
@@ -101,7 +106,7 @@ function toneOf(m, x) {
  * neighbour's (the one before, else the one after), as harmonize walks them.
  *   given  [{ tone, node, quality (id), empty, targeted?, fallback? } | null per bar]
  */
-function walkChords(m, given, { e, gridBase, modulation, foldOffsets }) {
+function walkChords(m, given, { e, gridBase, modulation, foldOffsets }, spans = null) {
   const { row } = m, recs = [];
   let offset = 0;
   for (let k = 0; k < given.length; k++) {
@@ -110,12 +115,13 @@ function walkChords(m, given, { e, gridBase, modulation, foldOffsets }) {
     const quality = QUALITY.get(g.quality) ?? fail(`no quality ${g.quality}`);
     const pick = pickFor({ tone: g.tone, cents: row.toneCents[g.tone], node: g.node }, quality, { eachSide: e, gridBase, offset, modulation, foldOffsets });
     offset = pick.offset;
-    recs.push(chordRecord(row, k, pick, { eachSide: e }));
+    recs.push(spans ? spanRecord(chordRecord(row, spans[k].bar, pick, { eachSide: e }), spans[k], k) : chordRecord(row, k, pick, { eachSide: e }));
   }
   for (let k = 0; k < recs.length; k++) if (!recs[k]) {
     const near = recs.slice(0, k).reverse().find((x) => x && !x.empty) ?? recs.slice(k + 1).find((x) => x && !x.empty);
     if (!near) fail('no bar holds a chord');
-    recs[k] = { ...near, bar: k, empty: true, from: near.bar };
+    // a span's empty chord names its source span (`src`: `from` is its slot)
+    recs[k] = spans ? { ...near, bar: spans[k].bar, span: k, from: spans[k].from, slots: spans[k].slots, empty: true, src: near.span } : { ...near, bar: k, empty: true, from: near.bar };
   }
   return recs;
 }
@@ -135,12 +141,13 @@ function leadLineNotes(m, notes) {
   const { row, cells, S, timeOf, slotSeconds } = m.ctx;
   return notes.map((n) => { const tone = row.tone[n.node]; return { node: n.node, tone, octave: n.octave, pitch: row.toneCents[tone] + 1200 * n.octave, bar: Math.floor(n.slot / S), slot: n.slot, time: timeOf(row.tick[n.node]), slotSeconds: slotSeconds(n.slot), strong: isStrongBeat(cells.slots[n.slot].beat, S) }; });
 }
-/** the lead's notes as harmony.js reads them for chords and exceptions (cents, bar, beat, outside), each read under its bar's chord and target */
-function leadForHarmony(m, notes, recs, targets) {
+/** the lead's notes as harmony.js reads them for chords and exceptions (cents, bar, beat, outside), each read under its
+ *  bar's chord and target (its span's, through `unitOf`: slot → the span's index, when the bars are split) */
+function leadForHarmony(m, notes, recs, targets, unitOf = null) {
   const { row, cells } = m.ctx;
   return notes.map((n) => {
-    const c = recs[n.bar], t = targets[n.bar], f = c.frame;
-    return { slot: n.slot, node: n.node, fraction: row.tones[n.tone], cents: row.toneCents[n.tone], bar: n.bar, beat: cells.slots[n.slot].beat, outside: !f.inside[n.tone] || !t.scale.includes(f.pc[n.tone]) };
+    const u = unitOf ? unitOf[n.slot] : n.bar, c = recs[u], t = targets[u], f = c.frame;
+    return { slot: n.slot, ...(unitOf ? { cell: n.slot } : {}), node: n.node, fraction: row.tones[n.tone], cents: row.toneCents[n.tone], bar: n.bar, beat: cells.slots[n.slot].beat, outside: !f.inside[n.tone] || !t.scale.includes(f.pc[n.tone]) };
   });
 }
 
@@ -181,17 +188,24 @@ function changedByBar(oldParts, newParts) {
  */
 export function rearrange(spec, row, cells, edit, opts = {}) {
   if (!spec || spec.refused) fail('nothing to rearrange in a refused spec');
-  if (!edit || (edit.bar == null) === (edit.phrase == null)) fail('an edit is { bar, chord } or { phrase, line }');
   const K = spec.knobs, N = K.bars, S = K.slotsPerBar;
+  // a chart's split bars: the chords a span's each, and a chord swap names its span
+  const spans = spec.chords.some((c) => c.slots != null) ? spec.chords.map((c) => ({ bar: c.bar, from: c.from, slots: c.slots })) : null, U = spans ? spans.length : N;
+  const swapAt = spans ? edit?.span : edit?.bar;
+  if (!edit || (swapAt == null) === (edit.phrase == null)) fail(spans ? 'an edit of a chart\'s split bars is { span, chord } or { phrase, line }' : 'an edit is { bar, chord } or { phrase, line }');
   if (cells.bars !== N || cells.slotsPerBar !== S) fail(`the cells are ${cells.bars} × ${cells.slotsPerBar}, the spec ${N} × ${S}`);
   const m = materialCache(row, cells, spec), { ctx } = m;
+  const unitOf = spans ? spans.flatMap((sp, i) => Array.from({ length: sp.slots }, () => i)) : null, barOf = (u) => (spans ? spans[u].bar : u);
+  if (spans && !m.spanMaterial.has(JSON.stringify(spans))) m.spanMaterial.set(JSON.stringify(spans), spanMaterial(row, cells, spans));
+  const material = spans ? m.spanMaterial.get(JSON.stringify(spans)) : m.material;
+  const unitsOfBar = (k) => (spans ? spans.flatMap((sp, i) => (sp.bar === k ? [i] : [])) : [k]);
   const e = K.frameCentsEachSide, modulation = K.modulation, foldOffsets = spec.input.overrides?.foldOffsets ?? true, table = K.table;
   const gridBase = frameOf(row, toneOf(m, K.root), e).rootCents, how = { e, gridBase, modulation, foldOffsets };
   const parts = opts.parts ?? spec.parts, partById = Object.fromEntries(parts.map((p) => [p.id, p]));
   for (const id of PART_IDS) if (!partById[id]) fail(`no ${id} part`);
 
   // the chords as composed, rebuilt as records; the parent scale fixed
-  const given = givenOf(m, spec.chords), was = walkChords(m, given, how);
+  const given = givenOf(m, spec.chords), was = walkChords(m, given, how, spans);
   const scale = [...new Set(was.flatMap((c) => c.gridPcs))].sort((a, b) => a - b);
   const notes = Object.fromEntries(PART_IDS.map((id) => [id, builderNotes(m, partById[id])]));
   const exceptions = spec.chords.map((c) => c.exceptions);
@@ -200,25 +214,26 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   // chord is another one (their inner is re-mined, their exceptions counted again, their target reads the new chord)
   let recs = was;
   const target = new Set(), rebuilt = new Set(), leadChanged = new Set();
-  /** walk `next`; the bars in `bars` (and the empty bars that take their chord) are the edit's */
+  /** walk `next`; the units (bars, or a split chart's spans) in `bars` (and the empty ones that take their chord) are the edit's */
+  const srcOf = (c, j) => (c.empty ? (spans ? c.src : c.from) : j);
   const swap = (next, bars) => {
-    recs = walkChords(m, next, how);
-    for (let j = 0; j < N; j++) {
-      const src = recs[j].empty ? recs[j].from : j;
+    recs = walkChords(m, next, how, spans);
+    for (let j = 0; j < U; j++) {
+      const src = srcOf(recs[j], j);
       if (!bars.has(src)) continue;
       target.add(j);
-      if (recs[j].rootTone !== was[j].rootTone || recs[j].quality !== was[j].quality || !!recs[j].empty !== !!was[j].empty || (recs[j].empty && recs[j].from !== was[j].from)) rebuilt.add(j);
+      if (recs[j].rootTone !== was[j].rootTone || recs[j].quality !== was[j].quality || !!recs[j].empty !== !!was[j].empty || (recs[j].empty && srcOf(recs[j], j) !== srcOf(was[j], j))) rebuilt.add(j);
     }
   };
 
-  if (edit.bar != null) {
+  if (swapAt != null) {
     // ── a chord swap ──
-    const k = edit.bar;
-    if (!(Number.isInteger(k) && k >= 0 && k < N)) fail(`no bar ${k}`);
+    const k = swapAt;
+    if (!(Number.isInteger(k) && k >= 0 && k < U)) fail(`no ${spans ? 'span' : 'bar'} ${k}`);
     const c = edit.chord ?? fail('a chord swap needs { chord }');
     const tone = toneOf(m, c.root?.tone ?? c.rootTone), quality = c.quality?.id ?? c.quality;
     if (!QUALITY.has(quality)) fail(`no quality ${quality}`);
-    const node = c.root?.node ?? (!given[k].empty && given[k].tone === tone ? given[k].node : m.material[k].get(tone)?.node ?? null);
+    const node = c.root?.node ?? (!given[k].empty && given[k].tone === tone ? given[k].node : material[k].get(tone)?.node ?? null);
     const next = given.map((g) => ({ ...g }));
     next[k] = { tone, node, quality, empty: false };
     swap(next, new Set([k]));
@@ -235,23 +250,25 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
     if (sig(fresh) !== sig(old)) for (let j = span.from; j < span.from + span.bars; j++) leadChanged.add(j);
     notes.lead = [...notes.lead.filter((n) => !inSpan(n)), ...fresh];
     if (edit.chordsFollow && leadChanged.size) {
-      // chooseChord again over the new lead, bar by bar along the phrase (a pinned bar keeps its chord); the modulation
-      // offset and the voice-leading walk on from each new chord
+      // chooseChord again over the new lead, bar by bar (span by span) along the phrase (a pinned one keeps its chord);
+      // the modulation offset and the voice-leading walk on from each new chord
       const next = given.map((g) => ({ ...g })), bars = new Set();
       let cur = was;
-      for (let j = span.from; j < span.from + span.bars; j++) {
+      const units = spans ? spans.flatMap((sp, i) => (sp.bar >= span.from && sp.bar < span.from + span.bars ? [i] : [])) : Array.from({ length: span.bars }, (_, i) => span.from + i);
+      for (const j of units) {
         if (spec.chords[j].targeted || given[j].empty) continue;
         const tg = cur.map((c) => targetOfBar(c, scale));
-        const inBar = leadForHarmony(m, notes.lead.filter((n) => n.bar === j), cur, tg).filter((n) => !n.outside);
-        let strong = inBar.filter((n) => isStrongBeat(n.beat, S));
+        const mine = spans ? notes.lead.filter((n) => n.slot >= spans[j].from && n.slot < spans[j].from + spans[j].slots) : notes.lead.filter((n) => n.bar === j);
+        const inBar = leadForHarmony(m, mine, cur, tg, unitOf).filter((n) => !n.outside);
+        let strong = inBar.filter((n) => isStrongBeat(n.beat, S) || (spans && n.slot === spans[j].from));
         if (!strong.length && inBar.length) strong = [inBar[0]];
         let prev = null; for (let i = j - 1; i >= 0; i--) if (!cur[i].empty) { prev = cur[i]; break; }
-        const pick = chooseChord([...m.material[j].values()], inBar.map((n) => ({ cents: n.cents, strong: strong.includes(n) })),
+        const pick = chooseChord([...material[j].values()], inBar.map((n) => ({ cents: n.cents, strong: strong.includes(n) })),
           { eachSide: e, gridBase, offset: prev ? prev.rawOffsetCents : 0, modulation, prevPcs: prev ? prev.gridPcs : null, foldOffsets });
         if (!pick) continue;
         next[j] = { tone: pick.root.tone, node: pick.root.node, quality: pick.quality.id, empty: false };
         bars.add(j);
-        cur = walkChords(m, next, how);
+        cur = walkChords(m, next, how, spans);
       }
       swap(next, bars);
     }
@@ -265,7 +282,18 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   const compLayer = 'ABCD'.indexOf(spec.stats.compLayer.layer);
   if (compLayer < 0) fail('the spec names no comp layer');
   const bassRooted = [];
-  for (const k of [...target].sort((a, b) => a - b)) {
+  if (spans) {
+    // a split bar is rebuilt whole: each span's voices and comping, the bar's bass over each span's target
+    for (const k of [...new Set([...target].map(barOf))].sort((a, b) => a - b)) {
+      const own = unitsOfBar(k).map((u) => recs[u]), range = (c) => ({ from: c.from, to: c.from + c.slots });
+      notes.chords = [...notes.chords.filter((n) => n.bar !== k), ...own.flatMap((c) => chordVoicesOfBar(ctx, c, k, range(c)))];
+      notes.comp = [...notes.comp.filter((n) => n.bar !== k), ...own.flatMap((c) => compOfBar(ctx, c, k, compLayer, range(c)))];
+      const over = harmonyOver(recs, allTargets, k, 1, S);
+      const b = bassOfBar(ctx, own[0], k, { table, scale, over: { frames: over.frames, targets: over.targets.bars } });
+      notes.bass = [...notes.bass.filter((n) => n.bar !== k), ...b.notes];
+      bassRooted[k] = b.rooted;
+    }
+  } else for (const k of [...target].sort((a, b) => a - b)) {
     const c = recs[k];
     notes.chords = [...notes.chords.filter((n) => n.bar !== k), ...chordVoicesOfBar(ctx, c, k)];
     notes.comp = [...notes.comp.filter((n) => n.bar !== k), ...compOfBar(ctx, c, k, compLayer)];
@@ -274,7 +302,7 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
     bassRooted[k] = b.rooted;
   }
   // ── the inner: bar-local over each rebuilt bar or a bar of a changed lead, with boundaries (or the whole phrase) ──
-  const innerBars = new Set([...rebuilt, ...leadChanged]);
+  const innerBars = new Set([...[...rebuilt].map(barOf), ...leadChanged]);
   if (innerBars.size) {
     const lead = leadAvoidOf(notes.lead);
     if (opts.smoothPhrase) {
@@ -292,12 +320,14 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
     }
   }
   // ── exceptions: a rebuilt bar's, or a bar of a changed lead's, counted again; the rest as composed ──
-  for (const k of new Set([...rebuilt, ...leadChanged])) {
-    exceptions[k] = exceptionsOfBar(recs[k], leadForHarmony(m, notes.lead.filter((n) => n.bar === k), recs, targets), S, e).exceptions.length;
+  const recount = spans ? new Set([...rebuilt, ...[...leadChanged].flatMap(unitsOfBar)]) : new Set([...rebuilt, ...leadChanged]);
+  for (const k of recount) {
+    const mine = spans ? notes.lead.filter((n) => n.slot >= spans[k].from && n.slot < spans[k].from + spans[k].slots) : notes.lead.filter((n) => n.bar === k);
+    exceptions[k] = exceptionsOfBar(recs[k], leadForHarmony(m, mine, recs, targets, unitOf), S, e).exceptions.length;
   }
 
-  // ── the parts, rebuilt whole from their notes (re-articulated; hz at each bar's retune) ──
-  const ratioOf = (bar) => recs[bar].fundamentalRatio, baseHz = K.baseHz;
+  // ── the parts, rebuilt whole from their notes (re-articulated; hz at each bar's (span's) retune) ──
+  const ratioOf = spans ? (bar, slot) => (recs[unitOf[slot]] ?? recs[unitsOfBar(bar)[0]]).fundamentalRatio : (bar) => recs[bar].fundamentalRatio, baseHz = K.baseHz;
   const byVoice = (list) => { const v = []; for (const n of list.sort((a, b) => a.bar - b.bar || a.time - b.time)) (v[n.voice] ||= []).push(n); return v; };
   const newParts = PART_IDS.map((id) => {
     const p = partById[id];
@@ -313,14 +343,15 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
     return out;
   });
   const modulations = [];
-  for (let k = 0, prev = 0; k < N; k++) {
+  for (let k = 0, prev = 0; k < U; k++) {
     const c = recs[k];
     if (c.empty) continue;
-    if (Math.abs(c.rawOffsetCents - prev) > EPS) modulations.push({ bar: k, cents: c.offsetCents, rawCents: c.rawOffsetCents, fundamentalRatio: 2 ** (c.rawOffsetCents / 1200) });
+    if (Math.abs(c.rawOffsetCents - prev) > EPS) modulations.push({ bar: barOf(k), ...(spans ? { span: k, from: spans[k].from } : {}), cents: c.offsetCents, rawCents: c.rawOffsetCents, fundamentalRatio: 2 ** (c.rawOffsetCents / 1200) });
     prev = c.rawOffsetCents;
   }
-  const retunedBars = [];
-  for (let k = 0; k < N; k++) if (!rebuilt.has(k) && Math.abs(recs[k].fundamentalRatio - was[k].fundamentalRatio) > 1e-12) retunedBars.push(k);
+  const retuned = new Set(), rebuiltBars = new Set([...rebuilt].map(barOf));
+  for (let k = 0; k < U; k++) if (!rebuilt.has(k) && Math.abs(recs[k].fundamentalRatio - was[k].fundamentalRatio) > 1e-12) retuned.add(barOf(k));
+  const retunedBars = [...retuned].filter((b) => !spans || !rebuiltBars.has(b)).sort((a, b) => a - b);
 
   // ── the drums: arrangeDrums over the rearranged spec, with the spec's own options ──
   const next = { ...spec, parts: newParts, chords };
@@ -332,12 +363,12 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   for (let k = 0; k < N; k++) {
     if (bassRooted[k] !== undefined) { if (bassRooted[k]) rooted++; continue; }
     const first = notes.bass.filter((n) => n.bar === k).sort((a, b) => a.slot - b.slot)[0];
-    if (first && classOfCents(row.toneCents[first.tone] - recs[k].rootCents).pc === 0) rooted++;
+    if (first && classOfCents(row.toneCents[first.tone] - recs[unitsOfBar(k)[0]].rootCents).pc === 0) rooted++;
   }
   const leadCells = new Set(notes.lead.map((n) => n.slot));
   const stats = { notes: counts, exceptions: exceptions.reduce((a, b) => a + b, 0), chordVoices: notes.chords.length / N, bassRooted: `${rooted}/${N}`, innerOnLeadSlots: notes.inner.filter((n) => leadCells.has(n.slot)).length };
 
-  const changedBars = [...new Set([...rebuilt, ...leadChanged])].sort((a, b) => a - b);
+  const changedBars = [...new Set([...[...rebuilt].map(barOf), ...leadChanged])].sort((a, b) => a - b);
   return { version: COMPOSER_REARRANGE_VERSION, parts: newParts, drums, chords, modulations, changedBars, retunedBars, changed: changedByBar(parts, newParts), exceptions: stats.exceptions, stats };
 }
 

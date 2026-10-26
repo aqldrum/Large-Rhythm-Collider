@@ -6,7 +6,8 @@
 /** the knobs, as fields a view renders: a select (options [value, label]) or a number input (attrs). `read` turns the
  *  field's string into the controller's value (null = leave it to Compose). */
 export const KNOB_FIELDS = Object.freeze([
-  { name: 'bars', label: 'Bars', kind: 'select', options: [['', 'auto'], ['1', '1'], ['2', '2'], ['4', '4'], ['8', '8']], read: (v) => (v === '' ? null : Number(v)) },
+  // a number, like Slots / bar (Avery, 2026-10-26: Composer/CHART_ORDER.md P8); auto still picks 1, 2, 4 or 8 by tempo, a typed chart sets it
+  { name: 'bars', label: 'Bars', kind: 'number', title: 'blank: Compose picks 1, 2, 4 or 8 by tempo; a typed chord chart sets the bars itself', attrs: { min: 1, max: 64, step: 1, placeholder: 'auto' }, read: (v) => (v === '' ? null : Math.max(1, Math.min(64, Math.round(Number(v))))) },
   { name: 'slotsPerBar', label: 'Slots / bar', kind: 'number', attrs: { min: 2, max: 16, placeholder: 'auto' }, read: (v) => (v === '' ? null : Number(v)) },
   { name: 'frameCentsEachSide', label: 'Frame ±¢', kind: 'number', attrs: { min: 0, max: 50, step: 0.5, placeholder: 'auto' }, read: (v) => (v === '' ? null : Number(v)) },
   { name: 'modulation', label: 'Modulation', kind: 'select', options: [['', 'auto'], ['on', 'on'], ['off', 'off']], read: (v) => (v === '' ? null : v === 'on') },

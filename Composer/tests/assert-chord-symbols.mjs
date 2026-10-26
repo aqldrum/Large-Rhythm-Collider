@@ -273,8 +273,11 @@ console.log('\n— resolving the field');
   check('a symbol the Composer has no quality for: the richest inside it, the rest dropped and said', r.perBar[0].pin.quality === 'dominant_7th' && r.perBar[0].quality.dropped.join() === '2' && r.perBar[1].pin.quality === 'major_triad' && r.perBar[2].pin.quality === 'major_triad' && r.perBar[2].quality.exact && r.perBar[0].amber.some((x) => /no quality with its 2/.test(x)), JSON.stringify(r.perBar.map((b) => b.quality)));
   check('qualityOfIntervals: exact, reduced, none', qualityOfIntervals([0, 3, 7, 10]).quality === 'minor_7th' && qualityOfIntervals([0, 7]).quality === 'power' && qualityOfIntervals([0, 1, 6]).quality === 'root_only' && qualityOfIntervals([1, 6]).quality === null);
   // the bars
-  r = resolveSymbols('C | F | G | Am | Dm7 | E', M);
+  r = resolveSymbols('C, F, G, Am, Dm7, E', M);
   check('more symbols than bars: the extras dropped and flagged', r.extras.map((t) => t.text).join() === 'Dm7,E' && r.pins.length === 4 && !r.ok && r.notes.some((x) => /6 symbols for 4 bars: "Dm7", "E" dropped/.test(x)));
+  // a bar line makes the field a chart (CHART_ORDER.md P2), which sets its own bars: these materials are not its
+  r = resolveSymbols('C | F | G | Am | Dm7 | E', M);
+  check('a chart against materials of another shape: a mismatch, nothing pinned (CHART_ORDER P2, P9)', !!r.mismatch && r.chart.bars === 6 && r.pins.length === 0 && !r.ok, JSON.stringify(r.mismatch));
   r = resolveSymbols('F, Fsus4', M);
   check('fewer: the rest auto', r.pins.length === 4 && r.pins[2] === null && r.pins[3] === null && r.perBar[3].status === 'auto' && r.notes.some((x) => /bars 3–4 auto/.test(x)));
   r = resolveSymbols('F H7 F* ?', M);
