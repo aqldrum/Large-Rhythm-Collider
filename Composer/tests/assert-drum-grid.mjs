@@ -28,7 +28,10 @@ const J = (x) => JSON.stringify(x);
 const CASES = [];
 for (const [L, T] of [[[8, 7, 6, 5], 4], [[41, 42, 43], 8], [[19, 17, 16, 15], 6], [[119, 42, 15, 8], 8], [[768, 769], 8], [[11, 9, 7, 5], 6], [[97, 103, 37], 5]]) CASES.push([L, T, {}]);
 for (const [L, T] of [[[119, 42, 15, 8], 8], [[41, 42, 43], 8], [[19, 17, 16, 15], 6]]) for (const [bars, slotsPerBar] of [[4, 5], [2, 7], [4, 3], [2, 11], [1, 13], [8, 6], [2, 2]]) CASES.push([L, T, { bars, slotsPerBar }]);
-const specs = CASES.map(([L, T, ov]) => ({ name: `${L.join(':')} ${T}s ${ov.bars ? `${ov.bars}×${ov.slotsPerBar}` : 'auto'}`, L, T, spec: compose(L, T, { seed: 3, overrides: { ...ov } }) }));
+// the comp one note a stroke (compStyle 'notes', COMP_ARP_ORDER.md P9), as these cases were measured: with's and against's
+// lines read the comp's strokes, and the chords default strikes more slots (its with → grid round trip merges two strokes
+// onto one place on 19:17:16:15 8×6; DESIGN_NOTES "Comping in chords (phase A core)")
+const specs = CASES.map(([L, T, ov]) => ({ name: `${L.join(':')} ${T}s ${ov.bars ? `${ov.bars}×${ov.slotsPerBar}` : 'auto'}`, L, T, spec: compose(L, T, { seed: 3, overrides: { ...ov, compStyle: 'notes' } }) }));
 const rowOf = new Map();
 const row = (L) => { const k = L.join(':'); if (!rowOf.has(k)) rowOf.set(k, buildRow(L)); return rowOf.get(k); };
 const nodeAt = (r, tick) => { let lo = 0, hi = r.n - 1; while (lo <= hi) { const m = (lo + hi) >> 1; if (r.tick[m] === tick) return m; if (r.tick[m] < tick) lo = m + 1; else hi = m - 1; } return -1; };
@@ -62,7 +65,8 @@ console.log('\n— unchanged without a grid');
   const kept = DRUM_BASELINE_VARIANTS.filter((v) => !usesAgainst(v)).length;
   let bad = '', n = 0;
   for (const c of DRUM_BASELINE_CASES) {
-    const [L, T, ov] = c, spec = compose(L, T, { seed: DRUM_BASELINE_SEED, overrides: { ...ov } }), want = DRUM_BASELINE[caseName(c)];
+    // b69a39e's specs: the comp one note a stroke (compStyle 'notes', COMP_ARP_ORDER.md P9; the drums' with and against read it)
+    const [L, T, ov] = c, spec = compose(L, T, { seed: DRUM_BASELINE_SEED, overrides: { ...ov, compStyle: 'notes' } }), want = DRUM_BASELINE[caseName(c)];
     DRUM_BASELINE_VARIANTS.forEach((v, i) => { if (usesAgainst(v)) return; n++; if (sha(v === null ? spec.drums : arrangeDrums(spec, v)) !== want[i]) bad ||= `${caseName(c)} variant ${i} ${J(v)}`; });
   }
   check(`every mode and option variant but \`against\` (re-seeded per bar in step 4d), no grid, no prime: byte for byte the drums of b69a39e (${n} = ${DRUM_BASELINE_CASES.length} cases × ${kept} variants; ${DRUM_BASELINE_VARIANTS.length - kept} against variants left out)`, !bad && n === 527 && kept === 31, bad);

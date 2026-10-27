@@ -232,7 +232,8 @@ console.log('\n— fills, with and against');
   check(`the 16k row's ${big.knobs.bars} bars: two phrases, fills on bars 4 and 8`, big.drums.bars.filter((b) => b.fill).map((b) => b.bar + 1).join() === '4,8');
   let withBad = '', againstBad = '';
   for (const { name, spec } of specs) {
-    const lead = spec.parts.find((p) => p.id === 'lead').notes, comp = spec.parts.find((p) => p.id === 'comp').notes, Sx = spec.knobs.slotsPerBar;
+    // the comp in chords: its strokes, one a slot, not the strum's tones (COMP_ARP_ORDER.md P9); in notes, its notes
+    const compPart = spec.parts.find((p) => p.id === 'comp'), lead = spec.parts.find((p) => p.id === 'lead').notes, comp = compPart.strokes ?? compPart.notes, Sx = spec.knobs.slotsPerBar;
     const busy = new Set([...lead, ...comp].map((n) => n.slot));
     const w = arrangeDrums(spec, { mode: 'with' }).hits.filter((h) => h.voice === 'perc');
     // (two slots may hold one onset: a lead note's slot is its window's, a comping note's its place's — then one stroke)
@@ -242,7 +243,7 @@ console.log('\n— fills, with and against');
     const perBar = new Map(); for (const h of a) perBar.set(h.bar, (perBar.get(h.bar) || 0) + 1);
     if (a.some((h) => busy.has(h.slot)) || [...perBar.values()].some((c) => c > Math.max(1, Math.floor(Sx / 2)))) againstBad ||= `${name}: ${a.length} strokes`;
   }
-  check('with: a perc stroke on every slot the lead or comping strikes, on that note\'s own onset', !withBad, withBad);
+  check('with: a perc stroke on every slot the lead or comping strikes, on that note\'s (that stroke\'s) own onset', !withBad, withBad);
   check('against: perc only on slots both leave empty, at most ⌊S/2⌋ a bar', !againstBad, againstBad);
   const mixed = arrangeDrums(s, { perBar: { 1: 'halftime', 2: 'partition' } });
   check('a bar may have a mode of its own (perBar)', mixed.bars[1].mode === 'halftime' && mixed.bars[2].mode === 'partition' && mixed.hits.some((h) => h.bar === 2 && h.snap === 'layer') && !mixed.hits.some((h) => h.bar !== 2 && h.snap === 'layer'));

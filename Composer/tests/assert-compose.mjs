@@ -33,17 +33,19 @@ function audit(spec) {
   for (const part of spec.parts) {
     for (const n of part.notes) {
       const [num, den] = n.ratio.split('/').map(Number);
-      if (row.tick[n.node] !== n.tick || row.tones[row.tone[n.node]] !== n.ratio) return `${part.id}: node ${n.node} is not its tick and ratio`;
+      // a comp tone borrowed in chords (COMP_ARP_ORDER.md P4) sounds at its stroke's onset with its source voice's tone (`from`)
+      if (row.tick[n.node] !== n.tick || row.tones[row.tone[n.borrowed ? n.from : n.node]] !== n.ratio) return `${part.id}: node ${n.node} is not its tick and ratio`;
       if (!near(n.time, mod(n.tick / row.grid - phaseX, 1) * T)) return `${part.id}: node ${n.node} is not at its own time`;
       if (!Number.isInteger(n.octave) || !near(n.hz, k.baseHz * (num / den) * 2 ** n.octave * fr[n.bar])) return `${part.id}: hz`;
       if (!(n.duration >= 0 && n.time + n.duration <= T + 1e-9 && n.velocity > 0 && n.velocity <= 1)) return `${part.id}: duration or velocity`;
     }
-    // legato, voice by voice
-    const groups = part.id === 'chords' ? [...new Set(part.notes.map((n) => n.voice))].map((v) => part.notes.filter((n) => n.voice === v)) : [part.notes];
+    // legato, voice by voice (the comp in chords too, each tone held at most to its stroke's `holdTo`)
+    const voiced = part.id === 'chords' || (part.id === 'comp' && part.strokes);
+    const groups = voiced ? [...new Set(part.notes.map((n) => n.voice))].map((v) => part.notes.filter((n) => n.voice === v)) : [part.notes];
     for (const g of groups) {
       const s = [...g].sort((a, b) => a.time - b.time || a.node - b.node);
       for (let i = 0; i < s.length; i++) {
-        const gap = (i + 1 < s.length ? s[i + 1].time : T) - s[i].time, slot = cells.slots[s[i].slot].length * T;
+        const next = i + 1 < s.length ? s[i + 1].time : T, gap = Math.max(0, (s[i].holdTo != null ? Math.min(next, s[i].holdTo) : next) - s[i].time), slot = cells.slots[s[i].slot].length * T;
         const want = part.legato ? gap : Math.min(slot, gap);
         if (!near(s[i].duration, want, 1e-9)) return `${part.id}: note ${i} lasts ${s[i].duration}, legato ${part.legato} wants ${want}`;
         const re = !part.legato || part.struck || i === 0;
@@ -54,11 +56,12 @@ function audit(spec) {
   // the chords' voices and comping strokes sound the bar's chord tones (comping may fall back to the root onset)
   const e = k.frameCentsEachSide;
   for (const part of spec.parts.filter((p) => p.id === 'chords' || p.id === 'comp')) for (const n of part.notes) {
-    const c = spec.chords[n.bar], rc = row.toneCents[row.tones.indexOf(c.rootTone)], cl = classOfCents(row.toneCents[row.tone[n.node]] - rc);
+    const c = spec.chords[n.bar], rc = row.toneCents[row.tones.indexOf(c.rootTone)], cl = classOfCents(row.toneCents[row.tone[n.borrowed ? n.from : n.node]] - rc);
     if (!(Math.abs(cl.dev) <= e + 1e-9 && c.intervals.includes(cl.pc))) return `${part.id}: ${n.ratio} in bar ${n.bar} is not a tone of ${c.name}`;
   }
   const comp = spec.parts.find((p) => p.id === 'comp'), b = 'ABCD'.indexOf(spec.stats.compLayer.layer);
-  for (const n of comp.notes) if (!(row.owners[n.node] & (1 << b)) && n.node !== spec.chords[n.bar].rootNode) return `comp: node ${n.node} is not a strike of layer ${spec.stats.compLayer.layer}`;
+  // in chords the strokes are the layer's strikes (the strum's tones any onset near them: assert-comp.mjs); in notes, every note
+  for (const n of comp.strokes ?? comp.notes) if (!(row.owners[n.node] & (1 << b)) && n.node !== spec.chords[n.bar].rootNode) return `comp: node ${n.node} is not a strike of layer ${spec.stats.compLayer.layer}`;
   return '';
 }
 
@@ -173,7 +176,9 @@ console.log('\n— tempo');
 console.log('\n— the root\'s cluster, and settling');
 {
   let bad = '', n = 0;
-  for (const [name, run] of composeCases(compose)) { n++; if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) { bad = name; break; } }
+  // the baseline's comp is one note a stroke: compStyle 'notes' (COMP_ARP_ORDER.md P9), the override itself left out of the input
+  const notesCompose = (L, T, o) => { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes' } }); delete spec.input.overrides.compStyle; return spec; };
+  for (const [name, run] of composeCases(notesCompose)) { n++; if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) { bad = name; break; } }
   check(`settlePasses 0 with presence 'exact' reproduces e3909e1's specs byte for byte (${n} specs: 10 rows × 2 seeds, 2 on the full table, 1 with modulation off)`, !bad && n === Object.keys(COMPOSE_HASHES).length, bad);
   const L = [4099, 4093, 4091, 4079], T = 16;
   const cl = compose(L, T), ex = compose(L, T, { overrides: { presence: 'exact' } }), why = (s, w) => s.decisions.find((d) => d.what === w);

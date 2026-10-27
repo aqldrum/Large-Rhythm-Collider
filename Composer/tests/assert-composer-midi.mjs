@@ -78,7 +78,9 @@ sink.setEnabled(false);
 check('disabled: the live note ended at once, not active', ports.lead.sent.length > n0 && !sink.active && sink.liveNotes === 0);
 
 console.log('\n— the lengths (M12)');
-const T = 8, spec = compose([41, 42, 43, 0], T, { seed: 1, worker: true }), ST = spec.knobs.cycleSeconds;
+// the comp one note a stroke (compStyle 'notes'): until COMP_ARP_ORDER.md A3 makes the Comp bus a zone of four (P11), the
+// chords default's strums would stack on its one channel
+const T = 8, spec = compose([41, 42, 43, 0], T, { seed: 1, worker: true, overrides: { compStyle: 'notes' } }), ST = spec.knobs.cycleSeconds;
 const flip = (p) => rearticulate(p, { legato: !p.legato, cycleSeconds: ST });
 check('every part the same with its legato flipped', spec.parts.every((p) => JSON.stringify(midiNotesOf(p, ST)) === JSON.stringify(midiNotesOf(flip(p), ST))));
 const lanesOk = spec.parts.every((p) => {

@@ -1577,6 +1577,62 @@ The order: `TARGET_ORDER.md` phase B (B1–B5), on phase A's core ("MIDI targets
 - **Tests:** `tests/assert-arp.mjs` runs 8 rows × both parts × 4 patterns × rates 1–4 × ranges 1–3, with legato on and off. It checks every note's onset, step, class, rung and range, the shape against each step's candidates, the rests and stats, hz, velocity and lengths. It also covers the inner over a Line lead and an arp lead, a chart's split bar, a target (the lead refused; the inner inside three windows), determinism, Back to Line, the options, and the 16k row's time.
 
 **For B2:** the store keeps a part's mode and options (Q7). The controller replaces `spec.parts[i]` with `arrangeArp(...)` and restores it with `lineOf`. After any rebuild of the lead (a lead swap) or the chords (a chord swap, a re-compose), it re-arranges: rearrange the Line part, then the arp over it. An inner arp also re-arranges when the lead changes mode. The drums' *with* mode reads the lead's notes, so they re-arrange too. The order's default inner sound (harp, Q4) is the controller's to set; `arrangeArp` keeps the part's sound.
+## Comping in chords (phase A core; built 2026-10-27, branch `comp/core`)
+
+`Composer/COMP_ARP_ORDER.md` steps A1, A2 and A5's core tests. Decisions 1 (strum, then borrow) and 2 (every strike a stroke) are Avery's, marked **decided** there; P1–P10 are the builder's proposals, built as written except where noted below. Nothing here has been heard. The MIDI zone (A3) and the plot's rings and the inspector line (A4) are later steps.
+
+**The rule** (`core/compose.js`, `compChordsOfBar`, `strumOf`):
+- **Strokes (P1, decided 2).** Every slot the comp layer strikes is a stroke, at its first strike there. A bar or span with no strike is struck once on its root onset, as before. The stroke's own onset sounds only when its tone is a chord tone; otherwise it only sets the moment.
+- **The strum (P3, decided 1).** For each chord class, the class's onset nearest the stroke within ±¼ of the stroke's slot wins. Ties go to the most strikes, then the earliest. Each tone sounds at its own time. The window never leaves the stroke's bar, or its span in a chart's split bar, and the chord is that span's.
+- **Borrowed tones (P4).** A class missing from the window takes the bar's chord voice of that class (`chordVoicesOfBar`). It sounds at the stroke's onset and time with the voice's tone, marked `borrowed: true, from: <the voice's onset>`. If the chords part has no voice of that class either, the class is left out.
+- **Voicing (P5).** One voice per class, root first, at most 4, stacked close from an octave under the root (as the chord voices are). A note's `voice` is its class's index.
+- **Velocity (P7).** The stroke's own onset is 0.55, plus 0.1 for each extra layer striking it. The strum's other tones are 0.5, borrowed tones 0.45.
+- **Lengths (P6).** Each tone carries `holdTo`: the next stroke's time, or the span's end for the span's last stroke. `articulate` holds a note no further than that (and no further than its voice's next note). Legato off (the default): the shorter of that and the note's slot. On: all of it. `rearticulate` (the live legato toggle) groups the comp by voice and gives Compose's own lengths.
+- **The layer (P2).** The score has four parts, averaged over the bars. (1) The share of the bar's slots struck: 1 between 25 % and 60 %, falling to 0 at none and at every slot. (2) A straight or triplet count of strokes to the bar. (3) A stroke in every bar. (4) The strum's coverage: the share of the chord voices' classes found in the window rather than borrowed. `compLayer` still picks a layer by hand.
+- **The spec (P8).** Comp notes gain `voice`, `holdTo`, and `borrowed` and `from` where they apply. The comp part gains `strokes`: `[{ node, tick, time, bar, slot }]`, one a stroke. `stats.compStrum` is the share of the comp's tones found unborrowed. Two new decisions: `compStyle` and `compStrum` (the layer, its strokes and that share).
+- **`compStyle` (P9).** `overrides.compStyle: 'notes'` is the old one-note comp, byte for byte (no `strokes`, voices, `compStrum` or new decisions). `'chords'` is the default.
+
+**The probe's numbers, now** (seed 1; strokes, the comp's tones, the share found in the row, the strokes with no borrowed tone, and the old comp's notes for comparison):
+
+| row | onsets | meter | strokes | tones | from the row | pure strokes | old comp notes |
+|---|--:|---|---|--:|--:|--:|---|
+| 8:7:6:5 | 22 | 2×3 | 6 (layer B) | 15 | 60 % | 2/6 | 3 (layer A) |
+| 11:9:7:5 | 29 | 2×4 | 5 (D) | 15 | 27 % | 0/5 | 3 (A) |
+| 19:17:16:15 (3 s) | 64 | 1×8 | 8 (A) | 24 | 50 % | 1/8 | 3 (A) |
+| 16:12:9 | 30 | 2×4 | 8 (C) | 24 | 50 % | 0/8 | 7 (C) |
+| 119:42:15:8 | 172 | 4×8 | 15 (C) | 45 | 44 % | 0/15 | 6 (C) |
+| 426:317:285 | 1,024 | 4×8 | 32 (C) | 96 | 47 % | 1/32 | 5 (C) |
+| 768:769 | 1,536 | 4×8 | 32 (A) | 96 | 26 % | 0/32 | 5 (A) |
+| 768:784 | 1,536 | 4×8 | 32 (A) | 120 | 87 % | 16/32 | 16 (B) |
+| 4099:4093:4091:4079 | 16,359 | 8×8 | 64 (A) | 232 | 94 % | 51/64 | 8 (A) |
+
+On the 16k row, scoring every layer and building the bars takes about 10 ms. Compose's lean time is unchanged (about 0.53–0.59 s on a quiet machine, chords or notes).
+
+**Edits and the drums (A2, P9, P10).**
+- `rearrange.js` reads the style from the spec's comp part (`strokes` present means chords). A chord swap rebuilds the bar's strokes, strum and borrowed tones over the new chord, so a borrowed tone follows the new chord's voices. `builderNotes` keeps `voice`, `velocity`, `holdTo`, `borrowed` and `from`, and a borrowed tone keeps its source's tone. `stats.compStrum` is recounted. Every bar swapped to its own chord still gives the spec byte for byte.
+- The store and the controller pass whole specs and parts through `rearrange`, `applyRearrange` and `rearticulate`, so the fields survive. A JSON round trip of the spec rearranges the same (tested).
+- **The drums** read the comp's `strokes` (one a slot) in *with* and *against*, not the strum's tones (`drums.js`). Without `strokes` (notes), the expression is the one it was.
+
+**The frozen fixtures, kept.** No fixture or hash was edited. The tests that compare against them now compose with `compStyle: 'notes'` and delete the override from the spec's input before comparing:
+- `assert-refactor-identity.mjs`: the live call, plus the override list in the bad-override error (", compStyle" taken back out)
+- `settle-baseline.mjs`'s cases, in `assert-compose.mjs`, `assert-trace.mjs` and `assert-progression.mjs`
+- `assert-chord-symbols.mjs`: the b69a39e ratio hashes
+- `assert-drum-grid.mjs`: the `drums-baseline.mjs` cases
+
+`assert-drum-grid.mjs`'s fidelity specs also run with `'notes'`. Under chords, *with* → grid → re-landed loses one stroke to a merge on 19:17:16:15 at 8×6 (25 → 24: two strokes land on one place). `assert-composer-midi.mjs` runs with `'notes'` until A3 makes the Comp bus a zone of four, because the chords' strums would stack on its one channel.
+
+The invariant audits learned the new note. A borrowed tone's ratio is its `from`'s, and the comp's strokes, not its notes, are the layer's strikes. These audits are in `assert-compose`, `assert-progression`, `assert-rearrange`, `assert-chart`, `assert-drums` and Cosmos's `assert-compose-dust`.
+
+**Calls beyond the order (proposed):**
+1. **The window stays inside the bar** in a plain bar too, not only a span. A window crossing a bar line would mix chords and retunes, and near the downbeat it would wrap around the cycle.
+2. **A borrowed tone sounds on the stroke's onset** (`node`, `tick` and `time` are the stroke's). Its tone and ratio are the source voice's (`from`). So time, tick, slot and bar always agree with `node`; only the ratio comes from `from`.
+3. **`strokes` on the part,** so the drums read the strokes exactly. A stroke whose own tone isn't a chord tone has no note of its own.
+4. **The strum's score part counts only classes the chord voices have.** A class with no voice can be neither found nor borrowed.
+
+**Open, for Avery:**
+1. **On dense rows every layer strikes every slot** (768:769, 768:784, 426:317:285, the 16k row: 32/32 or 64/64 strokes). P2's density part is then 0 for every layer, and the comp is a chord on every slot, a pulse. Should comping thin itself there: a stroke every other slot, or a layer's own period over the slots?
+2. **Small rows borrow most of the chord** (11:9:7:5 27 %, 768:769 26 % from the row). Borrowed tones sound at the stroke's moment, so these comps are near-block chords. That is ruling 1 as decided, flagged only because it is audible.
+3. **The default change moves the drums' *with* and *against*** (the strokes are denser now). Their baselines stay frozen by running with `'notes'`, as P9 proposed.
 
 ## Layout (agreed earlier, 2026-10-21)
 

@@ -54,7 +54,8 @@ function realOnsets(C, spec) {
   const slotOf = (i) => { const x = mod(row.x[i] - phaseX, 1); let lo = 0, hi = starts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= x + 1e-9) lo = mid; else hi = mid - 1; } return lo; };
   for (const p of spec.parts) for (const n of p.notes) {
     if (!(n.node >= 0 && n.node < row.n)) return `${p.id}: node ${n.node} is not an onset`;
-    if (n.tick !== row.tick[n.node] || n.ratio !== row.tones[row.tone[n.node]]) return `${p.id}: node ${n.node}'s tick or ratio is not its onset's`;
+    // a comp tone borrowed in chords (COMP_ARP_ORDER.md P4) sounds at its stroke's onset with its source voice's tone (`from`)
+    if (n.tick !== row.tick[n.node] || n.ratio !== row.tones[row.tone[n.borrowed ? n.from : n.node]]) return `${p.id}: node ${n.node}'s tick or ratio is not its onset's`;
     if (Math.abs(n.time - mod(n.tick / row.grid - phaseX, 1) * T) > 1e-9) return `${p.id}: node ${n.node} off its time`;
     // a note's slot: the one its onset falls in from the phase (chord voices, comping) or the one whose window holds it (the mined lines)
     // (Compose's own quirk, kept: a bass bar with no line plays its chord's root onset, `slot` that onset's from the phase,
@@ -94,9 +95,10 @@ function swapBreak(C, k, cand, r, next) {
   // pinned: baseHz, the comp layer, every part's sound and legato; targets.scale fixed (no other bar re-mined, above)
   if (next.knobs.baseHz !== spec.knobs.baseHz || next.stats.compLayer.layer !== spec.stats.compLayer.layer) return 'baseHz or the comp layer moved';
   for (const p of next.parts) { const q = spec.parts.find((x) => x.id === p.id); if (p.sound !== q.sound || p.legato !== q.legato || p.enabled !== q.enabled) return `${p.id}'s sound or legato moved`; }
-  // the comping on the pinned layer: every stroke of bar k struck by it (or the bar's root onset alone)
+  // the comping on the pinned layer: every stroke of bar k struck by it (or the bar's root onset alone); in chords the
+  // strokes are on the part (the strum's tones any onset near them, and of the new chord: assert-comp.mjs)
   const comp = next.parts.find((p) => p.id === 'comp'), layer = 'ABCD'.indexOf(spec.stats.compLayer.layer);
-  for (const n of comp.notes.filter((x) => x.bar === k)) if (!(C.row.owners[n.node] & (1 << layer)) && n.node !== next.chords[k].rootNode) return `bar ${k}: a comp stroke off the pinned layer`;
+  for (const n of (comp.strokes ?? comp.notes).filter((x) => x.bar === k)) if (!(C.row.owners[n.node] & (1 << layer)) && n.node !== next.chords[k].rootNode) return `bar ${k}: a comp stroke off the pinned layer`;
   // the new chord's tones: every chord voice of bar k is a class of the chord, inside the frame
   const c = r.chords[k], rootCents = C.row.toneCents[C.row.tones.indexOf(c.rootTone)];
   for (const n of next.parts.find((p) => p.id === 'chords').notes.filter((x) => x.bar === k)) { const q = classOfCents(C.row.toneCents[C.row.tone[n.node]] - rootCents); if (!(c.intervals.includes(q.pc) && Math.abs(q.dev) <= spec.knobs.frameCentsEachSide + 1e-9)) return `bar ${k}: a chord voice off the chord`; }
