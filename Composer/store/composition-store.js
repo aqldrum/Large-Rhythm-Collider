@@ -54,9 +54,17 @@
 //                 (target.js placements), current (the index playing), lanes } | null. A compose with a placement
 //                 given (an alternate auditioned or kept) doesn't search, so it keeps the list.
 // A new cycle of the same row carries both (proposed: a placement is the row's, its phase a share of the cycle).
+//
+// The Arp mode (COMP_ARP_ORDER.md B2, Q7; DESIGN_NOTES "Comping and Arp in the window"; the controller acts on it):
+//   arps     { lead, inner }: each { mode: 'line' | 'arp', pattern, rate, range } (core/arp.js' options; the knobs are
+//            kept while the part is in Line, so Arp comes back as it was). A choice saved with the composition, like the
+//            drum grid: in the undo snapshots, kept through a re-compose and the glyph's recall, and (proposed) carried
+//            to a new cycle of the same row. `spec` plays the arps (composed + edits, then arrangeArp); `composed`
+//            never does.
 
 import { PART_IDS } from '../core/compose.js';
 import { DEFAULT_KIT } from '../core/drums.js';
+import { ARP_PARTS, ARP_DEFAULTS } from '../core/arp.js';
 
 export const STORE_VERSION = 'composition-store-v1';
 /** how many rhythms the store keeps (proposed) */
@@ -67,6 +75,8 @@ export const KNOB_NAMES = Object.freeze(['bars', 'slotsPerBar', 'frameCentsEachS
 export const UNDO_LIMIT = 50;
 /** no edits */
 export const emptyEdits = () => ({ chords: {}, lead: {}, order: [], grid: null });
+/** B2: every Arp part in Line, its knobs at the defaults */
+export const lineArps = () => Object.fromEntries(ARP_PARTS.map((id) => [id, { mode: 'line', pattern: ARP_DEFAULTS.pattern, rate: ARP_DEFAULTS.rate, range: ARP_DEFAULTS.range }]));
 const copy = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
 /** a pin list entry copied (a ratio, { ratio, quality }, or null) */
 const copyPin = (x) => (x && typeof x === 'object' ? { ...x } : x);
@@ -92,6 +102,8 @@ export function newCompositionState({ layers = [0, 0, 0, 0], cycleSeconds = 10, 
     composed: null, edits: emptyEdits(), field: null, undo: [], redo: [], dropped: null,
     // MIDI targets (phase B): the last search's placements (input.target, when set, holds the clip)
     placements: null,
+    // B2 (COMP_ARP_ORDER.md): the lead's and the inner's mode, Line or Arp, and the Arp's knobs
+    arps: lineArps(),
   };
 }
 
@@ -114,6 +126,8 @@ function inheritEdits(to, from) {
   // MIDI targets (phase B): the clip, its tonic and a kept placement, and the search's list (proposed)
   if (from.input.target) to.input.target = copy(from.input.target);
   to.placements = copy(from.placements ?? null);
+  // B2: the Arp modes (proposed: a choice of the row's composition, like the drum options)
+  to.arps = copy(from.arps ?? lineArps());
   return to;
 }
 

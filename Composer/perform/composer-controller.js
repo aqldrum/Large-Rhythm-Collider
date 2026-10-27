@@ -82,15 +82,31 @@
 //              chord is; another shape (bars, or a bar split anew) waits for Compose (P9): the pins go to the next
 //              Compose, the edits of the old shape are dropped, the entry goes dirty. A swap writes its chord into the
 //              chart where the chord is written once, else the chart is written out played (repeats and holds unrolled).
+//   arps       (COMP_ARP_ORDER.md B2; DESIGN_NOTES "Comping and Arp in the window") the lead and the inner voice each
+//              play Line (the mined line) or Arp (core/arp.js arrangeArp: the chord's tones in a shape, at a rate):
+//                setArp(part, { mode: 'line' | 'arp', pattern, rate, range })   live, no re-compose; one undo step
+//                arpOf(part) → { mode, pattern, rate, range, playing, refusal, stats }
+//              The choice is the entry's (`state.arps`, store/composition-store.js): in the undo snapshots, kept through
+//              a re-compose and the glyph's recall. `state.spec` is composed + edits in Line (the fold), THEN the arps
+//              over it, the lead first (the inner keeps off the lead as it sounds, Q4); the drums are arranged over
+//              that. So a chord swap, a lead swap, an undo or a re-compose rebuilds the Line part and re-arps it from
+//              the fresh line, an inner arp follows the lead's mode, and the drums' *with* hears the arp lead. A big
+//              row's arps (past MAIN_THREAD_ONSETS) are arranged in the module worker (runCompose.arp), from its kept
+//              materials; arrangeArp is ~2.5 ms on the 16k row, so every other row arranges on this thread. While the
+//              lead is an arp its runner-ups are hidden (Q5: alternatesOf(bar, 'lead') is null). A MIDI target's lead
+//              is the clip (arpRefusal): its Arp is refused, and setting a clip puts the lead back in Line (proposed).
+//              An inner in Arp sounds the harp (INNER_ARP_SOUND, Q4) unless a sound was chosen for it: a part's sound
+//              carries through a rebuild only where it differs from the spec's own.
 
 import { compose, rearticulate, chooseMeter, PART_IDS, TARGET_SETS } from '../core/compose.js';
+import { arrangeArp, arpRefusal, ARP_PARTS, ARP_PATTERNS, ARP_RATES, ARP_RANGES } from '../core/arp.js';   // B2: the Arp mode
 import { rootCandidates, chooseChordOnRoot, qualityById } from '../core/progression.js';
 import { NOTE_INSTRUMENT_IDS, getInstrument } from '../../Audio/voices/recipes.js';
 import { createPlayer } from './composer-player.js';
 import { arrangeDrums, gridOf, readGrid, beatsOf, ALL_DRUM_MODES, DRUM_VOICES, DEFAULT_KIT, GRID_CHARS } from '../core/drums.js';
 import { DRUM_PATTERNS } from '../core/drum-patterns.js';
 import { MADE_DRUM_CHOICES } from '../../Audio/drums/index.js';
-import { newCompositionState, KNOB_NAMES, emptyEdits, UNDO_LIMIT } from '../store/composition-store.js';
+import { newCompositionState, KNOB_NAMES, emptyEdits, UNDO_LIMIT, lineArps } from '../store/composition-store.js';
 import { ALTERNATE_CAPS } from '../core/trace.js';   // STEP 4a
 // STEP 4d: the edits
 import { rearrange, applyRearrange, materialsOf, materialsKey } from '../core/rearrange.js';
@@ -122,6 +138,10 @@ export const TEMPO_LIMITS = Object.freeze([30, 300]);
 export const MAIN_THREAD_ONSETS = 32768;
 /** …a lead swap on the full table only up to this many (it is 35–50 ms from 10k onsets up, 15 ms at 1,536; proposed) */
 export const MAIN_THREAD_LEAD_FULL_ONSETS = 2048;
+/** B2 (Q4): an inner voice in Arp sounds this, unless a sound was chosen for it */
+export const INNER_ARP_SOUND = 'harp';
+/** B2: the Arp parts and their knobs' choices, for a view */
+export const ARP_CHOICES = Object.freeze({ parts: ARP_PARTS, patterns: ARP_PATTERNS, rates: ARP_RATES, ranges: ARP_RANGES });
 /** every sound a part can play: the note-role instruments of Audio/voices, in the catalog's order */
 export const soundChoices = () => NOTE_INSTRUMENT_IDS.map((id) => ({ id, label: getInstrument(id).label }));
 
@@ -171,9 +191,11 @@ export function readLayers(values) {
  *                 runCompose.rearrange by default, compose-runner.js'; none: every edit on this thread)
  *   mainThreadOnsets, leadFullOnsets   where an edit runs (MAIN_THREAD_ONSETS, MAIN_THREAD_LEAD_FULL_ONSETS)
  *   midi          the MIDI sink the player books into (composer-midi.js; CLEAN_MIDI_ORDER.md phase B), or none
+ *   runArp        ({ key, spec, parts }) → Promise<[arranged parts]>: a big row's arps in the worker (B2; runCompose.arp
+ *                 by default; none: every arp on this thread)
  */
 export function createComposerController({ runCompose = async (l, T, o) => compose(l, T, o), createContext = () => new AudioContext(), timers = globalThis, clock = () => (globalThis.performance ? performance.now() : Date.now()), beforePerform = null, destination = null, state: initial = null,
-  runRearrange = runCompose?.rearrange ?? null, mainThreadOnsets = MAIN_THREAD_ONSETS, leadFullOnsets = MAIN_THREAD_LEAD_FULL_ONSETS, midi = null } = {}) {
+  runRearrange = runCompose?.rearrange ?? null, mainThreadOnsets = MAIN_THREAD_ONSETS, leadFullOnsets = MAIN_THREAD_LEAD_FULL_ONSETS, midi = null, runArp = runCompose?.arp ?? null } = {}) {
   let state = initial ?? newCompositionState({ layers: PRESETS[0].layers, cycleSeconds: PRESETS[0].cycleSeconds, seed: 1 });
   const listeners = new Set(), levelListeners = new Set();
   const changed = (st = state) => { for (const f of listeners) f(st); };
@@ -212,6 +234,30 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   const ready = (st) => !!(st.composed && !st.composed.refused && st.spec && !st.spec.refused);
   const requireSpec = (st) => { if (!ready(st)) throw new Error('composer: nothing composed to edit'); };
   const materialsFor = (st) => { let m = mats.get(st.composed); if (!m) { m = materialsOf(st.composed); mats.set(st.composed, m); } return m; };
+  // ── B2: the Arp mode (COMP_ARP_ORDER.md; arrangeArp over the spec in Line, the lead first) ──
+  /** the parts this entry plays as arps over this spec: Arp chosen and not refused (a target's lead), the lead first */
+  const arpsOn = (st, spec) => ARP_PARTS.filter((id) => st.arps?.[id]?.mode === 'arp' && !arpRefusal(spec, id));
+  /** the arp jobs for a spec: [{ id, options: its knobs and its legato as it plays }] */
+  const arpJobs = (st, spec) => arpsOn(st, spec).map((id) => {
+    const a = st.arps[id];
+    return { id, options: { pattern: a.pattern, rate: a.rate, range: a.range, legato: st.parts?.[id]?.legato ?? spec.parts.find((p) => p.id === id)?.legato ?? false } };
+  });
+  /** arranged arp parts into a spec in Line; an inner arp's own sound the harp (Q4: a sound chosen for it wins in settleState) */
+  function placeArps(spec, parts) {
+    const T = spec.knobs.cycleSeconds, by = new Map(parts.map((p) => [p.id, p.id === 'inner' && p.sound !== INNER_ARP_SOUND ? rearticulate(p, { sound: INNER_ARP_SOUND, cycleSeconds: T }) : p]));
+    return { ...spec, parts: spec.parts.map((p) => by.get(p.id) ?? p) };
+  }
+  /** a spec in Line with the entry's arps, arranged on this thread (each over the one before: the inner hears the lead) */
+  function withArps(st, line) {
+    const jobs = arpJobs(st, line);
+    if (!jobs.length) return line;
+    const m = materialsFor(st), out = [];
+    let spec = line;
+    for (const j of jobs) { const p = arrangeArp(spec, m, j.id, j.options); out.push(p); spec = { ...spec, parts: spec.parts.map((x) => (x.id === j.id ? p : x)) }; }
+    return placeArps(line, out);
+  }
+  /** a big row's arps go to the worker (its kept materials), as its edits do */
+  const arpOnWorker = (st) => !!runArp && st.composed.stats.onsets > mainThreadOnsets;
   // ── charts: the typed field read as a chord chart (null: not a chart; { error }: one that can't be read) ──
   let chartMemo = { text: null, value: null };
   const chartOfText = (text) => {
@@ -295,12 +341,22 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     }
     return { changedBars, retunedBars };
   }
-  /** the edited spec in place: the parts re-articulated as they play now, the drums arranged over it */
-  function settleState(st, eff) {
-    const next = eff ? { ...eff, drums: st.composed.drums } : st.composed, T = st.composed.knobs.cycleSeconds;
-    const art = Object.fromEntries(Object.values(st.parts).map((p) => [p.id, { sound: p.sound, legato: p.legato, enabled: p.enabled }]));
+  /**
+   * The edited spec in place: the arps over it (B2: `arped`, the parts the worker arranged; undefined, arranged here),
+   * the parts re-articulated as they play now, the drums arranged over it. A part's sound carries over only where it
+   * was chosen (it differs from the spec's own part's), so an inner switched to Arp takes the harp and back to Line its
+   * own (Q4); legato and on/off always carry.
+   */
+  function settleState(st, eff, arped = undefined) {
+    const line = eff ? { ...eff, drums: st.composed.drums } : st.composed, T = st.composed.knobs.cycleSeconds;
+    const next = arped === undefined ? withArps(st, line) : arped ? placeArps(line, arped) : line;
+    const own = Object.fromEntries((st.spec?.parts ?? []).map((p) => [p.id, p.sound]));
+    const art = Object.fromEntries(Object.values(st.parts).map((p) => [p.id, { sound: p.sound !== own[p.id] ? p.sound : null, legato: p.legato, enabled: p.enabled }]));
     st.spec = next;
-    st.parts = Object.fromEntries(next.parts.map((p) => { const a = art[p.id]; return [p.id, a && (a.sound !== p.sound || a.legato !== p.legato || a.enabled !== p.enabled) ? rearticulate(p, { ...a, cycleSeconds: T }) : p]; }));
+    st.parts = Object.fromEntries(next.parts.map((p) => {
+      const a = art[p.id];
+      return [p.id, a && ((a.sound != null && a.sound !== p.sound) || a.legato !== p.legato || a.enabled !== p.enabled) ? rearticulate(p, { sound: a.sound ?? p.sound, legato: a.legato, enabled: a.enabled, cycleSeconds: T }) : p];
+    }));
     st.drums = arrangeDrums(next, st.drumOptions);
   }
   /**
@@ -316,22 +372,29 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     while (i < list.length && f.steps[i] && f.steps[i].sig === sigs[i]) { spec = f.steps[i].spec; i++; }
     f.steps.length = i;
     const commit = (r) => { spec = applyRearrange(spec, r); f.steps.push({ sig: sigs[i], spec }); i++; };
-    const finish = () => { f.applying = false; settleState(st, list.length ? spec : null); return { ok: true, ...movedBars(was, st.spec), edits: list.length }; };
+    // stale: a newer fold of this state took over, or a Compose landed (a new fold record) while a worker step ran; a
+    // stale answer, or a stale failure, never touches the state
+    const stale = () => mine !== f.gen || folds.get(st) !== f || st.composed !== f.composed;
+    const finish = (arped) => { f.applying = false; settleState(st, list.length ? spec : null, arped); return { ok: true, ...movedBars(was, st.spec), edits: list.length }; };
     const loop = () => {
       while (i < list.length) {
         const e = list[i], job = jobOf(st, e);
         if (onWorker(st, e)) {
           f.applying = true;
-          // stale: a newer fold of this state took over, or a Compose landed (a new fold record) while it ran; a
-          // stale answer, or a stale failure, never touches the state
-          const stale = () => mine !== f.gen || folds.get(st) !== f || st.composed !== f.composed;
           return Promise.resolve(runRearrange({ key: materialsKey(spec), spec, edit: job.edit, opts: job.opts })).then((r) => (stale() ? STALE : (commit(r), loop())),
             (err) => { if (stale()) return STALE; f.applying = false; throw err; });
         }
         const { row, cells } = materialsFor(st);
         commit(rearrange(spec, row, cells, job.edit, job.opts));
       }
-      return finish();
+      // B2: the arps over the spec in Line (the edits applied); a big row's in the worker
+      const line = list.length ? spec : st.composed, jobs = arpJobs(st, line);
+      if (jobs.length && arpOnWorker(st)) {
+        f.applying = true;
+        return Promise.resolve(runArp({ key: materialsKey(line), spec: line, parts: jobs })).then((parts) => (stale() ? STALE : finish(parts)),
+          (err) => { if (stale()) return STALE; f.applying = false; throw err; });
+      }
+      return finish(undefined);
     };
     return loop();
   }
@@ -447,7 +510,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   /** the entry as a placement audition finds it (everything a target compose moves), to put back exactly */
   const entrySnap = (st) => ({ target: st.input.target, placements: st.placements, spec: st.spec, composed: st.composed, trace: st.trace, parts: st.parts, drums: st.drums,
     drumOptions: JSON.parse(JSON.stringify(st.drumOptions)), edits: JSON.parse(JSON.stringify(st.edits)), undo: st.undo.slice(), redo: st.redo.slice(), dropped: st.dropped,
-    progression: JSON.parse(JSON.stringify(st.progression)), field: st.field, tempoBpm: st.tempoBpm, lastMs: st.lastMs, dirty: st.dirty, error: st.error, status: settled(st) });
+    progression: JSON.parse(JSON.stringify(st.progression)), field: st.field, tempoBpm: st.tempoBpm, lastMs: st.lastMs, dirty: st.dirty, error: st.error, status: settled(st),
+    arps: JSON.parse(JSON.stringify(st.arps ?? lineArps())) });
   /** a compose in flight for this state is dropped (its answer is for another input), as touch() does */
   const dropFlight = (st) => { if (st.status === 'composing') { bump(st); flights.delete(st); st.status = settled(st); } };
   /** a new clip, or none: the pins, the field and the edits were another meter's bars (proposed) */
@@ -539,7 +603,16 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
           st.spec = spec; st.composed = spec; st.lastMs = clock() - t0; st.dirty = false;
           landEdits(st, spec, sent);   // STEP 4d: the edits baked or dropped (decision 5), the undo stack cleared
           if (spec.refused) { st.parts = {}; st.drums = null; st.status = 'refused'; }
-          else { st.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); st.drums = arrangeDrums(spec, st.drumOptions); st.status = 'ready'; st.tempoBpm = seedTempoOf(spec); }
+          else {
+            st.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); st.drums = arrangeDrums(spec, st.drumOptions);
+            // B2: the entry's arps over the new spec (the fold: this thread, or the worker for a big row); the drums
+            // re-arranged over them. An arp that can't be made leaves the parts in Line.
+            if (arpsOn(st, spec).length) {
+              try { const out = runFold(st); if (out && typeof out.then === 'function') await out; }
+              catch { st.spec = spec; st.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); st.drums = arrangeDrums(spec, st.drumOptions); }
+            }
+            st.status = 'ready'; st.tempoBpm = seedTempoOf(spec);
+          }
           landPlacements(st, spec);   // MIDI targets: the search's list (kept when this compose was given its placement)
         } catch (err) {
           if (mine !== runs.get(st)) return st.spec;
@@ -705,12 +778,14 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     onEdit(f) { editListeners.add(f); return () => editListeners.delete(f); },
     /** the bars whose fundamental differs from Compose's (a swap's modulation re-pitching later bars) */
     retunedBars: () => (ready(state) ? [...new Set(state.spec.chords.flatMap((c, k) => (Math.abs(c.fundamentalRatio - state.composed.chords[k].fundamentalRatio) > 1e-12 ? [c.bar] : [])))] : []),
-    /** the edits as JSON export carries them (null with none) */
+    /** the edits as JSON export carries them (null with none); B2: `arps` when a part is in Arp */
     editsExport() {
       const e = state.edits, grid = state.drumOptions.grid && (state.drumOptions.mode === 'grid' || state.drumOptions.mode === 'prime');
-      if (!hasEdits(state) && !grid && !state.field) return null;
+      const arps = ARP_PARTS.some((id) => state.arps?.[id]?.mode === 'arp') ? JSON.parse(JSON.stringify(state.arps)) : null;
+      if (!hasEdits(state) && !grid && !state.field && !arps) return null;
       return { chords: JSON.parse(JSON.stringify(e.chords)), lead: JSON.parse(JSON.stringify(e.lead)), order: [...e.order],
-        drums: grid ? { mode: state.drumOptions.mode, grid: JSON.parse(JSON.stringify(state.drumOptions.grid)), from: e.grid?.from ?? null } : null, field: state.field ? state.field.text : null };
+        drums: grid ? { mode: state.drumOptions.mode, grid: JSON.parse(JSON.stringify(state.drumOptions.grid)), from: e.grid?.from ?? null } : null, field: state.field ? state.field.text : null,
+        ...(arps ? { arps } : {}) };
     },
     /**
      * A bar's alternates (a pure read of the kept trace): part 'chords' → the bar's 12 candidates; 'lead' → the bar's
@@ -719,7 +794,11 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     alternatesOf(bar, part = 'chords') {
       if (!ready(state) || !state.trace) return null;
       if (part === 'chords') return chordAlternates(state, bar);
-      if (part === 'lead') { if (state.spec.target) return null; const p = phraseOfBar(state.spec, bar); return p < 0 ? null : leadAlternates(state, p); }   // P6: a target's lead is the clip
+      if (part === 'lead') {
+        if (state.spec.target) return null;   // P6: a target's lead is the clip
+        if (state.spec.parts.find((x) => x.id === 'lead')?.arp) return null;   // B2 (Q5): an arp lead hides its runner-ups
+        const p = phraseOfBar(state.spec, bar); return p < 0 ? null : leadAlternates(state, p);
+      }
       return null;
     },
     /** swap bar k's chord (a chart's split bar: chord k's, unitsOfBar): a trace candidate ({ root: { ratio }, quality })
@@ -870,7 +949,41 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
         return true;
       });
     },
-    /** back one edit (chords, lead, the field, the drum grid) → Promise<{ ok, … }> */
+    // ── B2: the Arp mode (COMP_ARP_ORDER.md Q1–Q8) ──
+    /** a part's Arp mode → { part, mode, pattern, rate, range, playing (it sounds as an arp now), refusal (why Arp is
+     *  refused on this composition: arpRefusal's words; null), stats (arrangeArp's, while it plays) } */
+    arpOf(id) {
+      if (!ARP_PARTS.includes(id)) throw new Error(`composer: only the lead and the inner voice have an Arp mode, not ${id}`);
+      const a = (state.arps ??= lineArps())[id], s = state.spec && !state.spec.refused ? state.spec : null, part = s?.parts.find((p) => p.id === id);
+      return { part: id, mode: a.mode, pattern: a.pattern, rate: a.rate, range: a.range, playing: !!part?.arp, refusal: s ? arpRefusal(s, id) : null, stats: part?.arp?.stats ?? null };
+    },
+    /**
+     * Line or Arp for the lead or the inner voice, and the Arp's knobs: { mode: 'line' | 'arp', pattern ('up' | 'down'
+     * | 'updown' | 'played'), rate (1–4), range (1–3) }, any of them. Live, no re-compose; one undo step. Before any
+     * Compose it is only kept (the Compose arranges it). A refused Arp (a MIDI target's lead) → { ok: false, error }.
+     * → Promise<{ ok, kind: 'arp', part, changedBars, … }>
+     */
+    setArp(id, { mode, pattern, rate, range } = {}) {
+      if (!ARP_PARTS.includes(id)) throw new Error(`composer: only the lead and the inner voice have an Arp mode, not ${id}`);
+      const given = { mode, pattern, rate: rate == null || rate === '' ? undefined : Number(rate), range: range == null || range === '' ? undefined : Number(range) };
+      if (given.mode !== undefined && given.mode !== 'line' && given.mode !== 'arp') throw new Error(`composer: a part's mode is 'line' or 'arp', not ${JSON.stringify(mode)}`);
+      if (given.pattern !== undefined && !ARP_PATTERNS.includes(given.pattern)) throw new Error(`composer: an arp pattern is one of ${ARP_PATTERNS.join(', ')}, not ${JSON.stringify(pattern)}`);
+      if (given.rate !== undefined && !ARP_RATES.includes(given.rate)) throw new Error(`composer: an arp rate is 1..4, not ${JSON.stringify(rate)}`);
+      if (given.range !== undefined && !ARP_RANGES.includes(given.range)) throw new Error(`composer: an arp range is 1..3 octaves, not ${JSON.stringify(range)}`);
+      const st = state;
+      st.arps ??= lineArps();
+      const next = { ...st.arps[id], ...Object.fromEntries(Object.entries(given).filter(([, v]) => v !== undefined)) };
+      const why = next.mode === 'arp' && st.spec && !st.spec.refused ? arpRefusal(st.spec, id) : null;
+      if (why) return Promise.resolve({ ok: false, error: why, refused: true, kind: 'arp', part: id });
+      const same = (s) => JSON.stringify(s.arps[id]) === JSON.stringify(next);
+      if (!ready(st)) {
+        if (same(st)) return Promise.resolve({ ok: true, noop: true, kind: 'arp', part: id });
+        st.arps = { ...st.arps, [id]: next }; changed();
+        return Promise.resolve({ ok: true, live: false, kind: 'arp', part: id });
+      }
+      return edit('arp', { part: id }, (s) => { if (same(s)) return false; s.arps = { ...s.arps, [id]: next }; return true; });
+    },
+    /** back one edit (chords, lead, the field, the drum grid, an Arp mode) → Promise<{ ok, … }> */
     undo() {
       const st = state;
       if (!ready(st) || !st.undo.length) return Promise.resolve({ ok: false, empty: true, kind: 'undo' });
@@ -954,7 +1067,10 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       let clip;
       try { clip = readClip(source, { name }); } catch (err) { return Promise.resolve({ ok: false, error: String(err && err.message ? err.message : err) }); }
       st.input.target = { clip, tonic }; st.placements = null;
-      freshTarget(st); touch();
+      freshTarget(st);
+      // B2 (Q5): a target's lead is the clip, so its Arp goes back to Line (proposed; arpRefusal refuses it anyway)
+      if (st.arps?.lead?.mode === 'arp') st.arps = { ...st.arps, lead: { ...st.arps.lead, mode: 'line' } };
+      touch();
       return api.compose().then((spec) => outcome(st, spec, { clip }));
     },
     /** the clip on the bound entry (as decoded), or null */
@@ -1019,7 +1135,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       const x = mark.snap;
       if (x.target) st.input.target = x.target; else delete st.input.target;
       Object.assign(st, { placements: x.placements, spec: x.spec, composed: x.composed, trace: x.trace, parts: x.parts, drums: x.drums, drumOptions: x.drumOptions, edits: x.edits,
-        undo: x.undo, redo: x.redo, dropped: x.dropped, progression: x.progression, field: x.field, tempoBpm: x.tempoBpm, lastMs: x.lastMs, dirty: x.dirty, error: x.error, status: x.status });
+        undo: x.undo, redo: x.redo, dropped: x.dropped, progression: x.progression, field: x.field, tempoBpm: x.tempoBpm, lastMs: x.lastMs, dirty: x.dirty, error: x.error, status: x.status, arps: x.arps });
       folds.delete(st); auditions.delete(st);
       if (live && st.spec && !st.spec.refused) api.perform(); else changed(st);
       return Promise.resolve({ ok: true, index: x.placements?.current ?? 0 });

@@ -12,6 +12,8 @@
 //   runCompose.rearrange({ key, spec, edit, opts }) → Promise<rearrange's result>   (STEP 4d) a local edit in the same
 //     module worker (compose-worker.js keeps the row and cells per key); the controller sends the edits of big rows
 //     and every smoothPhrase here
+//   runCompose.arp({ key, spec, parts }) → Promise<[the arranged parts]>   (COMP_ARP_ORDER.md B2) a big row's arps
+//     (arp.js arrangeArp, part by part) in the same worker, from the same kept row and cells
 //
 // Chord charts (Composer/CHART_ORDER.md): `changes` ([[shares] × bars]) goes through as it is, both ways.
 // MIDI targets (phase B): `target` ({ clip, placement?, tonic?, maxDriftCents? }, compose.js) goes through as it is,
@@ -48,5 +50,7 @@ export function createComposeRunner({ makeWorker = () => new Worker(new URL('../
     : new Promise((resolve, reject) => defer(() => { try { resolve(compose(layers, cycleSeconds, { seed: options.seed, overrides: options.overrides, progression: options.progression, ...(options.trace ? { trace: options.trace } : {}), ...(options.target ? { target: options.target } : {}), ...(options.changes ? { changes: options.changes } : {}) })); } catch (err) { reject(err); } })));
   /** STEP 4d: a local edit in the worker → rearrange's result */
   run.rearrange = ({ key = null, spec, edit, opts = {} }) => post({ kind: 'rearrange', key, spec, edit, opts }, (d) => d.result);
+  /** B2: a big row's arps in the worker → the arranged parts */
+  run.arp = ({ key = null, spec, parts }) => post({ kind: 'arp', key, spec, parts }, (d) => d.result);
   return run;
 }
