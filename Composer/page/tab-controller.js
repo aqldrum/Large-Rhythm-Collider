@@ -54,8 +54,8 @@ export const kitChoices = (voice) => sharedKitChoices(voice, PAGE_SAMPLES_BASE);
  *   keepPlaying () → whether closing the tab leaves playback alone (the Composition lens owns it)
  *   the rest as the shared controller's
  */
-export function createTabController({ host = {}, runCompose, createContext, timers, clock, store = createCompositionStore(), keepPlaying = () => false } = {}) {
-  const core = createComposerController({ runCompose, createContext, timers, clock, beforePerform: () => host.stopMain?.() });
+export function createTabController({ host = {}, runCompose, createContext, timers, clock, store = createCompositionStore(), keepPlaying = () => false, midi = null } = {}) {
+  const core = createComposerController({ runCompose, createContext, timers, clock, beforePerform: () => host.stopMain?.(), midi });
   const view = { open: false, selected: 'lead', bar: 0, section: CONTEXT_SECTION, hasRhythm: false, showWork: true, details: false, targetError: null };
   const listeners = new Set(), mainListeners = new Set();
   const changed = () => { for (const f of listeners) f(core.state, view); };

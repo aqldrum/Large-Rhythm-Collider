@@ -170,9 +170,10 @@ export function readLayers(values) {
  *   runRearrange  ({ key, spec, edit, opts }) → Promise<rearrange's result>: the worker for big rows (STEP 4d;
  *                 runCompose.rearrange by default, compose-runner.js'; none: every edit on this thread)
  *   mainThreadOnsets, leadFullOnsets   where an edit runs (MAIN_THREAD_ONSETS, MAIN_THREAD_LEAD_FULL_ONSETS)
+ *   midi          the MIDI sink the player books into (composer-midi.js; CLEAN_MIDI_ORDER.md phase B), or none
  */
 export function createComposerController({ runCompose = async (l, T, o) => compose(l, T, o), createContext = () => new AudioContext(), timers = globalThis, clock = () => (globalThis.performance ? performance.now() : Date.now()), beforePerform = null, destination = null, state: initial = null,
-  runRearrange = runCompose?.rearrange ?? null, mainThreadOnsets = MAIN_THREAD_ONSETS, leadFullOnsets = MAIN_THREAD_LEAD_FULL_ONSETS } = {}) {
+  runRearrange = runCompose?.rearrange ?? null, mainThreadOnsets = MAIN_THREAD_ONSETS, leadFullOnsets = MAIN_THREAD_LEAD_FULL_ONSETS, midi = null } = {}) {
   let state = initial ?? newCompositionState({ layers: PRESETS[0].layers, cycleSeconds: PRESETS[0].cycleSeconds, seed: 1 });
   const listeners = new Set(), levelListeners = new Set();
   const changed = (st = state) => { for (const f of listeners) f(st); };
@@ -180,6 +181,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   const runs = new WeakMap(), flights = new WeakMap();
   const bump = (st) => { const n = (runs.get(st) ?? 0) + 1; runs.set(st, n); return n; };
   let ctx = null, player = null, choices = null, choicesKey = null;
+  let localSound = true;   // M7: the voices heard while the MIDI goes out (session only)
 
   const overrides = () => { const o = {}; for (const k of KNOBS) if (state.knobs[k] != null) o[k] = state.knobs[k]; return o; };
   const settled = (st = state) => (!st.spec ? 'idle' : st.spec.refused ? 'refused' : 'ready');
@@ -620,7 +622,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       if (beforePerform) beforePerform();
       ctx ??= createContext();
       if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
-      player ??= createPlayer({ ctx, timers, destination });
+      player ??= createPlayer({ ctx, timers, destination, midi });
+      player.localSound(localSound);
       for (const id of [...PART_IDS, 'drums']) player.setLevel(id, state.levels[id]);
       player.setGlide(state.glideMs / 1000);
       player.setTimeFactor(api.tempoFactor());
@@ -628,6 +631,11 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       state.status = 'playing'; changed();
     },
     stop() { player?.stop(); if (state.status === 'playing') state.status = 'ready'; changed(); },
+    /** the MIDI sink (phase B), or null */
+    get midi() { return midi; },
+    /** M7: hear the Composer's own voices, or only the MIDI */
+    setLocalSound(on) { localSound = !!on; player?.localSound(localSound); changed(); },
+    localSound: () => localSound,
     playhead: () => player?.playhead() ?? null,
 
     // ── the progression editor (targeted progressions, progression.js) ──

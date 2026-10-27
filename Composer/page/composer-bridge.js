@@ -31,6 +31,7 @@
 // cache" on). See DESIGN_NOTES "Theater (sprint 2, step 2)".
 
 import { createTabController, TAB_VERSION } from './tab-controller.js';
+import { createComposerMidi } from '../perform/composer-midi.js';
 import { createComposerTab } from './composer-tab.js';
 import { createComposeRunner } from '../perform/compose-runner.js';
 import { createCompositionStore } from '../store/composition-store.js';
@@ -85,10 +86,12 @@ export function motionAllowed(win) {
 }
 
 /** the bridge over a window (the page's, or a test's stub) */
-export function createComposerBridge(win, { runCompose = createComposeRunner(), createContext, timers, clock, storage, session, motion = () => motionAllowed(win) } = {}) {
+export function createComposerBridge(win, { runCompose = createComposeRunner(), createContext, timers, clock, storage, session, motion = () => motionAllowed(win), midiAccess, download } = {}) {
   const doc = win.document, host = pageHost(win);
   const store = createCompositionStore();
-  const tab = createTabController({ host, runCompose, createContext, timers, store, keepPlaying: () => store.lens === 'composition' });
+  // MIDI out (CLEAN_MIDI_ORDER.md phase B): the page's one sink, booked by the player, its ports picked in the window
+  const midi = createComposerMidi(win.performance ? { now: () => win.performance.now() } : {});
+  const tab = createTabController({ host, runCompose, createContext, timers, store, keepPlaying: () => store.lens === 'composition', midi });
   const local = storage !== undefined ? storage : (() => { try { return win.localStorage ?? null; } catch { return null; } })();
   const sess = session !== undefined ? session : (() => { try { return win.sessionStorage ?? null; } catch { return null; } })();
   const visuals = () => win.lrcVisuals ?? null;
@@ -97,7 +100,10 @@ export function createComposerBridge(win, { runCompose = createComposeRunner(), 
   // STEP 4e: getFocus rings the window's selected matrix cell (only while the tab shows its context section)
   const overlay = createPlotOverlay({ getHighlights: () => tab.highlights(plotted()), getSelected: () => tab.view.selected, getFocus: () => tab.cellFocus(plotted()), makeCanvas: () => doc.createElement('canvas') });
   const seat = createOverlaySeat({ visuals, overlay });
-  const view = createComposerTab({ tab, doc, visuals, raf: (f) => win.requestAnimationFrame(f), clock, storage: local, overlay, seat });
+  const navMidi = () => (win.navigator && typeof win.navigator.requestMIDIAccess === 'function' ? () => win.navigator.requestMIDIAccess({ sysex: false }) : null);
+  const view = createComposerTab({ tab, doc, visuals, raf: (f) => win.requestAnimationFrame(f), clock, storage: local, overlay, seat, download, midiAccess: midiAccess !== undefined ? midiAccess : navMidi() });
+  // the page going away: nothing left sounding in the DAW (M6)
+  win.addEventListener('pagehide', () => midi.allOff());
   const panels = [
     createPartStrips({ doc, tab, highlights: () => tab.highlights(plotted()), layerMap: () => win.lrcModule?.currentLayerMap ?? null }),
     createScaleLock({ doc, tab, playback: () => win.toneRowPlayback ?? null, progression: () => win.ProgressionBar ?? null }),
@@ -121,6 +127,7 @@ export function createComposerBridge(win, { runCompose = createComposeRunner(), 
     isPlaying: () => tab.state.status === 'playing',
     stop: () => tab.core.stop(),
     controller: tab,
+    midi,
     overlay,
     seat,
     animator: view.animator,

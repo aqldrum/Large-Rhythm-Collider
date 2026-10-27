@@ -21,6 +21,13 @@
 //            change opens a new segment where the booking has reached (the lookahead's edge), so what is booked
 //            keeps its place and the playhead never jumps: it takes effect within ~150 ms.
 //   stop     every live voice fades out over 30 ms and stops; nothing more is booked.
+//   midi     (CLEAN_MIDI_ORDER.md, phase B) an optional sink (composer-midi.js) booked from the same loop, on the same
+//            clock map, as the voices: each of a part's notes its own note (its length midiNotesOf's, so the legato
+//            and the glide never reach it), its off booked as the clock reaches its end (so a live tempo moves it),
+//            each drum stroke, and MIDI clock — 24 a quarter of the spec's own tempo, so the DAW follows a live
+//            tempo too — with Start at play and every note off (and Stop) at stop. The audio clock becomes a Web
+//            MIDI timestamp through the context's getOutputTimestamp. `localSound(false)` silences the voices
+//            (the master) while the MIDI goes on (M7).
 //   drums    the spec's drum strokes (drums.js), booked like a note's start on the same clock map (so they loop, follow
 //            the phase and the live tempo), each a one-shot through Audio/drums into its own bus, 'drums': a `made:`
 //            choice is playMadeDrum at the stroke's velocity; a sample URL is playSample at the velocity × the made
@@ -30,6 +37,7 @@ import { getRecipe, normalizeNoteInstrumentId } from '../../Audio/voices/recipes
 import { planVoice } from '../../Audio/voices/plan.js';
 import { createInstrumentVoice } from '../../Audio/voices/voice.js';
 import * as drumLibrary from '../../Audio/drums/index.js';
+import { midiNotesOf } from './composer-midi.js';
 
 export const PLAYER_DEFAULTS = Object.freeze({ tickMs: 25, aheadSeconds: 0.15, master: 0.8, level: 0.8, release: 0.08, glide: 0.012, stopFade: 0.03, factor: 1 });
 const LIMITER = Object.freeze({ threshold: -10, knee: 6, ratio: 6, attack: 0.003, release: 0.2 });
@@ -70,7 +78,8 @@ const endOf = (chain) => { const last = chain.notes[chain.notes.length - 1]; ret
  *            {} (no setInterval: nothing is started) and calls the public tick() from its own scheduler.
  *   getParts () → the parts as they play now (the lab's sound, legato and on/off), read at every tick
  */
-export function createPlayer({ ctx, destination = null, voices = { planVoice, createInstrumentVoice, getRecipe }, drums: drumLib = drumLibrary, timers = globalThis, options = {} } = {}) {
+export function createPlayer({ ctx, destination = null, voices = { planVoice, createInstrumentVoice, getRecipe }, drums: drumLib = drumLibrary, timers = globalThis, options = {}, midi = null,
+  now = () => (globalThis.performance ? performance.now() : Date.now()) } = {}) {
   const o = { ...PLAYER_DEFAULTS, ...options };
   const limiter = ctx.createDynamicsCompressor();
   for (const [k, v] of Object.entries(LIMITER)) limiter[k].value = v;
@@ -87,6 +96,17 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
   let segments = [];
   /** chains whose voice has started but whose moves or release are not all booked yet: { chain, base, handle, next, entry } */
   let holding = [];
+  // MIDI (phase B): the notes whose off isn't booked yet { handle, end (spec time) }, the next clock tick (spec time),
+  // each part's level (the velocity scales by it, M4), and whether the voices sound (M7)
+  let midiHeld = [], nextTick = 0, local = true;
+  const levels = {};
+  /** an audio-clock time as a Web MIDI timestamp: the two clocks paired at one instant (cosmos-midi-out.js' way) */
+  const msOf = (t) => {
+    let perf = now(), ref = ctx.currentTime;
+    const stamp = ctx.getOutputTimestamp?.();
+    if (stamp && Number.isFinite(stamp.contextTime) && Number.isFinite(stamp.performanceTime)) { perf = stamp.performanceTime; ref = stamp.contextTime; }
+    return Math.max(now(), perf + (t - ref) * 1000);
+  };
 
   const segAtClock = (t) => { let i = segments.length - 1; while (i > 0 && segments[i].t0 > t) i--; return segments[i]; };
   const segAtSpec = (s) => { let i = segments.length - 1; while (i > 0 && segments[i].s0 > s) i--; return segments[i]; };
@@ -152,17 +172,37 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
     const keep = Math.min(now, booked);
     while (segments.length > 1 && segments[1].t0 <= keep) segments.shift();
     const until = specAt(horizon);
-    const parts = getParts(), drums = getDrums ? getDrums() : null;
+    const parts = getParts(), drums = getDrums ? getDrums() : null, m = midi?.active ? midi : null;
+    // MIDI: the offs that come due first, so a voice's next note-on follows its last note-off (M3)
+    if (midiHeld.length) midiHeld = midiHeld.filter((h) => { if (h.end >= until) return true; midi.off(h.handle, msOf(clockOf(h.end))); return false; });
     for (let c = Math.floor(bookedSpec / T); c * T < until; c++) {
       const base = c * T;
-      if (drums?.enabled) for (const hit of drums.hits) { const S = base + hit.time; if (S >= bookedSpec && S < until) strike(drums.kit[hit.voice], hit, clockOf(S)); }
+      if (drums?.enabled) for (const hit of drums.hits) {
+        const S = base + hit.time;
+        if (S >= bookedSpec && S < until) { strike(drums.kit[hit.voice], hit, clockOf(S)); if (m) m.stroke(hit.voice, hit.velocity * (levels.drums ?? o.level), msOf(clockOf(S))); }
+      }
       for (const part of parts) {
         if (!part.enabled) continue;
         for (const chain of chainsOf(part)) {
           const S = base + chain.notes[0].time;
           if (S >= bookedSpec && S < until) startChain(part, chain, base);
         }
+        if (m && m.sends(part.id)) for (const n of midiNotesOf(part, T)) {
+          const S = base + n.time;
+          if (S < bookedSpec || S >= until) continue;
+          const handle = m.note(part.id, n.voice, n.hz, n.velocity * (levels[part.id] ?? o.level), msOf(clockOf(S)));
+          if (handle) {
+            const E = base + n.end;
+            if (E < until) m.off(handle, msOf(clockOf(E))); else midiHeld.push({ handle, end: E });
+          }
+        }
       }
+    }
+    // MIDI clock (decision 2): 24 a quarter of the spec's tempo, on spec time, so it follows a live tempo
+    if (m && m.clocking && spec.knobs.tempoBpm > 0) {
+      const dt = 60 / spec.knobs.tempoBpm / 24;
+      if (nextTick < bookedSpec - dt) nextTick = Math.ceil(bookedSpec / dt) * dt;   // the clock came on mid-play
+      for (; nextTick < until; nextTick += dt) m.clockTick(msOf(clockOf(nextTick)));
     }
     holding = holding.filter((h) => !advance(h, until));
     booked = horizon; bookedSpec = until;
@@ -179,9 +219,10 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
       for (const p of spec.parts) busOf(p.id);
       busOf('drums');
       loopStart = ctx.currentTime + 0.05; booked = loopStart; bookedSpec = 0; playing = true;
-      segments = [{ t0: loopStart, s0: 0, factor: o.factor }]; holding = [];
+      segments = [{ t0: loopStart, s0: 0, factor: o.factor }]; holding = []; midiHeld = []; nextTick = 0;
       master.gain.cancelScheduledValues(ctx.currentTime);
-      master.gain.setValueAtTime(o.master, ctx.currentTime);
+      master.gain.setValueAtTime(local ? o.master : 0, ctx.currentTime);
+      if (midi?.active) midi.clockStart(msOf(loopStart));
       tick();
       timer = timers.setInterval ? timers.setInterval(tick, o.tickMs) : null;
     },
@@ -193,8 +234,13 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
       const now = ctx.currentTime;
       for (const v of live) { try { v.handle.fadeOut(now, o.stopFade); } catch {} try { v.handle.stop(now + o.stopFade + 0.02); } catch {} }
       live.clear(); holding = [];
+      midiHeld = [];
+      midi?.allOff();
     },
-    setLevel(id, value) { const b = busOf(id); b.gain.setTargetAtTime(Math.max(0, value), ctx.currentTime, 0.02); },
+    setLevel(id, value) { levels[id] = Math.max(0, Number(value) || 0); const b = busOf(id); b.gain.setTargetAtTime(Math.max(0, value), ctx.currentTime, 0.02); },
+    /** M7: the voices heard or not (the master), the MIDI going on either way */
+    localSound(on) { local = !!on; master.gain.setTargetAtTime(local ? o.master : 0, ctx.currentTime, 0.02); },
+    get local() { return local; },
     /** portamento: how long a held voice takes to move to its next note, in seconds (0 = a step). Moves booked from
      *  now on use it (held voices too); the ~150 ms already booked keep the old length. */
     setGlide(seconds) { o.glide = Math.max(0, Number(seconds) || 0); },
