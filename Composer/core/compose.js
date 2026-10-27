@@ -28,11 +28,22 @@
 //                         inside the bar's frame, with the most strikes (then the earliest); stacked close from an octave
 //                         under the bar's root up, each voice the lowest register above the one under it. A voice's
 //                         notes sound at their onsets, so a chord builds as its tones arrive.
-//                comping  one layer of this rhythm cut into the bars and their slots, a slot's step the layer's first
-//                         strike in it, sounding only where that strike is on one of the bar's chord tones
-//                         (rhythm-claves.js and chunk-comping.js, ported): the layer whose bars make the best claves
-//                         (25–50 % of its steps sounding, a straight or triplet count of steps to the bar, a stroke in
-//                         every bar). A bar with no stroke is struck once on its root onset.
+//                comping  in chords (`compStyle: 'chords'`, the default; COMP_ARP_ORDER.md, decided 1–2, P1–P9 proposed):
+//                         one layer of this rhythm cut into the bars and their slots, EVERY slot it strikes a stroke at
+//                         its first strike there. A stroke plays the bar's chord as a strum: each chord class its onset
+//                         nearest the stroke within ±¼ slot, inside the bar (a split bar's span), sounding at its own
+//                         time (ties: the most strikes, then the earliest); a class the row doesn't sound there is
+//                         BORROWED, the chord voice of that class at the stroke's time (`borrowed`, `from`: the voice's
+//                         onset), velocity 0.45 (the strum's other tones 0.5, the stroke's own 0.55 + 0.1 a layer more).
+//                         A voice a class (root first, ≤ 4), stacked close from an octave under the root; each holds at
+//                         most to the next stroke (`holdTo`), never past the span. The layer: the best of a share of the
+//                         bar's slots struck (1 at 25–60 %, 0 at none and at every slot), a straight or triplet count of
+//                         strokes to the bar, a stroke in every bar, and the strum's share found unborrowed.
+//                         `compStyle: 'notes'`: one note a stroke (rhythm-claves.js and chunk-comping.js, ported), a
+//                         slot's step sounding only where its strike is on one of the bar's chord tones; the layer
+//                         whose bars make the best claves (25–50 % of its steps sounding, a straight or triplet count
+//                         of steps to the bar, a stroke in every bar). Either way a bar with no stroke is struck once
+//                         on its root onset.
 //                bass     lines.js' bass mined bar by bar, each bar rooted on its chord's root tone, two octaves under the
 //                         lead's range, opening on a tone of the root's class (inside the frame) where it can, else
 //                         the cheapest line; a bar with no line plays its root onset.
@@ -90,7 +101,16 @@ export const VELOCITY = Object.freeze({ lead: 0.8, chords: 0.45, comp: 0.55, bas
 export const LEAD_TARGET_HZ = Math.sqrt(440 * 660);
 const REGISTER = Object.freeze({ inner: -1200, bass: -2400, chords: -1200 });
 const COMP_SHARE = Object.freeze([0.25, 0.5]);
-const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses']);
+/** the comping's two styles: chords (the default: every strike a stroke, a strum then borrowed tones) and notes (one note a stroke, as before) */
+export const COMP_STYLES = Object.freeze(['chords', 'notes']);
+/** chords: the share of a bar's slots a comp layer may strike at full score (P2, proposed) */
+const COMP_SLOT_SHARE = Object.freeze([0.25, 0.6]);
+/** chords: the strum's window either side of a stroke, as a share of its slot (decided 1: ½ slot in all; P3) */
+export const STRUM_WINDOW = 0.25;
+/** chords: a stroke's own onset (plus 0.1 a layer more striking it), the strum's other tones, a borrowed tone (P7, proposed) */
+export const COMP_VELOCITY = Object.freeze({ stroke: 0.55, strum: 0.5, borrowed: 0.45 });
+export const MAX_COMP_VOICES = 4;
+const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses', 'compStyle']);
 /** MIDI targets: the overrides a target sets itself (the meter, the phase and the cells from the placement, the root from the tonic, the lead pinned) */
 export const TARGET_SETS = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'root', 'presence', 'settlePasses']);
 
@@ -179,12 +199,14 @@ export const isStruck = (sound) => getInstrument(sound)?.roles?.note?.amp?.kind 
  * Times and lengths for one voice's notes (each with `time` and `slotSeconds`), in place, in time order:
  * legato on, a note holds until the next; off, it lasts its slot or the gap to the next if shorter; the last runs
  * to the cycle's end. A note with its own `endTime` (a MIDI target's lead: its note-off onset, P4) lasts until then,
- * whatever the legato. A note retriggers unless the voice is legato on a held sound and it is not the first.
+ * whatever the legato; one with a `holdTo` (a comp stroke's tone: the next stroke, or its span's end) holds no further.
+ * A note retriggers unless the voice is legato on a held sound and it is not the first.
  */
 export function articulate(notes, { legato, struck, cycleSeconds }) {
   notes.sort((a, b) => a.time - b.time || a.node - b.node);
   notes.forEach((n, i) => {
-    const gap = (i + 1 < notes.length ? notes[i + 1].time : cycleSeconds) - n.time;
+    const next = i + 1 < notes.length ? notes[i + 1].time : cycleSeconds;
+    const gap = (n.holdTo != null ? Math.min(next, n.holdTo) : next) - n.time;
     n.duration = Math.max(0, n.endTime != null ? n.endTime - n.time : legato ? gap : Math.min(n.slotSeconds, gap));
     n.retrigger = !legato || struck || i === 0;
   });
@@ -193,12 +215,13 @@ export function articulate(notes, { legato, struck, cycleSeconds }) {
 
 /**
  * A part of a spec played with another sound or legato (the lab's toggles): its notes' durations and retriggers
- * re-derived by `articulate`, voice by voice in the chords part, nothing re-mined. → a new part
+ * re-derived by `articulate`, voice by voice in the chords part (and the comp in chords), nothing re-mined. → a new part
  */
 export function rearticulate(part, { sound = part.sound, legato = part.legato, enabled = part.enabled, cycleSeconds }) {
   if (!(cycleSeconds > 0)) fail('rearticulate needs the cycle\'s seconds');
   const struck = isStruck(sound), notes = part.notes.map((n) => ({ ...n }));
-  const groups = part.id === 'chords' ? [...new Set(notes.map((n) => n.voice))].map((v) => notes.filter((n) => n.voice === v)) : [notes];
+  const voiced = part.id === 'chords' || (part.id === 'comp' && part.strokes != null);
+  const groups = voiced ? [...new Set(notes.map((n) => n.voice))].map((v) => notes.filter((n) => n.voice === v)) : [notes];
   for (const g of groups) articulate(g, { legato, struck, cycleSeconds });
   notes.sort((a, b) => a.time - b.time || a.node - b.node);
   return { ...part, sound, struck, legato, enabled, notes };
@@ -297,13 +320,72 @@ function compStepsOfBar(ctx, c, k, b, range = null) {
   }
   return { steps, on };
 }
+/** the slots a chord's comping reads: its span's [from, to) in a chart's split bar, else bar k's */
+const compRangeOf = (ctx, c, k) => (c.slots != null ? { from: c.from, to: c.from + c.slots } : { from: k * ctx.S, to: (k + 1) * ctx.S });
+/** chords (P1): a layer's strokes in slots [from, to): each slot it strikes, at its first strike there → [node] */
+function compStrokesOf(ctx, b, from, to) {
+  const { row, inSlot } = ctx, out = [];
+  for (let j = from; j < to; j++) { const first = inSlot[j].find((i) => row.owners[i] & (1 << b)); if (first !== undefined) out.push(first); }
+  return out;
+}
 /**
- * Every layer's comping, scored over the bars (rhythm-claves.js and chunk-comping.js, ported): 25–50 % of its steps on
- * chord tones, a straight or triplet count of steps to the bar, a stroke in every bar.
+ * The strum around stroke s (decided 1, P3): for each of chord c's classes, its onset nearest the stroke within
+ * ±STRUM_WINDOW of the stroke's slot, inside slots [from, to) (ties: the most strikes, then the earliest).
+ * → Map(class → node)
+ */
+export function strumOf(ctx, c, s, from, to) {
+  const { row, inSlot, timeOf, chordClass, slotSeconds, posSlot } = ctx;
+  const j = posSlot[s], ts = timeOf(row.tick[s]), w = STRUM_WINDOW * slotSeconds(j) + EPS, best = new Map();
+  const take = (i, t) => {
+    const pc = chordClass(c, row.tone[i]); if (pc < 0) return;
+    const d = Math.abs(t - ts), was = best.get(pc);
+    if (!was || d < was.d - EPS || (d <= was.d + EPS && (row.strikes[i] > row.strikes[was.i] || (row.strikes[i] === row.strikes[was.i] && t < was.t)))) best.set(pc, { i, t, d });
+  };
+  // outward from the stroke's slot, each slot's onsets in time order, until one falls past the window
+  for (let q = j; q >= from; q--) {
+    const list = inSlot[q]; let past = false;
+    for (let x = list.length - 1; x >= 0; x--) { const i = list[x], t = timeOf(row.tick[i]); if (t < ts - w) { past = true; break; } if (t <= ts + w) take(i, t); }
+    if (past) break;
+  }
+  for (let q = j + 1; q < to; q++) {
+    const list = inSlot[q]; let past = false;
+    for (const i of list) { const t = timeOf(row.tick[i]); if (t > ts + w) { past = true; break; } if (t >= ts - w) take(i, t); }
+    if (past) break;
+  }
+  return new Map([...best].map(([pc, x]) => [pc, x.i]));
+}
+/**
+ * Every layer's comping, scored over the bars. Chords (`style: 'chords'`, P2): the share of the bar's slots struck (1 at
+ * 25–60 %, 0 at none and at every slot), a straight or triplet count of strokes to the bar, a stroke in every bar, and
+ * the strum's share of the chord voices' classes found unborrowed. Notes (rhythm-claves.js and chunk-comping.js,
+ * ported): 25–50 % of its steps on chord tones, a straight or triplet count of steps to the bar, a stroke in every bar.
  * → [{ layer (bit index), value, score, hits: [bar → strokes] }], in row.active's order
  */
-export function compChoicesOf(ctx, chords, { chordAt = null } = {}) {
-  const { row, N } = ctx;
+export function compChoicesOf(ctx, chords, { chordAt = null, style = 'notes' } = {}) {
+  const { row, N, S } = ctx;
+  if (style === 'chords') {
+    // the classes a strum may find or borrow: the chord voices', one list a chord (a span's in a split bar)
+    const avail = new Map(), classesOf = (c, k) => { if (!avail.has(c)) { const r = compRangeOf(ctx, c, k); avail.set(c, new Set(chordVoicesOfBar(ctx, c, k, c.slots != null ? r : null).map((n) => c.intervals[n.voice]))); } return avail.get(c); };
+    return row.active.map((b) => {
+      let density = 0, fit = 0, covered = 0, strum = 0;
+      const hits = [];
+      for (let k = 0; k < N; k++) {
+        const strokes = compStrokesOf(ctx, b, k * S, (k + 1) * S), [lo, hi] = COMP_SLOT_SHARE, x = strokes.length / S;
+        density += x < lo ? x / lo : x > hi ? (1 - x) / (1 - hi) : 1;
+        fit += [4, 8, 16].includes(strokes.length) ? 1 : [3, 6, 12].includes(strokes.length) ? 0.75 : 0.4;
+        if (strokes.length) covered++;
+        let found = 0, wanted = 0;
+        for (const s of strokes) {
+          const c = chordAt ? chordAt(ctx.posSlot[s]) : chords[k], r = compRangeOf(ctx, c, k), has = classesOf(c, k);
+          const got = strumOf(ctx, c, s, r.from, r.to);
+          wanted += has.size; for (const pc of got.keys()) if (has.has(pc)) found++;
+        }
+        strum += wanted ? found / wanted : 0;
+        hits.push(strokes);
+      }
+      return { layer: b, value: row.layers[b], score: (density + fit + covered + strum) / (4 * N), hits };
+    });
+  }
   return row.active.map((b) => {
     let density = 0, fit = 0, covered = 0;
     const hits = [];
@@ -326,6 +408,39 @@ export function compOfBar(ctx, c, k, layer, range = null) {
   const inside = (i) => (range ? posSlot[i] >= range.from && posSlot[i] < range.to : Math.floor(posSlot[i] / S) === k);
   const strokes = on.length ? on : (c.rootNode != null && inside(c.rootNode) ? [c.rootNode] : []);
   return strokes.map((i) => { const { octave, pitch } = pitchAtLeast(row.tone[i], floor); return noteAt(ctx, i, octave, pitch, k, { strikes: row.strikes[i] }); });
+}
+/**
+ * Bar k's comping in chords on the given layer (P1–P7): every slot it strikes a stroke (none: the root onset once), each
+ * the strum of the bar's chord around it, a class missing there borrowed from the bar's chord voice of that class (at
+ * the stroke's time and onset, its tone the voice's: `borrowed`, `from`), left out if the chords have none either. A
+ * voice a class (root first, at most MAX_COMP_VOICES), stacked close from an octave under the root; every tone holds at
+ * most to the next stroke, or the span's end (`holdTo`). `range` ({ from, to }: a chart's span) cuts it to the span.
+ * → { notes: [note with voice, velocity, holdTo (, borrowed, from)], strokes: [{ node, tick, time, bar, slot }], found, tones }
+ */
+export function compChordsOfBar(ctx, c, k, layer, range = null) {
+  const { row, S, P, T, rowT, starts, posSlot, pitchAtLeast, timeOf } = ctx;
+  const from = range ? range.from : k * S, to = range ? range.to : (k + 1) * S;
+  let strokes = compStrokesOf(ctx, layer, from, to);
+  if (!strokes.length && c.rootNode != null && posSlot[c.rootNode] >= from && posSlot[c.rootNode] < to) strokes = [c.rootNode];
+  const voiceOf = new Map(chordVoicesOfBar(ctx, c, k, range).map((n) => [n.voice, n]));
+  const at = strokes.map((s) => ({ s, t: timeOf(row.tick[s]) })).sort((a, b) => a.t - b.t || a.s - b.s);
+  const end = to < P ? starts[to] * rowT : T, notes = [];
+  let found = 0, tones = 0;
+  at.forEach(({ s, t }, x) => {
+    // to the next stroke, never past the span; a stroke before the downbeat (sounding at the cycle's end) holds to that end
+    const holdTo = t < end ? Math.min(x + 1 < at.length ? at[x + 1].t : end, end) : T;
+    const got = strumOf(ctx, c, s, from, to);
+    let floor = c.rootCents + REGISTER.chords - 50;
+    c.intervals.slice(0, MAX_COMP_VOICES).forEach((pc, v) => {
+      const i = got.get(pc), src = i === undefined ? voiceOf.get(v) : null;
+      if (i === undefined && !src) return;
+      const tone = i !== undefined ? row.tone[i] : src.tone, { octave, pitch } = pitchAtLeast(tone, floor);
+      floor = pitch + 1; tones++;
+      if (i !== undefined) { found++; notes.push(noteAt(ctx, i, octave, pitch, k, { voice: v, velocity: i === s ? Math.min(1, COMP_VELOCITY.stroke + 0.1 * Math.max(0, row.strikes[s] - 1)) : COMP_VELOCITY.strum, holdTo })); }
+      else notes.push(noteAt(ctx, s, octave, pitch, k, { tone, voice: v, velocity: COMP_VELOCITY.borrowed, holdTo, borrowed: true, from: src.node }));
+    });
+  });
+  return { notes, strokes: at.map(({ s, t }) => ({ node: s, tick: row.tick[s], time: t, bar: k, slot: posSlot[s] })), found, tones };
 }
 
 /**
@@ -372,10 +487,12 @@ export function innerOf(ctx, { from, bars }, { chords, targets, lead, table, rul
 
 /**
  * A part as the spec has it, from the builders' notes: articulated (legato, retriggers) voice by voice when `voice`
- * (the chords: notes is then [voice → notes]), each note's hz at baseHz × ratio × 2^octave × its bar's retune.
- *   opts { sound, legato, enabled, baseHz, ratioOf ((bar, slot) → fundamentalRatio), voice }
+ * (the chords, and the comp in chords: notes is then [voice → notes]), each note's hz at baseHz × ratio × 2^octave × its
+ * bar's retune. A note's own `velocity` (the comp in chords) stands; `borrowed`, `from` and `holdTo` are kept.
+ *   opts { sound, legato, enabled, baseHz, ratioOf ((bar, slot) → fundamentalRatio), voice, strokes (the comp in chords:
+ *          its strokes, kept on the part for the drums and the views) }
  */
-export function partOf(ctx, id, notes, { sound, legato, enabled, baseHz, ratioOf, voice = false }) {
+export function partOf(ctx, id, notes, { sound, legato, enabled, baseHz, ratioOf, voice = false, strokes = null }) {
   const { row, T } = ctx;
   const struck = isStruck(sound), groups = voice ? notes : [notes];
   for (const g of groups) if (g) articulate(g, { legato, struck, cycleSeconds: T });
@@ -387,10 +504,12 @@ export function partOf(ctx, id, notes, { sound, legato, enabled, baseHz, ratioOf
       const accent = id === 'comp' ? 0.1 * Math.max(0, (n.strikes ?? 1) - 1) : id === 'lead' && n.strong ? 0.1 : 0;
       return {
         node: n.node, tick: row.tick[n.node], time: n.time, ratio: row.tones[n.tone], octave: n.octave, hz: baseHz * (num / den) * 2 ** n.octave * ratioOf(n.bar, n.slot),
-        duration: n.duration, velocity: Math.min(1, VELOCITY[id] + accent), bar: n.bar, slot: n.slot, slotSeconds: n.slotSeconds, retrigger: n.retrigger, ...(voice ? { voice: n.voice } : {}),
+        duration: n.duration, velocity: n.velocity ?? Math.min(1, VELOCITY[id] + accent), bar: n.bar, slot: n.slot, slotSeconds: n.slotSeconds, retrigger: n.retrigger, ...(voice ? { voice: n.voice } : {}),
         ...(n.endTime != null ? { endTime: n.endTime } : {}), ...(n.clipNote != null ? { clipNote: n.clipNote } : {}),
+        ...(n.holdTo != null ? { holdTo: n.holdTo } : {}), ...(n.borrowed ? { borrowed: true, from: n.from } : {}),
       };
     }),
+    ...(strokes ? { strokes: [...strokes].sort((a, b) => a.time - b.time || a.node - b.node) } : {}),
   };
 }
 
@@ -472,7 +591,8 @@ function targetLeadNotes(row, cells, tg, base) {
  *   cycleSeconds   how long one cycle lasts
  *   options        { seed (default 1), overrides: { bars, slotsPerBar, anchors, phase, frameCentsEachSide, root,
  *                  modulation, foldOffsets, table, sounds: { part: id }, legato: { part: bool }, enabled: { part: bool },
- *                  baseHz, compLayer, presence ('cluster' | 'exact'), settlePasses (an integer 0..3) }, worker (true:
+ *                  baseHz, compLayer, presence ('cluster' | 'exact'), settlePasses (an integer 0..3), compStyle ('chords', the
+ *                  default, | 'notes': the comping, above) }, worker (true:
  *                  the full table unless asked), progression ([a ratio of the row | null] a bar: progression.js;
  *                  absent or all null: lead-led, exactly as without it),
  *                  drums (drums.js `arrangeDrums` options, or false: no `drums` in the spec),
@@ -634,9 +754,15 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   const voices = [];
   if (spans) { for (let k = 0; k < N; k++) for (const c of ownChords[k]) for (const n of chordVoicesOfBar(ctx, c, k, rangeOf(c))) (voices[n.voice] ||= []).push(n); }
   else for (let k = 0; k < N; k++) for (const n of chordVoicesOfBar(ctx, h.chords[k], k)) (voices[n.voice] ||= []).push(n);
-  // comping: a layer cut into the bars and their slots: a slot's step is the layer's first strike in it, and it sounds
-  // when that strike's tone is one of the bar's chord tones (rhythm-claves.js' tone set, chunk-comping.js' ranking)
-  const compChoices = spans ? compChoicesOf(ctx, h.chords, { chordAt: (j) => slotChord[j] }) : compChoicesOf(ctx, h.chords);
+  // comping: a layer cut into the bars and their slots. Chords (the default): every slot it strikes is a stroke, the
+  // bar's chord strummed from the onsets around it and the rest borrowed from the chord voices. Notes: a slot's step is
+  // the layer's first strike in it, sounding when its tone is one of the bar's chord tones (rhythm-claves.js' tone set,
+  // chunk-comping.js' ranking)
+  const compStyle = ov.compStyle ?? 'chords';
+  if (!COMP_STYLES.includes(compStyle)) fail(`compStyle must be one of ${COMP_STYLES.join(', ')}`);
+  const chordsStyle = compStyle === 'chords';
+  if (chordsStyle) decide('compStyle', compStyle, ov.compStyle != null ? 'asked' : 'chords by default (decided, Avery: every strike of the layer a stroke, the chord strummed from the row, then borrowed)');
+  const compChoices = compChoicesOf(ctx, h.chords, { ...(spans ? { chordAt: (j) => slotChord[j] } : {}), style: compStyle });
   const tieOrder = compChoices.map(() => rng());
   let comp;
   if (ov.compLayer != null) {
@@ -644,11 +770,23 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     decide('compLayer', 'ABCD'[comp.layer], 'asked');
   } else {
     comp = compChoices.reduce((a, b, i) => (b.score > a.score + EPS || (Math.abs(b.score - a.score) <= EPS && tieOrder[i] < tieOrder[compChoices.indexOf(a)]) ? b : a));
-    decide('compLayer', 'ABCD'[comp.layer], `layer ${'ABCD'[comp.layer]} (${comp.value}) makes the best claves on the chord tones: ${comp.score.toFixed(3)} (a slot's step its first strike there; 25–50 % of the steps on chord tones, a straight or triplet count of steps to the bar, a stroke in every bar), ties by the seed`);
+    decide('compLayer', 'ABCD'[comp.layer], chordsStyle
+      ? `layer ${'ABCD'[comp.layer]} (${comp.value}) comps best: ${comp.score.toFixed(3)} (every slot it strikes a stroke; 25–60 % of a bar's slots struck, a straight or triplet count of strokes to the bar, a stroke in every bar, the strum's share found in the row), ties by the seed`
+      : `layer ${'ABCD'[comp.layer]} (${comp.value}) makes the best claves on the chord tones: ${comp.score.toFixed(3)} (a slot's step its first strike there; 25–50 % of the steps on chord tones, a straight or triplet count of steps to the bar, a stroke in every bar), ties by the seed`);
   }
   parts.comp = [];
-  if (spans) { for (let k = 0; k < N; k++) for (const c of ownChords[k]) parts.comp.push(...compOfBar(ctx, c, k, comp.layer, rangeOf(c))); }
-  else for (let k = 0; k < N; k++) parts.comp.push(...compOfBar(ctx, h.chords[k], k, comp.layer));
+  const compStrokes = [];
+  let compFound = 0, compTones = 0;
+  const compBar = (c, k, range = null) => {
+    if (!chordsStyle) { parts.comp.push(...compOfBar(ctx, c, k, comp.layer, range)); return; }
+    const got = compChordsOfBar(ctx, c, k, comp.layer, range);
+    for (const n of got.notes) (parts.comp[n.voice] ||= []).push(n);
+    compStrokes.push(...got.strokes); compFound += got.found; compTones += got.tones;
+  };
+  if (spans) { for (let k = 0; k < N; k++) for (const c of ownChords[k]) compBar(c, k, rangeOf(c)); }
+  else for (let k = 0; k < N; k++) compBar(h.chords[k], k);
+  const compStrum = compTones ? compFound / compTones : 0;
+  if (chordsStyle) decide('compStrum', compStrum, `layer ${'ABCD'[comp.layer]}'s ${compStrokes.length} stroke${compStrokes.length === 1 ? '' : 's'}, each the bar's chord: ${compFound} of ${compTones} tones (${(100 * compStrum).toFixed(0)} %) from the row within ±${STRUM_WINDOW} slot, the rest borrowed from the chord voices`);
   // bass: bar by bar, rooted on the bar's root tone
   parts.bass = [];
   let bassRooted = 0;
@@ -674,7 +812,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   // ── legato, sounds, pitch ──
   const leadGaps = []; for (let i = 1; i < h.lead.notes.length; i++) leadGaps.push(h.lead.notes[i].cell - h.lead.notes[i - 1].cell);
   const leadGap = median(leadGaps);
-  const legatoWhy = { chords: 'on by default: chords sustain', inner: 'on by default: an inner voice sustains', comp: 'off by default: comping is struck', bass: 'off by default (proposed)',
+  const legatoWhy = { chords: 'on by default: chords sustain', inner: 'on by default: an inner voice sustains', comp: chordsStyle ? 'off by default: comping is struck (a stroke\'s tones last to the next stroke or a slot, whichever is shorter)' : 'off by default: comping is struck', bass: 'off by default (proposed)',
     lead: `the lead's median gap is ${leadGap ?? '–'} slot${leadGap === 1 ? '' : 's'}: ${leadGap != null && leadGap <= 2 ? 'on (2 or less)' : 'off (more than 2)'}` };
   const legatoDefault = { chords: true, inner: true, comp: false, bass: false, lead: leadGap != null && leadGap <= 2 };
   const legato = {}, sound = {}, enabled = {};
@@ -692,8 +830,8 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   const baseHz = decide('baseHz', ov.baseHz ?? (leadPitch == null ? 261.6255653005986 : LEAD_TARGET_HZ / 2 ** (leadPitch / 1200)),
     ov.baseHz ? 'asked' : leadPitch == null ? 'no lead notes: 1/1 at middle C' : `the lead's median pitch (${leadPitch.toFixed(1)}¢ above 1/1) at √(440·660) ≈ 539 Hz`);
 
-  const out = (id, notes, { voice = false } = {}) => partOf(ctx, id, notes, { sound: sound[id], legato: legato[id], enabled: enabled[id], baseHz, ratioOf, voice });
-  const partList = [out('lead', parts.lead), out('chords', voices, { voice: true }), out('comp', parts.comp), out('bass', parts.bass), out('inner', parts.inner)];
+  const out = (id, notes, { voice = false, strokes = null } = {}) => partOf(ctx, id, notes, { sound: sound[id], legato: legato[id], enabled: enabled[id], baseHz, ratioOf, voice, strokes });
+  const partList = [out('lead', parts.lead), out('chords', voices, { voice: true }), out('comp', parts.comp, chordsStyle ? { voice: true, strokes: compStrokes } : {}), out('bass', parts.bass), out('inner', parts.inner)];
   rec?.parts(partList, { comp, compChoices, compAsked: ov.compLayer != null });
 
   const counts = Object.fromEntries(partList.map((p) => [p.id, p.notes.length]));
@@ -715,7 +853,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
       onsets: row.n, tones: row.tones.length, grid: row.grid, onsetsPerSlot: (tg ? tg.windowOnsets : row.n) / P, notes: counts,
       leadPhrases: h.passes.phrases.length, secondPassWins: h.passes.secondWins, exceptions: h.exceptions,
       chordVoices: voices.reduce((n, v) => n + (v ? v.length : 0), 0) / N, bassRooted: `${bassRooted}/${N}`, innerOnLeadSlots: innerOnLead,
-      compLayer: { layer: 'ABCD'[comp.layer], value: comp.value, score: comp.score },
+      compLayer: { layer: 'ABCD'[comp.layer], value: comp.value, score: comp.score }, ...(chordsStyle ? { compStrum } : {}),
       settle: { rounds: h.settle.rounds, converged: h.settle.converged, oscillated: h.settle.oscillated, changedBarsPerRound: [...h.settle.changedBarsPerRound],
         exceptionsPerRound: [...h.settle.exceptionsPerRound], chosenRound: h.settle.chosenRound, ...(h.settle.pinned ? { pinned: true } : {}) },
     },

@@ -10,6 +10,9 @@
 //   • every drum mode × fills on and off, a per-bar mode, and no drums
 //   • the trace off, `true` and `{ caps }`
 //   • thrown errors (a bad override) are the same error
+// The live core runs with `compStyle: 'notes'` (COMP_ARP_ORDER.md P9: the frozen core's comping, one note a stroke; the
+// default is now chords): the override is taken back out of the live spec's input, and out of the override list a bad
+// override's error names, before the texts are compared. The fixtures are untouched.
 //   node Composer/tests/assert-refactor-identity.mjs
 import { compose } from '../core/compose.js';
 import { compose as composeBefore } from './fixtures/compose-before.js';
@@ -20,6 +23,11 @@ import { RHYTHMS } from './rhythms.mjs';
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };
 const run = (f, L, T, o) => { try { return JSON.stringify(f(L, T, o)); } catch (err) { return `throws: ${err.message}`; } };
+/** the live core with the frozen core's comping (compStyle 'notes'), the override itself taken back out */
+const live = (L, T, o = {}) => {
+  try { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes' } }); delete spec.input.overrides.compStyle; return spec; }
+  catch (err) { throw new Error(err.message.replace(', compStyle)', ')')); }
+};
 const pad = (L) => [...L, 0, 0, 0, 0].slice(0, 4);
 
 console.log('═══ COMPOSER — the builder refactor: Compose byte for byte as before (step 4a) ═══');
@@ -28,7 +36,7 @@ const group = (label, cases) => {
   let same = 0, refused = 0, threw = 0;
   const bad = [];
   for (const [name, L, T, o] of cases) {
-    const a = run(composeBefore, L, T, o), b = run(compose, L, T, o);
+    const a = run(composeBefore, L, T, o), b = run(live, L, T, o);
     if (a === b) { same++; if (a.startsWith('throws')) threw++; else if (a.includes('"refused":true')) refused++; } else bad.push(name);
   }
   check(`${label}: ${same}/${cases.length} byte-identical (${refused} refused, ${threw} thrown alike)`, same === cases.length, bad.slice(0, 6).join('; '));

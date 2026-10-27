@@ -93,7 +93,8 @@ const spec = compose(L, T, { seed: 1, changes: chart.changes, progression: progr
   const chordOfSlot = spec.chords.flatMap((c) => Array.from({ length: c.slots }, () => c));
   const voices = spec.parts.find((p) => p.id === 'chords').notes, comp = spec.parts.find((p) => p.id === 'comp').notes;
   const { row } = materialsOf(spec);
-  const onChord = (n) => { const c = chordOfSlot[n.slot], k = classOfCents(row.toneCents[row.tone[n.node]] - row.toneCents[row.tones.indexOf(c.rootTone)]); return Math.abs(k.dev) <= spec.knobs.frameCentsEachSide + 1e-9 && c.intervals.includes(k.pc); };
+  // a comp tone borrowed in chords (COMP_ARP_ORDER.md P4) has its source voice's tone (`from`)
+  const onChord = (n) => { const c = chordOfSlot[n.slot], k = classOfCents(row.toneCents[row.tone[n.borrowed ? n.from : n.node]] - row.toneCents[row.tones.indexOf(c.rootTone)]); return Math.abs(k.dev) <= spec.knobs.frameCentsEachSide + 1e-9 && c.intervals.includes(k.pc); };
   check(`the chord voices sound their span's chord (${voices.length} notes)`, voices.length > 0 && voices.every(onChord));
   check(`the comping strikes its span's chord, or its root (${comp.length} strokes)`, comp.every((n) => onChord(n) || chordOfSlot[n.slot].rootNode === n.node));
   check('the decisions say the spans and the even split', spec.decisions.some((d) => d.what === 'changes' && /every bar split evenly/.test(d.why)) && spec.decisions.find((d) => d.what === 'bars').why.includes('chart'));

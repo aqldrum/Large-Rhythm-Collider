@@ -38,7 +38,8 @@ function audit(spec) {
   const row = buildRow(spec.input.layers), k = spec.knobs, T = k.cycleSeconds, phaseX = k.phase[0] / k.phase[1], fr = spec.chords.map((c) => c.fundamentalRatio);
   for (const part of spec.parts) for (const n of part.notes) {
     const [num, den] = n.ratio.split('/').map(Number);
-    if (row.tick[n.node] !== n.tick || row.tones[row.tone[n.node]] !== n.ratio) return `${part.id}: node ${n.node} is not its tick and ratio`;
+    // a comp tone borrowed in chords (COMP_ARP_ORDER.md P4) sounds at its stroke's onset with its source voice's tone (`from`)
+    if (row.tick[n.node] !== n.tick || row.tones[row.tone[n.borrowed ? n.from : n.node]] !== n.ratio) return `${part.id}: node ${n.node} is not its tick and ratio`;
     if (!near(n.time, mod(n.tick / row.grid - phaseX, 1) * T)) return `${part.id}: node ${n.node} is not at its own time`;
     if (!near(n.hz, k.baseHz * (num / den) * 2 ** n.octave * fr[n.bar])) return `${part.id}: hz of node ${n.node}`;
   }
@@ -133,7 +134,9 @@ console.log('\n— no progression is today\'s Compose');
   }
   check('null, [], all null and all auto: byte-identical specs, input included', !bad, bad);
   bad = '';
-  for (const [name, run] of composeCases((L, T, o) => compose(L, T, { ...o, progression: Array(8).fill(null) }))) if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) bad = name;
+  // the baseline's comp is one note a stroke: compStyle 'notes' (COMP_ARP_ORDER.md P9), the override itself left out of the input
+  const unasked = (spec) => { delete spec.input.overrides.compStyle; return spec; };
+  for (const [name, run] of composeCases((L, T, o) => unasked(compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes' }, progression: Array(8).fill(null) })))) if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) bad = name;
   check(`the e3909e1 baseline (settle-baseline.mjs, ${Object.keys(COMPOSE_HASHES).length} cases) with an all-null progression`, !bad, bad);
 }
 

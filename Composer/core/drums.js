@@ -23,7 +23,8 @@
 //   modes      backbeat   the default (Avery, the sprint brief): kick on beats 1 and 3, snare on 2 and 4, a hat on
 //                         every slot (its beat slots a little louder) — the steady beat the other parts sit on
 //              with       the backbeat, and a perc stroke on every slot where the lead or the comping strikes, on that
-//                         note's own onset (the lead's first); accented where both strike, or on a strong slot
+//                         note's own onset (the lead's first; the comp in chords: its stroke's); accented where both
+//                         strike, or on a strong slot
 //              against    the backbeat, and a perc stroke on the slots both leave empty, on the slot's nearest onset:
 //                         at most ⌊S / 2⌋ a bar (at least 1), the off-beat slots first, then by the seed
 //              partition  the backbeat, and a perc line from the layer that strikes the downbeat (`partitionLine`)
@@ -529,7 +530,9 @@ export function arrangeDrums(spec, options = {}) {
   const notesBySlot = (id) => { const by = new Map(); for (const n of spec.parts.find((p) => p.id === id)?.notes || []) if (!by.has(n.slot)) by.set(n.slot, n); return by; };
   let partition = null;
   if (bars.some((b) => b.mode === 'with' || b.mode === 'against')) {
-    const lead = notesBySlot('lead'), comp = notesBySlot('comp');
+    // the comp in chords (compose.js `compChordsOfBar`): its strokes, one a slot, not the strum's tones (COMP_ARP_ORDER.md P9)
+    const strokes = spec.parts.find((p) => p.id === 'comp')?.strokes;
+    const lead = notesBySlot('lead'), comp = strokes ? new Map(strokes.map((x) => [x.slot, x])) : notesBySlot('comp');
     for (let k = 0; k < N; k++) {
       if (modeOf(k) === 'with') {
         for (let q = 0; q < S; q++) {

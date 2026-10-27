@@ -31,10 +31,12 @@ console.log('Composer trace');
 console.log('\n— off: the spec as it was');
 {
   let bad = '';
-  for (const [name, run] of composeCases((L, T, o) => compose(L, T, { ...o, trace: false }))) if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) { bad = name; break; }
+  // the baseline's comp is one note a stroke: compStyle 'notes' (COMP_ARP_ORDER.md P9), the override itself left out of the input
+  const notes = (o) => ({ ...o, overrides: { ...o.overrides, compStyle: 'notes' } }), unasked = (spec) => { delete spec.input.overrides.compStyle; return spec; };
+  for (const [name, run] of composeCases((L, T, o) => unasked(compose(L, T, { ...notes(o), trace: false })))) if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) { bad = name; break; }
   check(`the e3909e1 baseline (${Object.keys(COMPOSE_HASHES).length} cases) with trace: false`, !bad, bad);
   bad = '';
-  for (const [name, run] of composeCases((L, T, o) => without(compose(L, T, { ...o, trace: true })))) if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) { bad = name; break; }
+  for (const [name, run] of composeCases((L, T, o) => unasked(without(compose(L, T, { ...notes(o), trace: true }))))) if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) { bad = name; break; }
   check('… and with the trace on, once spec.trace is taken off', !bad, bad);
   const a = compose([8, 7, 6, 5], 4), b = compose([8, 7, 6, 5], 4, { trace: false });
   check('no `trace` key when off; the input never records it', !('trace' in a) && !('trace' in b) && JSON.stringify(a) === JSON.stringify(b) && !('trace' in compose([8, 7, 6, 5], 4, { trace: true }).input));

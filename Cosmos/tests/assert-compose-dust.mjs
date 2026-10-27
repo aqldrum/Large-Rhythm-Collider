@@ -99,6 +99,9 @@ console.log('\n  The inputs: the trace and the dust');
   check('…off (the default): no trace asked, and the very spec object is played (E1 as it was)', !('trace' in off[0]) && !('dust' in off[0]) && off[1] === plain);
 }
 
+/** a comp voice's borrowed sources: a comp tone borrowed in chords (Composer/COMP_ARP_ORDER.md P4) sounds at its stroke's onset with its source voice's tone (`from`) */
+const borrowedAt = (spec, vo) => (vo.part === 'comp' ? (spec.parts.find((p) => p.id === 'comp')?.notes || []).filter((n) => n.borrowed && n.node === vo.node).map((n) => n.from) : []);
+
 console.log('\n  The scene: a Rhythm card (8:7:6:5 and the 4,099-onset 41:42:43:…)');
 const caps = (id) => dustCaps(QUALITY_TIERS[id]);
 const R1 = rhythmCompose([8, 7, 6, 5]);
@@ -115,7 +118,7 @@ const R2 = rhythmCompose([1031, 1033, 1039, 1049]);
     for (let i = v0; i < v1; i++) {
       const vo = a.voices[i - v0], node = vo.node;
       if (vo.part === 'drums') { if (!(node >= 0 && row.tick[node] === vo.tick)) bad.push(`drum ${i}`); continue; }
-      if (!(row.tick[node] === a.tickOf[i] && near(a.centsOf[i], row.toneCents[row.tone[node]], 1e-3))) bad.push(`voice ${i}`);
+      if (!(row.tick[node] === a.tickOf[i] && [node, ...borrowedAt(R.spec, vo)].some((src) => near(a.centsOf[i], row.toneCents[row.tone[src]], 1e-3)))) bad.push(`voice ${i}`);
     }
     for (let i = k0; i < k1; i++) { const node = a.nodeOfMote[i]; if (!(row.tick[node] === a.tickOf[i] && near(a.centsOf[i], row.toneCents[row.tone[node]], 1e-3))) bad.push(`key ${i}`); }
     for (let i = g0; i < g1; i++) { const node = a.nodeOfMote[i]; if (!(row.tick[node] === a.tickOf[i] && near(a.centsOf[i], row.toneCents[row.tone[node]], 1e-3))) bad.push(`grain ${i}`); }
@@ -135,7 +138,8 @@ const GR = gridCompose(840, G840.slice(0, 1200));
   const [g0, g1] = a.ranges.grains, [k0, k1] = a.ranges.keys, [v0, v1] = a.ranges.voices;
   let bad = [];
   const at = (i, node) => sr.tick[node] === a.tickOf[i] && near(a.centsOf[i], sr.toneCents[sr.tone[node]], 1e-3);
-  for (let i = v0; i < v1; i++) { const vo = a.voices[i - v0]; if (vo.part === 'drums' ? !(vo.node >= 0 && sr.tick[vo.node] === vo.tick) : !at(i, vo.node)) bad.push(`voice ${i}`); }
+  const borrowed = (i, vo) => borrowedAt(GR.spec, vo).some((src) => sr.tick[vo.node] === a.tickOf[i] && near(a.centsOf[i], sr.toneCents[sr.tone[src]], 1e-3));
+  for (let i = v0; i < v1; i++) { const vo = a.voices[i - v0]; if (vo.part === 'drums' ? !(vo.node >= 0 && sr.tick[vo.node] === vo.tick) : !at(i, vo.node) && !borrowed(i, vo)) bad.push(`voice ${i}`); }
   for (let i = k0; i < k1; i++) if (!at(i, a.nodeOfMote[i])) bad.push(`key ${i}`);
   // a grain is a source onset: its rhythm's own row strikes at that tick with that tone
   const rows = new Map(), rowOf = (r) => rows.get(r) ?? rows.set(r, buildRow(G840[r])).get(r);
