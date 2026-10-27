@@ -1,0 +1,196 @@
+# Chord comping, and arpeggiators (order, 2026-10-27)
+
+Two things the Composer has said it would do since 2026-10-22 (DESIGN_NOTES, "Next": "comping as chords", and "a full
+arpeggiator for the inner voice"):
+
+- **Phase A, comping in chords.** Today `comp` plays one note at a time. Its source is one layer's first strike in each
+  slot, and it sounds only where that strike's tone is a chord tone. On the test rows that's 3–16 notes a cycle. With
+  this phase, each stroke plays the bar's chord.
+- **Phase B, an Arp mode for the lead and the inner voice.** Each of those parts switches between Line (the mined line,
+  as now) and Arp: the chord's tones in a set shape, at a set rate.
+
+Integration branch: `composer-sprint-2`. Phases branch from it as `comp/<phase>` and `arp/<phase>`, each in its own
+worktree under `.claude/worktrees/`. The planner reviews each phase, runs the suites and merges it. Never `main`, never
+pushed. Verification is the Node suites. Avery does the browser pass and the rig pass.
+
+## The probe (2026-10-27): how much of a chord the row sounds near a stroke
+
+Every note is an onset the row already plays, at its own time. So a chord at one moment needs the row to sound the
+chord's tones close together. For each comp stroke of today's Compose (seed 1), this is the share of the bar's chord
+classes found among the onsets within a window around it:
+
+| row | onsets | ¼ slot | ½ slot | the slot | slots holding any chord tone |
+|---|--:|---|---|---|--:|
+| 8:7:6:5 | 22 | 44% | 56% | 67% | 5/6 |
+| 11:9:7:5 | 29 | 33% | 33% | 44% | 6/8 |
+| 19:17:16:15 | 64 | 39% | 44% | 56% | 14/16 |
+| 16:12:9 | 30 | 38% | 57% | 71% (29% full) | 8/8 |
+| 119:42:15:8 | 172 | 38% | 44% | 65% | 16/16 |
+| 426:317:285 | 1,024 | 64% | 64% | 92% (67% full) | 16/16 |
+| 768:769 | 1,536 | 40% | 40% | 47% | 25/32 |
+| 768:784 | 1,536 | 81% (25% full) | 81% | 100% full | 32/32 |
+| 4099:4093:4091:4079 | 16,359 | 81% (50% full) | 100% full | 100% full | 64/64 |
+
+- **Dense rows** find the whole chord within half a slot: a strum, each tone at its own moment.
+- **Small rows, and rows whose tones bunch in time (768:769),** find a third to a half of it.
+- **An arpeggio rarely lacks a note.** 75–100% of slots hold at least one chord tone. The engine chooses every note's
+  octave (`pitchAtLeast`), so an arp's shape (up, down, up-down) can always be kept. The row only decides *which*
+  chord tone comes at each step.
+
+The script is in the planner's scratchpad, not the repo. It re-derives each chord's root class from `chords[k].rootTone`.
+
+## Decided (Avery, 2026-10-27)
+
+1. **Strum, then borrow.** A stroke gathers the chord from the onsets near it (within ½ slot), each sounding at its own
+   time: a strum. A chord tone the row doesn't sound nearby is **borrowed**. It takes the tone of the bar's chord voice
+   of that class and sounds at the stroke's time, marked as borrowed (as a MIDI target's substitutes are marked). Dense
+   rows come out pure; small rows get full chords. (Ruled out: a strict strum with partial chords on sparse rows, and
+   block chords at the stroke.)
+2. **The comp's rhythm is a layer's clave, every strike.** The best-clave layer stays the source. Every slot it strikes
+   becomes a chord stroke, not only the ones whose strike is itself a chord tone. The comp plays that layer's own
+   polyrhythm. (Ruled out: today's sparse rule, and curated comp patterns. Patterns may come later.)
+3. **An arp's clock is the slots × a rate.** 1–4 notes a slot, taken from the slot's own onsets in time order, so the
+   subdivisions keep the row's own timing rather than a quantized grid. (Ruled out: a layer's strikes as the pulse.)
+4. **The lead and the inner voice get an Arp mode** (Line ⇄ Arp). Comping and the bass don't. (Not chosen: broken-chord
+   comping, bass arps.)
+
+## Proposed: Phase A, comping in chords (the builder's calls; Avery may overrule)
+
+- **P1. The strokes (decision 2).** For each slot the comp layer strikes, its first strike there is the stroke. The
+  stroke's own onset sounds only when its tone is a chord tone; otherwise it only sets the moment.
+- **P2. Choosing the layer.** Today's score has three parts. Its density part (25–50% of steps landing on chord tones)
+  no longer applies once every strike is a stroke. It becomes the share of the bar's *slots* the layer strikes: 1
+  between 25% and 60%, falling to 0 at none and at every slot (a layer that strikes every slot is a pulse, not a comp).
+  The fit part (straight or triplet step counts) and the covered part (a stroke in every bar) stay. A fourth part is
+  added: the strum's coverage, the share of chord tones found unborrowed. The `compLayer` override still picks a layer
+  by hand.
+- **P3. The strum (decision 1).** The window is the stroke's time ± ¼ slot (the probe's ½ slot). For each chord class,
+  the class's onset in the window nearest the stroke wins, with ties going to the most strikes, then the earliest. A
+  chart's split bar uses the span's chord at the stroke's slot, and the window doesn't cross the span's edge.
+- **P4. Borrowed tones (decision 1).** A class missing from the window takes the tone of the bar's chord voice of that
+  class (`chordVoicesOfBar`), at the stroke's time, with `borrowed: true` and `from: <that voice's node>`. If the chords
+  part has no voice of that class either, the class is left out.
+- **P5. Voicing.** One voice per chord class, root first, stacked close from an octave under the root (the chords'
+  register, as comp sits now). A note's `voice` is its class's index, as on the chords part. So the comp is at most 4
+  voices, like the chords.
+- **P6. Lengths.** Each voice holds until the next stroke (chunk-comping's rule), never past the chord's span. The
+  default stays legato off. Off: a stroke's tones last until the next stroke or one slot, whichever is shorter. On: until
+  the next stroke. Struck sounds (marimba, kalimba) decay on their own either way.
+- **P7. Velocity.** The stroke's own onset: 0.55, plus 0.1 for each extra layer striking it (as now). The strum's other
+  tones: 0.5. Borrowed tones: 0.45, so the row's own tones lead.
+- **P8. The spec.** Comp notes gain `voice`, and `borrowed` and `from` where they apply. The comp part is articulated
+  voice by voice, as the chords are (`partOf(..., { voice: true })`). New stats: `compStrum`, the share of tones found
+  unborrowed. A new decision line says the layer, its strokes and that share.
+- **P9. Identity.** The old one-note comp stays as an override, `compStyle: 'notes'`. The default becomes `'chords'`.
+  `assert-refactor-identity.mjs` and `settle-baseline.mjs` run with `compStyle: 'notes'`, so their frozen fixtures stay
+  never-edited and still pass byte for byte. The drums use the comp's strokes in their *with* and *against* modes. They
+  keep reading the strokes (one a slot), not the strum's tones, so drums only change where the strokes do.
+- **P10. Edits.** A chord swap rebuilds the bar's comp with the new chord (`rearrange.js`, as now through `compOfBar`).
+  A borrowed tone follows the swapped chord's voices.
+- **P11. MIDI out.** The Comp bus becomes an MPE zone of four, channels 2–5, one a comp voice, exactly like Chords
+  (`COMP_MEMBERS`). The .mid file follows. This applies Avery's all-MPE ruling; there's nothing new to decide.
+- **P12. The plot and the matrix.** A strummed tone lights its own onset. A borrowed tone lights its source onset as a
+  ring (hollow), the way the clip's substitutes are marked. The comp row's cell inspector gains one line, "7 strokes ·
+  82% from the row" (the share in Details).
+
+## Proposed: Phase B, the Arp mode (the builder's calls; Avery may overrule)
+
+- **Q1. An arrangement step, live.** Like the drums, an arp is built from the spec and its materials, with no
+  re-compose: `arrangeArp(spec, materials, partId, { pattern, rate, range })` in a new `core/arp.js`. It's pure: no
+  DP, one pass over the slots, so a switch or a knob is live (a big row's materials come from the worker's cache, as
+  rearrange's do). Line ⇄ Arp swaps the part's notes. Line mode is Compose's line, untouched.
+- **Q2. The steps (decision 3).** Each slot is cut into `rate` equal sub-windows (rate 1–4, default 2). Each
+  sub-window is one step. Its candidates are its onsets whose tone is a chord tone of the slot's chord (the span's, in a
+  split bar). A step with none rests.
+- **Q3. The pattern: the shape is strict, the order is loose.** The arp walks a ladder: the chord's classes stacked
+  close over `range` octaves (1–3, default 2) from the part's floor. Each step takes the candidate whose rung is the
+  next one in the pattern's direction, and the octave makes it so. Patterns:
+  - **Up / Down:** the next rung above / below, wrapping to the other end of the ladder.
+  - **Up-down:** turns at the ends.
+  - **As played:** the earliest candidate in the step, placed nearest the previous note.
+
+  So the direction always holds. Which chord tone comes next is the nearest in direction that the row offers. A strict
+  1–3–5 order, resting where the class is absent, is a possible later option.
+- **Q4. Arp in the inner voice.** Its floor is the inner's register (an octave under the lead). It never plays the
+  lead's onsets (`avoidNodes`, as now). It rests on a step where the lead strikes, unless the rate is 3 or more.
+  Default sound: harp.
+- **Q5. Arp in the lead.** Harmony follows melody, so the chords come from the mined line. An arp lead keeps that
+  order: Compose mines the line and settles the chords as now, and the arp then sounds over the final chords instead
+  of the line. The line stays in the spec (`lead.line`, silent) and in the trace. Back to Line restores it with no
+  re-compose. While the lead is an arp, its runner-ups and lead swaps are hidden. A MIDI target's lead is the clip, so
+  Arp is disabled there, with a title saying so. The inner keeps avoiding the arp's onsets.
+- **Q6. Lengths and velocity.** Legato off by default: a note lasts its step. On: it holds to the next step. Velocity:
+  the part's (lead 0.8, inner 0.5), +0.1 on a slot's first step.
+- **Q7. Where it lives.** It's a choice saved with the composition, like the drum grid: in the store's entry, undoable,
+  surviving a re-compose. It's not a Compose knob. Compose's own output (Line) is unchanged, so every identity fixture
+  holds.
+- **Q8. The window.** In the lead and inner cell inspectors: a **Line | Arp** switch. When Arp is on: Pattern (Up,
+  Down, Up-down, As played), Rate (1–4), Range (1–3 octaves). The part strip's name gains "· arp". In Details: the
+  rests count and the steps' share holding a chord tone.
+- **Q9. MIDI.** One note at a time, so its bus stays a zone of one. Nothing changes there.
+- **Q10. Improvise, later.** Pattern and rate are natural things for the improvise walk to vary from loop to loop
+  (DIRECTIONS.md, "Improvise"). It's not built here.
+
+## Phase A: comping in chords
+
+- A1. `compose.js`: `compStepsOfBar` → every struck slot (P1); the score (P2); `compOfBar` → the strum and the borrowed
+  tones, voiced (P3–P5, P7); `compStyle` (P9); the comp part articulated by voice (P6, P8).
+- A2. `rearrange.js` and the store: a chord swap rebuilds the comp's chords; `specNotesOf` keeps `voice`, `borrowed`
+  and `from`.
+- A3. `composer-midi.js`: the Comp zone of four (P11); the .mid's comp track.
+- A4. The plot's rings for borrowed tones, and the inspector's line (P12); the trace's `parts` event carries the comp's
+  voices.
+- A5. Tests: a new `assert-comp.mjs` checks:
+  - every strike is a stroke;
+  - every strum tone is a real onset within ± ¼ slot of its stroke, and of a chord class;
+  - borrowed tones are exactly the classes missing from the window;
+  - the stroke's chord, through a split bar;
+  - at most 4 voices;
+  - lengths with legato on and off;
+  - the 16k row's timing;
+  - `compStyle: 'notes'` byte for byte.
+
+  `assert-composer-midi.mjs` adds the Comp zone. The identity suites run as P9 says.
+
+## Phase B: the Arp mode
+
+- B1. `core/arp.js`: `arrangeArp` (Q1–Q3, Q6) and its tests, `assert-arp.mjs`, which check:
+  - every note is a real onset, of a chord class, inside its step's sub-window;
+  - the shape holds for each pattern;
+  - `range` holds;
+  - the inner's avoidance (Q4);
+  - rests;
+  - a split bar;
+  - the 16k row's time (target: under 50 ms).
+- B2. The controller and the store: the per-part mode and its knobs (Q7), live, undoable; lead in Arp hides its swaps
+  (Q5); the MIDI target disables it.
+- B3. The window: the switch and knobs (Q8), the strip's "· arp".
+- B4. Tests: `assert-page-arp.mjs`: the switch, live with no re-compose, undo, a re-compose keeping the mode, the
+  target's lock, recall through the glyph.
+
+A and B touch different core files. Both touch the cell inspector in `composer-tab.js`, so A3–A4 and B3 go one after
+the other. A1–A2 and B1 can run side by side.
+
+## Browser and rig checklist (for Avery; a draft, finalized when built)
+
+Serve from `.claude/worktrees/composer-sprint-2`. Composer window. Try 8:7:6:5 (a small row: expect borrowed tones), and
+4099:4093:4091:4079 or 768:784 (dense: expect pure strums).
+
+**Comping**
+1. Compose. The comp plays chords: on the small row a chord on every strike of its layer, on the dense row a quick
+   strum that rolls with the polyrhythm.
+2. The plot: on the small row, rings mark the borrowed tones' sources; the dense row has few or none.
+3. Swap a chord: the comp follows it from that bar.
+4. Legato on the comp: the chords ring to the next stroke. Off: short.
+5. MIDI: the Comp track (MPE) gets chords, each tone on its own channel, beatless against the Chords track.
+
+**Arp**
+6. Click an Inner cell → Arp. It starts at once, with no re-compose: up, two notes a slot, two octaves.
+7. Each pattern: Up climbs and wraps, Down falls, Up-down turns, As played wanders. Rate 1–4 thickens it. Range widens
+   it.
+8. Lead → Arp: the lead becomes an arp over the same chords. Back to Line: the melody returns, the same as before.
+9. Undo steps back through the switches. Compose again (same seed): the arp modes stay.
+10. With a MIDI clip loaded: the lead's Arp is greyed, with its reason in the title.
+11. MIDI: the arps arrive on the Lead and Inner tracks, one note at a time, in tune.
+
+## Log
