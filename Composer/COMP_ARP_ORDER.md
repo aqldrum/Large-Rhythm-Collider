@@ -242,3 +242,11 @@ the other. A1–A2 and B1 can run side by side.
   is a chord on every slot (P2's density term is 0 for all); thin it?; (2) small and bunched rows borrow most of the
   chord (11:9:7:5 27%, 768:769 26% from the row), near-block chords, as ruled; (3) the drums' *with* / *against* get
   more strokes under the new default.
+- **2026-10-27, A3–A4 and B2–B4 merged (81f29e9, `ui/comp-arp`).** 77/0 with `assert-page-arp.mjs`. The Comp bus is an
+  MPE zone of four (`ZONE_MEMBERS`); borrowed tones ring their source on the plot, in the cell and in the matrix; the
+  arps live in the store entry (`state.arps`), in undo/redo and audition snapshots, applied over the Line spec on every
+  rebuild, in the worker above `MAIN_THREAD_ONSETS`. Builder's calls: a part's sound carries over a rebuild only where
+  it was chosen (so the inner's harp in Arp); a MIDI clip puts an arp lead back in Line; `swapLead` still works under an
+  arp lead (the window hides it); the player lanes the comp by voice (a legato comp chained voices into each other).
+  CLEAN_MIDI_ORDER.md's routing table (Comp a zone of one) is left as history. Avery's browser and rig pass owed: the
+  checklist above.
