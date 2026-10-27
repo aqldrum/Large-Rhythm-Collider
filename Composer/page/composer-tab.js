@@ -328,7 +328,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     };
     const rows = MIDI_PARTS.map((id) => el('div', { className: 'ctab-knob ctab-midi-part' }, el('label', { textContent: MIDI_LABELS[id] }),
       pick(portOf(id), (v) => { prefs.ports = { ...prefs.ports, [id]: v }; savePrefs(); applyMidi(); renderMidi(); },
-        { auto: id === 'chords' ? 'an MPE zone: master channel 1, a voice a channel on 2–5 (MPE on the Ableton track)' : id === 'drums' ? 'channel 10, General MIDI drum notes' : 'an MPE zone of one: master channel 1, its notes on 2 (MPE on the Ableton track)' })));
+        { auto: id === 'chords' || id === 'comp' ? `an MPE zone: master channel 1, a ${id === 'comp' ? 'comp' : 'chord'} voice a channel on 2–5 (MPE on the Ableton track)` : id === 'drums' ? 'channel 10, General MIDI drum notes' : 'an MPE zone of one: master channel 1, its notes on 2 (MPE on the Ableton track)' })));
     const clockSel = pick(clockOf(), (v) => { prefs.clock = v; savePrefs(); applyMidi(); renderMidi(); }, { none: 'no clock', auto: 'MIDI clock, Start and Stop, for the DAW to follow the tempo (its Sync on this bus)' });
     const bend = el('input', { type: 'number', min: 1, max: 96, step: 1, className: 'ctab-num', value: String(sink?.bendRange ?? 48), title: 'the pitch-bend range, in semitones, for synths set by hand (48 is MPE\'s)' });
     bend.addEventListener('change', () => { const v = Math.round(Number(bend.value)); if (v >= 1 && v <= 96) { prefs.bend = v; savePrefs(); sink?.setBendRange(v); } renderMidi(); });

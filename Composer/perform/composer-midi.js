@@ -14,11 +14,15 @@
 //   routing   decision 1, a bus per part, and every tonal bus an MPE lower zone (Avery, 2026-10-27, after the rig: an
 //             MPE track uses the instrument's per-note bend range, 48 by MPE's convention, where an ordinary track
 //             uses each device's own PB range, which differs instrument to instrument). Channel 1 is each zone's
-//             master. Lead, comping, bass and inner play one note at a time: a zone of one member, their notes on
-//             channel 2. Chords: a zone of four, each chord voice its own member channel (voice 1, the root, on
-//             channel 2, up to voice 4 on channel 5). An ordinary track on All Channels still hears channel 2, at its
-//             device's own range. Drums: channel 10, General MIDI
+//             master. Lead, bass and inner play one note at a time: a zone of one member, their notes on channel 2.
+//             Chords: a zone of four, each chord voice its own member channel (voice 1, the root, on channel 2, up to
+//             voice 4 on channel 5). Comping (COMP_ARP_ORDER.md A3, P11: it plays chords now, a strum a stroke) is a
+//             zone of four the same way, one comp voice (`voice`, its chord class's index) a member channel; the old
+//             one-note comp (`compStyle: 'notes'`, no `voice`) sounds on channel 2 of that zone. An ordinary track on
+//             All Channels still hears channel 2, at its device's own range. Drums: channel 10, General MIDI
 //             notes. Every voice owns its channel for the whole composition: no allocator, no stealing (M3).
+//   pitch     a note's own `hz`, always: a comp tone BORROWED from the chord voices (`borrowed`, `from`) sits on the
+//             stroke's onset with the source voice's tone, and its hz is that tone's (compose.js), not the onset's.
 //   notes     decision 3: a new note for each note, the synth doing any glide. A note on a channel that still holds
 //             one ends that one first (the same-note guard, and a clip's overlapping note-off).
 //   lengths   decision 4, M12: the same with the page's legato on or off — `midiNotesOf`: each note lasts until its
@@ -33,7 +37,8 @@
 //             on the same channels with the same bends, lengths and velocities, at the spec's tempo.
 //
 //   createComposerMidi({ now, bendRange }) → the sink (below); midiNotesOf(part, T); midiFileOf(spec, parts, drums,
-//   levels); matchPort(outputs, part); noteAndBend(hz, range); bendFromSemitones(st, range); freqToMidiFloat(hz)
+//   levels); matchPort(outputs, part); noteAndBend(hz, range); bendFromSemitones(st, range); freqToMidiFloat(hz);
+//   zonedPart(id) (the chords' and the comp's buses: a voice a member channel, ZONE_MEMBERS)
 
 import { rearticulate } from '../core/compose.js';
 import { writeMidi } from '../core/midi.js';
@@ -48,6 +53,12 @@ export const ZONE_MASTER = 0;               // every tonal bus's MPE master, cha
 export const MONO_CHANNEL = 1;              // a one-note part's member channel, channel 2
 export const CHORD_MASTER = ZONE_MASTER;
 export const CHORD_MEMBERS = Object.freeze([1, 2, 3, 4]);   // channels 2–5, one a chord voice
+export const COMP_MASTER = ZONE_MASTER;
+export const COMP_MEMBERS = Object.freeze([1, 2, 3, 4]);    // channels 2–5, one a comp voice (A3, P11)
+/** the buses that are a zone of several members, a voice a member channel: the chords and the comping */
+export const ZONE_MEMBERS = Object.freeze({ chords: CHORD_MEMBERS, comp: COMP_MEMBERS });
+/** is this part's bus a zone of voices (its notes laned by `voice`)? */
+export const zonedPart = (partId) => partId in ZONE_MEMBERS;
 export const DRUM_CHANNEL = 9;              // channel 10
 export const GM_DRUMS = Object.freeze({ kick: 36, snare: 38, hat: 42, perc: 37, cym: 49 });
 export const DRUM_NOTE_MS = 50;
@@ -68,17 +79,18 @@ export function noteAndBend(hz, range = MIDI_BEND_RANGE) {
 }
 export const velocityOf = (v) => Math.min(127, Math.max(1, Math.round(127 * Math.min(1, Math.max(0, Number(v) || 0)))));
 
-/** the channel a part's note goes on (a chord voice: its member channel) */
+/** the channel a part's note goes on (a chord or comp voice: its member channel) */
 export function channelOf(partId, voice = 0) {
   if (partId === 'drums') return DRUM_CHANNEL;
-  if (partId === 'chords') return CHORD_MEMBERS[Math.min(CHORD_MEMBERS.length - 1, Math.max(0, voice | 0))];
+  const members = ZONE_MEMBERS[partId];
+  if (members) return members[Math.min(members.length - 1, Math.max(0, voice | 0))];
   return MONO_CHANNEL;
 }
 
 const lengthsCache = new WeakMap();
 /**
  * A part's notes as MIDI sends them (M12): [{ time, end, hz, velocity, voice }] in time order, end in the cycle's
- * spec seconds. The lengths are the page's legato-on rule (compose.js `articulate`) whatever the part's own legato,
+ * spec seconds (a zoned part's — the chords', the comp's — laned by voice). The lengths are the page's legato-on rule (compose.js `articulate`) whatever the part's own legato,
  * so the toggle never reaches the MIDI; a clip note's own note-off is kept where it is sooner than its voice's next
  * note. Memoized on the part object (the player reads it every tick).
  */
@@ -86,7 +98,7 @@ export function midiNotesOf(part, T) {
   const had = lengthsCache.get(part);
   if (had && had.T === T) return had.notes;
   const held = rearticulate(part, { legato: true, cycleSeconds: T });
-  const lanes = part.id === 'chords' ? [...new Set(held.notes.map((n) => n.voice ?? 0))].map((v) => held.notes.filter((n) => (n.voice ?? 0) === v)) : [held.notes];
+  const lanes = zonedPart(part.id) ? [...new Set(held.notes.map((n) => n.voice ?? 0))].map((v) => held.notes.filter((n) => (n.voice ?? 0) === v)) : [held.notes];
   const out = [];
   for (const lane of lanes) {
     lane.forEach((n, i) => {
@@ -104,7 +116,8 @@ const rpnBytes = (ch, msb, lsb, value) => [[0xB0 | ch, 101, msb], [0xB0 | ch, 10
 /** a bus's set-up, its MPE zone: RPN 6 on the master (its members), RPN 0 (the bend range) on each member */
 export function setupBytes(partId, range = MIDI_BEND_RANGE) {
   if (partId === 'drums') return [];
-  if (partId === 'chords') return [...rpnBytes(CHORD_MASTER, 0, 6, CHORD_MEMBERS.length), ...CHORD_MEMBERS.flatMap((ch) => rpnBytes(ch, 0, 0, range))];
+  const members = ZONE_MEMBERS[partId];
+  if (members) return [...rpnBytes(ZONE_MASTER, 0, 6, members.length), ...members.flatMap((ch) => rpnBytes(ch, 0, 0, range))];
   return [...rpnBytes(ZONE_MASTER, 0, 6, 1), ...rpnBytes(MONO_CHANNEL, 0, 0, range)];
 }
 
@@ -165,7 +178,7 @@ export function createComposerMidi({ now = () => (globalThis.performance ? perfo
   const live = new Map();   // `${part}:${channel}` → { port, channel, note, onTs, off }
   const stats = { notes: 0, strokes: 0, ticks: 0, guarded: 0 };
   const send = (port, bytes, ts) => { if (!port) return; try { port.send(bytes, ts); } catch { /* a port can vanish mid-session; never break the audio */ } };
-  /** every used bus told its bend range, the chords' zone its members (RPN 6 on the master, MPE's configuration) */
+  /** every used bus told its bend range, its zone its members (RPN 6 on the master, MPE's configuration) */
   function configure(only = null) {
     const ts = now();
     for (const id of MIDI_PARTS) {
@@ -174,7 +187,7 @@ export function createComposerMidi({ now = () => (globalThis.performance ? perfo
       for (const bytes of setupBytes(id, range)) send(port, bytes, ts);
     }
   }
-  const usedChannels = (id) => (id === 'drums' ? [DRUM_CHANNEL] : id === 'chords' ? [ZONE_MASTER, ...CHORD_MEMBERS] : [ZONE_MASTER, MONO_CHANNEL]);
+  const usedChannels = (id) => (id === 'drums' ? [DRUM_CHANNEL] : zonedPart(id) ? [ZONE_MASTER, ...ZONE_MEMBERS[id]] : [ZONE_MASTER, MONO_CHANNEL]);
   function endLive(entry, ts) {
     if (entry.off) return;
     entry.off = true;

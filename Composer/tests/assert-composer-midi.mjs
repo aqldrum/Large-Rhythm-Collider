@@ -1,8 +1,11 @@
 // assert-composer-midi.mjs — the Composer's MIDI out (Composer/perform/composer-midi.js and its hooks in
 // composer-player.js; Composer/CLEAN_MIDI_ORDER.md phase B), against recording ports and a mock AudioContext:
 //   • the tuning math is the Cosmos sender's (and so the site's), note for note and bend for bend
-//   • the routing: a bus per part, every tonal bus an MPE zone (master 1): the one-note parts on 2, the chords on 2–5,
-//     the drums on 10 with General MIDI notes; RPN 0 and the zone's RPN 6 sent when the ports are set
+//   • the routing: a bus per part, every tonal bus an MPE zone (master 1): the one-note parts on 2, the chords and
+//     (COMP_ARP_ORDER.md A3) the comp's voices on 2–5, the drums on 10 with General MIDI notes; RPN 0 and the zone's
+//     RPN 6 sent when the ports are set
+//   • the comp in chords (the default compStyle): its voices on 2–5, no channel holding two notes, a borrowed tone
+//     sent at its own hz (the source voice's tone), not its onset's
 //   • a note: its bend before its note-on; a note its channel holds ends first; velocity 1–127
 //   • midiNotesOf: the same with legato on or off; a voice's notes never overlap; the last ends by the cycle's end
 //   • the player: every note of every part booked once a cycle on its own channel, no channel holding two notes,
@@ -13,7 +16,8 @@ import { readFileSync } from 'node:fs';
 import { compose, rearticulate } from '../core/compose.js';
 import { createPlayer } from '../perform/composer-player.js';
 import { readMidi, writeMidi } from '../core/midi.js';
-import { createComposerMidi, midiNotesOf, midiFileOf, setupBytes, matchPort, noteAndBend, bendFromSemitones, channelOf, velocityOf, MIDI_PARTS, GM_DRUMS, CHORD_MEMBERS, DRUM_CHANNEL, DRUM_NOTE_MS } from '../perform/composer-midi.js';
+import { createComposerMidi, midiNotesOf, midiFileOf, setupBytes, matchPort, noteAndBend, bendFromSemitones, channelOf, velocityOf, MIDI_PARTS, GM_DRUMS, CHORD_MEMBERS, COMP_MEMBERS, DRUM_CHANNEL, DRUM_NOTE_MS } from '../perform/composer-midi.js';
+import { buildRow, ONSET_GATE } from '../core/row.js';
 import * as cosmos from '../../Cosmos/audio/cosmos-midi-out.js';
 
 let PASS = true, checks = 0;
@@ -33,7 +37,8 @@ for (let hz = 20; hz < 8000; hz *= 1.0137) {
 check('noteAndBend: the Cosmos sender\'s, note for note and bend for bend, 20 Hz–8 kHz', same && bendFromSemitones(0.5) === cosmos.bendFromSemitones(0.5));
 check('±50¢: a tone 49¢ under a note bends down onto it', noteAndBend(220 * 2 ** (1151 / 1200)).note === 69 && noteAndBend(220 * 2 ** (1151 / 1200)).bend < 8192);
 check('velocity: 1–127, never 0', velocityOf(0) === 1 && velocityOf(1) === 127 && velocityOf(0.5) === 64 && velocityOf(2) === 127);
-check('channels: one-note parts on 2, chord voices on 2–5, drums on 10', ['lead', 'comp', 'bass', 'inner'].every((id) => channelOf(id) === 1) && [0, 1, 2, 3].map((v) => channelOf('chords', v)).join() === '1,2,3,4' && channelOf('drums') === 9);
+check('channels: one-note parts on 2, chord and comp voices on 2–5, drums on 10', ['lead', 'bass', 'inner'].every((id) => channelOf(id) === 1) && [0, 1, 2, 3].map((v) => channelOf('chords', v)).join() === '1,2,3,4'
+  && [0, 1, 2, 3].map((v) => channelOf('comp', v)).join() === '1,2,3,4' && channelOf('comp') === 1 && channelOf('drums') === 9);
 const outs = ['IAC Driver Composer Lead', 'IAC Driver Composer Chords', 'IAC Driver Bus 1', 'Composer Bass', 'composer inner', 'Drums'].map((name) => ({ name }));
 check('matchPort: a bus whose name holds the part\'s word', matchPort(outs, 'lead').name === 'IAC Driver Composer Lead' && matchPort(outs, 'chords').name.endsWith('Chords') && matchPort(outs, 'comp') === null && matchPort(outs, 'inner').name === 'composer inner' && matchPort(outs, 'drums').name === 'Drums');
 
@@ -45,7 +50,8 @@ sink.setPorts(ports);
 check('off until enabled: nothing sent, not active', !sink.active && MIDI_PARTS.every((id) => ports[id].sent.length === 0) && sink.note('lead', 0, 440, 1, 1000) === null);
 sink.setEnabled(true);
 const rpns = (p) => p.sent.filter((m) => kind(m.bytes) === 0xB0 && m.bytes[1] === 6).map((m) => [chan(m.bytes), m.bytes[2]]);
-check('enabled: each one-note bus a zone of one (RPN 6 = 1 on the master), RPN 0 = 48 on channel 2', ['lead', 'comp', 'bass', 'inner'].every((id) => JSON.stringify(rpns(ports[id])) === '[[0,1],[1,48]]'));
+check('enabled: each one-note bus a zone of one (RPN 6 = 1 on the master), RPN 0 = 48 on channel 2', ['lead', 'bass', 'inner'].every((id) => JSON.stringify(rpns(ports[id])) === '[[0,1],[1,48]]'));
+check('… the comp\'s zone (A3): RPN 6 = 4 members on the master, RPN 0 = 48 on each of 2–5', JSON.stringify(rpns(ports.comp)) === JSON.stringify([[0, 4], ...COMP_MEMBERS.map((c) => [c, 48])]));
 check('… the chords\' zone: RPN 6 = 4 members on the master, RPN 0 = 48 on each member', JSON.stringify(rpns(ports.chords)) === JSON.stringify([[0, 4], ...CHORD_MEMBERS.map((c) => [c, 48])])
   && ports.chords.sent.some((m) => m.bytes[1] === 100 && m.bytes[2] === 6));
 check('… nothing to the drums bus (no bend on 10)', ports.drums.sent.length === 0 && sink.active);
@@ -70,7 +76,7 @@ sink.note('lead', 0, 440, 1, 5000);
 sink.allOff();
 const cc = (p, n) => p.sent.filter((m) => kind(m.bytes) === 0xB0 && m.bytes[1] === n).map((m) => chan(m.bytes));
 check('allOff: the live note off, All Sound Off and All Notes Off on every used channel, Stop on the clock', kind(ports.lead.sent[2].bytes) === 0x80 && cc(ports.lead, 123).join() === '0,1'
-  && cc(ports.chords, 123).join() === '0,1,2,3,4' && cc(ports.drums, 120).join() === '9' && clock.sent.map((m) => m.bytes[0]).join() === [0xFA, 0xF8, 0xFC].join() && sink.liveNotes === 0);
+  && cc(ports.chords, 123).join() === '0,1,2,3,4' && cc(ports.comp, 123).join() === '0,1,2,3,4' && cc(ports.drums, 120).join() === '9' && clock.sent.map((m) => m.bytes[0]).join() === [0xFA, 0xF8, 0xFC].join() && sink.liveNotes === 0);
 sink.setPorts({ bass: null });
 check('a part with no bus isn\'t sent', !sink.sends('bass') && sink.sends('lead') && sink.note('bass', 0, 100, 1, 6000) === null);
 sink.note('lead', 0, 440, 1, 7000); const n0 = ports.lead.sent.length;
@@ -78,9 +84,9 @@ sink.setEnabled(false);
 check('disabled: the live note ended at once, not active', ports.lead.sent.length > n0 && !sink.active && sink.liveNotes === 0);
 
 console.log('\n— the lengths (M12)');
-// the comp one note a stroke (compStyle 'notes'): until COMP_ARP_ORDER.md A3 makes the Comp bus a zone of four (P11), the
-// chords default's strums would stack on its one channel
-const T = 8, spec = compose([41, 42, 43, 0], T, { seed: 1, worker: true, overrides: { compStyle: 'notes' } }), ST = spec.knobs.cycleSeconds;
+// the default comp, in chords (COMP_ARP_ORDER.md A3: the Comp bus a zone of four, so the strums no longer stack)
+const T = 8, spec = compose([41, 42, 43, 0], T, { seed: 1, worker: true }), ST = spec.knobs.cycleSeconds;
+check('the composition\'s comp is in chords: voiced, with strokes and borrowed tones', !!spec.parts.find((p) => p.id === 'comp').strokes && spec.parts.find((p) => p.id === 'comp').notes.some((n) => n.borrowed));
 const flip = (p) => rearticulate(p, { legato: !p.legato, cycleSeconds: ST });
 check('every part the same with its legato flipped', spec.parts.every((p) => JSON.stringify(midiNotesOf(p, ST)) === JSON.stringify(midiNotesOf(flip(p), ST))));
 const lanesOk = spec.parts.every((p) => {
@@ -91,6 +97,17 @@ const lanesOk = spec.parts.every((p) => {
 check('a voice\'s notes never overlap, and the last ends by the cycle\'s end', lanesOk);
 check('a held voice\'s note lasts to its next note', (() => { const ns = midiNotesOf(spec.parts.find((p) => p.id === 'inner'), ST); return ns.length > 2 && Math.abs(ns[0].end - ns[1].time) < 1e-9; })());
 check('chord voices are 0–3', midiNotesOf(spec.parts.find((p) => p.id === 'chords'), ST).every((n) => n.voice >= 0 && n.voice <= 3));
+const compPart = spec.parts.find((p) => p.id === 'comp'), compMidi = midiNotesOf(compPart, ST);
+check(`comp voices are 0–3, more than one of them (${[...new Set(compMidi.map((n) => n.voice))].join(', ')})`, compMidi.every((n) => n.voice >= 0 && n.voice <= 3) && new Set(compMidi.map((n) => n.voice)).size > 1);
+// a borrowed tone: on the stroke's onset, with the source voice's tone (its `from`); MIDI sends its own hz
+const row = buildRow(spec.input.layers, { gate: ONSET_GATE }), ratioOfNode = (i) => row.tones[row.tone[i]];
+const borrowed = compPart.notes.filter((n) => n.borrowed), chordNotes = spec.parts.find((p) => p.id === 'chords').notes;
+const fromOk = borrowed.every((n) => { const src = chordNotes.find((c) => c.node === n.from); return src && src.ratio === n.ratio && Math.abs(Math.log2(n.hz / src.hz) - Math.round(Math.log2(n.hz / src.hz))) < 1e-9; });
+const offTone = borrowed.filter((n) => ratioOfNode(n.node) !== n.ratio);
+check(`a borrowed tone (${borrowed.length}) has its source voice's ratio and pitch class; ${offTone.length} of them sit on an onset of another tone`, borrowed.length > 0 && fromOk && offTone.length > 0);
+check('… and MIDI sends the note\'s own hz (the source\'s tone), not its onset\'s', offTone.every((n) => compMidi.some((m) => Math.abs(m.time - n.time) < 1e-12 && m.hz === n.hz && m.voice === n.voice)));
+const oldComp = compose([41, 42, 43, 0], T, { seed: 1, worker: true, overrides: { compStyle: 'notes' } }).parts.find((p) => p.id === 'comp');
+check('the old one-note comp (compStyle \'notes\'): one lane, on channel 2 of its zone', midiNotesOf(oldComp, ST).every((n) => n.voice === 0 && channelOf('comp', n.voice) === 1));
 
 console.log('\n— the .mid file (M11)');
 const fparts = spec.parts.map((p) => ({ ...p, enabled: true })), fdrums = { ...spec.drums, enabled: true };
@@ -106,6 +123,9 @@ const tempo = file.tempos[0];
 check(`the spec's tempo (${spec.knobs.tempoBpm} BPM) at 480 a quarter`, file.ppq === 480 && Math.abs(60e6 / tempo.usPerQuarter - spec.knobs.tempoBpm) < 0.01);
 const has = (seq) => { for (let i = 0; i + seq.length <= bytes.length; i++) if (seq.every((b, j) => bytes[i + j] === b)) return true; return false; };
 check('the chords\' zone set up in the file (RPN 6 = 4 on channel 1, RPN 0 = 48 on 2)', has(setupBytes('chords')[2]) && has([0xB1, 6, 48]));
+const compTrack = named('Comp');
+check('the comp\'s track (A3): its voices on 2–5, RPN 6 = 4 and RPN 0 = 48 on 2–5 set up', compTrack.notes.length === compMidi.length && compTrack.notes.every((n) => n.channel >= 1 && n.channel <= 4)
+  && new Set(compTrack.notes.map((n) => n.channel)).size > 1 && JSON.stringify(setupBytes('comp')) === JSON.stringify(setupBytes('chords')) && [0xB2, 0xB3, 0xB4].every((b) => has([b, 6, 48])));
 const tiny = writeMidi({ tracks: [{ notes: [{ tick: 0, end: 10, pitch: 60, velocity: 90, channel: 1, bend: 8192 }, { tick: 10, end: 20, pitch: 60, velocity: 90, channel: 1, bend: 9000 }] }] });
 const hasIn = (b, seq) => { for (let i = 0; i + seq.length <= b.length; i++) if (seq.every((x, j) => b[i + j] === x)) return true; return false; };
 check('the writer: a note\'s bend just before its note-on, after the note-off at the same tick', hasIn(tiny, [0xE1, 0x00, 0x40, 0x00, 0x91, 60, 90]) && hasIn(tiny, [0x0A, 0x81, 60, 0, 0x00, 0xE1, 9000 & 0x7F, 9000 >> 7, 0x00, 0x91, 60, 90]));
@@ -139,7 +159,8 @@ run(ST * 2 + 0.3);   // two whole cycles booked
 const ons = (p) => p.sent.filter((m) => kind(m.bytes) === 0x90 && m.bytes[2] > 0);
 const counts = parts.filter((p) => p.id !== 'drums').map((p) => [p.id, ons(pp[p.id]).length, midiNotesOf(p, ST).length]);
 check(`every note of every part, once a cycle (${counts.map(([id, got, n]) => `${id} ${got}/${2 * n}`).join(', ')})`, counts.every(([, got, n]) => got >= 2 * n && got <= 2 * n + n));
-check('the one-note parts on channel 2, the chords on 2–5', ['lead', 'comp', 'bass', 'inner'].every((id) => ons(pp[id]).every((m) => chan(m.bytes) === 1)) && ons(pp.chords).every((m) => chan(m.bytes) >= 1 && chan(m.bytes) <= 4));
+check('the one-note parts on channel 2, the chords and the comp\'s voices on 2–5', ['lead', 'bass', 'inner'].every((id) => ons(pp[id]).every((m) => chan(m.bytes) === 1))
+  && ['chords', 'comp'].every((id) => ons(pp[id]).every((m) => chan(m.bytes) >= 1 && chan(m.bytes) <= 4) && new Set(ons(pp[id]).map((m) => chan(m.bytes))).size > 1));
 const noOverlap = MIDI_PARTS.filter((id) => id !== 'drums').every((id) => {
   const evs = pp[id].sent.filter((m) => kind(m.bytes) === 0x90 || kind(m.bytes) === 0x80).map((m, i) => ({ ...m, i })).sort((a, b) => a.ts - b.ts || a.i - b.i), held = new Map();
   for (const e of evs) {
