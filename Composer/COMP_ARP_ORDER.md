@@ -171,27 +171,60 @@ The script is in the planner's scratchpad, not the repo. It re-derives each chor
 A and B touch different core files. Both touch the cell inspector in `composer-tab.js`, so A3–A4 and B3 go one after
 the other. A1–A2 and B1 can run side by side.
 
-## Browser and rig checklist (for Avery; a draft, finalized when built)
+## Browser and rig checklist (for Avery; final, for A3–A4 and B2–B4 as built)
 
-Serve from `.claude/worktrees/composer-sprint-2`. Composer window. Try 8:7:6:5 (a small row: expect borrowed tones), and
-4099:4093:4091:4079 or 768:784 (dense: expect pure strums).
+**Set up.**
+1. Serve the branch that has it from its own folder: `.claude/worktrees/comp-arp-ui` (branch `ui/comp-arp`), or `.claude/worktrees/composer-sprint-2` once it's merged.
+2. Hard-reload, so the tab's stylesheet `?v=20261027.3` and the bridge's `?v=20261027` load.
+3. Generate 8:7:6:5 (cycle 4 s): a small row, so expect borrowed tones.
+4. Open the Composer window: double-click the Playback header, then the Composer tab.
+5. Details stays off unless a step says otherwise.
 
-**Comping**
-1. Compose. The comp plays chords: on the small row a chord on every strike of its layer, on the dense row a quick
-   strum that rolls with the polyrhythm.
-2. The plot: on the small row, rings mark the borrowed tones' sources; the dense row has few or none.
-3. Swap a chord: the comp follows it from that bar.
-4. Legato on the comp: the chords ring to the next stroke. Off: short.
-5. MIDI: the Comp track (MPE) gets chords, each tone on its own channel, beatless against the Chords track.
+**Comping in chords (A3–A4)**
+1. **Compose, then Perform.** Comping plays a chord on every strike of its layer. On this small row most of each chord is borrowed, so it sounds near-block.
+2. **The plot.** The comp's colour is pink. Besides its filled dots, you should see **hollow pink rings** on some of the chords' onsets: the sources of the borrowed tones.
+   - Click a Comping cell. In the matrix cell, the borrowed tones are hollow pink dots.
+   - The inspector says "N strokes".
+   - Details on: it adds " · P% from the row", and hovering the line gives the counts.
+   - On the plot, the cell's own onsets are ringed and its borrowed sources are ringed hollow.
+3. **A dense row.** Try 768:784 (cycle 8 s) or 4099:4093:4091:4079 (16 s). You should see few or no rings, and the comp is a quick strum that rolls with the polyrhythm.
+4. **Swap a chord** (a Chords cell → an alternate → Keep). The comp follows from that bar, and its rings move to the new chord's voices.
+5. **Legato.** Select Comping and turn legato on: each chord tone rings to the next stroke. No voice should slide into another voice's pitch; that was a chain bug, now fixed. Off: short.
+6. **Rig.** The Comp bus on an MPE track:
+   - chords arrive one tone a channel, on channels 2–5, beatless against the Chords track
+   - Details → MIDI file: the .mid's Comp track holds those channels, with its MPE set-up at the start
 
-**Arp**
-6. Click an Inner cell → Arp. It starts at once, with no re-compose: up, two notes a slot, two octaves.
-7. Each pattern: Up climbs and wraps, Down falls, Up-down turns, As played wanders. Rate 1–4 thickens it. Range widens
-   it.
-8. Lead → Arp: the lead becomes an arp over the same chords. Back to Line: the melody returns, the same as before.
-9. Undo steps back through the switches. Compose again (same seed): the arp modes stay.
-10. With a MIDI clip loaded: the lead's Arp is greyed, with its reason in the title.
-11. MIDI: the arps arrive on the Lead and Inner tracks, one note at a time, in tune.
+**Arp (B2–B3)**
+7. **Inner → Arp.** Click an Inner cell. The inspector opens on **Line | Arp**. Click Arp:
+   - it starts at once, with no "Composing…": Up, 2 a slot, 2 octaves
+   - the inner turns to the harp, unless you'd picked a sound for it
+   - its lane reads "Inner · arp"
+   - Details adds "N rests of M · P% of steps on a chord tone"
+8. **Each knob, live.**
+   - Pattern: Up climbs and wraps, Down falls, Up-down turns, As played wanders.
+   - Rate 1–4 thickens it.
+   - Range 1–3 octaves widens it.
+9. **Lead → Arp.** Click a Lead cell, then Arp.
+   - The lead becomes an arpeggio over the same chords, and the runner-up lines disappear.
+   - The inner moves off the lead's onsets.
+   - With Drums set to "clave: with lead + comping", the drums follow the arp.
+   - **Line:** the melody comes back exactly as before, with its runner-ups.
+10. **Undo (↶ or ⌘Z)** steps back through each switch and each knob. Redo (↷ or ⇧⌘Z) steps forward.
+11. **Swap a chord with the lead and inner in Arp.** Both arps follow the new chord from that bar.
+12. **Compose again (same seed).** The modes stay. Then press the header glyph: it recalls the composition with no compose, playing the arps, and the Playback div's part strips read "Lead · arp" and "Inner · arp".
+13. **A chosen sound.** Pick a sound for the inner, then Arp: it keeps that sound; Line keeps it too.
+14. **A MIDI clip.** Choose a .mid.
+    - The lead's Line | Arp is greyed. Hovering it reads "the lead is the MIDI clip: a target's lead has no Arp mode".
+    - A lead that was in Arp is back in Line.
+    - The inner's Arp still works.
+    - Clear, then Compose: the lead stays in Line.
+15. **Rig.** The arps arrive on the Lead and Inner buses, one note at a time, in tune.
+
+**Watch for (not checkable in Node).**
+- Do the hollow rings read as "borrowed" next to a selected part's outer rings?
+- Does the switch-and-selects row fit at narrow window widths?
+- How the inner arp sounds at rate 2 on small rows. It rests a lot: 41:42:43 at 4 × 8 rests 50 of 64 steps.
+- The inner sits a fixed octave under the lead (the core's open question 2).
 
 ## Log
 - **2026-10-27, B1 merged (223be9c, `arp/core`).** `core/arp.js` `arrangeArp` + `assert-arp.mjs`; 75/0. 16k row ~2.5 ms

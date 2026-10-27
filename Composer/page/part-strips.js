@@ -9,6 +9,7 @@
 // Each part button carries a small dot in the colour of the layer it leans on (proposed): the layer that strikes most
 // of the part's lit onsets on the plot (LRCModule's layer map), so "layers make the row; parts are read from it"
 // stays visible. The layer strips come back exactly as they were with the row (their elements are only hidden).
+// A part playing as an arpeggio (COMP_ARP_ORDER.md B3) is named so: "Lead · arp", "Inner · arp".
 //
 //   dominantLayer(indices, layerMap) → 'A'..'D' | null     (pure)
 //   stripRows({ parts, drums, levels, highlights, layerMap }) → the strips as data (pure)
@@ -32,13 +33,13 @@ export function dominantLayer(indices, layerMap) {
   return best;
 }
 
-/** the six strips as data: { id, label, color, has, enabled, level, sound, layer } */
+/** the six strips as data: { id, label (B3: "Lead · arp" while it plays an arpeggio), color, has, arp, enabled, level, sound, layer } */
 export function stripRows({ parts = {}, drums = null, drumOptions = {}, levels = {}, highlights = null, layerMap = null } = {}) {
   return HIGHLIGHT_PARTS.map((id) => {
     const isDrums = id === 'drums', p = isDrums ? drums : parts[id];
     const h = highlights?.parts?.[id];
     return {
-      id, label: PART_LABELS[id], color: PART_COLORS[id], has: !!p,
+      id, label: `${PART_LABELS[id]}${!isDrums && p?.arp ? ' · arp' : ''}`, color: PART_COLORS[id], has: !!p, arp: !isDrums && !!p?.arp,
       enabled: isDrums ? (drums ? drums.enabled !== false : drumOptions.enabled !== false) : p ? p.enabled !== false : true,
       level: levels[id] ?? 0.8,
       sound: isDrums ? drumOptions.mode ?? 'backbeat' : p?.sound ?? null,

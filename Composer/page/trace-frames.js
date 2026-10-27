@@ -402,7 +402,7 @@ export function frameAt(scene, t) {
       const N = data.notes.length, shown = Math.ceil(N * ease(u / 0.85)), h = scene.final.parts[data.part];
       if (!h) break;
       const seen = new Set();
-      for (let j = 0; j < shown; j++) seen.add(data.notes[j].index);
+      for (let j = 0; j < shown; j++) if (!data.notes[j].ring) seen.add(data.notes[j].index);   // a borrowed tone's source rings in once landed (A4)
       f.parts[data.part] = [...seen];
       f.lanes.show[data.part] = 'shown';
       const pops = Math.max(1, Math.min(MAX_POPS, Math.ceil(N * 0.15)));

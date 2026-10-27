@@ -24,10 +24,17 @@
 // The row and cells are kept per `key` (materialsKey(spec): the layers and the knobs the cells read), the last
 // REARRANGE_ROWS of them, so a second edit of the same composition builds nothing (the 524k row: ~250 ms once).
 // `edit.line` must be the line's record ({ notes }), not an id: the trace stays on the page.
+//
+// The Arp mode (COMP_ARP_ORDER.md B2): a big row's arps are arranged here too, from the same kept materials:
+//   worker.postMessage({ id, kind: 'arp', key, spec, parts: [{ id: 'lead' | 'inner', options }] })   arp.js'
+//                     arrangeArp over the spec (in Line), part by part in the order given (the lead first: the inner
+//                     reads the lead as it sounds)
+//   ← { id, ok: true, result: [the arranged parts, in that order] }  |  { id, ok: false, error }
 
 import { compose } from './compose.js';
 import { buildRow, isRow, ONSET_GATE } from './row.js';
 import { rearrange, materialsOf, materialsKey } from './rearrange.js';
+import { arrangeArp } from './arp.js';
 
 /** how many rows' materials the worker keeps for edits (proposed) */
 export const REARRANGE_ROWS = 3;
@@ -54,6 +61,23 @@ export function answerRearrange(data) {
   }
 }
 
+/** an arp message's answer (B2): the parts arranged in order over the spec, each over the one before it */
+export function answerArp(data) {
+  const { id = null, key = null, spec, parts = [] } = data || {};
+  try {
+    const m = materialsFor(spec, key ?? materialsKey(spec)), out = [];
+    let s = spec;
+    for (const { id: part, options } of parts) {
+      const arranged = arrangeArp(s, m, part, options);
+      out.push(arranged);
+      s = { ...s, parts: s.parts.map((p) => (p.id === part ? arranged : p)) };
+    }
+    return { id, ok: true, result: out };
+  } catch (err) {
+    return { id, ok: false, error: String(err && err.message ? err.message : err) };
+  }
+}
+
 /**
  * k onsets of a row, evenly spaced in row order (all of them when the row has ≤ k): → { n (the row's onsets), grid,
  * index (Uint32Array: row indices), tick (Float64Array), cents (Float32Array: each onset's tone), octave (Int8Array) }
@@ -71,6 +95,7 @@ export function sampleRowDust(row, k) {
 /** one message's answer: the reply a worker posts (exported so a page or a test can run it without a worker) */
 export function answer(data) {
   if (data && data.kind === 'rearrange') return answerRearrange(data);
+  if (data && data.kind === 'arp') return answerArp(data);
   const { id = null, layers, cycleSeconds, options = {} } = data || {};
   try {
     const { dust = 0, ...opts } = options || {};

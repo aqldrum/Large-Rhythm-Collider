@@ -1,6 +1,8 @@
 // assert-page-highlights.mjs — the Composer tab's plot seam (Composer/page/plot-highlights.js, plot-overlay.js), in
 // Node, against the site's own composite rhythm (LRCModule.js, loaded in a vm) on rows from 8:7:6:5 to 16,359 onsets:
 //   • every highlighted index is a real onset of the plotted rhythm (its tick), and the note's own node; a set a part
+//   • comping in chords (COMP_ARP_ORDER.md A4): a borrowed tone lights its source onset (`from`, the chord voice's
+//     node) as a ring, not its stroke's onset; the overlay draws the rings hollow, one stroke for them
 //   • the drums light the onsets their strokes land on; a part off is kept but marked; a spec of another rhythm → null
 //   • the playhead: spec time → the onset at or before it and the way into its gap; at a note's time it is on that
 //     note's node; it walks forward through the cycle and wraps; its x steps evenly between dots
@@ -36,15 +38,21 @@ for (const { site, T } of CASES) {
   check(`nothing missed: every note and stroke (${h.total}) is a plotted onset`, h.missed === 0 && h.total === spec.parts.reduce((n, p) => n + p.notes.length, 0) + spec.drums.hits.length);
   let bad = '';
   for (const p of spec.parts) {
-    const lit = h.parts[p.id], want = [...new Set(p.notes.map((n) => n.node))].sort((a, b) => a - b);
+    const lit = h.parts[p.id], own = p.notes.filter((n) => !n.borrowed), want = [...new Set(own.map((n) => n.node))].sort((a, b) => a - b);
     if (lit.indices.join() !== want.join()) bad ||= `${p.id}: indices are not the notes' nodes`;
-    for (const n of p.notes) {
+    const rings = [...new Set(p.notes.filter((n) => n.borrowed).map((n) => n.from))].filter((i) => !want.includes(i)).sort((a, b) => a - b);
+    if ((lit.rings ?? []).join() !== rings.join()) bad ||= `${p.id}: rings are not the borrowed tones' sources`;
+    if (lit.notes.filter((x) => x.ring).length !== p.notes.length - own.length) bad ||= `${p.id}: a borrowed tone's lit note isn't a ring`;
+    for (const n of own) {
       const i = indexOfTick(plot.ticks, n.tick);
       if (i !== n.node || plot.ticks[i] !== n.tick) bad ||= `${p.id}: node ${n.node} is not the plotted onset at tick ${n.tick}`;
     }
     if (lit.notes.length !== p.notes.length) bad ||= `${p.id}: ${lit.notes.length} lit notes for ${p.notes.length}`;
   }
   check('each part\'s indices are exactly its notes\' nodes, and each node is the site\'s onset at the note\'s tick', !bad, bad);
+  const comp = spec.parts.find((p) => p.id === 'comp'), nb = comp.notes.filter((n) => n.borrowed).length;
+  check(`the comp's borrowed tones (${nb} of ${comp.notes.length}) light their sources as rings (${h.parts.comp.rings.length}), every one a chord voice's onset`,
+    h.parts.comp.rings.every((i) => spec.parts.find((p) => p.id === 'chords').notes.some((c) => c.node === i)) && (nb === 0 || h.parts.comp.rings.length + h.parts.comp.indices.length > 0));
   const dl = h.parts.drums, strokeOk = spec.drums.hits.every((x) => plot.ticks[indexOfTick(plot.ticks, x.tick)] === x.tick);
   check(`the drums light their strokes' onsets (${dl.indices.length} nodes for ${spec.drums.hits.length} strokes)`, strokeOk && dl.indices.length > 0 && dl.indices.every((i) => i >= 0 && i < plot.n));
   check('indices are sorted, unique and in range', HIGHLIGHT_PARTS.every((id) => h.parts[id].indices.every((v, k, a) => v >= 0 && v < plot.n && (k === 0 || a[k - 1] < v))));
@@ -109,8 +117,9 @@ for (const site of [[41, 42, 43, 1], [4099, 4093, 4091, 4079]]) {
   const missingDot = HIGHLIGHT_PARTS.filter((id) => id !== 'drums').flatMap((id) => h.parts[id].indices).find((i) => !arcAt.has(`${positions[i].x.toFixed(3)},${positions[i].y.toFixed(3)}`));
   check('every lit node is a dot at its plotted position (one path a part)', missingDot === undefined, `node ${missingDot}`);
   check('the drums are squares on their nodes', rects.length - 2 === h.parts.drums.indices.length);
-  const ringed = h.parts.chords.indices.length;
-  check(`the selected part (chords) is ringed: ${ringed} rings, drawn last`, arcs.length === litDots + ringed && calls.filter((c) => c[0] === 'stroke').length === 1);
+  const ringed = h.parts.chords.indices.length, hollow = HIGHLIGHT_PARTS.reduce((n, id) => n + (h.parts[id].rings?.length ?? 0), 0);
+  check(`the selected part (chords) is ringed: ${ringed} rings, drawn last; ${hollow} borrowed sources hollow`, arcs.length === litDots + ringed + hollow && calls.filter((c) => c[0] === 'stroke').length === 1 + (hollow ? 1 : 0)
+    && calls.filter((c) => c[0] === 'stroke').length - 1 === HIGHLIGHT_PARTS.filter((id) => h.parts[id].rings?.length).length);
   check('no dot of the row is drawn: only the lit ones', arcs.length < plot.n + 1 || plot.n < 200);
   check('then a snapshot of the canvas', snapCanvas.width === 1600 && snapCanvas.height === 800 && snapCanvas.ctx.calls.some((c) => c[0] === 'drawImage' && c[1] === canvas) && overlay.snapshotted);
   const before = ctx.calls.length;

@@ -11,6 +11,9 @@
 //     strip from the prime output
 //   • the narrow fallback: the bar picker and the container query
 //   • the edits reach the part strips and the glyph's recall
+//   • comping in chords (COMP_ARP_ORDER.md A4): a borrowed tone's dot hollow in the comp row, its source ringed on the
+//     plot (the cell's focus), the comp cell's line "N strokes · P% from the row" (the share behind Details), the
+//     trace's comp part carrying its voices
 //   node Composer/tests/assert-page-matrix.mjs
 import fs from 'node:fs';
 import path from 'node:path';
@@ -331,6 +334,29 @@ tab.selectCell('drums', 0);
 const sc = core.drumGrid().silentCells;
 check(`8:7:6:5 with a perc stroke on every place: silent cells (${sc.length}) shown hollow, "no onset here"`, sc.length > 0 && qa(inspector, '.ctab-step.silent').length === sc.filter((x) => x.bar === 0).length
   && qa(inspector, '.ctab-step.silent').every((b) => /no onset here/.test(b.title)) && qa(lane('drums'), '.ctab-mstep.silent').length === sc.length);
+
+console.log('\n— comping in chords: borrowed tones (A4)');
+{
+  const comp = tab.state.parts.comp, chordsP = tab.state.parts.chords, bars = tab.state.spec.knobs.bars;
+  const k = Array.from({ length: bars }, (_, i) => i).find((i) => comp.notes.some((n) => n.bar === i && n.borrowed)) ?? 0;
+  const inBar = comp.notes.filter((n) => n.bar === k), borrowedHere = inBar.filter((n) => n.borrowed);
+  const cellEl = lane('comp').querySelectorAll('.ctab-cell').find((c) => c.dataset.bar === String(k));
+  check(`8:7:6:5's comp in chords: bar ${k + 1} has ${borrowedHere.length} borrowed of ${inBar.length} tones, drawn hollow in its cell`, borrowedHere.length > 0 && qa(cellEl, '.ctab-dot.borrowed').length === borrowedHere.length
+    && qa(cellEl, '.ctab-dot').length === inBar.length && qa(cellEl, '.ctab-dot.borrowed').every((d) => d.style.color && !d.style.background));
+  tab.selectCell('comp', k);
+  const line = q(inspector, '.ctab-comp-line'), strokes = comp.strokes.filter((x) => x.bar === k).length, pct = Math.round(100 * (inBar.length - borrowedHere.length) / inBar.length);
+  check(`the comp cell's line: "${line?.textContent}" — the share behind Details`, !!line && line.textContent === `${strokes} stroke${strokes === 1 ? '' : 's'} · ${pct}% from the row`
+    && q(line, '.ctab-detail')?.textContent === ` · ${pct}% from the row` && /borrowed from the chord voices/.test(line.title));
+  const plotted = { compositeRhythm: win.lrcVisuals.compositeRhythm, grid: win.lrcVisuals.grid }, f = tab.cellFocus(plotted), pl = plotOf(plotted);
+  const srcIdx = [...new Set(borrowedHere.map((n) => indexOfTick(pl.ticks, chordsP.notes.find((c) => c.node === n.from).tick)))];
+  const ownIdx = new Set(inBar.filter((n) => !n.borrowed).map((n) => n.node));
+  check(`the cell's focus rings the borrowed tones' sources (${f.rings.join(', ')}), not their strokes' onsets`, f.part === 'comp' && f.rings.join() === srcIdx.filter((i) => !ownIdx.has(i)).sort((a, b) => a - b).join()
+    && f.indices.join() === [...ownIdx].sort((a, b) => a - b).join());
+  win.lrcVisuals.drawPlot();
+  check('the overlay drew that focus, its rings hollow', bridge.overlay.focus?.part === 'comp' && bridge.overlay.focus.rings.join() === f.rings.join() && (bridge.overlay.highlights.parts.comp.rings.length > 0 || f.rings.length === 0));
+  const ev = tab.state.trace?.events?.find((e) => e.kind === 'part' && e.part === 'comp');
+  check('the trace\'s comp part carries every note\'s voice (the animation reads the lit notes, rings landing last)', !!ev && ev.notes.length === comp.notes.length && ev.notes.every((n) => Number.isInteger(n.voice)));
+}
 
 bridge.hideTab();
 restore();

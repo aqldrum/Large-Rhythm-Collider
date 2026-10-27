@@ -8,8 +8,8 @@
 //   graph    each part → its gain bus (a level per part) → master gain → limiter (DynamicsCompressor) → destination
 //   voices   a note with `retrigger` starts a voice of its part's sound (`note` role, its velocity the peak). The notes
 //            after it without `retrigger` are a CHAIN: the same voice, held, moved to each one's pitch with
-//            setFrequency at its time (in the chords part a chain is one voice's), released at the chain's end. A
-//            note alone is planned with its own duration, so a struck sound damps where its note ends.
+//            setFrequency at its time (in the chords, and the comp in chords, a chain is one voice's), released at the
+//            chain's end. A note alone is planned with its own duration, so a struck sound damps where its note ends.
 //   booking  everything is booked inside the lookahead, as the clock reaches it: a chain's start when its first note
 //            comes up, then each of its moves, then its release, one tick at a time (a held chain is carried from
 //            tick to tick, across the loop's end if it wraps). Nothing is booked further ahead than 150 ms, so a
@@ -37,7 +37,7 @@ import { getRecipe, normalizeNoteInstrumentId } from '../../Audio/voices/recipes
 import { planVoice } from '../../Audio/voices/plan.js';
 import { createInstrumentVoice } from '../../Audio/voices/voice.js';
 import * as drumLibrary from '../../Audio/drums/index.js';
-import { midiNotesOf } from './composer-midi.js';
+import { midiNotesOf, zonedPart } from './composer-midi.js';
 
 export const PLAYER_DEFAULTS = Object.freeze({ tickMs: 25, aheadSeconds: 0.15, master: 0.8, level: 0.8, release: 0.08, glide: 0.012, stopFade: 0.03, factor: 1 });
 const LIMITER = Object.freeze({ threshold: -10, knee: 6, ratio: 6, attack: 0.003, release: 0.2 });
@@ -54,7 +54,8 @@ export function chainsOf(part) {
   return out;
 }
 function chainsOfUncached(part) {
-  const lanes = part.id === 'chords' ? [...new Set(part.notes.map((n) => n.voice))].map((v) => part.notes.filter((n) => n.voice === v)) : [part.notes];
+  // the chords' and the comp's voices each their own lane (COMP_ARP_ORDER.md A3: a comp in chords holds a voice a class)
+  const lanes = zonedPart(part.id) ? [...new Set(part.notes.map((n) => n.voice))].map((v) => part.notes.filter((n) => n.voice === v)) : [part.notes];
   const out = [];
   for (const lane of lanes) {
     const sorted = [...lane].sort((a, b) => a.time - b.time || a.node - b.node);

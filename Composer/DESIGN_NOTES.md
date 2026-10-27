@@ -1634,6 +1634,64 @@ The invariant audits learned the new note. A borrowed tone's ratio is its `from`
 2. **Small rows borrow most of the chord** (11:9:7:5 27 %, 768:769 26 % from the row). Borrowed tones sound at the stroke's moment, so these comps are near-block chords. That is ruling 1 as decided, flagged only because it is audible.
 3. **The default change moves the drums' *with* and *against*** (the strokes are denser now). Their baselines stay frozen by running with `'notes'`, as P9 proposed.
 
+## Comping and Arp in the window (A3–A4, B2–B4; built 2026-10-27, branch `ui/comp-arp`)
+
+`COMP_ARP_ORDER.md` steps A3, A4, B2, B3 and B4, on the two cores above (no core compose rule changed; Compose's output is the same). Nothing here has been heard or seen in a browser.
+
+**A3: the Comp bus is an MPE zone of four** (`perform/composer-midi.js`, P11).
+- `ZONE_MEMBERS = { chords, comp }` generalises `CHORD_MEMBERS`: `COMP_MEMBERS` is channels 2–5, one comp voice a channel by its `voice` (its chord class's index), master channel 1. `channelOf`, `midiNotesOf`'s lanes, `setupBytes` (RPN 6 = 4 on the master, RPN 0 on each member), `allOff`'s channels and the .mid file's Comp track all follow. So `CLEAN_MIDI_ORDER.md`'s routing table is out of date on one row: Comp is no longer "a zone of one".
+- The old one-note comp (`compStyle: 'notes'`, no `voice`) plays on channel 2 of that zone.
+- The player's chains (`composer-player.js` `chainsOf`) lane the comp by voice too, as the chords are. Without that, a comp in chords with legato on would chain one voice's held note into another's.
+- A borrowed tone's pitch is its own `hz` (the source voice's tone, set by compose.js), and the sender reads only `n.hz`. The test checks it on borrowed tones whose onset has another tone.
+- `assert-composer-midi.mjs` no longer pins `compStyle: 'notes'`. It checks the comp's zone on the sink and in the file, its voices on 2–5 (more than one used), no channel holding two notes, the borrowed tones' hz, and the old comp on channel 2.
+
+**A4: the plot, the matrix, the inspector, the trace** (P12).
+- `plot-highlights.js`: a borrowed tone lights its **source** onset (`from`, found by the chord voice's tick: `sourceTicks`, `litTickOf`) as a ring. The lane gains `rings` (sources the part doesn't otherwise light), and its lit note is marked `ring`. `drawLitPart` draws rings hollow in the part's colour. The cell focus (`tab.cellFocus`) carries `rings` too, so a selected comp cell rings its sources. `soundingAt` glows the source while the borrowed tone sounds.
+- The Compose animation (`trace-frames.js`): a part's cascade leaves ring notes out, and they appear when the part has landed (the final frame is exactly the highlights, rings and all).
+- The matrix: a borrowed dot is hollow, a ring in the part's colour (`.ctab-dot.borrowed`), as a clip's substitutes are ringed. In Details' notes table its ratio is italic, and its title says so.
+- The comp cell's inspector line: `matrix.js` `compLine` gives "7 strokes · 82% from the row", the share behind Details (`ctab-detail`). Its title gives the counts.
+- The trace's `part` event already carried each note's `voice`. I added nothing there: the animation reads the lit notes, not the event's. `assert-page-matrix.mjs` checks that the comp event carries a voice on every note.
+
+**B2: the controller and the store** (Q5, Q7).
+- **Stored:** `state.arps = { lead, inner }`, each `{ mode: 'line' | 'arp', pattern, rate, range }` (`store/composition-store.js` `lineArps`). The knobs are kept while the part is in Line, so Arp comes back as it was. The arps are in the undo snapshots (`composition-edits.js`) and in the placement audition's snapshot. They are carried to a new cycle of the same row (proposed, as the drum options are).
+- **How it plays:** `state.spec` is composed + edits in Line (the fold, as before), then the arps over it (`arrangeArp`, the lead first so the inner hears the lead as it sounds), then the drums over that. Every rebuild therefore goes through the same order: a chord swap, a lead swap, an undo, a redo or a re-compose rebuilds the Line part, then re-arps it from the fresh line. An inner arp follows a change of the lead's mode, and the drums' *with* hears an arp lead. `state.composed` never plays the arps.
+- **Live:** `setArp(part, { mode, pattern, rate, range })` is one undo step through the same `edit()` door as a swap. The fold's steps are cached, so only the arps and the drums are rebuilt. `arpOf(part)` returns `{ mode, pattern, rate, range, playing, refusal, stats }`. Before any Compose it is only kept; the Compose arranges it as it lands.
+- **Big rows:** past `MAIN_THREAD_ONSETS` the arps go to the module worker (`runCompose.arp`, compose-worker's `answerArp`), from the same kept materials as its edits. Everything else arranges on the main thread: arrangeArp is about 2.5 ms on the 16k row.
+- **Q5:** while the lead is an arp, `alternatesOf(bar, 'lead')` is null, so the runner-ups and the badge are hidden. `swapLead` still works under it, since it swaps the line the arp is built from; the window just doesn't offer it. On a MIDI target, `arpRefusal` refuses the lead's Arp (`setArp` → `{ ok: false, error }`). Setting a clip also puts the lead back in Line (proposed), so it doesn't come back silently after Clear. The inner's Arp works on a target (inside the window).
+- **Q4, the sound:** an inner arp's own sound is the harp (`INNER_ARP_SOUND`). To keep a sound the user chose, `settleState` now carries a part's sound through a rebuild only where it differs from the spec's own part's sound. Legato and on/off always carry, as before. So switching the inner to Arp gives the harp, Line gives back its own sound, and a sound picked by hand stays in both modes. For every edit that existed before, this is the same as it was, because a rebuild never changed a part's own sound.
+- `editsExport` (JSON) gains `arps` when a part is in Arp. The spec's arp parts carry `arp` (the options and stats) and `line` (the silent line), as arrangeArp returns them.
+
+**B3: the window** (Q8).
+- The lead's and the inner's cell inspectors open on a **Line | Arp** pair. With Arp on, Pattern (Up, Down, Up-down, As played), Rate ("1–4 a slot") and Range ("1–3 oct") sit on the same row, as small selects.
+- Details adds "50 rests of 64 · 27% of steps on a chord tone"; its title gives the notes and the rests for the lead.
+- An arp lead's context is just the switch, the knobs and "Line brings the melody back, and its runner-ups". An arp inner hides "smooth the phrase", and its tag says arp.
+- On a target, the lead's (clip) context shows the switch disabled. Its title, and each button's, is arpRefusal's text.
+- The matrix's lane name and the Playback div's part strip read "Lead · arp" / "Inner · arp".
+- The tab stylesheet's `?v=` (20261027.3) and the bridge's (20261027) are bumped in `index.html`.
+
+**B4: the tests.** `assert-page-arp.mjs` (37 checks) covers:
+- the switch in both inspectors, Line by default
+- Arp live with no Compose, exactly arrangeArp over the spec in Line
+- the harp, and a chosen sound winning over it
+- each knob through its select, each one undo step
+- undo and redo through the header's buttons
+- an arp lead hiding its runner-ups, re-arranging the inner off its onsets and the drums' *with*
+- Back to Line restoring the melody byte for byte
+- a chord swap: the Line parts equal to `rearrange`'s, and the arps over them on the new chord's tones
+- a re-compose (same seed) keeping the modes
+- the glyph's recall with no Compose, and the strips' "· arp"
+- a target: the lead put back in Line, its switch disabled with arpRefusal's title, setArp refused, the inner free
+- the worker path (the same parts as on the main thread, and a re-compose re-arping there before it lands)
+
+A4's checks are in `assert-page-highlights.mjs` (rings, the hollow draw) and `assert-page-matrix.mjs` (the hollow dots, the comp line, the focus rings, the trace's voices).
+
+**Not verifiable in Node (for Avery's pass):**
+- what the rings look like on the plot (radius r − 0.75, hollow), and whether they read as "borrowed" next to the selected part's outer ring
+- how the switch and selects fit in the inspector at narrow widths
+- the harp under the lead
+- whether the inner's arp at rate 2 on small rows rests so much it sounds broken (41:42:43 at 4 × 8: 50 of 64 steps rest)
+- the Comp zone on a real MPE track (Ableton's MPE input on the Comp bus, now channels 2–5)
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
