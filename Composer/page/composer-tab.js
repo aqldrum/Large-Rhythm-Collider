@@ -63,7 +63,7 @@ import { PART_COLORS, PART_LABELS, HIGHLIGHT_PARTS, plotOf } from './plot-highli
 import { SECTIONS, SECTION_LABELS, CONTEXT_SECTION } from './tab-controller.js';
 import { createPlotOverlay } from './plot-overlay.js';
 import { createComposeAnimator, paintFrame, paintShimmer, readShowWork, writeShowWork } from './compose-animator.js';
-import { matrixModel, moveCell, nextStep, fieldStrip, candidateRow, lineRow, primeStrip, barsLabel, retuneRanges, barAt, qualityName, phraseSpans } from './matrix.js';
+import { matrixModel, moveCell, nextStep, fieldStrip, candidateRow, lineRow, primeStrip, barsLabel, retuneRanges, barAt, qualityName, phraseSpans, compLine } from './matrix.js';
 import { createAudition } from './audition.js';
 import { MIDI_PARTS, matchPort, midiFileOf } from '../perform/composer-midi.js';
 import { arrangeDrums, gridOf, DRUM_VOICES, beatsOf } from '../core/drums.js';
@@ -567,9 +567,11 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     } else {
       for (const d of c.dots) {
         // MIDI targets: a clip note's kind (amber substitute, red silent) and a late note-off
-        const dot = el('span', { className: `ctab-dot${d.accent ? '' : ' held'}${d.kind ? ` clip ${d.kind}` : ''}${d.late ? ' late' : ''}` });
+        // comping in chords (A4): a borrowed tone hollow, a ring in the part's colour
+        const dot = el('span', { className: `ctab-dot${d.accent ? '' : ' held'}${d.kind ? ` clip ${d.kind}` : ''}${d.late ? ' late' : ''}${d.borrowed ? ' borrowed' : ''}` });
         dot.style.left = `${(100 * d.x).toFixed(2)}%`; dot.style.top = `${(8 + 76 * d.y).toFixed(1)}%`;
-        if (d.kind !== 'hard') dot.style.background = row.color;
+        if (d.borrowed) dot.style.color = row.color;
+        else if (d.kind !== 'hard') dot.style.background = row.color;
         cell.append(dot);
       }
       if (c.part === 'chords' && c.spans) {
@@ -952,6 +954,9 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       button('the chord ▸', 'ctab-btn ctab-ctx-action', `select bar ${bar + 1}'s chord: swapping it re-mines this part's bar`, () => tab.selectCell('chords', bar)));
     const out = [head, follows];
     if (id === 'comp') {
+      // A4 (P12): the strokes, and (Details) the share of the bar's tones the row sounds near them
+      const cl = compLine(part, bar);
+      if (cl) out.push(el('div', { className: 'ctab-row ctab-comp-line', title: cl.title }, el('span', { textContent: cl.text }), cl.detail ? el('span', { className: `ctab-muted ${DETAIL}`, textContent: ` · ${cl.detail}` }) : null));
       const L = s.stats?.compLayer;
       if (L) out.push(el('div', { className: `ctab-muted ctab-pin ${DETAIL}`, textContent: `comp layer: ${L.layer} (${L.value}), pinned through edits (read-only; Compose's layer choice scores every bar)` }));
     }
@@ -962,7 +967,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     }
     if (id === 'bass' || id === 'comp') out.push(el('div', { className: `ctab-muted ${DETAIL}`, textContent: `re-mined with its chord: swap bar ${bar + 1}'s chord to move it` }));
     out.push(notes.length ? el('table', { className: `ctab-decisions-table ctab-notes ${DETAIL}` }, el('tr', {}, ...['slot', 'ratio', 'oct', 'Hz'].map((h) => el('td', { textContent: h }))),
-      ...notes.map((n) => el('tr', { title: noteTitle(n) }, el('td', { textContent: String(n.slot) }), el('td', { textContent: n.ratio }), el('td', { textContent: String(n.octave) }), el('td', { textContent: n.hz.toFixed(1) }))))
+      ...notes.map((n) => el('tr', { title: `${noteTitle(n)}${n.borrowed ? ' — borrowed: the chord voice\'s tone, at the stroke' : ''}`, ...(n.borrowed ? { className: 'borrowed' } : {}) }, el('td', { textContent: String(n.slot) }), el('td', { textContent: n.ratio }), el('td', { textContent: String(n.octave) }), el('td', { textContent: n.hz.toFixed(1) }))))
       : el('div', { className: 'ctab-muted', textContent: 'no notes in this bar' }));
     return out;
   }

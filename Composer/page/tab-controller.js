@@ -31,7 +31,7 @@
 //              in view.targetError (target-lines.js targetError); a target compose is the window's (store.made).
 
 import { createComposerController, kitChoices as sharedKitChoices } from '../perform/composer-controller.js';
-import { highlightsOf, plotOf, indexOfTick, HIGHLIGHT_PARTS } from './plot-highlights.js';
+import { highlightsOf, plotOf, indexOfTick, sourceTicks, litTickOf, HIGHLIGHT_PARTS } from './plot-highlights.js';
 import { phraseSpans, cellSpan } from './matrix.js';
 import { createCompositionStore } from '../store/composition-store.js';
 import { targetError } from './target-lines.js';
@@ -159,7 +159,8 @@ export function createTabController({ host = {}, runCompose, createContext, time
       const spans = N ? phraseSpans(core.state.spec) : [];
       return { part: view.selected, bar: view.bar, ...cellSpan(view.selected, view.bar, spans) };
     },
-    /** the selected cell's lit nodes on the plot: { part, indices } (null: no context shown, or nothing to light) */
+    /** the selected cell's lit nodes on the plot: { part, from, to, indices, rings (a borrowed comp tone's source onsets,
+     *  ringed hollow: A4) } (null: no context shown, or nothing to light) */
     cellFocus(plotted) {
       const s = core.state;
       if (!view.open || view.section !== CONTEXT_SECTION || !s.spec || s.spec.refused) return null;
@@ -169,9 +170,13 @@ export function createTabController({ host = {}, runCompose, createContext, time
       let value = null;
       if (plot && api.highlights(plotted)) {
         const items = c.part === 'drums' ? s.drums?.hits ?? [] : parts.find((p) => p.id === c.part)?.notes ?? [];
-        const seen = new Set();
-        for (const it of items) if (it.bar >= c.from && it.bar < c.to) { const i = indexOfTick(plot.ticks, it.tick); if (i >= 0) seen.add(i); }
-        value = { part: c.part, from: c.from, to: c.to, indices: [...seen].sort((a, b) => a - b) };
+        const seen = new Set(), ringed = new Set(), sources = sourceTicks(parts.find((p) => p.id === 'chords'));
+        for (const it of items) {
+          if (!(it.bar >= c.from && it.bar < c.to)) continue;
+          const t = litTickOf(it, sources), i = t == null ? -1 : indexOfTick(plot.ticks, t);
+          if (i >= 0) (it.borrowed ? ringed : seen).add(i);
+        }
+        value = { part: c.part, from: c.from, to: c.to, indices: [...seen].sort((a, b) => a - b), rings: [...ringed].filter((i) => !seen.has(i)).sort((a, b) => a - b) };
       }
       focusMemo = { key, value };
       return value;

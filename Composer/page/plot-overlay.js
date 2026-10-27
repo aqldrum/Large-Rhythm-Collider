@@ -6,7 +6,8 @@
 //
 //   draw    a dark wash over the plot (the invert button left clear), then a lit-node layer a part, from
 //           plot-highlights.js: a dot in the part's colour on each of its nodes (drum strokes as squares), the selected
-//           part on top with a ring, a part that is off faint. Then a snapshot of the whole canvas.
+//           part on top with a ring, a part that is off faint; a borrowed comp tone's source onset a hollow ring of the
+//           part's colour (`rings`; COMP_ARP_ORDER.md A4). Then a snapshot of the whole canvas.
 //   frame   the snapshot back (one blit, however many onsets the row has), then the playhead: a line at its place on
 //           the plot, a ring on the onset under it, and a glow on each node sounding now. No dot of the row is redrawn
 //           per frame, so a 16k-onset row costs the same as 8:7:6:5.
@@ -26,8 +27,9 @@ export const OVERLAY_STYLE = Object.freeze({ wash: 'rgba(16, 16, 16, 0.62)', off
 export const litRadius = (view) => Math.max(2, ((view && view.dotSize) || 4) * 0.9);
 
 /** one part's lit nodes as one path: dots, or squares for the drums (the selected part ringed); `indices` defaults to
- *  all of the part's (an animation frame passes the ones landed so far) */
-export function drawLitPart(ctx, h, positions, r, ringed, indices = h.indices) {
+ *  all of the part's (an animation frame passes the ones landed so far). `rings` (the part's own, `h.rings`, when all of
+ *  it is drawn) are drawn hollow: the borrowed comp tones' source onsets (A4) */
+export function drawLitPart(ctx, h, positions, r, ringed, indices = h.indices, rings = indices === h.indices ? h.rings : null) {
   ctx.save();
   ctx.globalAlpha = h.enabled ? 1 : OVERLAY_STYLE.offAlpha;
   ctx.fillStyle = h.color;
@@ -39,6 +41,12 @@ export function drawLitPart(ctx, h, positions, r, ringed, indices = h.indices) {
     else { ctx.moveTo(p.x + r, p.y); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); }
   }
   ctx.fill();
+  if (rings?.length) {
+    ctx.strokeStyle = h.color; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (const i of rings) { const p = positions[i]; if (!p) continue; ctx.moveTo(p.x + r - 0.75, p.y); ctx.arc(p.x, p.y, r - 0.75, 0, Math.PI * 2); }
+    ctx.stroke();
+  }
   if (ringed) {
     ctx.strokeStyle = h.color; ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -85,7 +93,7 @@ export function createPlotOverlay({ getHighlights, getSelected = () => null, get
       if (!scene) for (const id of order(selected)) {
         const h = lit.parts[id];
         if (!h || !h.indices.length) continue;
-        if (focus && id === focus.part) { lastFocus = focus; drawLitPart(ctx, h, v.positions, r, false); if (focus.indices.length) drawLitPart(ctx, h, v.positions, r + 1, true, focus.indices); }
+        if (focus && id === focus.part) { lastFocus = focus; drawLitPart(ctx, h, v.positions, r, false); if (focus.indices.length || focus.rings?.length) drawLitPart(ctx, h, v.positions, r + 1, true, focus.indices, focus.rings ?? null); }
         else drawLitPart(ctx, h, v.positions, r, id === selected);
       }
       if (v.animating || !v.canvas) return;

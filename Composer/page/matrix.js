@@ -20,6 +20,10 @@
 // MIDI targets (phase B, B3): on a target spec the lead row IS the clip. Its dots are the clip's notes (y by the clip's
 // own pitch), each with its kind (target-lines.js clipMarks): a hit, an amber substitute (fringe or shift), a red hard
 // miss (silent: drawn hollow at its step, it has no onset), a late note-off marked. It has no alternates (P6).
+//
+// Comping in chords (COMP_ARP_ORDER.md A4, P12): a comp dot of a BORROWED tone (the chord voice's tone at the stroke's
+// time) carries `borrowed` and is drawn hollow, a ring in the part's colour, as the clip's substitutes are ringed.
+// compLine(part, bar) → the comp cell's inspector line: its strokes, and the share of its tones the row sounds.
 
 import { phrasesOf } from '../core/harmony.js';
 import { DRUM_VOICES, GRID_CHARS } from '../core/drums.js';
@@ -73,7 +77,7 @@ export const barsLabel = ({ from, to }) => (from === to ? `bar ${from + 1}` : `b
  *   alternates (bar, part) → how many alternates the cell has (0: no badge)
  *   retuned   the bars re-pitched from Compose's (controller retunedBars())
  * → null without a composition, else { bars, cols, starts, lens, spans, rows: [{ id, label, color, enabled, cells }] }
- *   cell: { part, bar, from, to, phrase, dots: [{ x, y, accent, kind?, late?, j? }], clip? (a target's lead: its counts),
+ *   cell: { part, bar, from, to, phrase, dots: [{ x, y, accent, kind?, late?, j?, borrowed? }], clip? (a target's lead: its counts),
  *           name?, spans? (a chord chart's split bar: [{ unit (the chord's index), name, x, w (0..1 of the bar), targeted,
  *           fallback, edited, title }]), badge, edited, editKind, retuned, retune
  *           ({ from, to } on the cell whose edit re-pitched those later bars), steps? (drums: { voice: string }),
@@ -125,7 +129,7 @@ export function matrixModel(state, { grid = null, composedGrid = null, alternate
     };
     const cells = cellsOf.map(({ from, to }, idx) => {
       const t0 = starts[from], len = endOf(to) - t0;
-      const dots = marks ? clipDots(from, to, t0, len) : (part?.notes ?? []).filter((n) => n.bar >= from && n.bar < to).map((n) => ({ x: Math.min(1, Math.max(0, (n.time - t0) / len)), y: yOf(n.hz), accent: !!n.retrigger }));
+      const dots = marks ? clipDots(from, to, t0, len) : (part?.notes ?? []).filter((n) => n.bar >= from && n.bar < to).map((n) => ({ x: Math.min(1, Math.max(0, (n.time - t0) / len)), y: yOf(n.hz), accent: !!n.retrigger, ...(n.borrowed ? { borrowed: true } : {}) }));
       let edited = false;
       for (let k = from; k < to; k++) if (notesSig(own[id], k) !== notesSig(base[id], k)) edited = true;
       const cell = { part: id, bar: from, from, to, phrase: id === 'lead' ? idx : cellSpan(id, from, spans).phrase, dots, badge: alternates(from, id) || 0, edited, editKind: null, retuned: false, retune: null, title: '' };
@@ -172,6 +176,19 @@ export function matrixModel(state, { grid = null, composedGrid = null, alternate
     return { id, label, color, enabled: part ? part.enabled !== false : true, cells };
   });
   return { version: MATRIX_VERSION, bars: N, cycleSeconds: T, cols, starts, lens, spans, rows, retuneRanges: ranges };
+}
+
+/**
+ * A4 (P12): the comp cell's line in the inspector, for bar k of the comp as it plays (a comp in chords: it has
+ * `strokes`) → { strokes, tones, fromRow (tones the row sounds near the stroke, not borrowed), share (0..1 | null),
+ * text ("7 strokes"), detail ("82% from the row": Details), title } | null (the one-note comp, or no part)
+ */
+export function compLine(part, k) {
+  if (!part?.strokes) return null;
+  const strokes = part.strokes.filter((x) => x.bar === k).length, notes = part.notes.filter((n) => n.bar === k), fromRow = notes.filter((n) => !n.borrowed).length;
+  const share = notes.length ? fromRow / notes.length : null;
+  return { strokes, tones: notes.length, fromRow, share, text: `${strokes} stroke${strokes === 1 ? '' : 's'}`, detail: share == null ? '' : `${Math.round(100 * share)}% from the row`,
+    title: `bar ${k + 1}: ${strokes} stroke${strokes === 1 ? '' : 's'} of the comp layer, each the bar's chord; ${fromRow} of ${notes.length} tones strummed from the row within ±¼ slot, ${notes.length - fromRow} borrowed from the chord voices (ringed on the plot)` };
 }
 
 /** a target lead cell's dots counted by kind (target-lines.js clipCounts' shape) */

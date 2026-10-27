@@ -13,6 +13,11 @@
 //
 // A later sprint animates Compose from its trace on this same canvas: a trace step is just another highlight set.
 //
+// Comping in chords (COMP_ARP_ORDER.md A4, P12): a strummed tone lights its own onset. A BORROWED tone (`borrowed`,
+// `from`: the chord voice it takes its tone from) sounds on the stroke's onset with another onset's tone, so it lights
+// its SOURCE onset instead, as a ring (hollow; `rings`), the way the MIDI clip's substitutes are marked in the matrix.
+// Its source's tick is the chord voice's (`sourceTicks`), so it is found among the plotted onsets like any note.
+//
 // MIDI targets (phase B): a WINDOW composition loops on a window of the row's cycle (knobs.cycleSeconds the loop,
 // knobs.rowCycleSeconds the row's cycle; target.js' window share W = loop / row cycle), from the phase. Its playhead
 // walks the window on the full-cycle plot: phase + p × W (p the share of the loop). `share` is 1 for every other spec.
@@ -53,6 +58,15 @@ export const matchesPlot = (spec, plot) => !!(spec && !spec.refused && plot && s
 /** the share of the row's cycle a spec's loop spans: a window's W (MIDI targets), else 1 */
 export const loopShare = (spec) => (spec?.knobs?.rowCycleSeconds > 0 ? spec.knobs.cycleSeconds / spec.knobs.rowCycleSeconds : 1);
 
+/** the ticks of the chord voices' onsets, by node (a borrowed comp tone's `from` is one of them) */
+export function sourceTicks(chordsPart) {
+  const m = new Map();
+  for (const n of chordsPart?.notes ?? []) if (!m.has(n.node)) m.set(n.node, n.tick);
+  return m;
+}
+/** the tick a note lights: its own, or a borrowed tone's source's (null when the source isn't among the chord voices) */
+export const litTickOf = (n, sources) => (n.borrowed ? sources.get(n.from) ?? null : n.tick);
+
 /**
  * The Composer's selections as a lit-node layer a part.
  *   spec    a Compose spec; parts: the parts as they play now (default the spec's); drums: as they play now (default
@@ -60,26 +74,29 @@ export const loopShare = (spec) => (spec?.knobs?.rowCycleSeconds > 0 ? spec.knob
  *   plot    plotOf(...) of the rhythm on the plot
  * → null when there is nothing to light (no spec, a refusal, or a spec of another rhythm), else
  *   { grid, n, cycleSeconds, phaseX, share (the loop's share of the row's cycle: loopShare), plot, missed, total,
- *     parts: { [id]: { id, color, enabled, indices (sorted, unique), notes: [{ index, time, end }] (by time) } } }
+ *     parts: { [id]: { id, color, enabled, indices (sorted, unique), notes: [{ index, time, end, ring? }] (by time),
+ *       rings (sorted, unique: the borrowed tones' source onsets not lit otherwise; drawn hollow) } } }
  *   `missed` counts notes or strokes whose tick is not a plotted onset (never, for a matching spec).
  */
 export function highlightsOf({ spec, parts = null, drums = undefined } = {}, plot) {
   if (!matchesPlot(spec, plot)) return null;
   const T = spec.knobs.cycleSeconds, phase = spec.knobs.phase, out = {};
   let missed = 0, total = 0;
+  const byId = Object.fromEntries((parts || spec.parts).map((p) => [p.id, p]));
+  const sources = sourceTicks(byId.chords);
   const lane = (id, color, enabled, items, litFor) => {
-    const notes = [], seen = new Set();
+    const notes = [], seen = new Set(), ringed = new Set();
     for (const it of items) {
       total++;
-      const index = indexOfTick(plot.ticks, it.tick);
+      const tick = litTickOf(it, sources), index = tick == null ? -1 : indexOfTick(plot.ticks, tick);
       if (index < 0) { missed++; continue; }
+      if (it.borrowed) { ringed.add(index); notes.push({ index, time: it.time, end: it.time + litFor(it), ring: true }); continue; }
       seen.add(index);
       notes.push({ index, time: it.time, end: it.time + litFor(it) });
     }
     notes.sort((a, b) => a.time - b.time || a.index - b.index);
-    out[id] = { id, color, enabled, indices: [...seen].sort((a, b) => a - b), notes };
+    out[id] = { id, color, enabled, indices: [...seen].sort((a, b) => a - b), notes, rings: [...ringed].filter((i) => !seen.has(i)).sort((a, b) => a - b) };
   };
-  const byId = Object.fromEntries((parts || spec.parts).map((p) => [p.id, p]));
   for (const id of PART_IDS) {
     const p = byId[id];
     if (p) lane(id, PART_COLORS[id], p.enabled !== false, p.notes, (n) => Math.max(n.duration || 0, MIN_LIT_SECONDS));
