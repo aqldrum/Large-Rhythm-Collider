@@ -194,3 +194,18 @@ Serve from `.claude/worktrees/composer-sprint-2`. Composer window. Try 8:7:6:5 (
 11. MIDI: the arps arrive on the Lead and Inner tracks, one note at a time, in tune.
 
 ## Log
+- **2026-10-27, B1 merged (223be9c, `arp/core`).** `core/arp.js` `arrangeArp` + `assert-arp.mjs`; 75/0. 16k row ~2.5 ms
+  a part. Builder's calls where Q1–Q6 left room: the lead's floor is its line's median − 600 × range; the inner's a fixed
+  octave under it; a move is > 50¢; up-down with nowhere to go plays the nearest rung; legato holds to the next note;
+  a note's `slotSeconds` is its step's. Open for Avery: (1) small rows rest ~half the steps at rate 2 (8:7:6:5 holds a
+  chord tone in 50–58%); (2) the inner a fixed octave under the lead, vs the mined inner's ~400¢ on 8:7:6:5; (3) under
+  a dense lead at rate 1–2 the inner rests on every step the lead strikes (17/64 on 768:784).
+- **2026-10-27, A1–A2 merged (83e4583, `comp/core`).** The comp in chords, `compStyle: 'notes'` kept for the frozen
+  fixtures (only the tests' compose calls changed), `assert-comp.mjs`; 76/0 together with B1. 16k timing unchanged.
+  From the row / pure strokes: 8:7:6:5 60% (2/6), 768:769 26% (0/32), 768:784 87% (16/32), 16k 94% (51/64).
+  Builder's calls: the strum never crosses the bar; a borrowed tone sits on the stroke's node (its ratio from `from`);
+  the comp part carries `strokes` (the drums read them); each tone carries `holdTo`. **Until A3: MIDI out stacks the
+  strum on the Comp bus's one channel.** Open for Avery: (1) on dense rows every layer strikes every slot, so the comp
+  is a chord on every slot (P2's density term is 0 for all); thin it?; (2) small and bunched rows borrow most of the
+  chord (11:9:7:5 27%, 768:769 26% from the row), near-block chords, as ruled; (3) the drums' *with* / *against* get
+  more strokes under the new default.
