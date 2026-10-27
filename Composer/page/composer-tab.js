@@ -19,6 +19,13 @@
 // the hosts' `ctab-details-on`, so the toggle changes what is seen and nothing else: no spec, no compose, no sound. A
 // knob only Details shows keeps its value; when one is asked (not auto), the toggle carries a dot and names it.
 //
+// MIDI out (CLEAN_MIDI_ORDER.md, phase B): a MIDI button in the header opens the MIDI panel under it — Send (on or
+// off), a bus a part (matched on first use to a bus whose name holds the part's: "Composer Lead", …; "not sent"
+// leaves a part out), the clock's bus (the Lead's by default), the bend range, local sound, and what is going out.
+// The page's sink (composer-midi.js, the bridge's) does the sending; the choices are kept in localStorage
+// (lrc.composer.midi), never Send itself. Without Web MIDI (Safari) the button is disabled and says so. Details adds
+// "MIDI file" beside JSON: the composition as it plays now, one cycle, as a .mid (M11).
+//
 // The upper right stays the Partitions window's mirror of the Linear Plot. While the tab is shown, the plot carries the
 // Composer's lit nodes (plot-overlay.js, through LRCVisuals.setComposerOverlay), the selected cell ringed on it
 // (getFocus), and, during Perform, its playhead.
@@ -58,6 +65,7 @@ import { createPlotOverlay } from './plot-overlay.js';
 import { createComposeAnimator, paintFrame, paintShimmer, readShowWork, writeShowWork } from './compose-animator.js';
 import { matrixModel, moveCell, nextStep, fieldStrip, candidateRow, lineRow, primeStrip, barsLabel, retuneRanges, barAt, qualityName, phraseSpans } from './matrix.js';
 import { createAudition } from './audition.js';
+import { MIDI_PARTS, matchPort, midiFileOf } from '../perform/composer-midi.js';
 import { arrangeDrums, gridOf, DRUM_VOICES, beatsOf } from '../core/drums.js';
 // MIDI targets (phase B)
 import { TARGET_SETS } from '../core/compose.js';
@@ -77,6 +85,9 @@ export const DETAIL_KNOBS = Object.freeze(['settlePasses', 'presence', 'anchors'
 /** the asked knobs the clean view hides (C3): [label value] for the Details toggle's dot */
 export const hiddenSettings = (knobs) => DETAIL_KNOBS.filter((n) => knobs?.[n] != null).map((n) => `${KNOB_FIELDS.find((f) => f.name === n).label} ${fieldValue(n, knobs[n])}`);
 const DETAIL = 'ctab-detail', CLEAN = 'ctab-clean-only';
+/** MIDI out (phase B): where the panel's choices are kept { ports: { [part]: name | '' (not sent) }, clock: name | '', bend } */
+export const MIDI_KEY = 'lrc.composer.midi';
+const MIDI_LABELS = Object.freeze({ lead: 'Lead', chords: 'Chords', comp: 'Comping', bass: 'Bass', inner: 'Inner', drums: 'Drums' });
 /** the narrowest a matrix column gets before the matrix scrolls (px; proposed) */
 const MIN_COLUMN_PX = 56;
 const isMac = () => { try { return /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? ''); } catch { return false; } };
@@ -89,9 +100,11 @@ const isMac = () => { try { return /Mac|iPhone|iPad/.test(globalThis.navigator?.
  *   raf       (fn) → requestAnimationFrame(fn)
  *   clock     () → ms (performance.now): the Compose animation's clock
  *   storage   where "show the work" is kept (localStorage; any access is wrapped)
+ *   midiAccess () → Promise<MIDIAccess> (navigator.requestMIDIAccess), or null without Web MIDI (phase B)
  * → { mount({ left, inspector }), show(), hide(), render(), overlay, animator, audition, shown }
  */
-export function createComposerTab({ tab, doc = globalThis.document, visuals = () => globalThis.window?.lrcVisuals ?? null, raf = (f) => globalThis.requestAnimationFrame(f), makeCanvas, download, clock, storage = defaultStorage(), overlay: sharedOverlay = null, seat = null } = {}) {
+export function createComposerTab({ tab, doc = globalThis.document, visuals = () => globalThis.window?.lrcVisuals ?? null, raf = (f) => globalThis.requestAnimationFrame(f), makeCanvas, download, clock, storage = defaultStorage(), overlay: sharedOverlay = null, seat = null,
+  midiAccess = null } = {}) {
   const core = tab.core;
   const el = (tag, props = {}, ...kids) => { const e = Object.assign(doc.createElement(tag), props); for (const k of kids) if (k != null) e.append(k); return e; };
   const plotted = () => { const v = visuals(); return v && v.compositeRhythm ? { compositeRhythm: v.compositeRhythm, grid: v.grid } : null; };
@@ -155,6 +168,12 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     details.addEventListener('click', () => { const on = !tab.view.details; writeDetails(storage, on); tab.setDetails(on); });
     const json = el('button', { className: `ctab-btn ${DETAIL}`, textContent: 'JSON', title: 'download the spec as it plays now' });
     json.addEventListener('click', exportJSON);
+    const midiFile = el('button', { className: `ctab-btn ctab-midi-file ${DETAIL}`, textContent: 'MIDI file', title: 'download the composition as it plays now, one cycle, as a .mid: a track a part, in exact tuning (pitch bends)' });
+    midiFile.addEventListener('click', exportMid);
+    const midiBtn = el('button', { className: 'ctab-toggle ctab-midi', textContent: 'MIDI' });
+    midiBtn.addEventListener('click', () => { midiOpen = !midiOpen; renderMidi(); });
+    const midiPanel = el('div', { className: 'ctab-midi-panel' });
+    midiPanel.style.display = 'none';
     const tempo = el('input', { type: 'range', min: TEMPO_LIMITS[0], max: TEMPO_LIMITS[1], step: 1, className: 'ctab-tempo' });
     const tempoBpm = el('input', { type: 'number', min: TEMPO_LIMITS[0], max: TEMPO_LIMITS[1], step: 0.1, title: 'BPM', className: 'ctab-num' });
     const tempoReset = el('button', { className: 'ctab-toggle', textContent: 'reset', title: 'back to the tempo Compose chose' });
@@ -194,14 +213,14 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       clipError, clipSummary, clipDecode, clipFit, clipAlts);
     left.replaceChildren(
       el('div', { className: 'ctab-head' },
-        el('div', { className: 'ctab-row' }, rhythm, el('label', { className: 'ctab-muted', textContent: 'Seed' }), seed, go, undoBtn, redoBtn, json, work, details, status),
+        el('div', { className: 'ctab-row' }, rhythm, el('label', { className: 'ctab-muted', textContent: 'Seed' }), seed, go, undoBtn, redoBtn, json, midiFile, work, details, midiBtn, status),
         el('div', { className: 'ctab-row' }, el('label', { className: 'ctab-muted', textContent: 'Tempo', title: 'playback tempo: the composed cycle faster or slower, live (pitch unchanged)' }), tempo, tempoBpm, tempoReset,
           el('label', { className: 'ctab-muted', textContent: 'Glide' }), glide, glideOut)),
-      target, note, refusal, dropped, caption, summary, readouts,
+      midiPanel, target, note, refusal, dropped, caption, summary, readouts,
       el('div', { className: 'ctab-scroll' }, barPick, el('div', { className: 'ctab-matrix-wrap' }, lanes), decisions));
     // a click anywhere in the tab skips the animation (the button and the toggle do their own thing)
     left.addEventListener('click', (e) => { if (anim.status === 'playing' && !e.target?.closest?.('.ctab-go, .ctab-work')) skipAnimation(); });
-    return { seed, go, undoBtn, redoBtn, json, work, details, summary, clipSummary, tempo, tempoBpm, tempoReset, glide, glideOut, rhythm, status, note, refusal, dropped, caption, capLabel, capDetail, capBeats, readouts, lanes, barPick, table,
+    return { seed, go, undoBtn, redoBtn, json, midiFile, midiBtn, midiPanel, work, details, summary, clipSummary, tempo, tempoBpm, tempoReset, glide, glideOut, rhythm, status, note, refusal, dropped, caption, capLabel, capDetail, capBeats, readouts, lanes, barPick, table,
       target, clipFile, clipChoose, clipTonic, clipTonicLabel, clipClear, clipHint, clipError, clipDecode, clipFit, clipAlts };
   }
   function showTempo() {
@@ -222,6 +241,105 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (download) { download(name, core.exportJSON()); return; }
     const blob = new Blob([core.exportJSON()], { type: 'application/json' }), a = el('a', { href: URL.createObjectURL(blob), download: name });
     doc.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  /** M11: the composition as it plays now, one cycle, as a .mid */
+  function exportMid() {
+    const s = tab.state.spec;
+    if (!s || s.refused) return;
+    const bytes = midiFileOf(s, core.currentParts(), tab.state.drums, { levels: tab.state.levels, bendRange: core.midi?.bendRange ?? undefined });
+    const name = `composer-${tab.state.input.layers.filter(Boolean).join('-')}-seed${tab.state.input.seed}.mid`;
+    if (download) { download(name, bytes); return; }
+    const blob = new Blob([bytes], { type: 'audio/midi' }), a = el('a', { href: URL.createObjectURL(blob), download: name });
+    doc.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // ── MIDI out (phase B, B3): the button, the panel, the ports ──
+  const sink = core.midi;
+  let midiOpen = false, access = null, midiError = null, asking = null, panelKey = null;
+  const readPrefs = () => { try { const v = JSON.parse(storage?.getItem?.(MIDI_KEY) ?? 'null'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } };
+  const prefs = { ports: {}, ...readPrefs() };
+  const savePrefs = () => { try { storage?.setItem?.(MIDI_KEY, JSON.stringify(prefs)); } catch { /* storage refused: the choices last the page */ } };
+  const outputs = () => (access ? [...access.outputs.values()] : []);
+  const outputNamed = (name) => outputs().find((o) => o.name === name) ?? null;
+  /** each part's bus: as chosen ('' not sent), else the first whose name holds the part's (M8) */
+  const portOf = (id) => { const v = prefs.ports?.[id]; return v === '' ? null : v != null ? outputNamed(v) : matchPort(outputs(), id); };
+  const clockOf = () => (prefs.clock === '' ? null : prefs.clock != null ? outputNamed(prefs.clock) : portOf('lead'));
+  function applyMidi() {
+    if (!sink) return;
+    sink.setPorts(Object.fromEntries(MIDI_PARTS.map((id) => [id, portOf(id)])));
+    sink.setClockPort(clockOf());
+    if (prefs.bend != null) sink.setBendRange(prefs.bend);
+  }
+  /** Web MIDI access, asked once (the browser may prompt); the lists follow ports coming and going */
+  function ensureAccess() {
+    if (access) return Promise.resolve(access);
+    if (!midiAccess) return Promise.resolve(null);
+    asking ??= Promise.resolve().then(() => midiAccess()).then((a) => {
+      access = a; midiError = null;
+      a.onstatechange = () => { applyMidi(); renderMidi(); };
+      return a;
+    }, () => { midiError = 'MIDI access was refused (the browser\'s site settings can allow it)'; return null; }).finally(() => { asking = null; });
+    return asking;
+  }
+  async function toggleSend() {
+    if (!sink) return;
+    if (sink.enabled) { sink.setEnabled(false); renderMidi(); return; }
+    if (!(await ensureAccess())) { renderMidi(); return; }
+    applyMidi();
+    sink.setEnabled(true);
+    renderMidi();
+  }
+  /** the parts sharing a bus (the drums aside: they're on 10): [[a, b]] */
+  const sharing = () => {
+    const out = [], ids = MIDI_PARTS.filter((id) => id !== 'drums' && portOf(id));
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) if (portOf(ids[i]) === portOf(ids[j])) out.push([ids[i], ids[j]]);
+    return out;
+  };
+  function midiStatus() {
+    if (!midiAccess) return { text: "Web MIDI isn't available in this browser (Chrome, Edge or Firefox): Details' MIDI file still works", tone: 'amber' };
+    if (midiError) return { text: midiError, tone: 'amber' };
+    if (!access) return { text: 'Send asks the browser for MIDI access', tone: '' };
+    if (!outputs().length) return { text: 'no MIDI outputs: add IAC buses in Audio MIDI Setup (IAC Driver → +)', tone: 'amber' };
+    const n = MIDI_PARTS.filter((id) => portOf(id)).length, shared = sharing();
+    if (shared.length) return { text: `${shared.map(([a, b]) => `${MIDI_LABELS[a]} and ${MIDI_LABELS[b]}`).join(', ')} share a bus: their notes would collide`, tone: 'amber' };
+    return { text: sink?.enabled ? `sending ${n} of ${MIDI_PARTS.length} parts${clockOf() ? `, the clock on ${clockOf().name}` : ''}` : `${n} of ${MIDI_PARTS.length} parts have a bus`, tone: '' };
+  }
+  function renderMidi() {
+    if (!ui) return;
+    const b = ui.midiBtn;
+    b.disabled = !sink || !midiAccess;
+    b.className = `ctab-toggle ctab-midi${sink?.enabled ? ' on' : ''}${midiOpen ? ' open' : ''}`;
+    b.title = !midiAccess ? "Web MIDI isn't available in this browser (Chrome, Edge or Firefox)" : sink?.enabled ? 'MIDI out: sending (the panel)' : 'MIDI out: each part on its own bus (the panel)';
+    ui.midiPanel.style.display = midiOpen && midiAccess ? '' : 'none';
+    if (!midiOpen || !midiAccess) { panelKey = null; return; }
+    const outs = outputs(), st = midiStatus();
+    // rebuilt only when what it shows changes (a render mid-choice must not close an open select)
+    const key = JSON.stringify([!!sink?.enabled, core.localSound(), outs.map((o) => o.name), prefs, st, sink?.bendRange, !!access]);
+    if (key === panelKey) return;
+    panelKey = key;
+    const pick = (value, onPick, { none = 'not sent', auto = null } = {}) => {
+      const sel = el('select', {}, el('option', { value: '', textContent: none }), ...outs.map((o) => el('option', { value: o.name, textContent: o.name })));
+      sel.value = value?.name ?? '';
+      sel.disabled = !access;
+      sel.addEventListener('change', () => onPick(sel.value));
+      if (auto) sel.title = auto;
+      return sel;
+    };
+    const rows = MIDI_PARTS.map((id) => el('div', { className: 'ctab-knob ctab-midi-part' }, el('label', { textContent: MIDI_LABELS[id] }),
+      pick(portOf(id), (v) => { prefs.ports = { ...prefs.ports, [id]: v }; savePrefs(); applyMidi(); renderMidi(); },
+        { auto: id === 'chords' ? 'an MPE zone: master channel 1, a voice a channel on 2–5 (MPE on the Ableton track)' : id === 'drums' ? 'channel 10, General MIDI drum notes' : 'channel 1' })));
+    const clockSel = pick(clockOf(), (v) => { prefs.clock = v; savePrefs(); applyMidi(); renderMidi(); }, { none: 'no clock', auto: 'MIDI clock, Start and Stop, for the DAW to follow the tempo (its Sync on this bus)' });
+    const bend = el('input', { type: 'number', min: 1, max: 96, step: 1, className: 'ctab-num', value: String(sink?.bendRange ?? 48), title: 'the pitch-bend range, in semitones, for synths set by hand (48 is MPE\'s)' });
+    bend.addEventListener('change', () => { const v = Math.round(Number(bend.value)); if (v >= 1 && v <= 96) { prefs.bend = v; savePrefs(); sink?.setBendRange(v); } renderMidi(); });
+    ui.midiPanel.replaceChildren(
+      el('div', { className: 'ctab-row' }, el('b', { className: 'ctab-sub', textContent: 'MIDI out' }),
+        toggle(sink?.enabled ? 'sending' : 'send', !!sink?.enabled, 'send each part to its bus (turn it on before Perform, so the DAW gets Start)', () => { toggleSend(); }),
+        toggle('local sound', core.localSound(), "on: the Composer's own voices play too; off: only the DAW sounds", () => core.setLocalSound(!core.localSound())),
+        el('span', { className: `ctab-muted ctab-midi-status${st.tone ? ` ${st.tone}` : ''}`, textContent: st.text })),
+      el('div', { className: 'ctab-knobs' }, ...rows,
+        el('div', { className: 'ctab-knob' }, el('label', { textContent: 'Clock' }), clockSel),
+        el('div', { className: `ctab-knob ${DETAIL}` }, el('label', { textContent: 'Bend ±' }), bend)));
   }
 
   /** what the last Compose dropped (decision 5), in words: [text] */
@@ -258,6 +376,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     ui.redoBtn.disabled = !core.canRedo();
     ui.work.className = `ctab-toggle ctab-work${tab.view.showWork ? ' on' : ''}`;
     renderDetails();
+    renderMidi();
+    ui.midiFile.disabled = !s || s.refused;
     ui.status.textContent = tab.state.status === 'error' ? `error: ${tab.state.error}` : core.applying() ? 'applying the edit in the worker…' : tab.state.dirty && s ? 'changed — Compose again' : '';
     // the plot note: no rhythm yet, or a plot that isn't the Linear Plot
     const v = visuals(), notes = [];

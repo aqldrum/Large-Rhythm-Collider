@@ -112,7 +112,9 @@ const chunk = (tag, body) => [...tag].map((c) => c.charCodeAt(0)).concat(u32Byte
 
 /**
  * A Standard MIDI File, written (format 1: track 0 is the conductor).
- *   opts { ppq = 480, bpm = 120, timeSig: [num, den] = [4, 4], tracks: [{ name, notes: [{ tick, end, pitch, velocity = 90, channel = 0 }] }] }
+ *   opts { ppq = 480, bpm = 120, timeSig: [num, den] = [4, 4], tracks: [{ name, notes: [{ tick, end, pitch, velocity = 90, channel = 0, bend }], events }] }
+ *   bend     a note's pitch bend (0–16383), sent on its channel just before its note-on (the Composer's MIDI out, phase B)
+ *   events   [{ tick, bytes }] more channel messages, before the notes at the same tick (an RPN set-up at 0)
  * → Uint8Array
  */
 export function writeMidi({ ppq = 480, bpm = 120, timeSig = [4, 4], tracks }) {
@@ -120,11 +122,12 @@ export function writeMidi({ ppq = 480, bpm = 120, timeSig = [4, 4], tracks }) {
   const conductor = [0, 0xff, 0x51, 3, (us >> 16) & 255, (us >> 8) & 255, us & 255, 0, 0xff, 0x58, 4, num, Math.log2(den), 24, 8, 0, 0xff, 0x2f, 0];
   const chunks = [chunk('MTrk', conductor)];
   for (const t of tracks) {
-    const ev = [];
+    const ev = (t.events ?? []).map((e) => ({ tick: e.tick, order: -1, bytes: e.bytes }));
     for (const n of t.notes) {
       const ch = n.channel ?? 0;
-      ev.push({ tick: n.tick, order: 1, bytes: [0x90 | ch, n.pitch, n.velocity ?? 90] });
-      ev.push({ tick: n.end, order: 0, bytes: [0x80 | ch, n.pitch, 0] });   // a note-off before a note-on at the same tick
+      if (n.bend != null) ev.push({ tick: n.tick, order: 1, bytes: [0xe0 | ch, n.bend & 0x7f, (n.bend >> 7) & 0x7f] });
+      ev.push({ tick: n.tick, order: 2, bytes: [0x90 | ch, n.pitch, n.velocity ?? 90] });
+      ev.push({ tick: n.end, order: 0, bytes: [0x80 | ch, n.pitch, 0] });   // a note-off before a bend and a note-on at the same tick
     }
     ev.sort((a, b) => a.tick - b.tick || a.order - b.order);
     const body = [];

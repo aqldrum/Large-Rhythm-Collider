@@ -172,7 +172,10 @@ Serve from `.claude/worktrees/composer-sprint-2`. Composer window, 41:42:43 or 1
    the page: Details stays as you left it. Under the Composition lens, the part strips' hint sentence shows only with
    Details on.
 
-**MIDI out** (the six IAC buses, six Ableton tracks, the chords track in MPE, Ableton synced to the clock)
+**MIDI out** (set-up: six IAC buses named "Composer Lead", "Composer Chords", "Composer Comp", "Composer Bass",
+"Composer Inner", "Composer Drums" — any name holding the part's word matches; six Ableton tracks, each *MIDI From* its
+bus, *All Channels*, MPE on the chords track; Preferences → Link/Tempo/MIDI: *Sync* on for the Lead bus. In the
+Composer: MIDI (header) → the panel → send, before Perform)
 6. MIDI on, local sound on: the browser and the DAW play together, in tune with each other (no beating on held
    chords).
 7. Each part arrives on its own track. Turn a part off in the matrix: its track goes quiet.
@@ -192,6 +195,32 @@ commits ahead of `main`, and `main` hasn't moved past it, so it would merge with
 call once Phase A passes.
 
 ## Log
+
+**2026-10-27, phase B built** (branch `midi/out`, worktree `.claude/worktrees/midi-out`). Suites: 74, all green (two
+new: `assert-composer-midi.mjs`, 38 checks, the sender, the lengths, the .mid and the player against recording ports;
+`assert-page-midi.mjs`, 19, the window through the bridge with a fake Web MIDI).
+- `Composer/perform/composer-midi.js`: the sink (routing, notes, the guard, set-up, the clock, allOff), `midiNotesOf`
+  (M12), `midiFileOf` (M11), `matchPort` (M8). Its tuning math is held equal to Cosmos's sender by the test.
+- The player books the MIDI from its own loop (M2): offs first in each tick, so a voice's next note-on always follows
+  its last note-off; the clock on spec time, so it follows a live tempo; Start at play; allOff at stop. `localSound`
+  mutes the master (M7). The controller passes the sink through (`midi`), and the bridge makes the page's one and
+  silences it on `pagehide`.
+- `core/midi.js`'s writer takes a note's `bend` (just before its note-on, after a note-off at the same tick) and raw
+  set-up `events`. Every existing file it writes is byte for byte as before.
+- The window: a MIDI button in the header opens the MIDI panel under it (inline, not floating): send, local sound,
+  what is going out, a bus a part, the clock's bus, and the bend range (Details). "MIDI file" sits beside JSON in
+  Details. The choices are kept under `lrc.composer.midi`; Send never is.
+- Calls made while building (Avery may overrule):
+  - Turning Send on mid-Perform: the notes start at once, but the DAW gets no Start until the next Perform (the panel's
+    title says to send before Perform).
+  - Two parts on one bus (the drums aside) are warned about in the panel, not refused.
+  - A chord voice holds until that voice's next note, as the page's legato does. So a voice missing from the next bar
+    (a triad after a seventh) rings on under it. Worth an ear at the rig: if it bothers, the fix is to end a chord
+    voice at its span's end.
+  - The .mid is one cycle of the parts that are on, the drums if they're on.
+  - Cosmos is untouched: its player gets no sink (M10).
+- Not checked: the real path (Web MIDI → IAC → Ableton), and the timestamps through a real `getOutputTimestamp`.
+  That is Avery's rig pass, items 6–14.
 
 **2026-10-27, phase A built** (branch `clean/view`, worktree `.claude/worktrees/clean-view`). Suites: 72, all green (71
 before, plus the new `assert-page-detail.mjs`, 30 checks; `assert-page-target.mjs` gained a check of the clip's one
