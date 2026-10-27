@@ -55,8 +55,16 @@
 // first click hears one, a second click or Keep keeps it, Esc or Revert takes it back), Clear, and errors in plain
 // words. The matrix's lead row is the clip with its marks (matrix.js); the lead's context lists the clip's notes and
 // their kinds instead of runner-up lines (P6: no lead swaps on a target).
+//
+// The Arp mode (COMP_ARP_ORDER.md B3, Q8; DESIGN_NOTES "Comping and Arp in the window"): the lead's and the inner's
+// cell inspectors open on a Line | Arp switch (the controller's setArp: live, one undo step). With Arp: Pattern (Up,
+// Down, Up-down, As played), Rate (1–4 a slot) and Range (1–3 octaves); Details adds the rests and the share of steps
+// holding a chord tone. A lead in Arp hides its runner-ups (Q5). On a MIDI target the lead's switch is disabled, its
+// title arpRefusal's words. The matrix's lane name and the part strip say "· arp".
+// Comping in chords (A4): a borrowed comp tone's dot is hollow; the comp cell says its strokes (and, with Details,
+// the share of its tones the row sounds).
 
-import { soundChoices, drumModeChoices, DRUM_LAB_VOICES, TEMPO_LIMITS } from '../perform/composer-controller.js';
+import { soundChoices, drumModeChoices, DRUM_LAB_VOICES, TEMPO_LIMITS, ARP_CHOICES } from '../perform/composer-controller.js';
 import { KNOB_FIELDS, TABLE_FIELD, fieldValue, refusalText, readoutItems, knobChosen, decisionRows, rootGroups, strayRootOption, chordGot, progressionNote,
   noteTitle, modulationLabel } from '../perform/readouts.js';
 import { PART_COLORS, PART_LABELS, HIGHLIGHT_PARTS, plotOf } from './plot-highlights.js';
@@ -88,6 +96,11 @@ const DETAIL = 'ctab-detail', CLEAN = 'ctab-clean-only';
 /** MIDI out (phase B): where the panel's choices are kept { ports: { [part]: name | '' (not sent) }, clock: name | '', bend } */
 export const MIDI_KEY = 'lrc.composer.midi';
 const MIDI_LABELS = Object.freeze({ lead: 'Lead', chords: 'Chords', comp: 'Comping', bass: 'Bass', inner: 'Inner', drums: 'Drums' });
+/** B3: the Arp knobs' words */
+export const ARP_PATTERN_LABELS = Object.freeze({ up: 'Up', down: 'Down', updown: 'Up-down', played: 'As played' });
+const ARP_PATTERN_TITLES = Object.freeze({ up: 'climbs the chord, then wraps to the bottom', down: 'falls through the chord, then wraps to the top', updown: 'climbs, then turns and falls', played: 'the chord tone the row sounds first in each step, the nearest octave' });
+/** a part's name with its mode: "Lead · arp" (B3) */
+export const partName = (id, part) => `${PART_LABELS[id]}${part?.arp ? ' · arp' : ''}`;
 /** the narrowest a matrix column gets before the matrix scrolls (px; proposed) */
 const MIN_COLUMN_PX = 56;
 const isMac = () => { try { return /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? ''); } catch { return false; } };
@@ -614,7 +627,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const N = model.bars;
     ui.lanes.style.minWidth = `${112 + N * MIN_COLUMN_PX}px`;
     const head = (row) => {
-      const name = el('button', { className: 'ctab-lane-name', textContent: row.label, title: `select ${row.label.toLowerCase()}: the inspector shows it` });
+      const name = el('button', { className: 'ctab-lane-name', textContent: partName(row.id, tab.state.parts[row.id]), title: `select ${row.label.toLowerCase()}: the inspector shows it` });
       name.style.borderLeftColor = row.color;
       name.addEventListener('click', () => tab.select(row.id));
       const onToggle = row.id === 'drums' ? () => core.setDrums({ enabled: !row.enabled }) : () => core.setPart(row.id, { enabled: !row.enabled });
@@ -912,15 +925,52 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       tr.dataset.clipNote = String(m.j);
       return tr;
     });
-    return [head, lattice,
+    return [head, arpControls('lead'), lattice,
       el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: 'hit · amber: played off the frame (fringe) or a slot over (shift) · red: silent (the row has no onset of its class there) · late off: its end found no onset near its anchor' }),
       rows.length ? el('table', { className: 'ctab-decisions-table ctab-notes ctab-clip-notes' }, el('tr', {}, ...['note', 'bar.step', 'kind', 'ratio', 'dev', ''].map((h) => el('td', { textContent: h }))), ...rows)
         : el('div', { className: 'ctab-muted', textContent: 'no clip notes in this phrase' }),
       el('div', { className: 'ctab-muted', textContent: 'no lead alternates: the lead is the clip (its other placements are in the MIDI clip control)' })];
   }
+  /**
+   * B3 (Q8): the Line | Arp switch of the lead or the inner, and with Arp its knobs; Details: the rests and the share
+   * of steps on a chord tone. Refused (a MIDI target's lead): the switch disabled, arpRefusal's words its title.
+   */
+  function arpControls(id) {
+    const a = core.arpOf(id), refused = a.refusal, on = a.mode === 'arp' && !refused;
+    const set = (x) => doEdit(() => core.setArp(id, x));
+    const lineTitle = refused ?? (id === 'lead' ? 'the mined line: the melody Compose found (its runner-ups to audition)' : 'the mined inner line, in the lead\'s gaps');
+    const arpTitle = refused ?? `the chord's tones as an arpeggio, each an onset the row plays: live, no re-compose${id === 'inner' ? ' (the harp, unless you chose a sound)' : ''}`;
+    const sw = el('div', { className: `ctab-arp-switch${refused ? ' refused' : ''}`, title: refused ?? 'Line: the mined line · Arp: an arpeggio over the chords' },
+      button('Line', `ctab-seg ctab-arp-line${on ? '' : ' on'}`, lineTitle, () => set({ mode: 'line' }), { disabled: !!refused }),
+      button('Arp', `ctab-seg ctab-arp-on${on ? ' on' : ''}`, arpTitle, () => set({ mode: 'arp' }), { disabled: !!refused }));
+    sw.setAttribute('role', 'group');
+    const kids = [sw];
+    if (on) {
+      const pick = (cls, title, options, value, onPick) => {
+        const sel = el('select', { className: cls, title }, ...options.map(([v, label, t]) => el('option', { value: String(v), textContent: label, ...(t ? { title: t } : {}) })));
+        sel.value = String(value);
+        sel.addEventListener('change', () => onPick(sel.value));
+        return sel;
+      };
+      kids.push(
+        pick('ctab-arp-pattern', 'the shape: the next chord tone in its direction, whichever the row sounds', ARP_CHOICES.patterns.map((p) => [p, ARP_PATTERN_LABELS[p], ARP_PATTERN_TITLES[p]]), a.pattern, (v) => set({ pattern: v })),
+        pick('ctab-arp-rate', 'the rate: steps a slot (each step the row\'s own onsets in that part of the slot)', ARP_CHOICES.rates.map((r) => [r, `${r} a slot`]), a.rate, (v) => set({ rate: Number(v) })),
+        pick('ctab-arp-range', 'the range: the octaves the arpeggio spans', ARP_CHOICES.ranges.map((r) => [r, `${r} oct`]), a.range, (v) => set({ range: Number(v) })));
+      const st = a.stats;
+      if (st) kids.push(el('span', { className: `ctab-muted ctab-arp-stats ${DETAIL}`, textContent: `${st.rests} rest${st.rests === 1 ? '' : 's'} of ${st.steps} · ${Math.round(100 * st.chordShare)}% of steps on a chord tone`,
+        title: `${st.notes} notes over ${st.steps} steps; a step rests where the row sounds no chord tone in it${st.restsForLead != null ? `, or (below rate 3) where the lead strikes: ${st.restsForLead}` : ''}` }));
+    }
+    return el('div', { className: 'ctab-row ctab-arp' }, ...kids);
+  }
   function leadContext(bar) {
+    // B3 (Q5): an arp lead hides its runner-ups; the switch brings the line back
+    if (core.arpOf('lead').playing) {
+      const sp = phraseSpans(tab.state.spec).find((x) => bar >= x.from && bar < x.from + x.bars) ?? { from: bar, bars: 1 };
+      return [ctxHead(`${barsLabel({ from: sp.from, to: sp.from + sp.bars - 1 }).replace(/^b/, 'B')} · Lead`, el('span', { className: 'ctab-tag', textContent: 'arp' })), arpControls('lead'),
+        el('div', { className: 'ctab-muted', textContent: 'an arpeggio over the chords: Line brings the melody back, and its runner-ups' }), editNote()];
+    }
     const a = core.alternatesOf(bar, 'lead');
-    if (!a) return [ctxHead(`Bar ${bar + 1} · Lead`), el('span', { className: 'ctab-muted', textContent: 'no runner-ups for this phrase' })];
+    if (!a) return [ctxHead(`Bar ${bar + 1} · Lead`), arpControls('lead'), el('span', { className: 'ctab-muted', textContent: 'no runner-ups for this phrase' })];
     const e = a.edit, follow = e ? !!e.chordsFollow : followPref, phrase = a.phrase;
     const head = ctxHead(`${barsLabel({ from: a.from, to: a.from + a.bars - 1 }).replace(/^b/, 'B')} · Lead (phrase ${phrase + 1})`, e ? el('span', { className: 'ctab-tag', textContent: `swapped${e.chordsFollow ? ', chords follow' : ''}${e.smooth ? ', smoothed' : ''}` }) : null, retuneNote());
     const followBtn = toggle('chords follow', follow, "on: the phrase's chords are chosen again over the new line (its chord edits give way); off (the default): the chords stay", () => {
@@ -941,18 +991,19 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       b.addEventListener('click', () => audition.tryAlt(k, () => core.swapLead(phrase, l.id, { chordsFollow: follow }), `line ${r.cost}`));
       return b;
     }));
-    return [head, el('div', { className: 'ctab-row' }, followBtn, smooth), el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: '● plays now · C Compose\'s line · cost a note: lower is closer to the rules' }), list, auditionBar(), editNote()];
+    return [head, arpControls('lead'), el('div', { className: 'ctab-row' }, followBtn, smooth), el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: '● plays now · C Compose\'s line · cost a note: lower is closer to the rules' }), list, auditionBar(), editNote()];
   }
   function partContext(id, bar) {
     const s = tab.state.spec, ch = s.chords[bar], part = tab.state.parts[id];
     const notes = (part?.notes ?? []).filter((n) => n.bar === bar);
     const composedNotes = (tab.state.composed?.parts?.find((p) => p.id === id)?.notes ?? []).filter((n) => n.bar === bar);
     const edited = notes.map((n) => `${n.slot}:${n.node}:${n.octave}`).join() !== composedNotes.map((n) => `${n.slot}:${n.node}:${n.octave}`).join();
-    const head = ctxHead(`Bar ${bar + 1} · ${PART_LABELS[id]}`, edited ? el('span', { className: 'ctab-tag', textContent: 're-mined' }) : null);
+    const arp = !!part?.arp;   // B3: an inner in Arp
+    const head = ctxHead(`Bar ${bar + 1} · ${PART_LABELS[id]}`, arp ? el('span', { className: 'ctab-tag', textContent: 'arp' }) : edited ? el('span', { className: 'ctab-tag', textContent: 're-mined' }) : null);
     const follows = el('div', { className: 'ctab-row' }, el('span', {}, ch.empty ? `bar ${bar + 1} has no chord: it plays its root's onset` : `follows bar ${bar + 1}'s chord: ${ch.name}`,
       ch.empty ? null : el('span', { className: DETAIL, textContent: ` (root ${ch.rootTone}, ${qualityName(ch.quality)})` })),
       button('the chord ▸', 'ctab-btn ctab-ctx-action', `select bar ${bar + 1}'s chord: swapping it re-mines this part's bar`, () => tab.selectCell('chords', bar)));
-    const out = [head, follows];
+    const out = [head, ...(id === 'inner' ? [arpControls('inner')] : []), follows];
     if (id === 'comp') {
       // A4 (P12): the strokes, and (Details) the share of the bar's tones the row sounds near them
       const cl = compLine(part, bar);
@@ -960,7 +1011,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       const L = s.stats?.compLayer;
       if (L) out.push(el('div', { className: `ctab-muted ctab-pin ${DETAIL}`, textContent: `comp layer: ${L.layer} (${L.value}), pinned through edits (read-only; Compose's layer choice scores every bar)` }));
     }
-    if (id === 'inner') {
+    if (id === 'inner' && !arp) {
       const p = core.alternatesOf(bar, 'lead'), e = p?.edit;
       out.push(el('div', { className: 'ctab-row' }, el('span', { className: `ctab-muted ${DETAIL}`, textContent: 'the inner is re-mined bar by bar with its chord; smoothing re-mines the whole phrase (the worker)' }),
         button(e?.smooth ? 'smoothed ✓' : 'smooth the phrase', 'ctab-btn ctab-smooth', e ? 'smooth the inner over the whole phrase' : s.target ? 'no lead swaps on a MIDI target (its lead is the clip), so no smoothing' : 'available once the phrase\'s lead is swapped (the Lead row)', () => { if (e) doEdit(() => core.swapLead(p.phrase, p.currentId, { chordsFollow: !!e.chordsFollow, smooth: !e.smooth })); }, { disabled: !e || core.applying() })));

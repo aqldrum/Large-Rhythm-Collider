@@ -251,6 +251,15 @@
 .ctab-dot.borrowed { background: none; box-shadow: inset 0 0 0 1.5px currentColor; width: 6px; height: 6px; margin: -3px 0 0 -3px; opacity: .95; }
 .ctab-notes tr.borrowed td:nth-child(2) { font-style: italic; color: #c9b8d6; }
 .ctab-comp-line { gap: 0; }
+/* the Arp mode (COMP_ARP_ORDER.md B3): the Line | Arp switch, a segmented pair, and its knobs on the same row */
+.ctab-arp { gap: 6px; }
+.ctab-arp-switch { display: inline-flex; }
+.ctab-inspector .ctab-seg { padding: 1px 8px; font-size: 10px; border-radius: 0; }
+.ctab-inspector .ctab-seg:first-child { border-radius: 3px 0 0 3px; }
+.ctab-inspector .ctab-seg:last-child { border-radius: 0 3px 3px 0; border-left: none; }
+.ctab-inspector .ctab-seg.on { border-color: #00ff88; color: #00ff88; }
+.ctab-inspector .ctab-arp-switch.refused .ctab-seg { opacity: .45; cursor: not-allowed; }
+.ctab-arp select { font-size: 10px; }
 .ctab-clip-notes tr.fringe .ctab-clip-kind, .ctab-clip-notes tr.shift .ctab-clip-kind, .ctab-clip-notes tr.late td:last-child { color: #ffb347; }
 .ctab-clip-notes tr.hard td { color: #ff6b6b; }
 .ctab-clip-tag { color: #fff; border-color: #555; }
