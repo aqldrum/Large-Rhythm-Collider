@@ -14,6 +14,8 @@
 //              parts, the drums and the plot), or null when the spec isn't of the plotted rhythm.
 //   show work  view.showWork (on by default; the view keeps it in localStorage): the Compose button asks for the compose
 //              trace (state.trace) and the view animates it (compose-animator.js). Off, Compose is exactly as before.
+//   details    view.details (off by default; the view keeps it in localStorage): the window's full detail, or the
+//              clean view (Composer/CLEAN_MIDI_ORDER.md, phase A). It only changes what the window shows.
 //   store      (sprint 2) the tab is a view and editor of the page's composition store (Composer/store/): syncRhythm
 //              selects the page's rhythm in the store and binds the controller to that entry, so `state` is the
 //              current rhythm's composition. A compose started for one rhythm lands in that rhythm's entry even if
@@ -54,7 +56,7 @@ export const kitChoices = (voice) => sharedKitChoices(voice, PAGE_SAMPLES_BASE);
  */
 export function createTabController({ host = {}, runCompose, createContext, timers, clock, store = createCompositionStore(), keepPlaying = () => false } = {}) {
   const core = createComposerController({ runCompose, createContext, timers, clock, beforePerform: () => host.stopMain?.() });
-  const view = { open: false, selected: 'lead', bar: 0, section: CONTEXT_SECTION, hasRhythm: false, showWork: true, targetError: null };
+  const view = { open: false, selected: 'lead', bar: 0, section: CONTEXT_SECTION, hasRhythm: false, showWork: true, details: false, targetError: null };
   const listeners = new Set(), mainListeners = new Set();
   const changed = () => { for (const f of listeners) f(core.state, view); };
   // a change to any entry the controller acts on (the bound one, or one whose compose just landed) is the store's too
@@ -121,6 +123,8 @@ export function createTabController({ host = {}, runCompose, createContext, time
     revertPlacement: () => core.revertPlacement(),
     /** "show the work": animate Compose from its trace, or not */
     setShowWork(on) { const v = !!on; if (v === view.showWork) return; view.showWork = v; changed(); },
+    /** Details (CLEAN_MIDI_ORDER.md C1): the window's full detail, or the clean view; a viewing flag only */
+    setDetails(on) { const v = !!on; if (v === view.details) return; view.details = v; changed(); },
     /** the main page started playing: the Composer gives way (and so does an animation of Compose) */
     mainStarted() { if (core.state.status === 'playing') core.stop(); for (const f of [...mainListeners]) f(); },
     onMainStarted(f) { mainListeners.add(f); return () => mainListeners.delete(f); },

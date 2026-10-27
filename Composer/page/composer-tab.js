@@ -13,6 +13,12 @@
 //              knobs), Lines (the meter and the table), Drums (mode, fills, the kit), Tuning (the frame, the root,
 //              baseHz, the retunes)
 //
+// Details (CLEAN_MIDI_ORDER.md, phase A: a header toggle, off by default, kept in localStorage): off, the clean view —
+// names over numbers, what you can act on, and the warnings that need you; on, the window as it was before. What only
+// Details shows carries `ctab-detail` (and what only the clean view shows, `ctab-clean-only`), and the CSS hides it by
+// the hosts' `ctab-details-on`, so the toggle changes what is seen and nothing else: no spec, no compose, no sound. A
+// knob only Details shows keeps its value; when one is asked (not auto), the toggle carries a dot and names it.
+//
 // The upper right stays the Partitions window's mirror of the Linear Plot. While the tab is shown, the plot carries the
 // Composer's lit nodes (plot-overlay.js, through LRCVisuals.setComposerOverlay), the selected cell ringed on it
 // (getFocus), and, during Perform, its playhead.
@@ -62,6 +68,15 @@ const KNOBS_OF = Object.freeze({ harmony: ['modulation', 'settlePasses', 'presen
 const BEAT_NAMES = Object.freeze({ row: 'row', root: 'root', meter: 'meter', cells: 'cells', progression: 'progression', line: 'lead', chords: 'chords', line2: 'lead again',
   settle: 'settle', harmony: 'harmony', parts: 'parts', drums: 'drums', done: 'done' });
 const defaultStorage = () => { try { return globalThis.localStorage ?? null; } catch { return null; } };
+/** Details (C1): where the toggle is kept, and reading and writing it (any access wrapped; off when unread) */
+export const DETAILS_KEY = 'lrc.composer.details';
+export function readDetails(storage) { try { return storage?.getItem?.(DETAILS_KEY) === '1'; } catch { return false; } }
+export function writeDetails(storage, on) { try { storage?.setItem?.(DETAILS_KEY, on ? '1' : '0'); } catch { /* storage refused: the setting lasts the page */ } }
+/** the knobs only Details shows (C5); the Table row too, though it is where Compose runs, not an ask */
+export const DETAIL_KNOBS = Object.freeze(['settlePasses', 'presence', 'anchors', 'frameCentsEachSide']);
+/** the asked knobs the clean view hides (C3): [label value] for the Details toggle's dot */
+export const hiddenSettings = (knobs) => DETAIL_KNOBS.filter((n) => knobs?.[n] != null).map((n) => `${KNOB_FIELDS.find((f) => f.name === n).label} ${fieldValue(n, knobs[n])}`);
+const DETAIL = 'ctab-detail', CLEAN = 'ctab-clean-only';
 /** the narrowest a matrix column gets before the matrix scrolls (px; proposed) */
 const MIN_COLUMN_PX = 56;
 const isMac = () => { try { return /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? ''); } catch { return false; } };
@@ -94,6 +109,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   // STEP 4e: the last edit's result (said in the inspector), "chords follow" for the next lead swap, the bar now playing
   let lastEdit = null, followPref = false, nowBar = -1, pickEls = [], headEls = [], inspWhere = null;
   tab.view.showWork = readShowWork(storage);
+  tab.view.details = readDetails(storage);
 
   // ── STEP 4e: the audition, and every edit through one door (an open audition is kept before another edit) ──
   const audition = createAudition({
@@ -128,11 +144,16 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const go = el('button', { className: 'ctab-go', textContent: 'Compose' });
     go.addEventListener('click', pressGo);
     const mod = isMac() ? '⌘' : 'Ctrl+';
-    const undoBtn = button('↶ Undo', 'ctab-btn ctab-undo', `undo the last edit (${mod}Z): a swap, the typed field, a drum step`, () => undo());
-    const redoBtn = button('↷ Redo', 'ctab-btn ctab-redo', `redo it (${isMac() ? '⇧⌘Z' : 'Ctrl+Shift+Z'})`, () => redo());
+    // the icons alone in the clean view, the words with Details (C5)
+    const undoBtn = button('↶', 'ctab-btn ctab-undo', `undo the last edit (${mod}Z): a swap, the typed field, a drum step`, () => undo());
+    const redoBtn = button('↷', 'ctab-btn ctab-redo', `redo it (${isMac() ? '⇧⌘Z' : 'Ctrl+Shift+Z'})`, () => redo());
+    undoBtn.append(el('span', { className: `ctab-word ${DETAIL}`, textContent: ' Undo' }));
+    redoBtn.append(el('span', { className: `ctab-word ${DETAIL}`, textContent: ' Redo' }));
     const work = el('button', { className: 'ctab-toggle ctab-work', textContent: 'show the work', title: 'animate Compose: the root, the lead, the chords under it, the settling and the parts, on the Linear Plot' });
     work.addEventListener('click', () => { const on = !tab.view.showWork; writeShowWork(storage, on); tab.setShowWork(on); });
-    const json = el('button', { className: 'ctab-btn', textContent: 'JSON', title: 'download the spec as it plays now' });
+    const details = el('button', { className: 'ctab-toggle ctab-details', textContent: 'details' });
+    details.addEventListener('click', () => { const on = !tab.view.details; writeDetails(storage, on); tab.setDetails(on); });
+    const json = el('button', { className: `ctab-btn ${DETAIL}`, textContent: 'JSON', title: 'download the spec as it plays now' });
     json.addEventListener('click', exportJSON);
     const tempo = el('input', { type: 'range', min: TEMPO_LIMITS[0], max: TEMPO_LIMITS[1], step: 1, className: 'ctab-tempo' });
     const tempoBpm = el('input', { type: 'number', min: TEMPO_LIMITS[0], max: TEMPO_LIMITS[1], step: 0.1, title: 'BPM', className: 'ctab-num' });
@@ -144,7 +165,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const glideOut = el('span', { className: 'ctab-muted', textContent: `${tab.state.glideMs} ms` });
     glide.addEventListener('input', () => { core.setGlide(glide.value); glideOut.textContent = `${tab.state.glideMs} ms`; });
     const rhythm = el('span', { className: 'ctab-rhythm' }), status = el('span', { className: 'ctab-status' });
-    const note = el('div', { className: 'ctab-note' }), refusal = el('div', { className: 'ctab-refusal' }), readouts = el('div', { className: 'ctab-readouts' }), dropped = el('div', { className: 'ctab-dropped' });
+    const note = el('div', { className: 'ctab-note' }), refusal = el('div', { className: 'ctab-refusal' }), readouts = el('div', { className: `ctab-readouts ${DETAIL}` }), dropped = el('div', { className: 'ctab-dropped' });
+    const summary = el('div', { className: `ctab-summary ${CLEAN}` });
     const capLabel = el('b', { className: 'ctab-caption-label' }), capDetail = el('span', { className: 'ctab-caption-detail' }), capBeats = el('div', { className: 'ctab-caption-beats' });
     const caption = el('div', { className: 'ctab-caption' }, el('div', { className: 'ctab-row' }, capLabel, capDetail), capBeats);
     caption.style.display = 'none';
@@ -154,7 +176,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     lanes.setAttribute('role', 'grid');
     const barPick = el('div', { className: 'ctab-barpick' });
     const table = el('table', { className: 'ctab-decisions-table' });
-    const decisions = el('details', { className: 'ctab-decisions' }, el('summary', { textContent: 'Decisions — what Compose chose, and why' }), table);
+    const decisions = el('details', { className: `ctab-decisions ${DETAIL}` }, el('summary', { textContent: 'Decisions — what Compose chose, and why' }), table);
     // MIDI targets (phase B): the MIDI clip control (a hidden file input behind a button; a drop anywhere on the window)
     const clipFile = el('input', { type: 'file', accept: '.mid,.midi,audio/midi,audio/x-midi', className: 'ctab-clip-file' });
     clipFile.style.display = 'none';
@@ -165,20 +187,21 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const clipClear = button('Clear', 'ctab-btn ctab-clip-clear', 'drop the clip; Compose again for an ordinary composition', () => { audition.reset(); tab.setTarget(null); });
     const clipTonicLabel = el('span', { className: 'ctab-muted', textContent: 'Tonic' });
     const clipHint = el('span', { className: 'ctab-muted ctab-clip-hint' }), clipError = el('div', { className: 'ctab-clip-error' });
-    const clipDecode = el('div', { className: 'ctab-clip-line ctab-clip-decode' }), clipFit = el('div', { className: 'ctab-clip-line ctab-clip-fit' }), clipAlts = el('div', { className: 'ctab-clip-alts' });
+    const clipDecode = el('div', { className: `ctab-clip-line ctab-clip-decode ${DETAIL}` }), clipFit = el('div', { className: `ctab-clip-line ctab-clip-fit ${DETAIL}` }), clipAlts = el('div', { className: 'ctab-clip-alts' });
+    const clipSummary = el('div', { className: `ctab-clip-line ctab-clip-summary ${CLEAN}` });
     const target = el('div', { className: 'ctab-target' },
       el('div', { className: 'ctab-row' }, el('b', { className: 'ctab-target-label', textContent: 'MIDI clip' }), clipChoose, clipFile, clipTonicLabel, clipTonic, clipClear, clipHint),
-      clipError, clipDecode, clipFit, clipAlts);
+      clipError, clipSummary, clipDecode, clipFit, clipAlts);
     left.replaceChildren(
       el('div', { className: 'ctab-head' },
-        el('div', { className: 'ctab-row' }, rhythm, el('label', { className: 'ctab-muted', textContent: 'Seed' }), seed, go, undoBtn, redoBtn, json, work, status),
+        el('div', { className: 'ctab-row' }, rhythm, el('label', { className: 'ctab-muted', textContent: 'Seed' }), seed, go, undoBtn, redoBtn, json, work, details, status),
         el('div', { className: 'ctab-row' }, el('label', { className: 'ctab-muted', textContent: 'Tempo', title: 'playback tempo: the composed cycle faster or slower, live (pitch unchanged)' }), tempo, tempoBpm, tempoReset,
           el('label', { className: 'ctab-muted', textContent: 'Glide' }), glide, glideOut)),
-      target, note, refusal, dropped, caption, readouts,
+      target, note, refusal, dropped, caption, summary, readouts,
       el('div', { className: 'ctab-scroll' }, barPick, el('div', { className: 'ctab-matrix-wrap' }, lanes), decisions));
     // a click anywhere in the tab skips the animation (the button and the toggle do their own thing)
     left.addEventListener('click', (e) => { if (anim.status === 'playing' && !e.target?.closest?.('.ctab-go, .ctab-work')) skipAnimation(); });
-    return { seed, go, undoBtn, redoBtn, json, work, tempo, tempoBpm, tempoReset, glide, glideOut, rhythm, status, note, refusal, dropped, caption, capLabel, capDetail, capBeats, readouts, lanes, barPick, table,
+    return { seed, go, undoBtn, redoBtn, json, work, details, summary, clipSummary, tempo, tempoBpm, tempoReset, glide, glideOut, rhythm, status, note, refusal, dropped, caption, capLabel, capDetail, capBeats, readouts, lanes, barPick, table,
       target, clipFile, clipChoose, clipTonic, clipTonicLabel, clipClear, clipHint, clipError, clipDecode, clipFit, clipAlts };
   }
   function showTempo() {
@@ -213,6 +236,14 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     return out;
   }
 
+  /** Details (C1, C3): the hosts' class, the toggle, and its dot when the clean view hides an asked knob */
+  function renderDetails() {
+    const on = !!tab.view.details, hidden = on ? [] : hiddenSettings(tab.state.knobs);
+    for (const h of [hosts?.left, hosts?.inspector]) h?.classList?.toggle('ctab-details-on', on);
+    ui.details.className = `ctab-toggle ctab-details${on ? ' on' : ''}${hidden.length ? ' has-hidden' : ''}`;
+    ui.details.textContent = hidden.length ? 'details •' : 'details';
+    ui.details.title = hidden.length ? `settings hidden: ${hidden.join(', ')}` : on ? 'hide the detail: the clean view' : 'show every readout, the decisions and the advanced knobs';
+  }
   function renderLeft() {
     const label = tab.button(), s = tab.state.spec;
     ui.rhythm.replaceChildren(el('b', { textContent: tab.view.hasRhythm ? tab.state.input.layers.filter(Boolean).join(':') : '—' }), ` · ${tab.state.input.cycleSeconds} s cycle`);
@@ -226,6 +257,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     ui.undoBtn.disabled = !(core.canUndo() || audition.state !== 'idle');
     ui.redoBtn.disabled = !core.canRedo();
     ui.work.className = `ctab-toggle ctab-work${tab.view.showWork ? ' on' : ''}`;
+    renderDetails();
     ui.status.textContent = tab.state.status === 'error' ? `error: ${tab.state.error}` : core.applying() ? 'applying the edit in the worker…' : tab.state.dirty && s ? 'changed — Compose again' : '';
     // the plot note: no rhythm yet, or a plot that isn't the Linear Plot
     const v = visuals(), notes = [];
@@ -239,8 +271,13 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     ui.note.style.display = notes.length ? '' : 'none';
     ui.refusal.textContent = refusalText(s);
     const drop = droppedLines(tab.state.dropped);
-    ui.dropped.replaceChildren(...drop.map((t) => el('div', { textContent: t })));
+    // the clean view: one line, the list in its title; Details: the list (C5)
+    ui.dropped.replaceChildren(el('div', { className: CLEAN, textContent: `Compose couldn't keep ${drop.length} of the edits`, title: drop.join('\n') }),
+      ...drop.map((t) => el('div', { className: DETAIL, textContent: t })));
     ui.dropped.style.display = drop.length ? '' : 'none';
+    ui.summary.textContent = s && !s.refused ? `${s.knobs.bars} bar${s.knobs.bars === 1 ? '' : 's'} × ${s.knobs.slotsPerBar}` : '';
+    ui.summary.title = s && !s.refused ? 'the meter: bars × slots a bar (Details shows every readout)' : '';
+    ui.summary.style.display = ui.summary.textContent ? '' : 'none';
     ui.readouts.replaceChildren(...readoutItems(s, { lastMs: tab.state.lastMs, drums: tab.state.drums }).map(([k, val]) => el('span', {}, `${k} `, el('b', { textContent: val }))));
     ui.table.replaceChildren(...decisionRows(s, tab.state.drums).map((d) => el('tr', {}, el('td', { textContent: d.what }), el('td', { textContent: d.value }), el('td', { textContent: d.why }))));
     renderTarget();
@@ -298,6 +335,9 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     ui.clipError.style.display = err ? '' : 'none';
     clipLine(ui.clipDecode, t ? decodeLine(t.clip, { tonic: t.tonic }) : null);
     clipLine(ui.clipFit, fit ? fitLine(fit) : null);
+    // the clean view's one line: the clip and how much of it the row plays (C5)
+    const P = fit?.placement;
+    clipLine(ui.clipSummary, P ? { items: [{ text: t.clip.name ?? 'the clip', name: true }, { text: `${P.hits}/${P.J} notes fit`, tone: P.hits < P.J ? 'amber' : '' }], title: 'Details shows the decode and the fit' } : null);
     // the placements: the search's best and its alternates, auditioned as the matrix's alternates are
     const pl = t ? tab.state.placements : null, pa = core.placementAudition();
     if (!pl || pl.list.length < 2) { ui.clipAlts.replaceChildren(); ui.clipAlts.style.display = 'none'; return; }
@@ -305,7 +345,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const chips = pl.list.map((p, i) => {
       const r = placementRow(p, i, { current: i === pl.current });
       const b = el('button', { className: `ctab-place${r.current ? ' current' : ''}${pa?.index === i ? ' auditioning' : ''}`, title: r.title, disabled: composing && pa?.index !== i },
-        el('b', { textContent: r.label }), el('span', { className: 'ctab-place-where', textContent: r.where }), r.detail ? el('span', { className: 'ctab-muted', textContent: r.detail }) : null);
+        el('b', { textContent: r.label }), el('span', { className: 'ctab-place-where', textContent: r.where }), r.detail ? el('span', { className: `ctab-muted ${DETAIL}`, textContent: r.detail }) : null);
       b.dataset.index = String(i);
       b.addEventListener('click', () => tryPlacement(i));
       return b;
@@ -368,13 +408,22 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       const b = strip[k] ?? { text: '·', detail: '', mark: '', status: 'auto', title: '' };
       const cell = el('div', { className: `ctab-res ${b.status}${k === tab.view.bar ? ' in-pick' : ''}`, title: b.title },
         el('b', { className: 'ctab-res-name', textContent: b.text }), b.mark ? el('span', { className: 'ctab-res-mark', textContent: b.mark }) : null,
-        b.detail && b.status !== 'auto' ? el('span', { className: 'ctab-res-detail', textContent: b.detail }) : null);
+        b.detail && b.status !== 'auto' ? el('span', { className: `ctab-res-detail${b.status === 'error' ? '' : ` ${DETAIL}`}`, textContent: b.detail }) : null);
       cell.dataset.bar = String(k);
       return cell;
     }));
     const notes = f.resolution && !f.resolution.refused ? f.resolution.notes : [];
     const head = el('div', { className: 'ctab-lane-head ctab-field-head' }, el('span', { className: 'ctab-field-label', textContent: 'Typed', title: 'the typed progression field (decisions 3, 4)' }));
     return { row: el('div', { className: 'ctab-fieldrow' }, head, el('div', { className: 'ctab-field-wrap' }, input, res, notes.length ? el('div', { className: 'ctab-field-notes', textContent: notes.join(' · ') }) : null)), input };
+  }
+  /** a chord cell's modulation (the clean view: a glyph, its cents in the title) and an edit's retune (Details) */
+  function modMarks(cell, c) {
+    const m = tab.state.spec.modulations.find((x) => x.bar === c.from);
+    if (m) {
+      const ml = modulationLabel(m);
+      cell.append(el('span', { className: `ctab-mod ${DETAIL}`, textContent: ml.text, title: ml.title }), el('span', { className: `ctab-mod ctab-mod-glyph ${CLEAN}`, textContent: '↻', title: `${ml.text}: ${ml.title}` }));
+    }
+    if (c.retune) cell.append(el('span', { className: `ctab-retune ${DETAIL}`, textContent: `↻ retunes ${barsLabel(c.retune)}`, title: `this edit's modulation re-pitches ${barsLabel(c.retune)}: their notes stay, their tuning moves` }));
   }
   function cellView(c, row) {
     const sel = tab.view.selected === c.part && tab.view.bar >= c.from && tab.view.bar < c.to;
@@ -411,14 +460,10 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
           if (x.x > 0) { const rule = el('span', { className: 'ctab-span-rule' }); rule.style.left = `${(100 * x.x).toFixed(2)}%`; cell.append(rule); }
           cell.append(lab);
         }
-        const m = tab.state.spec.modulations.find((x) => x.bar === c.from);
-        if (m) { const ml = modulationLabel(m); cell.append(el('span', { className: 'ctab-mod', textContent: ml.text, title: ml.title })); }
-        if (c.retune) cell.append(el('span', { className: 'ctab-retune', textContent: `↻ retunes ${barsLabel(c.retune)}`, title: `this edit's modulation re-pitches ${barsLabel(c.retune)}: their notes stay, their tuning moves` }));
+        modMarks(cell, c);
       } else if (c.part === 'chords') {
         cell.append(el('span', { className: `ctab-chord${c.targeted ? ' targeted' : ''}${c.fallback ? ' fallback' : ''}`, textContent: c.name }));
-        const m = tab.state.spec.modulations.find((x) => x.bar === c.from);
-        if (m) { const ml = modulationLabel(m); cell.append(el('span', { className: 'ctab-mod', textContent: ml.text, title: ml.title })); }
-        if (c.retune) cell.append(el('span', { className: 'ctab-retune', textContent: `↻ retunes ${barsLabel(c.retune)}`, title: `this edit's modulation re-pitches ${barsLabel(c.retune)}: their notes stay, their tuning moves` }));
+        modMarks(cell, c);
       }
     }
     if (c.badge) cell.append(el('span', { className: 'ctab-badge', textContent: String(c.badge), title: `${c.badge} alternate${c.badge === 1 ? '' : 's'}: select the cell to hear them` }));
@@ -603,7 +648,9 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       const chart = name === 'bars' && !byClip ? core.chartShape() : null, byChart = !!chart && !chart.error;
       if (byChart) { input.disabled = true; input.title = 'set by the typed chord chart: its bars, every repeat played'; }
       const said = byClip ? `${c.text.replace(/^asked: /, 'chose ')} · the clip's` : byChart ? `${chart.bars} · the chart's` : c.text;
-      return el('div', { className: 'ctab-knob' }, el('label', { textContent: f.label, title: f.title || '' }), input, el('span', { className: `ctab-chosen${c.over && !byClip && !byChart ? ' over' : ''}`, textContent: said }));
+      // the clean view: the knob alone, unless the clip or the chart set it (C5)
+      return el('div', { className: `ctab-knob${DETAIL_KNOBS.includes(name) ? ` ${DETAIL}` : ''}` }, el('label', { textContent: f.label, title: f.title || '' }), input,
+        el('span', { className: `ctab-chosen${c.over && !byClip && !byChart ? ' over' : ''}${byClip || byChart ? '' : ` ${DETAIL}`}`, textContent: said }));
     }));
   }
   function progressionEditor() {
@@ -612,7 +659,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     take.addEventListener('click', () => { if (core.takeProgression()) recomposeIfQuick(); });
     const clear = el('button', { className: 'ctab-btn', textContent: 'clear', title: 'every bar back to auto' });
     clear.addEventListener('click', () => { core.clearProgression(); recomposeIfQuick(); });
-    const headRow = el('div', { className: 'ctab-row' }, el('span', { className: 'ctab-sub', textContent: 'Progression — a root a bar (a chord, where a typed chart splits a bar) from the row; auto leaves it to Compose (or type chords above the Chords row)' }));
+    const headRow = el('div', { className: 'ctab-row' }, el('span', { className: 'ctab-sub' }, 'Progression', el('span', { className: DETAIL, textContent: ' — a root a bar (a chord, where a typed chart splits a bar) from the row; auto leaves it to Compose (or type chords above the Chords row)' })));
     // a typed chart's split bars: each chord's bar, for its label (CHART_ORDER.md P10)
     const shape = core.chartShape(), split = !!shape && !shape.error && roots.length > shape.bars;
     const labelOf = (k) => {
@@ -631,9 +678,9 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       sel.value = ratio ?? '';
       sel.addEventListener('change', () => { core.setProgressionRoot(k, sel.value || null); recomposeIfQuick(); });
       const g = chordGot(got?.[k]);
-      return el('div', { className: 'ctab-knob' }, el('label', { textContent: labelOf(k) }), sel, el('span', { className: `ctab-chosen${g.over ? ' over' : ''}`, textContent: g.text }));
+      return el('div', { className: 'ctab-knob' }, el('label', { textContent: labelOf(k) }), sel, el('span', { className: `ctab-chosen${g.over ? ' over' : ''} ${DETAIL}`, textContent: g.text }));
     });
-    return el('div', {}, headRow, el('div', { className: 'ctab-knobs ctab-prog' }, ...bars), el('div', { className: 'ctab-row' }, take, clear, el('span', { className: 'ctab-muted', textContent: progressionNote(roots) })));
+    return el('div', {}, headRow, el('div', { className: 'ctab-knobs ctab-prog' }, ...bars), el('div', { className: 'ctab-row' }, take, clear, el('span', { className: `ctab-muted ${DETAIL}`, textContent: progressionNote(roots) })));
   }
   function drumControls() {
     const o = tab.state.drumOptions, enabled = tab.state.drums ? tab.state.drums.enabled : o.enabled !== false;
@@ -667,9 +714,10 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (!s || s.refused) return el('span', { className: 'ctab-muted', textContent: 'Compose first: the root, baseHz and retunes show here' });
     const k = s.knobs, rows = s.chords.map((c) => el('tr', {}, el('td', { textContent: `bar ${c.bar + 1}` }), el('td', { textContent: c.name }), el('td', { textContent: `root ${c.rootTone}` }),
       el('td', { textContent: c.offsetCents ? `${c.offsetCents >= 0 ? '+' : ''}${c.offsetCents.toFixed(1)}¢` : '' })));
-    return el('div', {}, el('div', { className: 'ctab-readouts' }, el('span', {}, 'root ', el('b', { textContent: k.root })), el('span', {}, 'baseHz ', el('b', { textContent: k.baseHz.toFixed(2) })),
-      el('span', {}, 'modulation ', el('b', { textContent: k.modulation ? 'on' : 'off' })), el('span', {}, 'retunes ', el('b', { textContent: String(s.modulations.length) }))),
-    el('table', { className: 'ctab-decisions-table' }, ...rows));
+    // the clean view: the root; Details: baseHz, modulation, the retunes and each bar's root and offset (C5)
+    return el('div', {}, el('div', { className: 'ctab-readouts' }, el('span', {}, 'root ', el('b', { textContent: k.root })), el('span', { className: DETAIL }, 'baseHz ', el('b', { textContent: k.baseHz.toFixed(2) })),
+      el('span', { className: DETAIL }, 'modulation ', el('b', { textContent: k.modulation ? 'on' : 'off' })), el('span', { className: DETAIL }, 'retunes ', el('b', { textContent: String(s.modulations.length) }))),
+    el('table', { className: `ctab-decisions-table ${DETAIL}` }, ...rows));
   }
 
   // ── the context (STEP 4e): the selected cell ──
@@ -707,7 +755,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   /** chord u's alternates (u: its index in spec.chords; a bar's, unless a chart splits it) */
   function chordUnitContext(u, title, more = false) {
     const bar = u, s = tab.state.spec, ch = s.chords[bar], a = core.alternatesOf(bar, 'chords'), e = tab.state.edits?.chords?.[bar];
-    const head = ctxHead(title, el('span', { className: 'ctab-muted', textContent: ch.empty ? 'an empty bar' : `now ${ch.name} · root ${ch.rootTone} · ${qualityName(ch.quality)}` }),
+    const head = ctxHead(title, el('span', { className: 'ctab-muted' }, ch.empty ? 'an empty bar' : `now ${ch.name}`, ch.empty ? null : el('span', { className: DETAIL, textContent: ` · root ${ch.rootTone} · ${qualityName(ch.quality)}` })),
       e ? el('span', { className: 'ctab-tag', textContent: e.from === 'typed' ? `typed${e.asked && e.asked !== e.quality ? ` (asked ${qualityName(e.asked)})` : ''}` : 'swapped' }) : null, more ? null : retuneNote());
     if (!a) return [head, el('span', { className: 'ctab-muted', textContent: 'no alternates for this chord (Compose kept none)' })];
     const key = (c) => `chord:${bar}:${c.root.ratio}:${c.quality}`;
@@ -715,8 +763,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       const r = candidateRow(c), k = key(c), trying = audition.key === k;
       const b = el('button', { className: `ctab-alt${r.current ? ' current' : ''}${r.composed ? ' composed' : ''}${trying ? ' auditioning' : ''}`, title: r.title },
         el('span', { className: 'ctab-alt-mark', textContent: `${r.current ? '●' : ''}${r.composed ? 'C' : ''}` }), el('b', { className: 'ctab-alt-name', textContent: r.name }),
-        el('span', { className: 'ctab-alt-ratio', textContent: r.ratio }), el('span', { className: 'ctab-alt-cents', textContent: r.cents }), el('span', { className: 'ctab-alt-q', textContent: r.quality }),
-        el('span', { className: `ctab-alt-support${r.amber ? ' amber' : ''}`, textContent: r.support }));
+        el('span', { className: `ctab-alt-ratio ${DETAIL}`, textContent: r.ratio }), el('span', { className: `ctab-alt-cents ${DETAIL}`, textContent: r.cents }), el('span', { className: 'ctab-alt-q', textContent: r.quality }),
+        el('span', { className: `ctab-alt-support${r.amber ? ' amber' : ''} ${DETAIL}`, textContent: r.support }));
       b.dataset.key = k;
       b.addEventListener('click', () => audition.tryAlt(k, () => core.swapChord(bar, c), r.name));
       return b;
@@ -724,7 +772,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const notes = [];
     if (a.currentIndex < 0 && !ch.empty) notes.push(el('div', { className: 'ctab-muted', textContent: `plays ${ch.name}, which isn't among Compose's candidates (typed)` }));
     if (a.pinned) notes.push(el('div', { className: 'ctab-muted', textContent: 'a pinned bar: its candidates keep the asked root' }));
-    return [head, more ? null : el('div', { className: 'ctab-muted ctab-legend', textContent: '● plays now · C Compose\'s · ✓ holds the lead\'s strong notes' }), list, ...notes].filter(Boolean);
+    return [head, more ? null : el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: '● plays now · C Compose\'s · ✓ holds the lead\'s strong notes' }), list, ...notes].filter(Boolean);
   }
   /** MIDI targets (B3): a target's lead cell is the clip's phrase: its notes, their kinds, its lattice (no lead swaps, P6) */
   function clipContext(bar) {
@@ -733,7 +781,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const marks = clipMarks(s).filter((m) => m.step >= c.from * S && m.step < c.to * S);
     const byClip = new Map((tab.state.parts.lead?.notes ?? []).map((n) => [n.clipNote, n]));
     const head = ctxHead(`${c.to - c.from > 1 ? `Bars ${c.from + 1}–${c.to}` : `Bar ${c.from + 1}`} · Lead (the clip)`, el('span', { className: 'ctab-tag ctab-clip-tag', textContent: s.target.clip.name }));
-    const lattice = el('div', { className: 'ctab-muted', textContent: `this phrase's lattice: ${ph.psiRatio} (lane +${ph.k}), the tonic at ${ph.tonicCents.toFixed(1)}¢${ph.driftCents ? `, drifted ${ph.driftCents >= 0 ? '+' : '−'}${Math.abs(ph.driftCents).toFixed(1)}¢` : ''}` });
+    const lattice = el('div', { className: `ctab-muted ${DETAIL}`, textContent: `this phrase's lattice: ${ph.psiRatio} (lane +${ph.k}), the tonic at ${ph.tonicCents.toFixed(1)}¢${ph.driftCents ? `, drifted ${ph.driftCents >= 0 ? '+' : '−'}${Math.abs(ph.driftCents).toFixed(1)}¢` : ''}` });
     const rows = marks.map((m) => {
       const n = byClip.get(m.j);
       const tr = el('tr', { className: `ctab-clip-note ${m.kind}${m.late ? ' late' : ''}`, title: `clip note ${m.j + 1}: ${noteName(m.midi)} at bar ${Math.floor(m.step / S) + 1}, step ${(m.step % S) + 1} — ${KIND_WORDS[m.kind]}${m.late ? '; its note-off found no onset near its anchor (late)' : ''}` },
@@ -743,7 +791,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       return tr;
     });
     return [head, lattice,
-      el('div', { className: 'ctab-muted ctab-legend', textContent: 'hit · amber: played off the frame (fringe) or a slot over (shift) · red: silent (the row has no onset of its class there) · late off: its end found no onset near its anchor' }),
+      el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: 'hit · amber: played off the frame (fringe) or a slot over (shift) · red: silent (the row has no onset of its class there) · late off: its end found no onset near its anchor' }),
       rows.length ? el('table', { className: 'ctab-decisions-table ctab-notes ctab-clip-notes' }, el('tr', {}, ...['note', 'bar.step', 'kind', 'ratio', 'dev', ''].map((h) => el('td', { textContent: h }))), ...rows)
         : el('div', { className: 'ctab-muted', textContent: 'no clip notes in this phrase' }),
       el('div', { className: 'ctab-muted', textContent: 'no lead alternates: the lead is the clip (its other placements are in the MIDI clip control)' })];
@@ -761,16 +809,17 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       if (e) doEdit(() => core.swapLead(phrase, a.currentId, { chordsFollow: !!e.chordsFollow, smooth: !e.smooth }));
     }, { disabled: !e || core.applying() });
     const key = (l) => `lead:${phrase}:${l.id}`;
-    const list = el('div', { className: 'ctab-alts' }, ...a.lines.map((l) => {
+    const list = el('div', { className: 'ctab-alts' }, ...a.lines.map((l, i) => {
       const r = lineRow(l), k = key(l), trying = audition.key === k;
       const b = el('button', { className: `ctab-alt${r.current ? ' current' : ''}${r.kept ? ' composed' : ''}${trying ? ' auditioning' : ''}`, title: r.title },
-        el('span', { className: 'ctab-alt-mark', textContent: `${r.current ? '●' : ''}${r.kept ? 'C' : ''}` }), el('b', { className: 'ctab-alt-name', textContent: r.cost }), el('span', { className: 'ctab-muted', textContent: '/note' }),
-        el('span', { className: 'ctab-alt-ratio', textContent: `${r.notes} notes` }), el('span', { className: 'ctab-alt-q', textContent: r.shape }));
+        el('span', { className: 'ctab-alt-mark', textContent: `${r.current ? '●' : ''}${r.kept ? 'C' : ''}` }), el('b', { className: `ctab-alt-name ctab-alt-rank ${CLEAN}`, textContent: `line ${i + 1}` }),
+        el('b', { className: `ctab-alt-name ${DETAIL}`, textContent: r.cost }), el('span', { className: `ctab-muted ${DETAIL}`, textContent: '/note' }),
+        el('span', { className: `ctab-alt-ratio ${DETAIL}`, textContent: `${r.notes} notes` }), el('span', { className: 'ctab-alt-q', textContent: r.shape }));
       b.dataset.key = k;
       b.addEventListener('click', () => audition.tryAlt(k, () => core.swapLead(phrase, l.id, { chordsFollow: follow }), `line ${r.cost}`));
       return b;
     }));
-    return [head, el('div', { className: 'ctab-row' }, followBtn, smooth), el('div', { className: 'ctab-muted ctab-legend', textContent: '● plays now · C Compose\'s line · cost a note: lower is closer to the rules' }), list, auditionBar(), editNote()];
+    return [head, el('div', { className: 'ctab-row' }, followBtn, smooth), el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: '● plays now · C Compose\'s line · cost a note: lower is closer to the rules' }), list, auditionBar(), editNote()];
   }
   function partContext(id, bar) {
     const s = tab.state.spec, ch = s.chords[bar], part = tab.state.parts[id];
@@ -778,27 +827,28 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const composedNotes = (tab.state.composed?.parts?.find((p) => p.id === id)?.notes ?? []).filter((n) => n.bar === bar);
     const edited = notes.map((n) => `${n.slot}:${n.node}:${n.octave}`).join() !== composedNotes.map((n) => `${n.slot}:${n.node}:${n.octave}`).join();
     const head = ctxHead(`Bar ${bar + 1} · ${PART_LABELS[id]}`, edited ? el('span', { className: 'ctab-tag', textContent: 're-mined' }) : null);
-    const follows = el('div', { className: 'ctab-row' }, el('span', { textContent: ch.empty ? `bar ${bar + 1} has no chord: it plays its root's onset` : `follows bar ${bar + 1}'s chord: ${ch.name} (root ${ch.rootTone}, ${qualityName(ch.quality)})` }),
+    const follows = el('div', { className: 'ctab-row' }, el('span', {}, ch.empty ? `bar ${bar + 1} has no chord: it plays its root's onset` : `follows bar ${bar + 1}'s chord: ${ch.name}`,
+      ch.empty ? null : el('span', { className: DETAIL, textContent: ` (root ${ch.rootTone}, ${qualityName(ch.quality)})` })),
       button('the chord ▸', 'ctab-btn ctab-ctx-action', `select bar ${bar + 1}'s chord: swapping it re-mines this part's bar`, () => tab.selectCell('chords', bar)));
     const out = [head, follows];
     if (id === 'comp') {
       const L = s.stats?.compLayer;
-      if (L) out.push(el('div', { className: 'ctab-muted ctab-pin', textContent: `comp layer: ${L.layer} (${L.value}), pinned through edits (read-only; Compose's layer choice scores every bar)` }));
+      if (L) out.push(el('div', { className: `ctab-muted ctab-pin ${DETAIL}`, textContent: `comp layer: ${L.layer} (${L.value}), pinned through edits (read-only; Compose's layer choice scores every bar)` }));
     }
     if (id === 'inner') {
       const p = core.alternatesOf(bar, 'lead'), e = p?.edit;
-      out.push(el('div', { className: 'ctab-row' }, el('span', { className: 'ctab-muted', textContent: 'the inner is re-mined bar by bar with its chord; smoothing re-mines the whole phrase (the worker)' }),
+      out.push(el('div', { className: 'ctab-row' }, el('span', { className: `ctab-muted ${DETAIL}`, textContent: 'the inner is re-mined bar by bar with its chord; smoothing re-mines the whole phrase (the worker)' }),
         button(e?.smooth ? 'smoothed ✓' : 'smooth the phrase', 'ctab-btn ctab-smooth', e ? 'smooth the inner over the whole phrase' : s.target ? 'no lead swaps on a MIDI target (its lead is the clip), so no smoothing' : 'available once the phrase\'s lead is swapped (the Lead row)', () => { if (e) doEdit(() => core.swapLead(p.phrase, p.currentId, { chordsFollow: !!e.chordsFollow, smooth: !e.smooth })); }, { disabled: !e || core.applying() })));
     }
-    if (id === 'bass' || id === 'comp') out.push(el('div', { className: 'ctab-muted', textContent: `re-mined with its chord: swap bar ${bar + 1}'s chord to move it` }));
-    out.push(notes.length ? el('table', { className: 'ctab-decisions-table ctab-notes' }, el('tr', {}, ...['slot', 'ratio', 'oct', 'Hz'].map((h) => el('td', { textContent: h }))),
+    if (id === 'bass' || id === 'comp') out.push(el('div', { className: `ctab-muted ${DETAIL}`, textContent: `re-mined with its chord: swap bar ${bar + 1}'s chord to move it` }));
+    out.push(notes.length ? el('table', { className: `ctab-decisions-table ctab-notes ${DETAIL}` }, el('tr', {}, ...['slot', 'ratio', 'oct', 'Hz'].map((h) => el('td', { textContent: h }))),
       ...notes.map((n) => el('tr', { title: noteTitle(n) }, el('td', { textContent: String(n.slot) }), el('td', { textContent: n.ratio }), el('td', { textContent: String(n.octave) }), el('td', { textContent: n.hz.toFixed(1) }))))
       : el('div', { className: 'ctab-muted', textContent: 'no notes in this bar' }));
     return out;
   }
   function drumsContext(bar) {
     const g = core.drumGrid(), d = tab.state.drums, s = tab.state.spec;
-    const head = ctxHead(`Bar ${bar + 1} · Drums`, el('span', { className: 'ctab-muted', textContent: `${d?.bars?.[bar]?.mode ?? ''}${d?.bars?.[bar]?.fill ? ' + fill' : ''}` }), g?.own ? el('span', { className: 'ctab-tag', textContent: `grid${tab.state.edits?.grid?.from ? ` (from ${tab.state.edits.grid.from})` : ''}` }) : null);
+    const head = ctxHead(`Bar ${bar + 1} · Drums`, el('span', { className: `ctab-muted ${DETAIL}`, textContent: `${d?.bars?.[bar]?.mode ?? ''}${d?.bars?.[bar]?.fill ? ' + fill' : ''}` }), g?.own ? el('span', { className: 'ctab-tag', textContent: `grid${tab.state.edits?.grid?.from ? ` (from ${tab.state.edits.grid.from})` : ''}` }) : null);
     const out = [head];
     if (g) {
       const silent = new Set(g.silentCells.filter((x) => x.bar === bar).map((x) => `${x.voice}:${x.place}`));
@@ -836,9 +886,9 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
         t.style.left = `${(100 * (l.x ?? l.at)).toFixed(3)}%`;
         return t;
       }));
-      out.push(el('div', { className: 'ctab-sub', textContent: 'The prime partition' }), el('div', { className: 'ctab-prime' }, el('div', { className: 'ctab-muted', textContent: strip.label }), lane,
-        el('div', { className: 'ctab-muted', textContent: 'each tick a level-1 light at its real time; tall: chosen by level 2 (Partitions\' distribution); bright: struck; hollow: dark. The shaded span is this bar.' })));
-    } else if (mode !== 'prime') out.push(el('div', { className: 'ctab-muted', textContent: 'prime: the two-level prime partition — pick it above to see its lights' }));
+      out.push(el('div', { className: 'ctab-sub', textContent: 'The prime partition' }), el('div', { className: 'ctab-prime' }, el('div', { className: `ctab-muted ${DETAIL}`, textContent: strip.label }), lane,
+        el('div', { className: `ctab-muted ${DETAIL}`, textContent: 'each tick a level-1 light at its real time; tall: chosen by level 2 (Partitions\' distribution); bright: struck; hollow: dark. The shaded span is this bar.' })));
+    } else if (mode !== 'prime') out.push(el('div', { className: `ctab-muted ${DETAIL}`, textContent: 'prime: the two-level prime partition — pick it above to see its lights' }));
     out.push(editNote());
     return out;
   }
@@ -879,7 +929,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     else if (section === 'lines') {
       const table = field(TABLE_FIELD, tab.state.table), chosen = knobChosen(tab.state.spec, tab.state.knobs).table;
       table.addEventListener('change', () => core.setTable(table.value));
-      body = [knobRow(KNOBS_OF.lines), el('div', { className: 'ctab-knobs' }, el('div', { className: 'ctab-knob' }, el('label', { textContent: TABLE_FIELD.label }), table, el('span', { className: 'ctab-chosen', textContent: chosen.text })))];
+      body = [knobRow(KNOBS_OF.lines), el('div', { className: 'ctab-knobs' }, el('div', { className: `ctab-knob ${DETAIL}` }, el('label', { textContent: TABLE_FIELD.label }), table, el('span', { className: 'ctab-chosen', textContent: chosen.text })))];
     } else if (section === 'drums') body = [el('div', { className: 'ctab-row' }, el('span', { className: 'ctab-sub', textContent: 'Drums' }), ...drumControls()), el('div', { className: 'ctab-sub', textContent: 'Kit — a sound a voice (the made kit, or the site\'s samples)' }), kitRow()];
     else body = [knobRow(KNOBS_OF.tuning), tuningReadout()];
     // the body keeps its scroll while it shows the same thing (a click on the 9th alternate doesn't jump to the top)

@@ -161,12 +161,16 @@ B1–B2 can run alongside A, with B3 after A merges.
 Serve from `.claude/worktrees/composer-sprint-2`. Composer window, 41:42:43 or 119:42:15:8.
 
 **Clean view**
-1. Open the window: the header, the matrix and the typed field, with no readouts line beyond "n bars × s · BPM", and
-   no decisions table. The knobs: Bars, Slots / bar, Modulation.
+1. Open the window: the header, the matrix and the typed field, with no readouts beyond the meter line ("8 bars ×
+   8"), and no decisions table. Undo and Redo are icons. The knobs: Bars, Slots / bar, Modulation.
 2. Details on: everything as it was before. Off again: nothing recomposes, nothing stops playing.
 3. With Details on, set Settle passes to 2, then turn Details off. The toggle shows its dot and names the setting.
 4. Load a MIDI clip: one line ("name · n/J notes fit"), with the chips still there to audition.
-5. Click a chord cell: the candidates by name, no numbers. Click a bass cell: no notes table.
+5. Click a chord cell: the candidates by name, no numbers. A lead cell: the runner-ups as "line 1, line 2…", their
+   shapes, no costs. A bass cell: the chord it follows, no notes table.
+5b. Look at the look: the alternates count is a small dot on a cell, a modulation a ↻ (its cents in the title). Reload
+   the page: Details stays as you left it. Under the Composition lens, the part strips' hint sentence shows only with
+   Details on.
 
 **MIDI out** (the six IAC buses, six Ableton tracks, the chords track in MPE, Ableton synced to the clock)
 6. MIDI on, local sound on: the browser and the DAW play together, in tune with each other (no beating on held
@@ -189,4 +193,20 @@ call once Phase A passes.
 
 ## Log
 
-(empty: nothing built yet)
+**2026-10-27, phase A built** (branch `clean/view`, worktree `.claude/worktrees/clean-view`). Suites: 72, all green (71
+before, plus the new `assert-page-detail.mjs`, 30 checks; `assert-page-target.mjs` gained a check of the clip's one
+line).
+- The flag is `tab.view.details` (`setDetails`), kept under `lrc.composer.details`. The hosts carry `ctab-details-on`;
+  `ctab-detail` and `ctab-clean-only` do the rest in `composer-tab.css`. Everything Details shows is still in the DOM, so
+  the existing page tests read it unchanged.
+- Calls made while building (Avery may overrule):
+  - The meter line is "8 bars × 8", without the BPM: the tempo box beside it already shows it.
+  - The field's notes stay in the clean view (a chart's error, "Compose to hear it"): you have to act on them. So does a
+    strip cell's "not a chord".
+  - The Table row is hidden but never makes the dot: it says where Compose runs, not what it is asked.
+  - The lead's runner-ups read "line 1…n" in the clean view (their cost a note in Details). The clip's own notes table
+    in a MIDI target's lead cell stays (the clip's notes and their kinds); its lattice line and legend go to Details.
+  - What Compose dropped reads "Compose couldn't keep n of the edits", the list in its title.
+  - The part strips' hint (under the Composition lens) shows only with Details.
+- Not checked: the look itself. The Node stub has no CSS, so the tests apply the stylesheet's rule by hand; the real
+  rendering is Avery's browser pass (items 1–5b).

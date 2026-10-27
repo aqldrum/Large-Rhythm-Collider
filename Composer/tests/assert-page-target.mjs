@@ -124,6 +124,8 @@ check(`the fit line: hits, tight, note-offs, the window, substitutes, silent, th
   && fit.includes(`${p.misses.hard} silent`) && fit.includes("the row can't play A"));
 check('… toned: the misses amber, silent and the missing classes red', qa(left, '.ctab-clip-fit .ctab-clip-item.red').length === 2 && qa(left, '.ctab-clip-fit .ctab-clip-item.amber').length >= 2);
 check('the readouts name the clip', /clip ode-to-joy · 8\/15 hit · 108\.0 BPM/.test(text('.ctab-readouts')));
+check('the clean view\'s one line: the clip and how much of it fits, amber when not all', /^ode-to-joy\s*· 8\/15 notes fit$/.test(text('.ctab-clip-summary')) && q(left, '.ctab-clip-summary').style.display !== 'none'
+  && q(left, '.ctab-clip-summary').children.map((x) => x.className).join('|') === 'ctab-clip-item name|ctab-clip-item amber');
 
 console.log('\n— the tempo (decided 1/4)');
 check(`playback is seeded from the clip's tempo (${core.tempo().toFixed(1)} BPM), not the spec's (${core.specTempo().toFixed(1)})`, Math.abs(core.tempo() - 108) < 1e-3 && Math.abs(core.specTempo() - 108) > 1 && Math.abs(core.tempoFactor() - core.specTempo() / core.tempo()) < 1e-12);
