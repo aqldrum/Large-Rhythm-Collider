@@ -23,19 +23,26 @@ pushed. Verification is the Node suites. Avery does the browser pass and the rig
 
    | Bus | Part | Channels |
    |---|---|---|
-   | Composer Lead | lead | 1 |
-   | Composer Chords | chords | an MPE zone: channel 1 the master, the voices on 2–5 |
-   | Composer Comp | comping | 1 |
-   | Composer Bass | bass | 1 |
-   | Composer Inner | inner | 1 |
+   | Composer Lead | lead | an MPE zone of one: channel 1 the master, the notes on 2 |
+   | Composer Chords | chords | an MPE zone of four: channel 1 the master, the voices on 2–5 |
+   | Composer Comp | comping | an MPE zone of one: the notes on 2 |
+   | Composer Bass | bass | an MPE zone of one: the notes on 2 |
+   | Composer Inner | inner | an MPE zone of one: the notes on 2 |
    | Composer Drums | drums | 10 (the General MIDI drum channel) |
+
+   **Amended after the rig (Avery, 2026-10-27): every tonal bus is an MPE zone.** First built, the one-note parts went
+   on channel 1 of ordinary tracks. Ableton's instruments ignore RPN 0, so each read the ±48 bends at its own PB range
+   (often ±2), and the tuning collapsed toward 12-TET. On an MPE track, an MPE-capable instrument applies its per-note
+   bend range instead, 48 by MPE's convention, the same for every instrument auditioned. An ordinary track on All
+   Channels still hears channel 2, at its device's own range.
 
    - **Why the chords need a zone.** MIDI tunes a note with pitch bend, and a bend applies to a whole channel. Only the
      chords part sounds several notes at once (a voice per chord class, root first, at most 4). The other five parts
      play one note at a time, so one channel each keeps every note exactly in tune. *MPE* (MIDI Polyphonic Expression)
      is the standard for one instrument spread over several channels, one note per channel, each with its own bend.
-   - **In Ableton:** six tracks, each *MIDI From: its bus, All Channels*, with MPE on for the chords track (Live 11 and
-     later, and Omnisphere, read it). The chords track is one polyphonic instrument in exact tuning.
+   - **In Ableton:** six tracks, each *MIDI From: its bus, All Channels*, with MPE on for the five tonal tracks (Live 11
+     and later, and Omnisphere, read it). The chords track is one polyphonic instrument in exact tuning. An instrument
+     that isn't MPE-capable still needs its own PB range set to the Composer's (Bend ± in the MIDI panel, Details).
    - **Setup, once:** Audio MIDI Setup → Window → Show MIDI Studio → IAC Driver → add the six buses with +. The browser
      sees each bus as its own output.
 2. **Ableton follows the Composer's tempo, at first.** The Composer sends *MIDI clock* (24 ticks a beat, plus Start and
@@ -104,7 +111,8 @@ pushed. Verification is the Node suites. Avery does the browser pass and the rig
   the same map, converted to MIDI timestamps through the context's `getOutputTimestamp`. MIDI reads the parts' notes,
   not the player's held chains, so the browser's legato never reaches it (decision 4). Live tempo, part on/off, a swap
   and an audition all reach MIDI exactly as they reach the speakers.
-- **M3. Fixed channels (decision 1).** The five one-note parts use channel 1 of their bus (drums: 10). A chord voice
+- **M3. Fixed channels (decision 1, as amended).** The four one-note tonal parts use channel 2 of their bus, its zone's
+  one member (drums: 10). A chord voice
   keeps its own member channel on the Chords bus: voice 1 (root) on 2, up to voice 4 on 5. No allocator and no
   stealing. A same-note guard, as the site's: when a
   channel strikes the note it's already holding, the old note ends first.
@@ -174,7 +182,7 @@ Serve from `.claude/worktrees/composer-sprint-2`. Composer window, 41:42:43 or 1
 
 **MIDI out** (set-up: six IAC buses named "Composer Lead", "Composer Chords", "Composer Comp", "Composer Bass",
 "Composer Inner", "Composer Drums" — any name holding the part's word matches; six Ableton tracks, each *MIDI From* its
-bus, *All Channels*, MPE on the chords track; Preferences → Link/Tempo/MIDI: *Sync* on for the Lead bus. In the
+bus, *All Channels*, MPE on the five tonal tracks (each instrument MPE-capable: Wavetable, Drift, Meld, Sampler…); Preferences → Link/Tempo/MIDI: *Sync* on for the Lead bus. In the
 Composer: MIDI (header) → the panel → send, before Perform)
 6. MIDI on, local sound on: the browser and the DAW play together, in tune with each other (no beating on held
    chords).
@@ -195,6 +203,11 @@ commits ahead of `main`, and `main` hasn't moved past it, so it would merge with
 call once Phase A passes.
 
 ## Log
+
+**2026-10-27, every tonal bus an MPE zone** (Avery's rig pass: bends recorded, but the one-note tracks played near
+12-TET on Ableton's own instruments). Lead, comping, bass and inner now send the MPE configuration (RPN 6 = 1 member on
+channel 1, RPN 0 on channel 2) and play on channel 2; the chords as before; the drums as before. The .mid carries the
+same set-up. Suites green (`assert-composer-midi` 38, `assert-page-midi` 19).
 
 **2026-10-27, phase B built** (branch `midi/out`, worktree `.claude/worktrees/midi-out`). Suites: 74, all green (two
 new: `assert-composer-midi.mjs`, 38 checks, the sender, the lengths, the .mid and the player against recording ports;

@@ -11,9 +11,13 @@
 // per-channel pitch bend, the bend sent before the note-on, over ±48 semitones set by RPN 0, and the MPE
 // configuration message (RPN 6) where a zone is used. So a DAW set up for the site receives the Composer the same way.
 //
-//   routing   decision 1, a bus per part. Lead, comping, bass and inner play one note at a time: channel 1 of their
-//             bus. Chords: an MPE lower zone on its bus, channel 1 the master and each chord voice its own member
-//             channel (voice 1, the root, on channel 2, up to voice 4 on channel 5). Drums: channel 10, General MIDI
+//   routing   decision 1, a bus per part, and every tonal bus an MPE lower zone (Avery, 2026-10-27, after the rig: an
+//             MPE track uses the instrument's per-note bend range, 48 by MPE's convention, where an ordinary track
+//             uses each device's own PB range, which differs instrument to instrument). Channel 1 is each zone's
+//             master. Lead, comping, bass and inner play one note at a time: a zone of one member, their notes on
+//             channel 2. Chords: a zone of four, each chord voice its own member channel (voice 1, the root, on
+//             channel 2, up to voice 4 on channel 5). An ordinary track on All Channels still hears channel 2, at its
+//             device's own range. Drums: channel 10, General MIDI
 //             notes. Every voice owns its channel for the whole composition: no allocator, no stealing (M3).
 //   notes     decision 3: a new note for each note, the synth doing any glide. A note on a channel that still holds
 //             one ends that one first (the same-note guard, and a clip's overlapping note-off).
@@ -40,8 +44,9 @@ export const MIDI_PARTS = Object.freeze(['lead', 'chords', 'comp', 'bass', 'inne
 /** what a bus is matched by on first use (M8): its name holds the part's */
 export const BUS_WORDS = Object.freeze({ lead: 'Lead', chords: 'Chords', comp: 'Comp', bass: 'Bass', inner: 'Inner', drums: 'Drums' });
 export const MIDI_BEND_RANGE = 48;
-export const MONO_CHANNEL = 0;              // channel 1
-export const CHORD_MASTER = 0;              // the chords' MPE master, channel 1
+export const ZONE_MASTER = 0;               // every tonal bus's MPE master, channel 1
+export const MONO_CHANNEL = 1;              // a one-note part's member channel, channel 2
+export const CHORD_MASTER = ZONE_MASTER;
 export const CHORD_MEMBERS = Object.freeze([1, 2, 3, 4]);   // channels 2–5, one a chord voice
 export const DRUM_CHANNEL = 9;              // channel 10
 export const GM_DRUMS = Object.freeze({ kick: 36, snare: 38, hat: 42, perc: 37, cym: 49 });
@@ -96,11 +101,11 @@ export function midiNotesOf(part, T) {
 
 /** the RPN messages that set a channel's parameter (and the null RPN after, so no stray data entry follows) */
 const rpnBytes = (ch, msb, lsb, value) => [[0xB0 | ch, 101, msb], [0xB0 | ch, 100, lsb], [0xB0 | ch, 6, value], [0xB0 | ch, 38, 0], [0xB0 | ch, 101, 127], [0xB0 | ch, 100, 127]];
-/** a bus's set-up: the bend range on its channel, the chords' zone (RPN 6 on the master, RPN 0 on each member) */
+/** a bus's set-up, its MPE zone: RPN 6 on the master (its members), RPN 0 (the bend range) on each member */
 export function setupBytes(partId, range = MIDI_BEND_RANGE) {
   if (partId === 'drums') return [];
   if (partId === 'chords') return [...rpnBytes(CHORD_MASTER, 0, 6, CHORD_MEMBERS.length), ...CHORD_MEMBERS.flatMap((ch) => rpnBytes(ch, 0, 0, range))];
-  return rpnBytes(MONO_CHANNEL, 0, 0, range);
+  return [...rpnBytes(ZONE_MASTER, 0, 6, 1), ...rpnBytes(MONO_CHANNEL, 0, 0, range)];
 }
 
 /**
@@ -169,7 +174,7 @@ export function createComposerMidi({ now = () => (globalThis.performance ? perfo
       for (const bytes of setupBytes(id, range)) send(port, bytes, ts);
     }
   }
-  const usedChannels = (id) => (id === 'drums' ? [DRUM_CHANNEL] : id === 'chords' ? [CHORD_MASTER, ...CHORD_MEMBERS] : [MONO_CHANNEL]);
+  const usedChannels = (id) => (id === 'drums' ? [DRUM_CHANNEL] : id === 'chords' ? [ZONE_MASTER, ...CHORD_MEMBERS] : [ZONE_MASTER, MONO_CHANNEL]);
   function endLive(entry, ts) {
     if (entry.off) return;
     entry.off = true;

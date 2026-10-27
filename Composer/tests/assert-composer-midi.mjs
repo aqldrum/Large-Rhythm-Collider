@@ -1,7 +1,7 @@
 // assert-composer-midi.mjs — the Composer's MIDI out (Composer/perform/composer-midi.js and its hooks in
 // composer-player.js; Composer/CLEAN_MIDI_ORDER.md phase B), against recording ports and a mock AudioContext:
 //   • the tuning math is the Cosmos sender's (and so the site's), note for note and bend for bend
-//   • the routing: a bus per part, the one-note parts on channel 1, the chords an MPE zone (master 1, voices 2–5),
+//   • the routing: a bus per part, every tonal bus an MPE zone (master 1): the one-note parts on 2, the chords on 2–5,
 //     the drums on 10 with General MIDI notes; RPN 0 and the zone's RPN 6 sent when the ports are set
 //   • a note: its bend before its note-on; a note its channel holds ends first; velocity 1–127
 //   • midiNotesOf: the same with legato on or off; a voice's notes never overlap; the last ends by the cycle's end
@@ -33,7 +33,7 @@ for (let hz = 20; hz < 8000; hz *= 1.0137) {
 check('noteAndBend: the Cosmos sender\'s, note for note and bend for bend, 20 Hz–8 kHz', same && bendFromSemitones(0.5) === cosmos.bendFromSemitones(0.5));
 check('±50¢: a tone 49¢ under a note bends down onto it', noteAndBend(220 * 2 ** (1151 / 1200)).note === 69 && noteAndBend(220 * 2 ** (1151 / 1200)).bend < 8192);
 check('velocity: 1–127, never 0', velocityOf(0) === 1 && velocityOf(1) === 127 && velocityOf(0.5) === 64 && velocityOf(2) === 127);
-check('channels: one-note parts on 1, chord voices on 2–5, drums on 10', ['lead', 'comp', 'bass', 'inner'].every((id) => channelOf(id) === 0) && [0, 1, 2, 3].map((v) => channelOf('chords', v)).join() === '1,2,3,4' && channelOf('drums') === 9);
+check('channels: one-note parts on 2, chord voices on 2–5, drums on 10', ['lead', 'comp', 'bass', 'inner'].every((id) => channelOf(id) === 1) && [0, 1, 2, 3].map((v) => channelOf('chords', v)).join() === '1,2,3,4' && channelOf('drums') === 9);
 const outs = ['IAC Driver Composer Lead', 'IAC Driver Composer Chords', 'IAC Driver Bus 1', 'Composer Bass', 'composer inner', 'Drums'].map((name) => ({ name }));
 check('matchPort: a bus whose name holds the part\'s word', matchPort(outs, 'lead').name === 'IAC Driver Composer Lead' && matchPort(outs, 'chords').name.endsWith('Chords') && matchPort(outs, 'comp') === null && matchPort(outs, 'inner').name === 'composer inner' && matchPort(outs, 'drums').name === 'Drums');
 
@@ -45,7 +45,7 @@ sink.setPorts(ports);
 check('off until enabled: nothing sent, not active', !sink.active && MIDI_PARTS.every((id) => ports[id].sent.length === 0) && sink.note('lead', 0, 440, 1, 1000) === null);
 sink.setEnabled(true);
 const rpns = (p) => p.sent.filter((m) => kind(m.bytes) === 0xB0 && m.bytes[1] === 6).map((m) => [chan(m.bytes), m.bytes[2]]);
-check('enabled: RPN 0 = 48 on channel 1 of each one-note bus', ['lead', 'comp', 'bass', 'inner'].every((id) => JSON.stringify(rpns(ports[id])) === '[[0,48]]'));
+check('enabled: each one-note bus a zone of one (RPN 6 = 1 on the master), RPN 0 = 48 on channel 2', ['lead', 'comp', 'bass', 'inner'].every((id) => JSON.stringify(rpns(ports[id])) === '[[0,1],[1,48]]'));
 check('… the chords\' zone: RPN 6 = 4 members on the master, RPN 0 = 48 on each member', JSON.stringify(rpns(ports.chords)) === JSON.stringify([[0, 4], ...CHORD_MEMBERS.map((c) => [c, 48])])
   && ports.chords.sent.some((m) => m.bytes[1] === 100 && m.bytes[2] === 6));
 check('… nothing to the drums bus (no bend on 10)', ports.drums.sent.length === 0 && sink.active);
@@ -69,7 +69,7 @@ for (const p of Object.values(ports)) p.sent.length = 0;
 sink.note('lead', 0, 440, 1, 5000);
 sink.allOff();
 const cc = (p, n) => p.sent.filter((m) => kind(m.bytes) === 0xB0 && m.bytes[1] === n).map((m) => chan(m.bytes));
-check('allOff: the live note off, All Sound Off and All Notes Off on every used channel, Stop on the clock', kind(ports.lead.sent[2].bytes) === 0x80 && cc(ports.lead, 123).join() === '0'
+check('allOff: the live note off, All Sound Off and All Notes Off on every used channel, Stop on the clock', kind(ports.lead.sent[2].bytes) === 0x80 && cc(ports.lead, 123).join() === '0,1'
   && cc(ports.chords, 123).join() === '0,1,2,3,4' && cc(ports.drums, 120).join() === '9' && clock.sent.map((m) => m.bytes[0]).join() === [0xFA, 0xF8, 0xFC].join() && sink.liveNotes === 0);
 sink.setPorts({ bass: null });
 check('a part with no bus isn\'t sent', !sink.sends('bass') && sink.sends('lead') && sink.note('bass', 0, 100, 1, 6000) === null);
@@ -137,7 +137,7 @@ run(ST * 2 + 0.3);   // two whole cycles booked
 const ons = (p) => p.sent.filter((m) => kind(m.bytes) === 0x90 && m.bytes[2] > 0);
 const counts = parts.filter((p) => p.id !== 'drums').map((p) => [p.id, ons(pp[p.id]).length, midiNotesOf(p, ST).length]);
 check(`every note of every part, once a cycle (${counts.map(([id, got, n]) => `${id} ${got}/${2 * n}`).join(', ')})`, counts.every(([, got, n]) => got >= 2 * n && got <= 2 * n + n));
-check('the one-note parts on channel 1, the chords on 2–5', ['lead', 'comp', 'bass', 'inner'].every((id) => ons(pp[id]).every((m) => chan(m.bytes) === 0)) && ons(pp.chords).every((m) => chan(m.bytes) >= 1 && chan(m.bytes) <= 4));
+check('the one-note parts on channel 2, the chords on 2–5', ['lead', 'comp', 'bass', 'inner'].every((id) => ons(pp[id]).every((m) => chan(m.bytes) === 1)) && ons(pp.chords).every((m) => chan(m.bytes) >= 1 && chan(m.bytes) <= 4));
 const noOverlap = MIDI_PARTS.filter((id) => id !== 'drums').every((id) => {
   const evs = pp[id].sent.filter((m) => kind(m.bytes) === 0x90 || kind(m.bytes) === 0x80).map((m, i) => ({ ...m, i })).sort((a, b) => a.ts - b.ts || a.i - b.i), held = new Map();
   for (const e of evs) {

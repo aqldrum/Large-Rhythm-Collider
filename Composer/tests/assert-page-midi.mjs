@@ -86,7 +86,8 @@ send().click(); await settle();
 check(`Send: access asked once, sending (${q(panel, '.ctab-midi-status').textContent})`, asked === 1 && sink.enabled && /sending 6 of 6 parts, the clock on IAC Driver Composer Lead/.test(q(panel, '.ctab-midi-status').textContent) && btn.classList.contains('on'));
 check('each part matched to its bus by name', ['lead', 'chords', 'comp', 'bass', 'inner', 'drums'].every((id, i) => sink.ports[id] === outs.get(names[i])) && sink.clockPort === bus('Lead'));
 check('… the pickers show them', qa(panel, '.ctab-midi-part').map((k) => q(k, 'select').value).join('|') === names.slice(0, 6).join('|'));
-check('the chords bus set up as an MPE zone (RPN 6 = 4 on channel 1)', bus('Chords').sent.some((m) => m.bytes[0] === 0xB0 && m.bytes[1] === 6 && m.bytes[2] === 4));
+check('every tonal bus set up as an MPE zone (RPN 6 on channel 1: 4 members for the chords, 1 for the lead)', bus('Chords').sent.some((m) => m.bytes[0] === 0xB0 && m.bytes[1] === 6 && m.bytes[2] === 4)
+  && bus('Lead').sent.some((m) => m.bytes[0] === 0xB0 && m.bytes[1] === 6 && m.bytes[2] === 1) && bus('Lead').sent.some((m) => m.bytes[0] === 0xB1 && m.bytes[1] === 6 && m.bytes[2] === 48));
 
 console.log('\n— Perform');
 for (const p of outs.values()) p.sent.length = 0;
@@ -96,7 +97,7 @@ check('performing', tab.state.status === 'playing' && typeof tickFn === 'functio
 run(spec.knobs.cycleSeconds + 0.5);
 check(`each part's notes on its own bus (lead ${ons(bus('Lead')).length}, chords ${ons(bus('Chords')).length}, comp ${ons(bus('Comp')).length}, bass ${ons(bus('Bass')).length}, inner ${ons(bus('Inner')).length}, drums ${ons(bus('Drums')).length})`,
   ['Lead', 'Chords', 'Comp', 'Bass', 'Inner'].every((w) => ons(bus(w)).length > 0) && ons(outs.get('IAC Driver Bus 1')).length === 0
-  && ons(bus('Chords')).every((m) => chan(m.bytes) >= 1 && chan(m.bytes) <= 4) && ons(bus('Lead')).every((m) => chan(m.bytes) === 0));
+  && ons(bus('Chords')).every((m) => chan(m.bytes) >= 1 && chan(m.bytes) <= 4) && ons(bus('Lead')).every((m) => chan(m.bytes) === 1));
 check('Start on the clock\'s bus, then the clock', bus('Lead').sent.some((m) => m.bytes[0] === 0xFA) && bus('Lead').sent.filter((m) => m.bytes[0] === 0xF8).length > 24);
 const innerSel = qa(panel, '.ctab-midi-part').find((k) => q(k, 'label').textContent === 'Inner').querySelector('select');
 innerSel.value = ''; innerSel.dispatchEvent({ type: 'change' }); await settle();
