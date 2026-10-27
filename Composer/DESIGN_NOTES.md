@@ -1553,6 +1553,31 @@ The order: `TARGET_ORDER.md` phase B (B1–B5), on phase A's core ("MIDI targets
 2. **Clearing the pins on a new clip** (built), or keep a typed progression across clips?
 3. **Clear** composes at once, or goes back to Compose and waits? **Ruled (Avery, 2026-10-26): it waits.**
 
+## Arp mode (phase B core; built 2026-10-27, branch `arp/core`)
+
+`COMP_ARP_ORDER.md`, step B1: `core/arp.js`, `arrangeArp(spec, materials, partId, { pattern, rate, range, legato })` with `partId` the lead or the inner. Like the drums, it's an arrangement over a finished spec and its materials (`materialsOf`): no re-compose, no DP, one pass over the onsets and one over the steps. Compose's own output (Line) is untouched, so every identity fixture holds. The result is the part as the spec has it (`partOf`'s shape, so it replaces `spec.parts[i]`), plus `arp` (the options and the stats) and `line` (the Line part, kept silent; `lineOf` gives it back, and arranging an arp part again starts from it).
+
+- **Steps (decided 3, Q2):** each slot is cut into `rate` equal windows of its time (1–4, default 2). A step's candidates are the onsets whose time falls in it and whose tone is a chord tone of the slot's chord: the span's chord in a chart's split bar. A step with none rests.
+- **The ladder and the patterns (Q3):** the chord's classes stacked close from the part's floor, over `range` octaves (1–3, default 2). Each step takes the candidate whose rung is next in the pattern's direction from the last note's rung. "Next" means more than half a semitone away, so a new chord's near-same rung doesn't count as a move. **Up** takes the nearest rung above and wraps to the step's lowest. **Down** mirrors it. **Up-down** turns where nothing lies ahead, and keeps its direction when nothing lies either way. **As played** takes the step's earliest candidate, on the rung of its class nearest the last note. Ties on a rung go to the earliest onset.
+- **The floor (proposed):** the lead's is its line's median pitch less half the ladder (median − 600 × range), so the arp's median sits on the line's (within 0–152¢ on the test rows). The inner's is the lead's floor less an octave (`REGISTER.inner`). With no lead notes, the median comes from baseHz.
+- **The inner (Q4):** never on the lead's onsets, and it rests on a step where a lead onset falls unless the rate is 3 or more. It reads the lead as the spec has it, so over an arp lead it avoids the arp's onsets (Q5).
+- **The lead (Q5):** arranged over the final chords; a MIDI target's lead is refused (`arpRefusal(spec, partId)` gives the reason, for B2's greyed switch).
+- **Lengths and velocity (Q6):** `articulate`, with each note's `slotSeconds` set to the step's seconds. Legato off: a note lasts its step (or the gap to the next note, if shorter). On: it holds to the next note. So `rearticulate`, a live legato or sound toggle, keeps the arp's lengths. Velocity is the part's, +0.1 on a slot's first step. hz is `partOf`'s.
+- **Stats** (`part.arp.stats`): floor, steps, notes, rests, chordSteps (steps holding a chord tone), chordShare, and the inner's restsForLead.
+- **Measured, at the defaults (seed 1):**
+
+  | row | inner | lead |
+  |---|---|---|
+  | 8:7:6:5 | 5 notes, 7/12 rests, 50% | 7 notes, 5/12 rests, 58% |
+  | 19:17:16:15 | 13 notes, 19/32 rests, 44% | 17 notes, 15/32 rests, 53% |
+  | 768:784 | 47 notes, 17/64 rests (all for the lead), 100% | 64 notes, no rests, 100% |
+  | 4099:4093:4091:4079 | 107 notes, 21/128 rests (all for the lead), 100% | 128 notes, no rests, 100% |
+
+  The percentage is the share of steps holding a chord tone. arrangeArp alone takes about 2.5 ms on the 16k row and under 0.3 ms on the others. Small rows rest a lot at rate 2: a half slot of a 22-onset row often holds no chord tone.
+- **Tests:** `tests/assert-arp.mjs` runs 8 rows × both parts × 4 patterns × rates 1–4 × ranges 1–3, with legato on and off. It checks every note's onset, step, class, rung and range, the shape against each step's candidates, the rests and stats, hz, velocity and lengths. It also covers the inner over a Line lead and an arp lead, a chart's split bar, a target (the lead refused; the inner inside three windows), determinism, Back to Line, the options, and the 16k row's time.
+
+**For B2:** the store keeps a part's mode and options (Q7). The controller replaces `spec.parts[i]` with `arrangeArp(...)` and restores it with `lineOf`. After any rebuild of the lead (a lead swap) or the chords (a chord swap, a re-compose), it re-arranges: rearrange the Line part, then the arp over it. An inner arp also re-arranges when the lead changes mode. The drums' *with* mode reads the lead's notes, so they re-arrange too. The order's default inner sound (harp, Q4) is the controller's to set; `arrangeArp` keeps the part's sound.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
