@@ -250,3 +250,12 @@
 .ctab-clip-notes tr.fringe .ctab-clip-kind, .ctab-clip-notes tr.shift .ctab-clip-kind, .ctab-clip-notes tr.late td:last-child { color: #ffb347; }
 .ctab-clip-notes tr.hard td { color: #ff6b6b; }
 .ctab-clip-tag { color: #fff; border-color: #555; }
+
+/* Details (Composer/CLEAN_MIDI_ORDER.md, phase A): off, the clean view hides what only Details shows; on, the window as
+   before, and what only the clean view shows (its short forms) gives way */
+.ctab-left:not(.ctab-details-on) .ctab-detail, .ctab-inspector:not(.ctab-details-on) .ctab-detail { display: none !important; }
+.ctab-details-on .ctab-clean-only { display: none !important; }
+.ctab-details.has-hidden { border-color: #ffb347 !important; color: #ffb347 !important; }
+.ctab-summary { flex-shrink: 0; font-family: monospace; font-size: 11px; color: #888; }
+/* the clean view's alternates mark: a dot, its count in the title */
+.ctab-left:not(.ctab-details-on) .ctab-badge { font-size: 0; min-width: 0; width: 6px; height: 6px; padding: 0; border-radius: 50%; right: 4px; bottom: 4px; }

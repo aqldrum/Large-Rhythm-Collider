@@ -97,7 +97,8 @@ export function createPartStrips({ doc = globalThis.document, tab, highlights = 
           el('div', { className: 'control-group' }, el('label', { textContent: isDrums ? 'Pattern' : 'Sound' }), sound),
           el('div', { className: 'control-group' }, el('label', { textContent: 'Level' }), levelEl, levelOut)),
         status ? el('div', { className: 'part-strip-status', textContent: status }) : null,
-        el('div', { className: 'part-strip-note', textContent: 'Parts are read from the row; the dot is the layer each leans on. The full Composer is behind a double-click on the Playback header.' })));
+        // the hint is Details' (the Composer window's toggle; CLEAN_MIDI_ORDER.md C5)
+        tab.view?.details ? el('div', { className: 'part-strip-note', textContent: 'Parts are read from the row; the dot is the layer each leans on. The full Composer is behind a double-click on the Playback header.' }) : null));
   }
 
   core.onLevel((id, value) => {
