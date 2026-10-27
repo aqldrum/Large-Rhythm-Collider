@@ -204,6 +204,9 @@ call once Phase A passes.
 
 ## Log
 
+**2026-10-27, Avery at the rig:** every tonal bus as an MPE zone "seems to work best" (Ableton's default instruments, MPE
+on the tonal tracks). The rest of the rig checklist (items 6–14) was not reported item by item.
+
 **2026-10-27, every tonal bus an MPE zone** (Avery's rig pass: bends recorded, but the one-note tracks played near
 12-TET on Ableton's own instruments). Lead, comping, bass and inner now send the MPE configuration (RPN 6 = 1 member on
 channel 1, RPN 0 on channel 2) and play on channel 2; the chords as before; the drums as before. The .mid carries the
