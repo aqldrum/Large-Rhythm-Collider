@@ -291,6 +291,104 @@ planner re-runs J's suite on the frame strokes.
 - **L4.** The page suites updated, the README's Files and Tests, a DESIGN_NOTES section for I–L, and the checklist below
   revised for every changed item.
 
+## Amendment 2 (Avery, 2026-10-28, after the first browser look): comp density tiers, the bass's default, the picker re-ranked
+
+Avery's rulings:
+
+10. **The comp has density tiers, and defaults to sparse–medium.** Dense rows whose every tone is in tune fill every
+    step, so the comp looks for its clave by tier and defaults to sparse–medium. The frame claves themselves "are really
+    good".
+11. **The bass defaults to Moving, landing on the Kick.**
+12. **Roots' runner-ups are named by their cents off the root.**
+13. **New chords are voiced with the current setting.** Chords solved by Chords Follow (or any other way) take the
+    current Close | Led.
+14. **The clave picker re-ranks when the chords change.**
+
+### The probe (2026-10-28): the clave's density under narrower tone sets
+
+Phase I's sets are `frame` (any in-tune tone) and `chord` (the chord's classes in tune). Three narrower ones are still
+inside the frame, so rule 6 holds: `root+5th`, `guide` (the chord's classes other than its root and fifth) and `root`.
+Counted at the clave's grains (seed 1; a candidate's density is its strokes over its steps):
+
+| row | sparse (< 25 %) | medium (25–50 %) | dense (> 50 %) | medium, for example |
+|---|--:|--:|--:|---|
+| 16:12:9 | 2 | 2 | 10 | layer 16 at 8, guide 25 %; root 44 % |
+| 7:5:3:2 | 0 | 3 | 8 | layer 7 at 7, guide 29 %; root 43 % |
+| 19:17:16:15 | 5 | 6 | 4 | layer 19 at 10, chord 50 %; root+5th 30 % |
+| 119:42:15:8 | 3 | 7 | 23 | layer 119 at 4, root 44 % |
+| 8:7:6:5 | 0 | 8 | 3 | layer 8 at 4, frame / chord / root+5th 38 % |
+| 11:9:7:5 | 3 | 6 | 3 | layer 11 at 6, chord 33 % |
+| 768:769 | 27 | 12 | 0 | layer 768 at 3, frame 33 % |
+| 768:784 | 7 | 28 | 11 | layer 768 at 3, frame / chord / guide 33 % |
+
+With the narrower sets, every row has a medium candidate. The all-in-tune rows (16:12:9, 7:5:3:2, 119:42:15:8) have
+few of them and many dense ones. The script is in the planner's scratchpad (`comp-tiers-probe.mjs`).
+
+### The bug (fixed by the planner, 2026-10-28)
+
+A runner-up line held for the bar boundary (performing) read "chords follow" when it was clicked, not when it landed, so
+a follow pressed while it waited was lost: the line landed with the chords kept. `composer-tab.js` now reads the follow
+when the line lands; `assert-page-matrix.mjs` checks it. The core voices new chords with the current setting already
+(rearrange.js runs the voicing pass on every chord edit and lead follow of a led spec; a close spec stays close), so
+rule 13 asks for a check, not new code (P32).
+
+### Proposed (the builder's calls; Avery may overrule)
+
+- **P26. The narrower sets.** Phase I's candidates gain `root+5th`, `guide` and `root`, each read and ranked as P16
+  reads `frame` and `chord`. A set whose reading equals a wider set's at the same layer and grain is dropped, keeping
+  the wider set's name (P16's rule). Their words: "root and fifth", "guide tones", "roots".
+- **P27. The tiers.** A candidate's density is its strokes over its steps, over the bars.
+  - **Sparse:** 10–25 %.
+  - **Medium:** 25–50 %.
+  - **Dense:** 50–85 %.
+  - Under 10 % or a pulse is no tier.
+  - **The comp's density:** a new override `compDensity: 'sparse-med' | 'sparse' | 'medium' | 'dense'`, `'sparse-med'`
+    by default (10–50 %).
+  - **The choice:** inside the asked tier, the candidates rank by COMP_RULES as now, the density term read against the
+    tier's own band. With no candidate in the tier, the nearest tier's best plays, and the trace says so.
+  - **Pins:** `claveFrom: 'pattern'` is unchanged (its fixed claves have no tier). The phase I suites that pin frame
+    results are pinned with `compDensity` at the tier that reproduces them, or updated with a reason.
+- **P28. The bass's default (rule 11).** Compose's bass is Moving · Kick (`arrangeBass` P23, covering the kick). With the
+  drums off, or no kick in the mode, it is Moving · Free, and says why (`bassLockRefusal`).
+  - A new override `bass: { density, lock }` pins it. The suites that freeze Compose's bass (and the identity fixtures)
+    are pinned with `bass: { density: 'sparse', lock: 'free' }`, the old default byte for byte.
+  - The window's bass controls read Compose's arrangement as their default. A change and an undo work as now.
+- **P29. Roots' names (rule 12).** A Roots runner-up is named by its tone's cents off the chord's root, signed and to a
+  tenth, then its slot: "root +3.2¢ · slot 3" (an exact root: "root · slot 3"). Its ratio goes in the title.
+- **P30. The picker re-ranked (rule 14).** A chord edit, a lead follow, a chart edit or a re-read changes the frames, so
+  the frame candidates are re-ranked over the chords as they play.
+  - **Where:** rearrange.js returns `claveAlternates` (the ranked list `claveAlternates` gives Compose) when any chord
+    changed. The controller keeps the latest, and the picker reads it instead of the trace's.
+  - **Cost:** about 3.5 ms on the 16k row (phase I's ranking), in the worker above it, as the rest of the edit.
+  - **What plays:** unchanged. The playing clave keeps its layer, grain and set, re-read (P20). A re-rank never switches
+    it.
+- **P31. The comp's caption** says the clave as it plays: a picked clave, the tier, and the re-read bars.
+- **P32. New chords voiced (rule 13).** Checks that a lead follow, a chord swap and a typed chord each voice their new
+  chords as the current setting does: Led, the voicing pass's output (the loop closed); Close, root position. Each is
+  live, before and after a Close | Led flip, against a Compose given the same edits.
+
+### Phase M: the core
+
+- **M1.** `claves.js`: the narrower sets (P26), the tiers and `compDensity` (P27). `compose.js`: `compDensity` as an
+  override, the comp's tier in the trace.
+- **M2.** `compose.js` and `bass.js`: Compose's bass at Moving · Kick, the `bass` override (P28).
+- **M3.** `rearrange.js`: the re-ranked alternates on a chord change (P30). `reclave` and the swap paths read the tier.
+- **M4.** Tests:
+  - `assert-frame-clave.mjs`: the sets and tiers against its brute force; every stroke still in frame; the nearest-tier
+    fallback; the re-ranked alternates equal to a Compose over the edited chords.
+  - `assert-bass.mjs`: Compose's default at Moving · Kick; the fallback with drums off; the pin byte for byte.
+  - The P32 checks.
+  - The pins as P27–P28 say.
+
+### Phase N: the window (after M merges)
+
+- **N1.** The Comping inspector: a Density select (Sparse–Med | Sparse | Medium | Dense). It is live, `reclave` over the
+  tier, one undo step. The picker lists the tier's candidates, re-ranked after a chord change (P30).
+- **N2.** The bass inspector opens at Compose's Moving · Kick. Roots' runner-ups are named by cents (P29).
+- **N3.** The comp's caption (P31). The page suites, the README, a DESIGN_NOTES section for M–N, and the checklist
+  revised: the comp's tiers on 16:12:9 and 768:784, the bass's default with drums on and off, Roots' cents, the picker
+  after a Chords Follow.
+
 ## Browser and rig checklist (for Avery; finished in H4, rewritten in L4 for the whole order and Amendment 1)
 
 Open the Partitions window's **Composer** tab, generate the rhythm on the main page, press **Compose**, then **Perform**.
@@ -436,3 +534,7 @@ and counts depend on the cycle, so read them as what to look for, not as the onl
   rewritten for the whole order and Amendment 1. Open for Avery (from the builder): re-rank the picker's frame claves
   after a chord swap (today the list shows Compose's patterns; what plays is re-read)? Name Roots' runner-ups by cents
   off the root rather than by ratio? Should the comp's caption say the clave as it plays (today Compose's, as phase E)?
+- 2026-10-28: Avery's first look. Rulings 10–14 (comp density tiers defaulting to sparse–medium; the bass's default
+  Moving · Kick; Roots' runner-ups by cents off the root; new chords voiced with the current setting; the picker
+  re-ranked on a chord change). The planner fixed a held line losing "chords follow" (composer-tab.js; a check in
+  assert-page-matrix.mjs). Probe and Amendment 2 (P26–P32, phase M then N) written; not yet committed or started.
