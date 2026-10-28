@@ -1899,7 +1899,7 @@ Every step landed on these rows. Phase A's every-strike comp struck 6, 8, 32 and
 - **The first chord (P2).** Its close voicing (root first, each voice the lowest above the one under it, from an octave under the root less 50¢), lifted by whole octaves until no pair is muddy.
 - **Each chord after (P2–P3).** Every assignment of octaves in the window is scored: motion (each tone to its nearest tone of the chord before, in cents as they sound, the retune included) plus 10⁶ a muddy pair. The cheapest wins, ties to the lower centre, then the first in order (voice 0's lowest octave first). The window: no tone under 1/1 − 1250¢ (close's floor, `VOICING_FLOOR`), each tone within ±1800¢ of the first chord's centre (3 octaves a tone, so at most 81 voicings), and the voicing's mean within ±600¢ of the first chord's. If no assignment's mean is inside, those nearest it are scored (none of the rows tested needs it; `stats.voicing.outside` counts them).
 - **baseHz is needed before the chords.** It is read from the lead's median pitch, which is known once the lead is mined, so it is computed there. Its decision stays in its old place among the decisions.
-- **The loop (P4).** Each chord is led from the one before, bar 0 from nothing. The wrap (the last chord to the first) is `stats.voicing.wrap`, not optimized.
+- **The loop (P4).** Each chord is led from the one before, bar 0 from nothing. The wrap (the last chord to the first) is `stats.voicing.wrap`, not optimized. (Superseded by phase K, below: the loop is closed.)
 - **Idempotent.** The first chord is re-stacked close from its tones and root, and every later choice reads only tones, so running the pass on its own output changes nothing. A rearrange relies on this.
 
 **The comp (P5, `compChordsOfBar`'s new `voiced` argument).** In chords, a strum tone takes the octave nearest its class's chord voice in its bar (or span); a borrowed tone is the voice itself, octave and all. `compStyle: 'notes'` is untouched.
@@ -1945,6 +1945,62 @@ Over the probe's 57 chords (seeds 1–3): motion 21,972¢ → 8,922¢, muddy 24 
 1. **P1 is steep on dense rows.** log2(n·d) grows with the ratio's size, not its width: on 768:769 the first chord (192/191, 24/19, 3/2) has a 191/152 third whose limit is 400 Hz, so the chord is lifted two octaves and its lowest note goes from 181 Hz to 722 Hz, above the lead's median (539 Hz). Every chord after stays near it (the window). Should the limit be capped (say at 16/15's 213 Hz), or read from the interval's width?
 2. **The wrap** (P4) is as large as a bar line's motion on some rows (11:9:7:5 680¢, 119:42:15:8 610¢). A second pass could close it.
 3. **11:9:7:5 moves 782¢, not the nearest-octave 284¢:** the least-motion voicing of its second chord has a muddy 14/11 at 159 Hz (limit 196 Hz), so the chord goes up an octave. That is P1 working as written.
+
+## The loop closed (phase K; built 2026-10-28, branch `voicing/loop`)
+
+`BASS_VOICING_ORDER.md` Amendment 1, phase K (K1–K2): rule 8 (the loop's wrap led like every other change) is Avery's; P25 is the builder's proposal, built as written except where noted below. `'close'` is untouched. Nothing here has been heard.
+
+**The objective** (`core/compose.js`, `voiceLead`). One cost over the whole loop: every chord-to-chord motion (each tone to its nearest tone of the chord before, in cents as they sound), the last chord back to the first included, each the same weight, plus `MUD_COST` (10⁶) a muddy pair. Since 10⁶ outweighs any loop's motion, the cycle is clear of the mud limit wherever each chord can be.
+
+**The anchor and the states.** The first chord's close voicing, lifted by octaves until clear (phase F's first chord), is now only the anchor: its centre is the window's, so the register can't creep. Each chord's states are its octave assignments in the window as before (no tone under `VOICING_FLOOR`, each within ±`VOICING_REACH` of the anchor's centre, the chord's centre within ±`VOICING_CENTRE` of it; none inside: those nearest), and the first chord's states are among them, so it can move to meet the last.
+
+**The solve.** Viterbi over the states, once a first state: the cost-to-go is built back from the last chord (its wrap into that first state its terminal cost), then the cycle is read forward taking, at each chord, the first state whose motion in plus cost-to-go is least. The first states are visited cheapest lower bound first (the same backward pass with each last state's cheapest wrap into any first state), and the visit stops when a bound is dearer than the best cycle found. The cycle on motion alone is solved first: when it is clear of the mud limit it is the answer (the mud can't make a clear cycle dearer), else the cycle is solved again with the mud weighed. Motions are precomputed flat, a tone's distance at each of its octaves found once a state.
+
+**Ties** (equal cost): less mud; then the first chord nearest the anchor (its motion from the anchor's voicing); then the chords' centres nearest the anchor's (summed); then the lower centres (summed); then the first in order (chord by chord from the first, voice 0's lowest octave first).
+
+**Edge cases.** A one-chord loop has no wrap: the least mud, then nearest the anchor, so the anchor itself when it is clear (phase F's voicing). A MIDI target's spec is its cut's bars, so the cut loops its own bars with nothing special. A unit with no voices is skipped; the chords either side of it are neighbours.
+
+**What it changes.**
+- **A swap** re-runs the loop (`rearrange.js`, unchanged code: it already compared every bar), so octaves before the swapped bar can move too. `revoicedBars` lists them: in `assert-voicing.mjs`, 19 bars revoiced over 32 swaps, 5 of them before the swap.
+- **The stats** keep their names. `motion` is still the bar lines' (the N − 1 changes), `wrap` the last chord back to the first (now led), and `meanMotion` is (motion + wrap) / N, the mean over the loop's N changes (it was motion / (N − 1)). `lifted` counts the chords the mud limit moved: the anchor when lifted, and every chord whose octaves differ from the motion-only cycle. `voiceLead` also returns `anchorLifted`, `moves` (N), `cost` and `states` (the most a chord had); `voicingStats` keeps only the old fields.
+- **The words** (`voicingWhy`): "the loop closed (rule 8, Avery): every chord's octaves chosen together, so the loop's motion is least, each change weighed the same, the last chord back to the first included, …; the window centred on the first chord's close voicing, (not) lifted clear of the mud limit …; …¢ of motion a chord; the mud limit moved L of N chords; the loop's wrap W¢ (led, as every change)". A one-chord loop says "one chord, so no wrap and nothing to lead". The window still reads "(the loop's wrap …, not led)" in the chords cell's title (`composer-tab.js`): phase L's.
+- **Idempotent.** Every choice reads only the tones (the anchor is re-stacked from them), so running the pass on its own output changes nothing.
+
+**Greedy (phase F) against the loop closed** (seed 1; motion in cents; the mean over the loop's N changes for both; the greedy's lowest note and first centre against the loop's):
+
+| row | chords | bar lines | wrap | loop total | mean a change | muddy | lifted | lowest note | first chord's centre |
+|---|--:|---|---|---|---|---|---|---|---|
+| 8:7:6:5 | 2 | 0 → 0 | 316 → 316 | 316 → 316 | 158 → 158 | 0 → 0 | 0 → 0 | 241 → 241 Hz | 132 → 132¢ |
+| 11:9:7:5 | 2 | 782 → 284 | 680 → 284 | 1463 → 569 | 731 → 284 | 0 → 0 | 1 → 2 | 191 → 254 Hz | −98 → 302¢ |
+| 19:17:16:15 | 2 | 691 → 380 | 499 → 293 | 1190 → 673 | 595 → 337 | 0 → 0 | 1 → 2 | 192 → 229 Hz | −101 → 299¢ |
+| 7:5:3:2 | 1 | — | — | 0 → 0 | — | 0 → 0 | 0 → 0 | 156 → 156 Hz | −837 → −837¢ |
+| 119:42:15:8 | 4 | 702 → 427 | 610 → 112 | 1312 → 539 | 328 → 135 | 0 → 0 | 0 → 0 | 180 → 225 Hz | −837 → −437¢ |
+| 768:769 | 4 | 873 → 873 | 372 → 372 | 1245 → 1245 | 311 → 311 | 0 → 0 | 1 → 1 | 361 → 361 Hz | 372 → 372¢ |
+| 768:784 | 4 | 237 → 237 | 125 → 125 | 362 → 362 | 91 → 91 | 0 → 0 | 0 → 0 | 253 → 253 Hz | −103 → −103¢ |
+| 11:9:7:5, a 4-bar chart | 5 | 1373 → 1373 | 204 → 204 | 1576 → 1576 | 315 → 315 | 0 → 0 | 0 → 0 | 227 → 227 Hz | −1200 → −1200¢ |
+| 768:784, a 32-bar chart | 40 | 10145 → 10145 | 204 → 204 | 10349 → 10349 | 259 → 259 | 0 → 0 | 0 → 0 | 191 → 191 Hz | −800 → −800¢ |
+| 4099:4093:4091:4079 | 8 | 2233 → 2233 | 706 → 307 | 2939 → 2540 | 367 → 318 | 0 → 0 | 0 → 8 | 224 → 299 Hz | 447 → 747¢ |
+
+- **11:9:7:5's 782¢ (phase F's open question 3) is now 284¢ both ways:** the first chord's 3/2 goes up an octave (to 381 Hz), so the second chord's least-motion voicing is clear of the mud limit and the wrap matches the bar line.
+- **On 119:42:15:8 the wrap drops from 610¢ to 112¢** and the bar lines from 702¢ to 427¢ (the probe's nearest-octave figure).
+- **The 16k row's register rises about 500¢** (the chords' mean centre 325 → 825¢; lowest note 224 → 299 Hz): the motion-only cycle is muddy, and the clear cycle of the same cost lifts each chord's lowest tone an octave, so "lifted 8 of 8". The window still holds (±600¢ of the anchor).
+- Where the greedy pass was already a least cycle (8:7:6:5, 768:769, 768:784, the charts), nothing moves.
+- Over the probe's 57 chords (seeds 1–3), the loop's total (wrap included) is 30,762¢ close → 11,112¢ led, no chord muddy. The loop never costs more than the greedy pass, and less on 9 of the 21 composes.
+
+**Cost** (the pass alone, the median of 7, in `assert-voicing.mjs`): the probe rows 0.01–0.4 ms; 768:784 and 119:42:15:8 as 32-bar charts (every 4th bar split, 39–40 chords) 0.25–0.4 ms; the 16k row 2.6 ms (8 chords of 3–4 tones, 61 states); **the 16k row as a 32-bar chart (40 chords, 61 states) 3.9 ms**, the worst, under the 5 ms budget. The 32-bar chart is `changes` with 32 bars, every 4th split [1, 1] (a chart sets the bars). Compose's lean time on the 16k row is unchanged (813–833 ms led, interleaved runs, against 820–838 ms before). Two levers made the budget: the motions decomposed by tone and octave (≈ 3× fewer distance evaluations) and the lower bound on first states. The 4-tone chords have about 61 states each, not the order's estimated 20 (±600¢ on a 4-tone mean allows octave sums of −2..2), and the first build, unpruned and allocating, took about 13 ms on the 16k row.
+
+**Calls beyond the order (proposed):**
+1. **The tie after the mud is the first chord nearest the anchor, then the centres nearest the anchor's, before the lower centre.** As written ("the lower centre"), motion can't tell a loop from its octave shifts, so ties sank whole loops to the window's floor at no gain: 8:7:6:5 and 768:769 by 400¢ (768:769's lowest note 361 → 181 Hz, undoing the planner's cap) and 768:784 by 325¢; and the first-in-order rule then picked spread voicings (768:784's first chord 1/1 at 168 Hz with 48/43 at 752 Hz). With the anchor tie, where the greedy pass was already least nothing moves.
+2. **A one-chord loop** follows the same ties, so it is the anchor when the anchor is clear (as written, the lower centre would have dropped 7:5:3:2's chord to the lowest clear inversion).
+3. **`meanMotion` is over the loop's N changes, the wrap one of them;** `motion` stays the bar lines'. The window's "…¢ a chord" now means a change of the loop.
+4. **`lifted`** counts the chords whose octaves differ from the motion-only cycle (plus the anchor when lifted), so a loop the mud limit shifted whole reads "8 lifted".
+
+**Tests** (`assert-voicing.mjs`, 32 checks): a brute force over every cycle on loops of up to 4 chords, written from the order (pruned only where a partial cost is already dearer), the octaves exactly its first least and the cost its least; past 4 chords, the cost an independent forward Viterbi's least (charts, 32-bar charts, the 16k row); the wrap counted (never dearer than the greedy pass, cheaper on 9 composes; the stats' wrap the measured); a one-chord loop; MIDI targets (twinkle, ode-to-joy, frère-jacques on 8:7:6:5 and 119:42:15:8: the cut's bars the loop); idempotence; swaps revoicing earlier bars (`revoicedBars` exact); the budget. Phase F's checks kept: the window, mud clear where possible, the comp's octaves and lanes, `'close'` byte for byte, a swap's tones unchanged outside its bar, the clave switch. No other suite pinned a led output; no fixture was touched.
+
+**Open, for Avery:**
+1. The ties (call 1): the first chord nearest the anchor, then the centres nearest it. Or the order's lower centre as written (loops sink up to 600¢)?
+2. The 16k row's chords now sit about 500¢ higher (lowest note 299 Hz). The window allows it; should the anchor's centre pull harder (say, a small cost a cent off the anchor's centre)?
+3. `meanMotion` (call 3): the mean over the loop's changes, or keep the bar lines' mean and show the wrap apart?
 
 ## The window: bass and voicing (phase H; built 2026-10-28, branch `ui/bass-voicing`)
 

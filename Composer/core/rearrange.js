@@ -370,9 +370,10 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
       bassRooted[k] = b.rooted;
     }
   }
-  // ── led chords (P8): the voicing pass again over every bar (a chart's span), from the first chord on. Tones never change
-  // outside the rebuilt bars, only octaves; `revoicedBars` lists the other bars whose octaves moved, and the comp (in
-  // chords) is strummed again over the rebuilt and the revoiced bars, its octaves from the chords' (P5) ──
+  // ── led chords (P8, P25): the voicing pass again over every bar (a chart's span): the loop closed, so a swap can move
+  // octaves before the swapped bar as well as after it. Tones never change outside the rebuilt bars, only octaves;
+  // `revoicedBars` lists the other bars whose octaves moved, before or after, and the comp (in chords) is strummed again
+  // over the rebuilt and the revoiced bars, its octaves from the chords' (P5) ──
   const ratioOf = spans ? (bar, slot) => (recs[unitOf[slot]] ?? recs[unitsOfBar(bar)[0]]).fundamentalRatio : (bar) => recs[bar].fundamentalRatio, baseHz = K.baseHz;
   let voicing = null, revoicedBars = null;
   if (led) {

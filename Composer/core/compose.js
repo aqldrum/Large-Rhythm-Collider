@@ -27,9 +27,11 @@
 //                chords   each bar's chord, a voice a chord class (root first, then up): the bar's onset of that class,
 //                         inside the bar's frame, with the most strikes (then the earliest). A voice's notes sound at their
 //                         onsets, so a chord builds as its tones arrive. The octaves (`voicing`; BASS_VOICING_ORDER.md
-//                         phase F, decided 3–4, P1–P7 proposed): led (the default), the first chord close and lifted clear
-//                         of the mud limit, each chord after in the octaves nearest the one before inside a window
-//                         (`voiceLead`), each note's `lane` its register order in its chord; close, stacked close from an
+//                         phase F, decided 3–4, P1–P7 proposed; Amendment 1, rule 8, P25): led (the default), the loop
+//                         closed: every chord's octaves chosen together inside a window centred on the first chord's close
+//                         voicing (lifted clear of the mud limit), so the motion over the whole loop is least, the last
+//                         chord back to the first weighed as every change (`voiceLead`), each note's `lane` its register
+//                         order in its chord; close, stacked close from an
 //                         octave under the bar's root up, each voice the lowest register above the one under it.
 //                comping  in chords (`compStyle: 'chords'`, the default; COMP_ARP_ORDER.md, decided 1 and 5–6, P3–P9 and
 //                         R1–R5 proposed): ONE CLAVE for the composition (claves.js), mined from this rhythm's layers (each
@@ -333,7 +335,7 @@ export function chordVoicesOfBar(ctx, c, k, range = null) {
   return out;
 }
 
-// ── the voicing pass (BASS_VOICING_ORDER.md phase F: decided 3–4, P1–P6) ──
+// ── the voicing pass (BASS_VOICING_ORDER.md phase F: decided 3–4, P1–P6; the loop closed, Amendment 1: rule 8, P25) ──
 
 const fractionCache = new WeakMap();
 /** the row's tones as exact fractions → [{ n, d (BigInt), value }] */
@@ -373,88 +375,205 @@ export function muddyPairs(row, notes, octaves, { baseHz, ratioOf, memo = new Ma
 }
 
 /**
- * The voicing pass (P2–P4, P6): the chord voices of every bar (a chart's span each), in order, their tones as chosen
- * (which onset each class sounds) and only their octaves set, in place:
- *   the first chord   its close voicing (root first, each voice the lowest above the one under it, from an octave
- *                     under the root, as `chordVoicesOfBar` stacks it), lifted by octaves until no pair is muddy
- *   each chord after  every assignment of octaves in the window — each tone not under VOICING_FLOOR and within
- *                     ±VOICING_REACH of the first chord's centre (3 octaves), the voicing's centre within ±VOICING_CENTRE
- *                     of it — scored by its motion (each tone to its nearest tone of the chord before, in cents as they
- *                     sound: the bar's retune in) plus MUD_COST a muddy pair; the cheapest wins, ties to the lower centre
- *                     (then the first in order, voice 0's octave lowest first). No assignment in the window: those whose
- *                     centre is nearest it.
- * Each note gains `lane`, its order in its chord from the lowest (0). A unit with no voices is skipped (the next is led
- * from the last that had some). Running it again on its own output changes nothing.
+ * The voicing pass (P1–P3, P6; the loop closed, Amendment 1 P25, rule 8): the chord voices of every bar (a chart's span
+ * each), their tones as chosen (which onset each class sounds) and only their octaves set, in place, the whole loop at once:
+ *   the anchor   the first chord's close voicing (root first, each voice the lowest above the one under it, from an
+ *                octave under the root, as `chordVoicesOfBar` stacks it), lifted by octaves until no pair is muddy; its
+ *                centre (the mean pitch as it sounds) is the window's, so the register can't creep
+ *   the states   each chord's octave assignments in the window — each tone not under VOICING_FLOOR and within
+ *                ±VOICING_REACH of the anchor's centre (3 octaves), the voicing's centre within ±VOICING_CENTRE of it
+ *                (none: those whose centre is nearest it) — the first chord's as well as the rest
+ *   the cycle    one objective over the loop: every chord-to-chord motion (each tone to its nearest tone of the chord
+ *                before, in cents as they sound: the bar's retune in), the last chord back to the first included, each
+ *                the same weight, plus MUD_COST a muddy pair. Viterbi over the states, once for each of the first
+ *                chord's (the wrap added), keeps the cheapest cycle; ties to less mud, then the first chord nearest the
+ *                anchor (its motion from the anchor's voicing: the builder's, so a loop the motion can't tell from its
+ *                octave shifts stays where the anchor put it), then the centres nearest the anchor's (summed), then the
+ *                lower centres (summed), then the first in order (chord by chord from the first, voice 0's octave lowest
+ *                first). The cycle's motion alone is solved first; when it is clear of the mud limit it is the answer
+ *   one chord    no wrap and nothing to lead: the least mud, then nearest the anchor (the anchor itself when it is clear)
+ * Each note gains `lane`, its order in its chord from the lowest (0). A unit with no voices is skipped (the chords either
+ * side of it are neighbours). Every choice reads only the tones, never the octaves given, so running it again on its own
+ * output changes nothing.
  *   units  [{ chord (harmony.js' record: rootCents), notes: [builder note with voice, tone, octave, pitch, bar, slot] }]
  *   opts   { baseHz, ratioOf ((bar, slot) → the bar's fundamentalRatio) }
- * → { chords (voiced), lifted (chords the mud limit moved: the first lifted, a later one whose least motion alone was
- *     muddy), muddy (chords left with a muddy pair: none in the window is clear), motion (cents, every chord from the
- *     one before), moves (chords led from one before), meanMotion, wrap (the last chord to the first, P4: reported, not
- *     optimized), centre (the first chord's, cents as it sounds), outside (chords with no assignment in the window) }
+ * → { chords (voiced), lifted (chords the mud limit moved: the anchor when lifted, and every chord whose octaves differ
+ *     from the cycle that weighs motion alone), anchorLifted, muddy (chords left with a muddy pair: none in the window is
+ *     clear), motion (cents, the bar lines': every chord from the one before, the wrap not in it), wrap (the last chord
+ *     back to the first, led like every change), moves (the loop's changes: chords − 1 bar lines and the wrap; 0 for
+ *     one chord), meanMotion ((motion + wrap) / moves), cost (the cycle's: motion + wrap + MUD_COST a muddy pair),
+ *     centre (the anchor's, cents as it sounds), outside (chords with no assignment in the window), states (the most a
+ *     chord had) }
  */
 export function voiceLead(ctx, units, { baseHz, ratioOf }) {
   const { row } = ctx, memo = new Map(), mud = { baseHz, ratioOf, memo };
   const shiftOf = (n) => 1200 * Math.log2(ratioOf(n.bar, n.slot));
-  const motionOf = (cur, prev) => { let m = 0; for (const s of cur) { let best = Infinity; for (const p of prev) best = Math.min(best, Math.abs(s - p)); m += best; } return m; };
-  const stats = { chords: 0, lifted: 0, muddy: 0, motion: 0, moves: 0, meanMotion: 0, wrap: 0, centre: null, outside: 0 };
-  let prev = null, first = null, centre = null;
+  const motionOf = (cur, prev) => { let m = 0; for (const s of cur) { let best = Infinity; for (const p of prev) { const d = Math.abs(s - p); if (d < best) best = d; } m += best; } return m; };
+  const stats = { chords: 0, lifted: 0, anchorLifted: false, muddy: 0, motion: 0, wrap: 0, moves: 0, meanMotion: 0, cost: 0, centre: null, outside: 0, states: 0 };
+  const chords = [];
   for (const unit of units) {
     const notes = [...unit.notes].sort((a, b) => a.voice - b.voice);
     if (!notes.length) continue;
-    stats.chords++;
     const cents = notes.map((n) => row.toneCents[n.tone]), shift = notes.map(shiftOf);
-    const sounding = (oct) => oct.map((o, i) => cents[i] + 1200 * o + shift[i]);
-    let chosen;
-    if (prev == null) {
-      // close, as chordVoicesOfBar stacks it, then lifted an octave at a time while a pair is muddy
-      let floor = unit.chord.rootCents + REGISTER.chords - 50;
-      const close = notes.map((n, i) => { const o = Math.ceil((floor - cents[i]) / 1200 - EPS); floor = cents[i] + 1200 * o + 1; return o; });
-      let lift = 0;
-      while (lift < 12 && muddyPairs(row, notes, close.map((o) => o + lift), mud) > 0) lift++;
-      if (lift > 0) stats.lifted++;
-      chosen = close.map((o) => o + lift);
-      if (muddyPairs(row, notes, chosen, mud) > 0) stats.muddy++;
-      const s = sounding(chosen);
-      centre = s.reduce((a, b) => a + b, 0) / s.length; stats.centre = centre;
-    } else {
-      // each tone's octaves in the window: not under the floor, within ±VOICING_REACH of the centre
-      const options = notes.map((n, i) => {
-        const lo = Math.max(Math.ceil((VOICING_FLOOR - cents[i]) / 1200 - EPS), Math.ceil((centre - VOICING_REACH - cents[i] - shift[i]) / 1200 - EPS));
-        const hi = Math.ceil((centre + VOICING_REACH - cents[i] - shift[i]) / 1200 - EPS) - 1;
-        const out = []; for (let o = lo; o <= hi; o++) out.push(o);
-        return out.length ? out : [lo];
-      });
-      const all = [];
-      const walk = (i, acc) => { if (i === notes.length) { all.push([...acc]); return; } for (const o of options[i]) { acc.push(o); walk(i + 1, acc); acc.pop(); } };
-      walk(0, []);
-      const scored = all.map((oct) => { const s = sounding(oct), mean = s.reduce((a, b) => a + b, 0) / s.length; return { oct, mean, motion: motionOf(s, prev), off: Math.max(0, Math.abs(mean - centre) - VOICING_CENTRE) }; });
-      const least = Math.min(...scored.map((x) => x.off));
-      if (least > EPS) stats.outside++;
-      const inside = scored.filter((x) => x.off <= least + EPS);
-      for (const x of inside) { x.mud = muddyPairs(row, notes, x.oct, mud); x.cost = x.motion + MUD_COST * x.mud; }
-      const pick = (key) => inside.reduce((a, b) => (b[key] < a[key] - EPS || (Math.abs(b[key] - a[key]) <= EPS && b.mean < a.mean - EPS) ? b : a));
-      const best = pick('cost'), plain = pick('motion');
-      if (best !== plain) stats.lifted++;
-      if (best.mud > 0) stats.muddy++;
-      chosen = best.oct;
-      stats.motion += best.motion; stats.moves++;
-    }
-    notes.forEach((n, i) => { n.octave = chosen[i]; n.pitch = cents[i] + 1200 * chosen[i]; });
-    const s = sounding(chosen);
-    [...notes.keys()].sort((a, b) => s[a] - s[b] || notes[a].voice - notes[b].voice).forEach((i, lane) => { notes[i].lane = lane; });
-    if (first == null) first = s;
-    prev = s;
+    chords.push({ unit, notes, cents, shift, sounding: (oct) => oct.map((o, i) => cents[i] + 1200 * o + shift[i]) });
   }
-  stats.meanMotion = stats.moves ? stats.motion / stats.moves : 0;
-  stats.wrap = first && prev && stats.chords > 1 ? motionOf(first, prev) : 0;
+  const N = stats.chords = chords.length;
+  if (!N) return stats;
+
+  // the anchor: the first chord close, as chordVoicesOfBar stacks it, lifted an octave at a time while a pair is muddy
+  const c0 = chords[0];
+  let floor = c0.unit.chord.rootCents + REGISTER.chords - 50;
+  const close = c0.notes.map((n, i) => { const o = Math.ceil((floor - c0.cents[i]) / 1200 - EPS); floor = c0.cents[i] + 1200 * o + 1; return o; });
+  let lift = 0;
+  while (lift < 12 && muddyPairs(row, c0.notes, close.map((o) => o + lift), mud) > 0) lift++;
+  const anchor = close.map((o) => o + lift), anchorS = c0.sounding(anchor);
+  const centre = anchorS.reduce((a, b) => a + b, 0) / anchorS.length;
+  stats.centre = centre; stats.anchorLifted = lift > 0;
+
+  // each chord's states: every assignment of octaves in the window, cut to those whose centre is inside (or nearest it)
+  const states = chords.map((c) => {
+    const options = c.notes.map((n, i) => {
+      const lo = Math.max(Math.ceil((VOICING_FLOOR - c.cents[i]) / 1200 - EPS), Math.ceil((centre - VOICING_REACH - c.cents[i] - c.shift[i]) / 1200 - EPS));
+      const hi = Math.ceil((centre + VOICING_REACH - c.cents[i] - c.shift[i]) / 1200 - EPS) - 1;
+      const out = []; for (let o = lo; o <= hi; o++) out.push(o);
+      return out.length ? out : [lo];
+    });
+    // each tone's pitch (as it sounds) at each of its octaves, and every assignment (its octaves' indices, `at`)
+    c.heard = options.map((os, i) => os.map((o) => c.cents[i] + 1200 * o + c.shift[i]));
+    const all = [];
+    const walk = (i, acc) => { if (i === c.notes.length) { all.push([...acc]); return; } for (let a = 0; a < options[i].length; a++) { acc.push(a); walk(i + 1, acc); acc.pop(); } };
+    walk(0, []);
+    const scored = all.map((at) => { const oct = at.map((a, i) => options[i][a]), s = c.sounding(oct), mean = s.reduce((a, b) => a + b, 0) / s.length; return { oct, at, s, mean, off: Math.max(0, Math.abs(mean - centre) - VOICING_CENTRE) }; });
+    const least = Math.min(...scored.map((x) => x.off));
+    if (least > EPS) stats.outside++;
+    const inside = scored.filter((x) => x.off <= least + EPS);
+    for (const x of inside) x.mud = muddyPairs(row, c.notes, x.oct, mud);
+    stats.states = Math.max(stats.states, inside.length);
+    return inside;
+  });
+  // the first chord's: each one's motion from the anchor (the anchor's own 0), the ties' first order after the cost
+  for (const x of states[0]) x.fromAnchor = motionOf(x.s, anchorS);
+  let chosen;
+  if (N === 1) {
+    // one chord: no wrap, nothing to lead from; the least mud, then nearest the anchor (the anchor itself when it is
+    // clear), then the centre nearest the anchor's, then the lower, then the first
+    const key = (x) => [x.mud, x.fromAnchor, Math.abs(x.mean - centre), x.mean];
+    const pick = states[0].reduce((b, x) => { const p = key(x), q = key(b); for (let i = 0; i < 4; i++) { if (p[i] < q[i] - (i ? EPS : 0)) return x; if (p[i] > q[i] + (i ? EPS : 0)) return b; } return b; });
+    chosen = [pick];
+    if (stats.anchorLifted || pick.fromAnchor > EPS) stats.lifted = 1;
+  } else {
+    // the motions, flat [from · S + to]: into chord i + 1 from chord i (step[i]), and the wrap, into the first from the
+    // last. A state's motion from p is the sum of its tones' distances to p's nearest, so each tone's distance at each of
+    // its octaves is found once a state p (near[j][a]) and a state's motion is the sum of its tones' (motionOf's, in order)
+    const motions = (i, k) => {
+      const from = states[i], to = states[k], heardTo = chords[k].heard, n = to.length, M = new Float64Array(from.length * n);
+      from.forEach((p, x) => {
+        const near = heardTo.map((hs) => hs.map((h) => { let best = Infinity; for (const u of p.s) { const d = Math.abs(h - u); if (d < best) best = d; } return best; }));
+        for (let y = 0; y < n; y++) { const at = to[y].at; let m = 0; for (let j = 0; j < at.length; j++) m += near[j][at[j]]; M[x * n + y] = m; }
+      });
+      return M;
+    };
+    const step = [];
+    for (let i = 0; i + 1 < N; i++) step.push(motions(i, i + 1));
+    const wrapM = motions(N - 1, 0);
+    // the cycle on motion alone first: clear of the mud limit, it is the cheapest with the mud weighed too (and the
+    // same under the ties), so the mud limit moved nothing but, perhaps, the anchor
+    const plain = solveCycle(states, step, wrapM, false, centre);
+    const best = plain.some((x, i) => states[i][x].mud > 0) ? solveCycle(states, step, wrapM, true, centre) : plain;
+    chosen = best.map((x, i) => states[i][x]);
+    const moved = new Set(best.flatMap((x, i) => (x !== plain[i] ? [i] : [])));
+    if (stats.anchorLifted) moved.add(0);
+    stats.lifted = moved.size;
+    for (let i = 0; i + 1 < N; i++) stats.motion += step[i][best[i] * states[i + 1].length + best[i + 1]];
+    stats.wrap = wrapM[best[N - 1] * states[0].length + best[0]];
+    stats.moves = N;
+  }
+  chords.forEach((c, i) => {
+    const { oct, s } = chosen[i];
+    if (chosen[i].mud > 0) stats.muddy++;
+    stats.cost += MUD_COST * chosen[i].mud;
+    c.notes.forEach((n, j) => { n.octave = oct[j]; n.pitch = c.cents[j] + 1200 * oct[j]; });
+    [...c.notes.keys()].sort((a, b) => s[a] - s[b] || c.notes[a].voice - c.notes[b].voice).forEach((j, lane) => { c.notes[j].lane = lane; });
+  });
+  stats.cost += stats.motion + stats.wrap;
+  stats.meanMotion = stats.moves ? (stats.motion + stats.wrap) / stats.moves : 0;
   return stats;
+}
+
+/** two cycle costs as voiceLead orders them: a before b — the cost (c) less by more than EPS, then fewer muddy pairs (m),
+ *  then the centres nearer the anchor's (d, summed |centre − the anchor's|, by more than EPS), then the lower centres
+ *  (z, summed, by more than EPS) */
+const costLess = (ac, am, ad, az, bc, bm, bd, bz) => ac < bc - EPS || (ac <= bc + EPS && (am < bm || (am === bm && (ad < bd - EPS || (ad <= bd + EPS && az < bz - EPS)))));
+/**
+ * The cheapest cycle over the chords' states (P25). Cost: motion (`step[i]`, into chord i + 1 from chord i, and
+ * `wrapM`, into the first from the last, each flat [from · S + to]) plus, `withMud`, MUD_COST a muddy pair; then the
+ * muddy pairs; then the centres nearest the anchor's (`centre`); then the lower centres. For a first state f, the
+ * cost-to-go is built back from the last chord (its wrap into f its terminal cost), and the cycle is read forward from f
+ * taking, at each chord, the first state whose motion in plus cost-to-go is least, so among equal cycles the first in
+ * order wins (chord by chord from the first). Every first state is weighed (the first of the least wins), but one whose
+ * lower bound (the same pass with each last state's cheapest wrap into any first state) is already dearer than the best
+ * found is skipped: it can't win. → each chord's state index
+ */
+function solveCycle(states, step, wrapM, withMud, centre) {
+  const N = states.length, S = states.map((st) => st.length), S0 = S[0], L = S[N - 1];
+  const nc = states.map((st) => Float64Array.from(st, (x) => (withMud ? MUD_COST * x.mud : 0)));
+  const nm = states.map((st) => Float64Array.from(st, (x) => (withMud ? x.mud : 0)));
+  const nd = states.map((st) => Float64Array.from(st, (x) => Math.abs(x.mean - centre)));
+  const nz = states.map((st) => Float64Array.from(st, (x) => x.mean));
+  // the cost-to-go from chord 0's states `fs`, the last chord's terminal cost `term`; keep: each chord's choice
+  const back = (term, fs, keep) => {
+    let Gc = new Float64Array(L), Gm = new Float64Array(L), Gd = new Float64Array(L), Gz = new Float64Array(L);
+    for (let x = 0; x < L; x++) { Gc[x] = nc[N - 1][x] + term[x]; Gm[x] = nm[N - 1][x]; Gd[x] = nd[N - 1][x]; Gz[x] = nz[N - 1][x]; }
+    const next = keep ? new Array(N - 1) : null;
+    for (let i = N - 2; i >= 0; i--) {
+      const n = S[i + 1], M = step[i], cnt = i === 0 ? fs.length : S[i];
+      const Hc = new Float64Array(S[i]), Hm = new Float64Array(S[i]), Hd = new Float64Array(S[i]), Hz = new Float64Array(S[i]), arg = keep ? new Int32Array(S[i]) : null;
+      for (let k = 0; k < cnt; k++) {
+        const x = i === 0 ? fs[k] : k, base = x * n;
+        let by = 0, bc = Gc[0] + M[base], bm = Gm[0], bd = Gd[0], bz = Gz[0];
+        for (let y = 1; y < n; y++) {
+          const c = Gc[y] + M[base + y];
+          if (costLess(c, Gm[y], Gd[y], Gz[y], bc, bm, bd, bz)) { by = y; bc = c; bm = Gm[y]; bd = Gd[y]; bz = Gz[y]; }
+        }
+        Hc[x] = nc[i][x] + bc; Hm[x] = nm[i][x] + bm; Hd[x] = nd[i][x] + bd; Hz[x] = nz[i][x] + bz;
+        if (keep) arg[x] = by;
+      }
+      Gc = Hc; Gm = Hm; Gd = Hd; Gz = Hz;
+      if (keep) next[i] = arg;
+    }
+    return { Gc, Gm, Gd, Gz, next };
+  };
+  const all = Array.from({ length: S0 }, (_, f) => f), term = new Float64Array(L);
+  for (let x = 0; x < L; x++) { let m = Infinity; for (let f = 0; f < S0; f++) m = Math.min(m, wrapM[x * S0 + f]); term[x] = m; }
+  const lb = back(term, all, false).Gc;
+  // the first states: by the cycle's cost and mud, then the first chord's motion from the anchor (`a`: constant for a
+  // first state, so it only orders them), then the centres and the order
+  const a = states[0].map((x) => x.fromAnchor);
+  const firstLess = (f, c, m, d, z, g, gc, gm, gd, gz) => (Math.abs(c - gc) > EPS ? c < gc : m !== gm ? m < gm : Math.abs(a[f] - a[g]) > EPS ? a[f] < a[g]
+    : costLess(c, m, d, z, gc, gm, gd, gz) || (!costLess(gc, gm, gd, gz, c, m, d, z) && f < g));
+  let best = -1, bc = 0, bm = 0, bd = 0, bz = 0;
+  for (const f of all.sort((x, y) => lb[x] - lb[y] || x - y)) {
+    if (best >= 0 && lb[f] > bc + EPS) break;
+    for (let x = 0; x < L; x++) term[x] = wrapM[x * S0 + f];
+    const g = back(term, [f], false), c = g.Gc[f], m = g.Gm[f], d = g.Gd[f], z = g.Gz[f];
+    if (best < 0 || firstLess(f, c, m, d, z, best, bc, bm, bd, bz)) { best = f; bc = c; bm = m; bd = d; bz = z; }
+  }
+  for (let x = 0; x < L; x++) term[x] = wrapM[x * S0 + best];
+  const { next } = back(term, [best], true), path = [best];
+  for (let i = 0; i + 1 < N; i++) path.push(next[i][path[i]]);
+  return path;
 }
 /** the voicing decision's words for a led voicing (voiceLead's stats; asked: the override given): Compose's, and a
  *  live Close | Led switch's (rearrange.js `revoice`, Phase H), so the two say the same */
-export const voicingWhy = (voiced, asked) => `${asked ? 'asked' : 'led by default (decided 3–4, Avery)'}: the first chord close, ${voiced.lifted ? '' : 'not '}lifted clear of the mud limit (${MUD_HZ} Hz × log2(n·d), at most ${Math.round(MUD_CAP_HZ)} Hz, under a pair less than an octave apart)`
-  + `; each chord after in the octaves nearest the one before (the window: no tone under ${VOICING_FLOOR}¢, the centre within ±${VOICING_CENTRE}¢ of the first chord's), ${(voiced.meanMotion).toFixed(0)}¢ of motion a chord`
-  + `; the mud limit moved ${voiced.lifted} of ${voiced.chords} chord${voiced.chords === 1 ? '' : 's'}${voiced.muddy ? `, ${voiced.muddy} left muddy (no voicing in the window clear of it)` : ''}; the loop's wrap ${voiced.wrap.toFixed(0)}¢ (not led)`;
-/** the voicing pass's stats as the spec keeps them (`stats.voicing`; rounded to the cent) */
+export const voicingWhy = (voiced, asked) => `${asked ? 'asked' : 'led by default (decided 3–4, Avery)'}: `
+  + (voiced.chords > 1
+    ? `the loop closed (rule 8, Avery): every chord's octaves chosen together, so the loop's motion is least, each change weighed the same, the last chord back to the first included, clear of the mud limit (${MUD_HZ} Hz × log2(n·d), at most ${Math.round(MUD_CAP_HZ)} Hz, under a pair less than an octave apart) where the window allows`
+      + `; the window centred on the first chord's close voicing, ${voiced.anchorLifted ? '' : 'not '}lifted clear of the mud limit (no tone under ${VOICING_FLOOR}¢, each chord's centre within ±${VOICING_CENTRE}¢ of it), ${(voiced.meanMotion).toFixed(0)}¢ of motion a chord`
+      + `; the mud limit moved ${voiced.lifted} of ${voiced.chords} chords${voiced.muddy ? `, ${voiced.muddy} left muddy (no voicing in the window clear of it)` : ''}; the loop's wrap ${voiced.wrap.toFixed(0)}¢ (led, as every change)`
+    : `one chord, so no wrap and nothing to lead: its close voicing, ${voiced.anchorLifted ? '' : 'not '}lifted clear of the mud limit (${MUD_HZ} Hz × log2(n·d), at most ${Math.round(MUD_CAP_HZ)} Hz, under a pair less than an octave apart)`
+      + `; the mud limit moved ${voiced.lifted} of 1 chord${voiced.muddy ? ', left muddy' : ''}; the loop's wrap 0¢`);
+/** the voicing pass's stats as the spec keeps them (`stats.voicing`; rounded to the cent): motion the bar lines', wrap the
+ *  last chord back to the first (led), meanMotion over the loop's changes, the wrap one of them */
 export const voicingStats = (v) => ({ mode: 'led', chords: v.chords, lifted: v.lifted, muddy: v.muddy, motion: Math.round(v.motion), meanMotion: Math.round(v.meanMotion), wrap: Math.round(v.wrap), outside: v.outside });
 
 /** a layer (its bit index b) cut into bar k's slots (or a span's [from, to)): { steps (slots it strikes), on (each struck
