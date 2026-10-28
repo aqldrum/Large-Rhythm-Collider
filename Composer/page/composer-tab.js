@@ -60,11 +60,20 @@
 // cell inspectors open on a Line | Arp switch (the controller's setArp: live, one undo step). With Arp: Time (×1, ×2,
 // ×3 the slots a bar: the anchors the arp is mined over; COMP_ARP_ORDER.md Amendment 1, M5 — it replaced B3's Pattern,
 // Rate and Range); Details adds the rests, the share of chord tones and the phrases mined (the rest walked). The
-// phrases' ranked arps (picks) have no picker here yet: that is phase E. A lead in Arp hides its runner-ups (Q5). On a
-// MIDI target the lead's switch is disabled, its title arpRefusal's words. The matrix's lane name and the part strip
-// say "· arp".
+// phrases' ranked arps are the phase E picker below. A lead in Arp hides its runner-ups (Q5). On a MIDI target the
+// lead's switch is disabled, its title arpRefusal's words. The matrix's lane name and the part strip say "· arp".
 // Comping in chords (A4): a borrowed comp tone's dot is hollow; the comp cell says its strokes (and, with Details,
 // the share of its tones the row sounds).
+//
+// The clave and arp pickers (COMP_ARP_ORDER.md Amendment 1, phase E; DESIGN_NOTES "The clave and arp pickers"):
+//   comp cell   the clave by its pattern (monospace, a bar a group) and its source ("from layer A · 4 steps", "son clave
+//               3-2"), a Sync | Fill switch (live: rearrange.js reclave, one undo step), then the claves to choose from
+//               (the trace's alternates: the mined top 12, then the curated), auditioned from the next bar, kept or
+//               reverted exactly as a chord's alternates are; Details: the scores and terms, the tone set, Fill's partner
+//   arp cells   the phrase holding the cell lists its ranked arps by contour and band ("arch · no rests"), the one
+//               playing marked, each auditioned the same way (Keep is one undo step: setArp's picks); a walked phrase
+//               says so and offers nothing; Details: each arp's cost a note, its chord-tone share and its notes
+//   dropped     a re-compose that can't keep a chosen clave, or an arp pick, says so with the other dropped edits
 
 import { soundChoices, drumModeChoices, DRUM_LAB_VOICES, TEMPO_LIMITS, ARP_CHOICES } from '../perform/composer-controller.js';
 import { KNOB_FIELDS, TABLE_FIELD, fieldValue, refusalText, readoutItems, knobChosen, decisionRows, rootGroups, strayRootOption, chordGot, progressionNote,
@@ -76,6 +85,7 @@ import { createComposeAnimator, paintFrame, paintShimmer, readShowWork, writeSho
 import { matrixModel, moveCell, nextStep, fieldStrip, candidateRow, lineRow, primeStrip, barsLabel, retuneRanges, barAt, qualityName, phraseSpans, compLine } from './matrix.js';
 import { createAudition } from './audition.js';
 import { MIDI_PARTS, matchPort, midiFileOf } from '../perform/composer-midi.js';
+import { claveSetText } from '../core/claves.js';   // phase E: the clave's tone set, in words
 import { arrangeDrums, gridOf, DRUM_VOICES, beatsOf } from '../core/drums.js';
 // MIDI targets (phase B)
 import { TARGET_SETS } from '../core/compose.js';
@@ -366,6 +376,9 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (d.lead?.length) out.push(`the lead swap${d.lead.length === 1 ? '' : 's'} (phrase ${d.lead.map((x) => x.phrase + 1).join(', ')}) ${d.lead.length === 1 ? 'was' : 'were'} dropped: a Compose re-mines the lead`);
     if (d.grid) out.push(`the drum grid was dropped: the meter moved${d.grid.was ? ` (${d.grid.was.bars} × ${d.grid.was.slotsPerBar} → ${d.grid.now.bars} × ${d.grid.now.slotsPerBar})` : ''}`);
     if (d.p) out.push(`the asked prime p = ${d.p.was} was dropped: the new meter has ${d.p.cells} cells (p must be above them)`);
+    // phase E: a chosen clave the new composition doesn't offer; arp picks their re-composed phrases don't
+    if (d.clave) out.push(`the chosen clave ${d.clave.pattern} was dropped: the new composition doesn't offer it (its own clave plays)`);
+    if (d.arps?.length) out.push(`${d.arps.length === 1 ? 'an arp pick' : `${d.arps.length} arp picks`} (${d.arps.map((x) => `${PART_LABELS[x.part]} phrase ${x.phrase + 1}`).join(', ')}) ${d.arps.length === 1 ? 'was' : 'were'} dropped: the re-composed phrase no longer offers ${d.arps.length === 1 ? 'it' : 'them'} (its first arp plays)`);
     return out;
   }
 
@@ -963,12 +976,74 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     }
     return el('div', { className: 'ctab-row ctab-arp' }, ...kids);
   }
+  /**
+   * Phase E: the phrase holding bar k of a part playing as an arp — its ranked arps by contour and band, the one playing
+   * marked (C: the best-ranked, the default), each auditioned from the next bar, kept (one undo step: setArp's picks)
+   * or reverted as the runner-ups are; a walked phrase says so and offers nothing. Details: each arp's cost a note, its
+   * share of chord tones and its notes. → [elements]
+   */
+  function arpPicker(id, bar) {
+    const a = core.arpOf(id);
+    if (!a.playing || !a.phrases) return [];
+    const p = a.phrases.findIndex((x) => bar >= x.from && bar < x.from + x.bars);
+    if (p < 0) return [];
+    const ph = a.phrases[p], span = barsLabel({ from: ph.from, to: ph.from + ph.bars - 1 });
+    const sub = el('div', { className: 'ctab-sub ctab-arp-sub', textContent: `Arps · phrase ${p + 1}`, title: `phrase ${p + 1}: ${span}, mined over ${ph.anchors} anchors (×${a.stats?.time ?? a.time})` });
+    if (ph.walked) return [sub, el('div', { className: 'ctab-muted ctab-arp-walked', textContent: 'walked: nothing could be mined here, so it plays the chord tones as the row sounds them — no arp to pick' })];
+    const rows = ph.alternates.map((x, i) => {
+      const k = `arp:${id}:${p}:${x.id}`, trying = audition.key === k, current = x.id === ph.picked, name = `${x.contour} · ${x.band}`, share = x.n ? Math.round((100 * x.chordTones) / x.n) : 0;
+      const b = el('button', { className: `ctab-alt ctab-arp-alt${current ? ' current' : ''}${i === 0 ? ' composed' : ''}${trying ? ' auditioning' : ''}`,
+        title: `${i === 0 ? 'the best-ranked arp (the default)' : `ranked ${i + 1} of ${ph.alternates.length}`}: ${name}, ${x.n} notes, cost ${x.perNote.toFixed(4)} a note, ${share}% chord tones` },
+        el('span', { className: 'ctab-alt-mark', textContent: `${current ? '●' : ''}${i === 0 ? 'C' : ''}` }), el('b', { className: 'ctab-alt-name', textContent: name }),
+        el('span', { className: `ctab-alt-ratio ${DETAIL}`, textContent: `${x.perNote.toFixed(3)}/note` }), el('span', { className: `ctab-alt-cents ${DETAIL}`, textContent: `${share}% chord` }),
+        el('span', { className: `ctab-alt-support ${DETAIL}`, textContent: `${x.n} notes` }));
+      b.dataset.key = k;
+      b.addEventListener('click', () => audition.tryAlt(k, () => core.pickArp(id, p, x.id), name));
+      return b;
+    });
+    return [sub, ph.missed != null ? el('div', { className: 'ctab-muted amber ctab-arp-missed', textContent: 'the arp picked here is gone (its chords changed): the best-ranked plays' }) : null,
+      el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: '● plays now · C the best-ranked · cost a note: lower is closer to the rules' }),
+      el('div', { className: 'ctab-alts ctab-arp-alts' }, ...rows), auditionBar()].filter(Boolean);
+  }
+  /**
+   * Phase E: the comp's clave — its pattern (monospace, a bar a group) and its source, Sync | Fill (live, one undo
+   * step), and the claves to choose from (the mined top 12, then the curated), auditioned from the next bar, kept or
+   * reverted as a chord's alternates are. Details: the score and its terms, the tone set, the partner Fill strikes.
+   * → [elements] (none for a composition in notes)
+   */
+  function claveBlock() {
+    const c = core.claveOf();
+    if (!c) return [];
+    const fill = c.relation === 'fill', setRel = (relation) => doEdit(() => core.setClave({ relation }));
+    const sw = el('div', { className: 'ctab-arp-switch ctab-clave-switch', title: 'Sync: the comp strikes with the clave (and the perc) · Fill: it strikes the clave\'s gaps' },
+      button('Sync', `ctab-seg ctab-clave-sync${fill ? '' : ' on'}`, 'the comp strikes the clave\'s own steps, with the perc: live, no re-compose', () => setRel('sync')),
+      button('Fill', `ctab-seg ctab-clave-fill${fill ? ' on' : ''}`, `the comp strikes the clave's gaps (${c.partner.source === 'partner' ? 'its partner' : 'the complement'} ${c.partner.text}), the perc keeps the clave: live, no re-compose`, () => setRel('fill')));
+    sw.setAttribute('role', 'group');
+    const line = el('div', { className: 'ctab-row ctab-clave', title: `the comp's clave: ${c.text}, ${c.source || 'asked'}; ${c.strokes} stroke${c.strokes === 1 ? '' : 's'} (${c.relation})${c.silent ? `, ${c.silent} step${c.silent === 1 ? '' : 's'} silent (no onset there)` : ''}` },
+      el('span', { className: 'ctab-muted', textContent: 'clave' }), el('code', { className: 'ctab-clave-pattern', textContent: c.text }), el('span', { className: 'ctab-muted ctab-clave-source', textContent: c.source || 'asked' }),
+      c.edit?.id ? el('span', { className: 'ctab-tag', textContent: 'chosen' }) : null, sw);
+    const t = c.terms ?? {};
+    const detail = el('div', { className: `ctab-muted ctab-clave-detail ${DETAIL}`, textContent: `score ${c.score.toFixed(3)} (recurrence ${t.held?.toFixed(2)}, density ${t.density?.toFixed(2)}, fit ${t.fit?.toFixed(2)})${c.from?.set ? ` · under ${claveSetText(c.from.set)}` : ''} · Fill strikes ${c.partner.text} (${c.partner.source})` });
+    const key = (x) => `clave:${x.id}`;
+    const rows = c.alternates.map((x) => {
+      const k = key(x), trying = audition.key === k;
+      const b = el('button', { className: `ctab-alt ctab-clave-alt${x.current ? ' current' : ''}${x.composed ? ' composed' : ''}${x.curated ? ' curated' : ''}${trying ? ' auditioning' : ''}`,
+        title: `${x.text}: ${x.source}${x.curated ? ' (curated)' : ''}; score ${x.score.toFixed(3)} (recurrence ${x.terms.held.toFixed(2)}, density ${x.terms.density.toFixed(2)}, fit ${x.terms.fit.toFixed(2)})${x.bars ? `, held by ${x.bars} bar${x.bars === 1 ? '' : 's'} of the table` : ''}` },
+        el('span', { className: 'ctab-alt-mark', textContent: `${x.current ? '●' : ''}${x.composed ? 'C' : ''}` }), el('code', { className: 'ctab-alt-name ctab-clave-pattern', textContent: x.text }),
+        el('span', { className: 'ctab-alt-q', textContent: x.source }), el('span', { className: `ctab-alt-support ${DETAIL}`, textContent: x.score.toFixed(3) }));
+      b.dataset.key = k;
+      b.addEventListener('click', () => audition.tryAlt(k, () => core.setClave({ id: x.id }), x.text));
+      return b;
+    });
+    return [line, detail, rows.length ? el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: '● plays now · C Compose\'s · the mined claves ranked, then the curated · score: recurrence, density, fit' }) : null,
+      rows.length ? el('div', { className: 'ctab-alts ctab-clave-alts' }, ...rows) : null, rows.length ? auditionBar() : null].filter(Boolean);
+  }
   function leadContext(bar) {
     // B3 (Q5): an arp lead hides its runner-ups; the switch brings the line back
     if (core.arpOf('lead').playing) {
       const sp = phraseSpans(tab.state.spec).find((x) => bar >= x.from && bar < x.from + x.bars) ?? { from: bar, bars: 1 };
       return [ctxHead(`${barsLabel({ from: sp.from, to: sp.from + sp.bars - 1 }).replace(/^b/, 'B')} · Lead`, el('span', { className: 'ctab-tag', textContent: 'arp' })), arpControls('lead'),
-        el('div', { className: 'ctab-muted', textContent: 'an arpeggio over the chords: Line brings the melody back, and its runner-ups' }), editNote()];
+        ...arpPicker('lead', bar), el('div', { className: 'ctab-muted', textContent: 'an arpeggio over the chords: Line brings the melody back, and its runner-ups' }), editNote()];
     }
     const a = core.alternatesOf(bar, 'lead');
     if (!a) return [ctxHead(`Bar ${bar + 1} · Lead`), arpControls('lead'), el('span', { className: 'ctab-muted', textContent: 'no runner-ups for this phrase' })];
@@ -1004,13 +1079,14 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const follows = el('div', { className: 'ctab-row' }, el('span', {}, ch.empty ? `bar ${bar + 1} has no chord: it plays its root's onset` : `follows bar ${bar + 1}'s chord: ${ch.name}`,
       ch.empty ? null : el('span', { className: DETAIL, textContent: ` (root ${ch.rootTone}, ${qualityName(ch.quality)})` })),
       button('the chord ▸', 'ctab-btn ctab-ctx-action', `select bar ${bar + 1}'s chord: swapping it re-mines this part's bar`, () => tab.selectCell('chords', bar)));
-    const out = [head, ...(id === 'inner' ? [arpControls('inner')] : []), follows];
+    const out = [head, ...(id === 'inner' ? [arpControls('inner'), ...(arp ? arpPicker('inner', bar) : [])] : []), follows];
     if (id === 'comp') {
       // A4 (P12): the strokes, and (Details) the share of the bar's tones the row sounds near them
       const cl = compLine(part, bar);
       if (cl) out.push(el('div', { className: 'ctab-row ctab-comp-line', title: cl.title }, el('span', { textContent: cl.text }), cl.detail ? el('span', { className: `ctab-muted ${DETAIL}`, textContent: ` · ${cl.detail}` }) : null));
       const L = s.stats?.compLayer;
       if (L) out.push(el('div', { className: `ctab-muted ctab-pin ${DETAIL}`, textContent: `comp layer: ${L.layer} (${L.value}), pinned through edits (read-only; Compose's layer choice scores every bar)` }));
+      out.push(...claveBlock());   // phase E: the clave, Sync | Fill, the claves to choose from
     }
     if (id === 'inner' && !arp) {
       const p = core.alternatesOf(bar, 'lead'), e = p?.edit;
@@ -1021,6 +1097,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     out.push(notes.length ? el('table', { className: `ctab-decisions-table ctab-notes ${DETAIL}` }, el('tr', {}, ...['slot', 'ratio', 'oct', 'Hz'].map((h) => el('td', { textContent: h }))),
       ...notes.map((n) => el('tr', { title: `${noteTitle(n)}${n.borrowed ? ' — borrowed: the chord voice\'s tone, at the stroke' : ''}`, ...(n.borrowed ? { className: 'borrowed' } : {}) }, el('td', { textContent: String(n.slot) }), el('td', { textContent: n.ratio }), el('td', { textContent: String(n.octave) }), el('td', { textContent: n.hz.toFixed(1) }))))
       : el('div', { className: 'ctab-muted', textContent: 'no notes in this bar' }));
+    if (id === 'comp' || arp) out.push(editNote());   // phase E: what a clave switch or an arp pick changed
     return out;
   }
   function drumsContext(bar) {

@@ -27,6 +27,14 @@
 import { traceTimeline, capTrace, TRACE_CAPS } from '../core/trace.js';
 import { classOfCents } from '../core/frame.js';
 import { indexOfTick, PART_COLORS, PART_LABELS } from './plot-highlights.js';
+import { claveText, claveSource } from '../core/claves.js';
+/** the comp part's caption: in chords its clave by pattern and source (Amendment 1; claves.js' words), in notes its layer */
+function compDetail(event) {
+  const c = event.clave;
+  if (!c) return `on layer ${event.layer} (${event.value}), the best of ${event.candidates.length} layers`;
+  const fill = c.relation === 'fill' && event.partner, n = fill ? event.partner.strokes - (event.partner.shared ?? 0) : c.strokes;
+  return `the clave ${claveText(c)} (${claveSource(c) || 'asked'}${event.asked && c.from?.asked !== true ? ', asked' : ''}): ${n} stroke${n === 1 ? '' : 's'}${fill ? `, in its gaps (${event.partner.pattern})` : ''}`;
+}
 
 export const TRACE_FRAMES_VERSION = 'composer-trace-frames-v1';
 /** the page's beat budgets at pace 1, seconds (proposed: chords and settle longer than traceTimeline's defaults, so a
@@ -196,7 +204,7 @@ export function buildScene({ trace: given, plot, final, timeline = null } = {}) 
       case 'part': {
         const h = final.parts[event.part];
         data.part = event.part; data.notes = h ? h.notes : [];
-        data.detail = event.part === 'comp' ? `on layer ${event.layer} (${event.value}), the best of ${event.candidates.length} layers` : event.part === 'bass' ? `mined bar by bar from the root`
+        data.detail = event.part === 'comp' ? compDetail(event) : event.part === 'bass' ? `mined bar by bar from the root`
           : event.part === 'inner' ? 'in the lead\'s gaps' : event.part === 'chords' ? 'a voice a chord tone' : `the kept line${(event.phrases || []).length === 1 ? '' : 's'}`;
         if (h) state.landed[event.part] = true;
         if (event.part === 'lead') state.leads = {};
