@@ -3,7 +3,7 @@
 // clave switch over it. Every led spec here is checked against a brute force written from the order, not from compose.js:
 //   • only octaves change: every chords and comp note is the onset 'close' plays, at its time, with its class (`voice`)
 //   • the mud limit (P1): neighbours under an octave apart, n/d in lowest terms, muddy when the lower sounds under
-//     27 Hz × log2(n·d); the first chord close, lifted by octaves until clear (P2)
+//     27 Hz × log2(n·d), at most 16/15's (27 × log2(240) ≈ 213 Hz); the first chord close, lifted by octaves until clear (P2)
 //   • each chord after: every octave assignment in the window (no tone under 1/1 − 1250¢, each tone within ±1800¢ of the
 //     first chord's centre, the centre within ±600¢ of it; P3) scored by its motion from the chord before (each tone to its
 //     nearest there, cents as they sound) + a large cost a muddy pair; the voicing chosen is the brute force's cheapest
@@ -50,7 +50,7 @@ function muddy(spec, tones, oct) {
     if (ob > oa) n *= 2n ** BigInt(ob - oa); else if (oa > ob) d *= 2n ** BigInt(oa - ob);
     const g = gcd(n, d); n /= g; d /= g;
     const hz = spec.knobs.baseHz * 2 ** ((a.cents + 1200 * oa + a.retune) / 1200);
-    if (hz < MUD * (Math.log2(Number(n)) + Math.log2(Number(d))) - EPS) m++;
+    if (hz < Math.min(MUD * (Math.log2(Number(n)) + Math.log2(Number(d))), MUD * Math.log2(240)) - EPS) m++;
   }
   return m;
 }

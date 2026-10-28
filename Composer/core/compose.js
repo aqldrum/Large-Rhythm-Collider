@@ -126,6 +126,9 @@ export const VOICINGS = Object.freeze(['led', 'close']);
 /** led: two neighbouring voices under an octave apart, n/d in lowest terms, are muddy when the lower sounds under
  *  MUD_HZ × log2(n·d) Hz (P1, proposed) */
 export const MUD_HZ = 27;
+/** led: the limit never rises past 16/15's (MUD_HZ × log2(240) ≈ 213 Hz; the planner, after phase F): a dense row's
+ *  near-simple intervals (191/152 beside 5/4) would otherwise lift the chords over the lead */
+export const MUD_CAP_HZ = MUD_HZ * Math.log2(240);
 /** led: the window (P3, proposed). No tone under VOICING_FLOOR cents of 1/1 (close's floor: an octave under 1/1, less
  *  50¢), each tone within ±VOICING_REACH of the first chord's centre (3 octaves a tone), the centre within ±VOICING_CENTRE */
 export const VOICING_FLOOR = REGISTER.chords - 50;
@@ -351,7 +354,7 @@ function intervalWeight(F, lo, ol, hi, oh) {
 /**
  * The mud limit (P1): a chord's notes ({ tone, bar, slot }) at the given octaves, how many neighbouring pairs (in pitch
  * order) are muddy — less than an octave apart, and the lower sounding (baseHz × its tone × 2^octave × its bar's retune)
- * under MUD_HZ × log2(n·d), n/d the pair's interval in lowest terms. `memo` keeps the weights of one pass.
+ * under MUD_HZ × log2(n·d) (at most MUD_CAP_HZ), n/d the pair's interval in lowest terms. `memo` keeps the weights of one pass.
  */
 export function muddyPairs(row, notes, octaves, { baseHz, ratioOf, memo = new Map() }) {
   const F = fractionsOf(row), idx = notes.map((_, i) => i), pitch = (i) => row.toneCents[notes[i].tone] + 1200 * octaves[i];
@@ -364,7 +367,7 @@ export function muddyPairs(row, notes, octaves, { baseHz, ratioOf, memo = new Ma
     let w = memo.get(key);
     if (w === undefined) { w = intervalWeight(F, ta, octaves[a], tb, octaves[b]); memo.set(key, w); }
     const hz = baseHz * F[ta].value * 2 ** octaves[a] * ratioOf(notes[a].bar, notes[a].slot);
-    if (hz < MUD_HZ * w - EPS) muddy++;
+    if (hz < Math.min(MUD_HZ * w, MUD_CAP_HZ) - EPS) muddy++;
   }
   return muddy;
 }
@@ -913,7 +916,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   if (!VOICINGS.includes(voicing)) fail(`voicing must be one of ${VOICINGS.join(', ')}`);
   const led = voicing === 'led';
   const voiced = led ? voiceLead(ctx, units, { baseHz: baseHzValue, ratioOf }) : null;
-  if (led) decide('voicing', voicing, `${ov.voicing != null ? 'asked' : 'led by default (decided 3–4, Avery)'}: the first chord close, ${voiced.lifted ? '' : 'not '}lifted clear of the mud limit (${MUD_HZ} Hz × log2(n·d) under a pair less than an octave apart)`
+  if (led) decide('voicing', voicing, `${ov.voicing != null ? 'asked' : 'led by default (decided 3–4, Avery)'}: the first chord close, ${voiced.lifted ? '' : 'not '}lifted clear of the mud limit (${MUD_HZ} Hz × log2(n·d), at most ${Math.round(MUD_CAP_HZ)} Hz, under a pair less than an octave apart)`
     + `; each chord after in the octaves nearest the one before (the window: no tone under ${VOICING_FLOOR}¢, the centre within ±${VOICING_CENTRE}¢ of the first chord's), ${(voiced.meanMotion).toFixed(0)}¢ of motion a chord`
     + `; the mud limit moved ${voiced.lifted} of ${voiced.chords} chord${voiced.chords === 1 ? '' : 's'}${voiced.muddy ? `, ${voiced.muddy} left muddy (no voicing in the window clear of it)` : ''}; the loop's wrap ${voiced.wrap.toFixed(0)}¢ (not led)`);
   const voices = [];
