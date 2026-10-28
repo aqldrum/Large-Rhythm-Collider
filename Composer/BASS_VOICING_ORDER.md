@@ -144,6 +144,153 @@ F and G can run in parallel: F touches the chord voices, the comp's octaves and 
 - **H4.** `tests/assert-page-bass.mjs`, the README's Files and Tests, a DESIGN_NOTES section for F, G and H, and the
   browser and rig checklist below finished.
 
+## Amendment 1 (Avery, 2026-10-28): the frame clave, the bass's fills and locks, the loop closed
+
+Avery's rulings on the build's open questions (the Log, 10-28):
+
+5. **Walking fills what it can.** A bar Walking can't fill plays the fullest walk the bar allows, with rests only where
+   no step fits, not a single root onset.
+6. **The clave comes from the frame.** A stroke on a tone outside the chord's frame doesn't count. "The decomposition of
+   a layer sequence based on tones that fit the current frame generates the claves automatically": a bar's clave is the
+   clave layer's own strikes whose tones fit that bar's frame, so the pattern changes with the chord. Asked between
+   three readings, Avery chose this one: the comp, the perc and the bass's Clave lock all play it.
+7. **A lock covers its hits; the density adds the rest.** Lands on Kick: every kick gets a bass note, and Sparse and
+   Moving decide whether any other notes play besides them. The same for Clave (asked: both locks).
+8. **The loop's wrap is led like every other change.** The step from the last chord back to the first weighs the same as
+   any bar line's.
+9. **Roots offers runner-ups:** the other notes in the frame of the chord's actual root.
+
+### The probe (2026-10-28): today's strokes, and the frame clave
+
+Compose (seed 1), today's clave strokes against each bar's chord, then the clave read from the frame:
+
+| row | today's clave | strokes in frame | strokes on chord tones | the frame clave: in-frame tones | chord tones only |
+|---|---|--:|--:|---|---|
+| 8:7:6:5 | `4:.xx.` | 1/4 | 1/4 | layer 8 at 4: `x.x.` `...x` (38 %) | the same |
+| 11:9:7:5 | `5:...xx` | 1/4 | 1/4 | layer 9 at 5: `x...x` `x...x` (40 %) | layer 11 at 6: `xxx...` `x.....` (33 %) |
+| 19:17:16:15 | `16:.......x....x.xx` | 5/8 | 2/8 | 63–88 %: nearly a pulse | layer 16 at 8: `x..x.x..` `.xx...x.` (38 %) |
+| 7:5:3:2 | `3:.xx` | 2/2 | 2/2 | 60–100 % | 60–100 % |
+| 119:42:15:8 | `8:...x..x.` | 8/8 | 6/8 | 92–100 %: a pulse | layer 15 at 4: `x.x.` `..xx` `..x.` `....` (31 %) |
+| 768:769 | `4:..xx` | 1/8 | 0/8 | layer 768 at 8: `x....x..` `x....xxx` `x.......` `.....x..` (25 %) | mostly empty |
+| 768:784 | `4:..xx` | 8/8 | 8/8 | layer 768 at 8: `.x.x.x.x` each bar (50 %) | the same at 3–12 |
+
+- **Today's strokes aren't the clave layer's.** The clave is a fixed pattern from a generic tone set (claves.js' table),
+  and each step lands on the nearest onset of any layer, whatever its tone: 7 of 768:769's 8 strokes are fringe.
+- **Simple rows need the chord's tones; dense rows need the frame's.** On 19:17:16:15, 7:5:3:2 and 119:42:15:8 nearly
+  every tone is in tune, so the in-frame strikes are close to a pulse. Limited to the bar's chord tones they have clave
+  densities. On 768:769 almost no strike is a chord tone, but 30 % are in frame.
+- **A dense layer is read at a grain.** 768:769's clave layer strikes 192 times a bar. At 8 steps a bar (each step the
+  layer's strike at its place) the in-frame strikes are 25 %, a different pattern every bar.
+- **Cheap.** Under 1 ms a row at the composition's grain (a layer's strikes, once a bar).
+
+The scripts are in the planner's scratchpad (`frame-clave-probe*.mjs`), not the repo.
+
+### Proposed (the builder's calls; Avery may overrule)
+
+- **P16. The frame clave.** A candidate is a layer, a grain and a tone set:
+  - **Grain:** n steps a bar. A layer striking m times a bar (3 ≤ m ≤ 16) is read at n = m, each strike a step; a
+    denser layer at each n of 3–16. Step j of bar k is the layer's own strike nearest place k·S + j·S/n (ties: the
+    earlier). A layer striking fewer than 3 times a bar offers nothing.
+  - **Tone set:** `chord`, the strike's tone one of the bar's chord classes in tune (compose.js `chordClass`), or
+    `frame`, inside the bar's frame (within ±`frameCentsEachSide` of its class from the bar's root). A chart's split
+    bar reads each step under its span's chord.
+  - **The pattern:** step j sounds when its strike's tone is in the set. The stroke is that strike, at its own time: no
+    landing, so every stroke is the clave layer's and in frame.
+  - **Ranking:** COMP_RULES over the bars' patterns, as now: density (1 inside 25–50 %), fit by n (straight, triplet,
+    other), and recurrence (the bars whose pattern another bar repeats). A pulse bar or a bar under `minOnsets` scores as
+    today's table leaves it out. Ties by the seed, as `chooseClave`.
+  - **Fewer strokes:** a bar with no strokes is struck once on its root onset, as the comp does now.
+- **P17. Fill.** The partner is the best-ranked frame candidate that shares no stroke with the clave (no onset within ¼
+  slot of one of its strokes). With none, the old complement rule, Euclid-thinned to the clave's mean onsets a bar, each
+  step landed only on an in-frame onset (P18's landing).
+- **P18. Curated and asked claves.** Son, rumba, bossa and an asked `steps:pattern` keep their fixed pattern. A step
+  lands only on an in-frame onset (`landPlace` over the in-frame onsets of the bar's frame; none in its window: silent),
+  so rule 6 holds for them too.
+- **P19. `claveFrom: 'frame' | 'pattern'`.** An override, `'frame'` by default. `'pattern'` is today's clave byte for
+  byte, and the suites that freeze today's comp, perc or Clave lock are pinned with it, as `voicing: 'close'` pinned F.
+- **P20. A chord swap.** It re-reads the swapped bar's (or span's) clave under its new frame, with the same layer, grain
+  and set. The comp re-strums there, the perc follows, and the bass re-mines it under Clave. The audit lists the bar.
+  `reclave` (the picker, Sync | Fill) is unchanged in shape, over the frame candidates.
+- **P21. The words.** A frame clave is named by its source ("layer A · 8 steps · chord tones"), with each bar's pattern
+  (`claveText` a bar), in the trace, the picker and the cell head.
+- **P22. Walking fills what it can (rule 5).** A bar whose full walk mines nothing is mined again at W − 1, W − 2, … 2
+  notes on its clock (stepwise, `maxGap` lifted, the approach to the next root kept). The first count that mines wins.
+  Only with no stepwise line of 2 does the bar fall back to its root onset. The stats count `walkFill` bars and their
+  notes. At most W ≤ 8 mines a failing bar.
+- **P23. A lock covers its hits (rule 7).** It replaces P12's "only the locked onsets" and "shares are of the locked
+  slots":
+  - **Hits:** Kick, each kick hit (its onsets within ¼ slot, as now). Clave, each comp stroke (`compSourceOf`, now the
+    frame clave's). Hits in one slot are one hit.
+  - **Each hit gets a note:** on one of its onsets, in frame. A hit with no in-frame onset rests and is counted
+    `missedHits` (rule 6's spirit; a frame clave's strokes are in frame by construction).
+  - **Density adds the rest:** Sparse and Moving count the bar's whole line (hits included) against their band, at least
+    the hits. On a backbeat (2 kicks, 8 slots), Sparse plays 2–3 (0–1 more) and Moving 3–5 (1–3 more). The extra notes
+    are on any onset.
+  - **Walking** fills every slot of its clock, the hits' slots on the hits.
+  - **Roots** puts a root on every hit: the hit's root-class onset, else its chord-tone one, else the hit's own.
+  - **The miner:** a new opt-in `requireNodes` rule in lines.js (a slot holding a hit keeps only that hit's candidates
+    and must sound; other slots are free). `allowNodes` stays for anything else that wants it.
+- **P24. Roots runner-ups (rule 9).** A chord's candidates are every root-class onset in frame in its windows (P11's
+  test: class 0, within ±e of the root, so the other tones of the root's ±15¢ cluster and their other onsets count).
+  They are ranked nearest the chord's first anchor, then earlier, then the lower node. A bar offers up to 8: the
+  combinations of its chords' candidates, ranked by summed distance. Locked, a hit's candidates are its root-class
+  onsets. The first is Roots' note as now.
+- **P25. The loop closed (rule 8).** The voicing pass minimizes the whole loop in one objective: every chord-to-chord
+  step, the last to the first included, each the same weight, plus `MUD_COST` a muddy pair.
+  - **Method:** Viterbi over each chord's window assignments (the first chord's included). It runs once for each first
+    chord state, adds the wrap, and keeps the cheapest cycle. Ties go to less mud, then the lower centre, then the first
+    in order.
+  - **The anchor:** the window stays centred on the first chord's close-lifted centre, so the register can't creep.
+  - **Cost:** states are cut to those inside the centre window (about 20 a chord), so a 32-chord loop runs in a few
+    milliseconds. The budget is ≤ 5 ms on the test rows and a 32-bar chart, measured.
+  - **Edge cases:** a one-chord loop has no wrap. A MIDI target's cut loops its own bars.
+  - **What it changes:** a swap (P8) re-runs the loop, so it may move octaves before the swapped bar too. The audit lists
+    them. `'close'` is unchanged; the led fixtures move. The stats' `wrap` is now led, and `voicingWhy` says "the loop
+    closed".
+
+### Phase I: the frame clave
+
+- **I1.** `claves.js`: the frame candidates (P16), their ranking and partners (P17), and the in-frame landing for curated
+  and asked claves (P18). Pure, over the row, the cells and the chord records.
+- **I2.** `compose.js`: the comp's clave chosen and laid from the frame (after the chords, which it now needs), and the
+  `claveFrom` override (P19). The perc (drums.js) reads `spec.clave.strokes` as now, so it follows.
+- **I3.** `rearrange.js`: a chord swap re-reads the bar's clave (P20). `reclave` runs over the frame candidates. The words
+  (P21) go in the trace.
+- **I4.** `tests/assert-frame-clave.mjs`, checked against a brute force written from this order: every stroke in frame
+  (or on a chord tone, under `chord`); every stroke the clave layer's own strike at its step's place; the ranking; Fill
+  sharing no stroke; a swap moving only its bar's strokes; `'pattern'` byte for byte today's. Existing suites pass with
+  their pins.
+
+### Phase J: the bass's fills, locks and Roots runner-ups
+
+- **J1.** `lines.js`: the `requireNodes` rule (opt-in, so every other mine is unchanged).
+- **J2.** `core/bass.js`: Walking's fill ladder (P22), the covering locks (P23), and Roots' runner-ups (P24). The default
+  (Sparse, Free, no picks) is still Compose's bass byte for byte.
+- **J3.** `tests/assert-bass.mjs` updated: every hit covered or counted missed; Sparse and Moving's totals at least the
+  hits and within their band; the walk's fill count the most a brute force finds; Roots' alternates every in-frame
+  root-class onset, ranked.
+
+### Phase K: the loop closed
+
+- **K1.** `compose.js` `voiceLead`: the cyclic objective (P25). `voicingStats` and `voicingWhy` updated.
+- **K2.** `tests/assert-voicing.mjs`: its brute force over every cycle on small loops (N ≤ 4); the chosen cycle's cost
+  equal to the brute force's least; the wrap counted; the timing budget held.
+
+I, J and K can run in parallel. I touches claves.js, the comp's clave in compose.js and the swap's clave in rearrange.js.
+J touches lines.js and bass.js. K touches `voiceLead` in compose.js. I and K meet only in compose.js, in separate
+functions; the planner merges. J's Clave lock reads `compSourceOf` and needs nothing new from I. After I merges, the
+planner re-runs J's suite on the frame strokes.
+
+### Phase L: the window (after I, J and K merge)
+
+- **L1.** The clave picker lists the frame candidates by source and score, with the curated ones ("lands in frame only").
+  The Comping cell head shows the bar's own pattern.
+- **L2.** The bass inspector: Roots' runner-ups in the existing list. A walk's fill ("walks 6 of 8: a rest where no step
+  fits"). Under a lock, the hits covered, and missed ones in amber.
+- **L3.** The voicing stats say the loop is closed. The trace captions follow I–K. `index.html` cache-busts.
+- **L4.** The page suites updated, the README's Files and Tests, a DESIGN_NOTES section for I–L, and the checklist below
+  revised for every changed item.
+
 ## Browser and rig checklist (for Avery; finished in H4)
 
 Open the Partitions window's **Composer** tab, generate the rhythm on the main page, press **Compose**, then **Perform**.
@@ -183,7 +330,6 @@ Everything below is live: no button should go back to Compose, and the header's 
 
 ## Later (recorded, not ruled)
 
-- Closing the loop's wrap in the voicing pass (P4).
 - A root-on-the-one rule for Sparse and Moving (today 0/4 on two rows; Roots covers it).
 - Voice-leading the inner voice against the chords.
 
@@ -210,3 +356,8 @@ Everything below is live: no button should go back to Compose, and the header's 
   at the barline like a runner-up (today it applies at once, like the arp's Time)? Name the density on the part strip
   ("Bass · walking", as "· arp")? Should a chord swap drop a stale bass pick at once (today it stays, marked amber, until
   undo or a re-compose)? The browser and rig checklist above is final.
+- 2026-10-28: Avery's rulings 5–9 on the open questions (Walking fills what it can; the clave comes from the frame, the
+  comp, the perc and the bass's Clave lock all playing it; a lock covers its hits and the density adds the rest, for Kick
+  and Clave; the loop's wrap led like every change; Roots offers the root's other in-frame notes). Probe and Amendment 1
+  (P16–P25, phases I ∥ J ∥ K, then L) written; not yet committed or started. Still unruled: a density or lock change at
+  the barline, "Bass · walking" on the strip, a stale pick after a chord swap, 11:9:7:5's 782¢.
