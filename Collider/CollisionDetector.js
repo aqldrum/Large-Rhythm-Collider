@@ -5,9 +5,29 @@
 class CollisionDetector {
     constructor() {
         this.baseCollisionTolerance = 2; // Base geometric tolerance (independent of visual thickness)
-        this.reboundForceMultiplier = 80; // Multiplier for rebound force (tweakable for battle optimization)
         this.currentVisualThickness = 3; // Visual thickness for rendering (doesn't affect collision)
         this.debugCollisionTolerance = false; // Enable debug logging for collision tolerance
+        this.arena = null; // Set by BattleController; wrap mode needs toroidal distances
+    }
+
+    // In a wrapping arena, shift a point by whichever multiple of the arena size
+    // brings it closest to a reference point, so contacts across an edge register.
+    nearestImage(px, py, refX, refY) {
+        if (!this.arena || this.arena.boundaryMode !== 'wrap') return { x: px, y: py };
+        const W = this.arena.width;
+        const H = this.arena.height;
+        return {
+            x: px - Math.round((px - refX) / W) * W,
+            y: py - Math.round((py - refY) / H) * H
+        };
+    }
+
+    // Unit vector from (fromX, fromY) to (toX, toY); falls back to +x when coincident.
+    unitVector(fromX, fromY, toX, toY) {
+        const dx = toX - fromX;
+        const dy = toY - fromY;
+        const length = Math.sqrt(dx * dx + dy * dy);
+        return length > 0 ? { x: dx / length, y: dy / length } : { x: 1, y: 0 };
     }
     
     setDebugMode(enabled) {
@@ -26,12 +46,6 @@ class CollisionDetector {
             }
             this.currentVisualThickness = thickness;
         }
-    }
-    
-    // Legacy method for backward compatibility - now uses geometric calculation
-    getCollisionTolerance() {
-        // For backward compatibility when no player is provided
-        return this.baseCollisionTolerance + 1.5; // Conservative default
     }
     
     getGeometricCollisionTolerance(player) {
@@ -168,38 +182,33 @@ class CollisionDetector {
                     continue;
                 }
                 
+                const midX = (segment.nodeA.x + segment.nodeB.x) / 2;
+                const midY = (segment.nodeA.y + segment.nodeB.y) / 2;
+                const point = this.nearestImage(node.x, node.y, midX, midY);
+
                 const distance = this.distanceToLineSegment(
-                    node.x, node.y,
+                    point.x, point.y,
                     segment.nodeA.x, segment.nodeA.y,
                     segment.nodeB.x, segment.nodeB.y
                 );
-                
+
                 if (distance <= totalCollisionDistance) {
                     // Final invulnerability check before registering collision
                     if (defenderPlayer.isInvulnerable) {
                         return collisions;
                     }
-                    
-                    // Get the attacking force for this node
-                    const forceIndex = node.index - 1; // Skip anchor node
-                    let attackingForce = { x: 0, y: 0 };
-                    
-                    if (forceIndex >= 0 && forceIndex < attackerPlayer.nodeForces.length) {
-                        const force = attackerPlayer.nodeForces[forceIndex];
-                        attackingForce = { 
-                            x: force.x * this.reboundForceMultiplier, 
-                            y: force.y * this.reboundForceMultiplier 
-                        };
-                        // Layer force applied for collision
-                    }
-                    
+
+                    // Rebound normal: from the struck segment's midpoint toward the
+                    // attacking node, so the bodies always push apart (GRIDLOCK model)
+                    const normal = this.unitVector(midX, midY, point.x, point.y);
+
                     collisions.push({
                         type: 'node-segment',
                         attacker: attackerPlayer.playerId,
                         defender: defenderPlayer.playerId,
                         attackingNode: node,
                         defendingSegment: segment,
-                        attackingForce: attackingForce,
+                        normal: normal,
                         collisionDistance: distance,
                         collisionTolerance: totalCollisionDistance
                     });
@@ -224,49 +233,28 @@ class CollisionDetector {
         
         for (const nodeA of nodesA) {
             for (const nodeB of nodesB) {
+                const pointA = this.nearestImage(nodeA.x, nodeA.y, nodeB.x, nodeB.y);
                 const distance = Math.sqrt(
-                    Math.pow(nodeA.x - nodeB.x, 2) + 
-                    Math.pow(nodeA.y - nodeB.y, 2)
+                    Math.pow(pointA.x - nodeB.x, 2) +
+                    Math.pow(pointA.y - nodeB.y, 2)
                 );
-                
+
                 // Calculate geometric collision radii for both nodes
                 const radiusA = this.getNodeCollisionRadius(playerA, nodeA.index);
                 const radiusB = this.getNodeCollisionRadius(playerB, nodeB.index);
                 const totalCollisionDistance = radiusA + radiusB;
-                
+
                 if (distance <= totalCollisionDistance) {
-                    // Get layer forces for both colliding nodes
-                    const forceIndexA = nodeA.index - 1; // Skip anchor node
-                    const forceIndexB = nodeB.index - 1; // Skip anchor node
-                    
-                    let forceA = { x: 0, y: 0 };
-                    let forceB = { x: 0, y: 0 };
-                    
-                    // Use the actual layer forces from each player's node
-                    if (forceIndexA >= 0 && forceIndexA < playerA.nodeForces.length) {
-                        const force = playerA.nodeForces[forceIndexA];
-                        forceA = { 
-                            x: force.x * this.reboundForceMultiplier, 
-                            y: force.y * this.reboundForceMultiplier 
-                        };
-                    }
-                    
-                    if (forceIndexB >= 0 && forceIndexB < playerB.nodeForces.length) {
-                        const force = playerB.nodeForces[forceIndexB];
-                        forceB = { 
-                            x: force.x * this.reboundForceMultiplier, 
-                            y: force.y * this.reboundForceMultiplier 
-                        };
-                    }
-                    
+                    // Rebound normal: from node B toward node A (A moves +normal, B moves -normal)
+                    const normal = this.unitVector(nodeB.x, nodeB.y, pointA.x, pointA.y);
+
                     collisions.push({
                         type: 'node-node',
                         playerA: playerA.playerId,
                         playerB: playerB.playerId,
                         nodeA: nodeA,
                         nodeB: nodeB,
-                        forceA: forceA,
-                        forceB: forceB,
+                        normal: normal,
                         collisionDistance: distance,
                         collisionTolerance: totalCollisionDistance
                     });

@@ -26,7 +26,33 @@ class BattleController {
         ];
 
         this.battleCenter = { x: 400, y: 300 }; // Default battle center point (will be updated based on canvas)
-        
+
+        // Finite arena (GRIDLOCK model). Sized at battle start from the player
+        // layout, then shrinks with the players' remaining gap total;
+        // boundaryMode 'bounce' = hard walls, 'wrap' = toroidal (Asteroids).
+        this.boundaryMode = 'bounce';
+        this.arena = null;
+        this.arenaBase = null;
+        this.initialGapTotal = 0;
+        this.arenaSmoothing = 0.01;  // fraction of the gap to its target the walls close per frame
+        this.arenaFitFactor = 0.6;   // short side ≥ this × the largest living body's length
+
+        // Experimental: bodies can't pass through themselves (see ColliderPlayer
+        // SELF-COLLISION). Off by default.
+        this.selfCollision = false;
+
+        // Natural rebound (GRIDLOCK model): bodies separate along the contact
+        // direction instead of following the striking layer's force heading. As in
+        // the original, its strength is proportional to the striker's pulse force,
+        // so it scales with Force Amplitude and with the rhythm's space sizes.
+        this.reboundScale = 5.6;            // px/frame kick per unit of average pulse force (original 80 × 0.07)
+        this.defenderReboundFraction = 0.5; // struck body recoils at this fraction
+
+        // Node-to-node ties flash and sound once per contact, not on every check
+        this.tieCooldownMs = 250;
+        this.tieCooldowns = new Map(); // player-pair key -> time the pair may tie again
+        this.wallReboundSpeed = 4;          // px/frame kick off a hard wall
+
         // Initialize players with base positions (will be updated when rhythms are set)
         for (const config of this.playerConfigs) {
             const player = new ColliderPlayer(config.id, config.baseX, config.baseY, config.color);
@@ -111,6 +137,92 @@ class BattleController {
         console.log(
             `📐 Dynamic positioning: sizes=${JSON.stringify(sizes)}, gaps=(${horizontalGap.toFixed(1)}, ${verticalGap.toFixed(1)}), margin=${margin.toFixed(1)}, vBuffer=(${verticalBufferLeft.toFixed(1)}, ${verticalBufferRight.toFixed(1)})`
         );
+
+        this.calculateArena(xLeft, xRight, yTop, yBottom, maxSize);
+    }
+
+    // ====================================
+    // ARENA (finite map)
+    // ====================================
+
+    calculateArena(xLeft, xRight, yTop, yBottom, maxSize) {
+        // A closed loop hangs about half its Grid length (= size) below its anchor,
+        // so pad every side by that. The longer open chain of the opening phase may
+        // poke past the walls; the arena only governs formed loops.
+        const pad = maxSize;
+        let minX = xLeft - pad, maxX = xRight + pad;
+        let minY = yTop - pad, maxY = yBottom + pad;
+
+        // Grow the short axis to the canvas aspect ratio so the arena fills the view.
+        const canvasAspect = this.canvasAspect || (4 / 3);
+        const width = maxX - minX;
+        const height = maxY - minY;
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        if (width / height < canvasAspect) {
+            const newWidth = height * canvasAspect;
+            minX = cx - newWidth / 2;
+            maxX = cx + newWidth / 2;
+        } else {
+            const newHeight = width / canvasAspect;
+            minY = cy - newHeight / 2;
+            maxY = cy + newHeight / 2;
+        }
+
+        this.arena = {
+            minX, minY, maxX, maxY,
+            width: maxX - minX,
+            height: maxY - minY,
+            boundaryMode: this.boundaryMode
+        };
+        this.collisionDetector.arena = this.arena;
+
+        // The starting arena that shrinking is measured against (the starting gap
+        // total is taken in startBattle, once players are activated)
+        this.arenaBase = { cx, cy, width: this.arena.width, height: this.arena.height };
+
+        console.log(`🧱 Arena ${this.arena.width.toFixed(0)}×${this.arena.height.toFixed(0)} (${this.boundaryMode})`);
+    }
+
+    // Total length of every living player's remaining gap sequence (Σ HP)
+    getRemainingGapTotal() {
+        return this.players
+            .filter(player => player.isAlive)
+            .reduce((sum, player) => sum + player.spacesPlot.reduce((s, space) => s + space, 0), 0);
+    }
+
+    // Shrinking map: the arena scales linearly with the players' remaining gap
+    // total, so the space around the bodies keeps pace as they are destroyed and
+    // the walls close in on the survivors. The walls ease toward their target
+    // each frame instead of snapping after a hit, and never get so close that the
+    // largest living body (a loop spans at most half its length) can't fit.
+    updateArena() {
+        if (!this.arena || !this.arenaBase || !this.initialGapTotal) return;
+
+        const base = this.arenaBase;
+        const largest = Math.max(0, ...this.players
+            .filter(player => player.isAlive)
+            .map(player => player.spacesPlot.reduce((s, space) => s + space, 0)));
+        const minShortSide = largest * this.arenaFitFactor;
+        const scale = Math.min(1, Math.max(
+            this.getRemainingGapTotal() / this.initialGapTotal,
+            minShortSide / Math.min(base.width, base.height)
+        ));
+
+        const arena = this.arena;
+        const width = arena.width + (base.width * scale - arena.width) * this.arenaSmoothing;
+        const height = arena.height + (base.height * scale - arena.height) * this.arenaSmoothing;
+        arena.width = width;
+        arena.height = height;
+        arena.minX = base.cx - width / 2;
+        arena.maxX = base.cx + width / 2;
+        arena.minY = base.cy - height / 2;
+        arena.maxY = base.cy + height / 2;
+    }
+
+    setBoundaryMode(mode) {
+        this.boundaryMode = mode;
+        if (this.arena) this.arena.boundaryMode = mode;
     }
 
 // ====================================
@@ -163,11 +275,12 @@ class BattleController {
     // Update battle center based on canvas size
     updateBattleCenterFromCanvas(canvas) {
         if (canvas && canvas.width && canvas.height) {
-            this.battleCenter = { 
-                x: canvas.width / 2, 
-                y: canvas.height / 2 
+            this.battleCenter = {
+                x: canvas.width / 2,
+                y: canvas.height / 2
             };
-            
+            this.canvasAspect = canvas.width / canvas.height;
+
             // Update ColliderAudio battle center for spatial audio
             this.colliderAudio.setBattleCenter(this.battleCenter.x, this.battleCenter.y);
             
@@ -207,14 +320,11 @@ class BattleController {
             }
         }
         
+        this.initialGapTotal = this.getRemainingGapTotal();
+
         console.log(`🎮 Battle starting with ${activePlayers.length} active players - master clock synchronized`);
     }
 
-    getBattleElapsedTime() {
-        if (!this.battleStartTime || this.gameState !== 'battle') return 0;
-        return Date.now() - this.battleStartTime;
-    }
-    
     updateCollisionDetectorThickness() {
         // Get the current visual thickness from the collider instance
         const colliderUI = this.getColliderUI();
@@ -227,10 +337,13 @@ class BattleController {
     updateBattle() {
         if (this.gameState !== 'battle') return;
         
+        this.updateArena();
+
         // Update all players
         for (const player of this.players) {
             if (player.isAlive) {
                 player.updateAnimation();
+                player.applyBoundary(this.arena);
             }
         }
         
@@ -267,17 +380,18 @@ class BattleController {
             }
             
             const collision = shuffledCollisions[0];
-            
-            // Double-check that the defender is not already invulnerable
-            const defender = this.getPlayer(collision.defender);
-            if (defender && !defender.isInvulnerable) {
-                if (collision.type === 'node-segment') {
-                    this.processAttack(collision);
-                } else if (collision.type === 'node-node') {
-                    this.processNodeNodeCollision(collision);
-                }
+
+            if (collision.type === 'node-node') {
+                // Node-node contacts have no defender: rebound only
+                this.processNodeNodeCollision(collision);
             } else {
-                console.log(`🛡️ Collision ignored - Player ${collision.defender} already invulnerable`);
+                // Double-check that the defender is not already invulnerable
+                const defender = this.getPlayer(collision.defender);
+                if (defender && !defender.isInvulnerable) {
+                    this.processAttack(collision);
+                } else {
+                    console.log(`🛡️ Collision ignored - Player ${collision.defender} already invulnerable`);
+                }
             }
             
             // Log if multiple collisions were ignored
@@ -293,11 +407,33 @@ class BattleController {
         
         if (!playerA || !playerB || !playerA.isAlive || !playerB.isAlive) return;
         
-        // Apply rebound forces (no damage, just physics)
-        playerA.applyReboundForce(-collision.forceA.x, -collision.forceA.y);
-        playerB.applyReboundForce(collision.forceB.x, collision.forceB.y);
-        
+        // Natural rebound (no damage): both bodies push apart along the contact
+        // direction. Momentum is cancelled first so neither tunnels through.
+        const { x: nx, y: ny } = collision.normal;
+        playerA.cancelMomentum();
+        playerB.cancelMomentum();
+        const speed = this.reboundScale * (playerA.getAverageForce() + playerB.getAverageForce()) / 2;
+        playerA.applyRebound(nx, ny, speed);
+        playerB.applyRebound(-nx, -ny, speed);
+
+        this.announceTie(playerA, collision.nodeA.index, playerB, collision.nodeB.index);
+
         console.log(`🤝 Node collision: Player ${collision.playerA} <-> Player ${collision.playerB}`);
+    }
+
+    // A tie does no damage, but both touching nodes light up and sound their tones
+    // together, so the contact is heard as a two-note harmony. A short per-pair
+    // cooldown keeps a contact that lasts a few checks from retriggering.
+    announceTie(playerA, nodeIndexA, playerB, nodeIndexB) {
+        const key = [playerA.playerId, playerB.playerId].sort().join('-');
+        const now = Date.now();
+        if (now < (this.tieCooldowns.get(key) || 0)) return;
+        this.tieCooldowns.set(key, now + this.tieCooldownMs);
+
+        playerA.flashNode(nodeIndexA);
+        playerB.flashNode(nodeIndexB);
+        this.colliderAudio.playNodeNote(playerA, nodeIndexA);
+        this.colliderAudio.playNodeNote(playerB, nodeIndexB);
     }
 
     getPlayer(playerId) {
@@ -331,10 +467,20 @@ class BattleController {
         
         console.log(`🛡️ Player ${defender.playerId} INSTANTLY invulnerable`);
         
-        const segmentIndex = collision.defendingSegment.segmentIndex;
-        const segment = defender.segments[segmentIndex];
-        
+        let segmentIndex = collision.defendingSegment.segmentIndex;
+        let segment = defender.segments[segmentIndex];
+
         if (!segment) return;
+
+        // The closing segment is zero-length (its end node sits on the anchor) and
+        // carries no space. Credit a hit on it to the real segment that ends there,
+        // so spaces, nodes and the elimination count stay in step.
+        if (segment.spaceIndex === -1) {
+            const closingNode = segment.nodeA;
+            segmentIndex = defender.segments.findIndex(s => s.spaceIndex !== -1 && s.nodeB === closingNode);
+            segment = defender.segments[segmentIndex];
+            if (!segment) return;
+        }
         
         // Calculate midpoint between the severed nodes
         const nodeA = defender.nodes[segment.nodeA];
@@ -348,11 +494,16 @@ class BattleController {
         const reconnectionDuration = segment.originalSpaceValue;
         
         // Apply damage immediately, then queue delayed reconnection start
-        defender.sufferAttackWithDelayedReconnection(segmentIndex, collision.attackingForce, midpoint, reconnectionDuration);
-        
-        // Apply rebound forces
-        attacker.applyReboundForce(-collision.attackingForce.x, -collision.attackingForce.y);
-        defender.applyReboundForce(collision.attackingForce.x, collision.attackingForce.y);
+        defender.sufferAttackWithDelayedReconnection(segmentIndex, collision.normal, midpoint, reconnectionDuration);
+
+        // Natural rebound: the striker bounces away from the struck segment, the
+        // struck body recoils the opposite way at a reduced fraction.
+        const { x: nx, y: ny } = collision.normal;
+        attacker.cancelMomentum();
+        defender.cancelMomentum();
+        const speed = this.reboundScale * attacker.getAverageForce();
+        attacker.applyRebound(nx, ny, speed);
+        defender.applyRebound(-nx, -ny, speed * this.defenderReboundFraction);
         
         console.log(`💥 Attack processed: Player ${collision.attacker} -> Player ${collision.defender}, invulnerability applied instantly`);
     }
@@ -531,7 +682,12 @@ class BattleController {
         this.winner = null;
         this.battleStartTime = 0;
         this.lastCollisionCheck = 0;
-        
+        this.arena = null;
+        this.arenaBase = null;
+        this.initialGapTotal = 0;
+        this.collisionDetector.arena = null;
+        this.tieCooldowns.clear();
+
         // Reset master clock system completely
         this.masterSpeed = 1.0; // Reset to default 1x speed
         this.resetMasterClock();

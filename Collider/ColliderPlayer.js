@@ -1,4 +1,13 @@
 class ColliderPlayer {
+    // A player needs at least a triangle to keep fighting; two nodes joined by a
+    // straight line is eliminated.
+    static MIN_VERTICES = 3;
+
+    // Experimental self-collision (BattleController.selfCollision)
+    static SELF_COLLISION_MARGIN = 0.5;      // px a node is kept off its own segments
+    static SELF_COLLISION_RESTITUTION = 0.5; // share of closing speed a node rebounds with
+    static SELF_COLLISION_ROUNDS = 3;        // push-back / constraint alternations per frame
+
     constructor(playerId, startX, startY, color) {
         this.playerId = playerId;
         this.color = color;
@@ -14,7 +23,7 @@ class ColliderPlayer {
         // Physics state
         this.nodes = [];
         this.segments = [];
-        this.nodeForces = [];
+        this.heading = 0;           // layer A's direction; refreshed by updateHeading()
         this.lastForceUpdate = 0;
         this.layerDirections = {}; 
         
@@ -37,13 +46,25 @@ class ColliderPlayer {
         this.invulnerabilityGlow = 0; 
         
         // Physics parameters
-        this.gravity = 0;
         this.damping = 0.995;
         this.tensionStrength = 0.3;
         this.maxSegmentLength = 50;
         
         // Force amplitude control (like Hinges.js)
         this.forceAmplitude = 1.0;
+
+        // Real layer membership: pulseLayers[k] = layer index (0=A … 3=D) of the onset
+        // that opens gap k. Spliced in step with spacesPlot when a gap is destroyed.
+        this.pulseLayers = null;
+        this.targetPlayerId = null; // nearest enemy the drift is aimed at (for inspection)
+
+        // ---- Vector-force progression ----
+        // The force for every pulse is a pure function of (spaceValue, layer) and
+        // two body-global scalars (heading, forceAmplitude). We keep only the
+        // schedule (prefix-sum onsets) and derive forces on demand via forceAt().
+        this.onsets = null;          // prefix-sum onset schedule (length N+1)
+        this.cycleTotal = 0;         // Σ spacesPlot (cached; was reduce()'d per frame)
+        this.scheduleCursor = 0;     // monotonic cursor for true-onset traversal
         
         // Rebound velocity system for animated center-of-mass movement
         this.reboundVelocity = { x: 0, y: 0 };
@@ -73,8 +94,10 @@ class ColliderPlayer {
         this.hp = rhythmData.grid;
         this.maxHp = rhythmData.grid; // Set maximum HP for health bar calculations
         this.ratios = rhythmData.ratios || [];
-        
-        this.calculateLayerForces();
+        this.pulseLayers = this.computePulseLayers();
+        this.onsets = null; // new plot: rebuild the schedule even if the length matches
+
+        this.updateHeading();
         
         console.log(`🎮 Player ${this.playerId} rhythm set: Grid ${this.grid}, Spaces: ${this.spacesPlot.length}, Ratios: ${this.ratios.length}`);
     }
@@ -93,11 +116,28 @@ class ColliderPlayer {
             this.originalGrid = tempGrid;
             this.hp = this.grid;
             this.maxHp = this.grid; // Set maximum HP for health bar calculations
-            
-            this.calculateLayerForces();
-            
+            this.pulseLayers = this.computePulseLayers();
+            this.onsets = null; // new plot: rebuild the schedule even if the length matches
+
+            this.updateHeading();
+
             console.log(`🎮 Player ${this.playerId} rhythm updated: Grid ${this.grid}, Spaces: ${this.spacesPlot.length}`);
         }
+    }
+
+    // A pulse belongs to every layer whose beat lands on its onset (onset is a
+    // multiple of cycle / L). It carries the first such layer, A–D — GRIDLOCK's
+    // primaryLayer rule — so shared downbeats count as A.
+    computePulseLayers() {
+        const cycle = this.spacesPlot.reduce((sum, space) => sum + space, 0);
+        const labels = [];
+        let onset = 0;
+        for (const space of this.spacesPlot) {
+            const layer = this.rhythms.findIndex(L => L > 0 && (onset * L) % cycle === 0);
+            labels.push(layer === -1 ? 0 : layer);
+            onset += space;
+        }
+        return labels;
     }
 
     getCanvasCenter() {
@@ -145,37 +185,14 @@ class ColliderPlayer {
             console.log(`🔧 Removed ${repairsMade} invalid segments`);
         }
         
-        // Check 2: Ensure nodeForces array matches structure
-        const expectedForces = Math.max(0, this.nodes.length - 1); // Skip anchor node
-        if (this.nodeForces.length !== expectedForces) {
-            console.log(`🔧 Force array mismatch: expected ${expectedForces}, got ${this.nodeForces.length}`);
-            // Recalculate all forces from scratch
-            this.calculateLayerForces();
-            repairsMade++;
-        }
-        
-        // Check 3: Clear invalid activeForceNodes references
-        const invalidActiveForces = Array.from(this.activeForceNodes).filter(index => 
-            index >= this.nodeForces.length || index < 0
+        // Check 2: Clear invalid activeForceNodes references
+        const invalidActiveForces = Array.from(this.activeForceNodes).filter(index =>
+            index >= this.spacesPlot.length || index < 0
         );
         
         if (invalidActiveForces.length > 0) {
             console.log(`🔧 Clearing ${invalidActiveForces.length} invalid active force references`);
             this.activeForceNodes.clear();
-            repairsMade++;
-        }
-        
-        // Check 4: Detect extreme force magnitudes that could cause stretching
-        let maxForceMagnitude = 0;
-        for (const force of this.nodeForces) {
-            if (force.magnitude > maxForceMagnitude) {
-                maxForceMagnitude = force.magnitude;
-            }
-        }
-        
-        if (maxForceMagnitude > 100000) { // Arbitrary threshold
-            console.log(`🔧 EXTREME FORCES detected (${maxForceMagnitude.toFixed(2)}) - recalculating`);
-            this.calculateLayerForces();
             repairsMade++;
         }
         
@@ -195,7 +212,7 @@ class ColliderPlayer {
     setForceAmplitude(amplitude) {
         this.forceAmplitude = amplitude;
         // Recalculate forces immediately with new amplitude
-        this.calculateLayerForces();
+        this.updateHeading();
         console.log(`🎮 Player ${this.playerId} force amplitude set to ${amplitude}x`);
     }
 
@@ -215,25 +232,61 @@ class ColliderPlayer {
         return this.parent?.battleController?.getMasterTime() || 0;
     }
 
+    // ---- Prefix-sum schedule (compact store for the force progression) ----
+    // onsets[k] = start time (grid units) of pulse k; onsets[N] = full cycle.
+    // Built once when spacesPlot changes; the lazy guard in getCurrentRhythmPosition
+    // rebuilds it self-healingly after a hit/fusion resizes spacesPlot.
+    rebuildSchedule() {
+        const n = this.spacesPlot.length;
+        const onsets = new Array(n + 1);
+        onsets[0] = 0;
+        // Same left-to-right accumulation as the old reduce(...,0) => cycleTotal
+        // is bit-identical to spacesPlot.reduce((s,v)=>s+v,0).
+        for (let i = 0; i < n; i++) onsets[i + 1] = onsets[i] + this.spacesPlot[i];
+        this.onsets = onsets;
+        this.cycleTotal = onsets[n];
+        this.scheduleCursor = 0;
+    }
+
+    ensureSchedule() {
+        if (!this.onsets || this.onsets.length !== this.spacesPlot.length + 1) {
+            this.rebuildSchedule();
+        }
+    }
+
+    // True-onset active index: largest k with onsets[k] <= phase < onsets[k+1].
+    // Monotonic cursor => O(1) amortized (one full pass per wrap, not per frame).
+    indexForPhaseTrueOnset(phase) {
+        const n = this.spacesPlot.length;
+        let c = this.scheduleCursor;
+        if (c >= n) c = 0;
+        if (phase < this.onsets[c]) c = 0; // clock wrapped: restart the walk
+        while (c + 1 <= n && this.onsets[c + 1] <= phase) c++;
+        if (c >= n) c = n - 1;
+        this.scheduleCursor = c;
+        return c;
+    }
+
     getCurrentRhythmPosition() {
         if (this.spacesPlot.length === 0) return { spaceIndex: 0, exactPosition: 0, cycleProgress: 0 };
-        
+
+        this.ensureSchedule();
+
         // Use the master clock (speed is already applied in getMasterTime)
         const masterTime = this.getMasterTime();
         const rhythmTime = masterTime - this.rhythmClockOffset;
-        
-        // FIXED: Use simpler approach similar to Hinges for reliable progression
-        // Calculate cycle progress as a percentage (0 to 1)
-        const cycleDuration = this.spacesPlot.reduce((sum, space) => sum + space, 0);
+
+        // Cached Σ spacesPlot instead of an O(N) reduce every frame.
+        const cycleDuration = this.cycleTotal;
         const cycleProgress = (rhythmTime % cycleDuration) / cycleDuration;
-        
-        // Map cycle progress directly to space index (like Hinges does)
-        const exactPosition = cycleProgress * this.spacesPlot.length;
-        const currentSpaceIndex = Math.floor(exactPosition) % this.spacesPlot.length;
-        
+
+        // Each pulse fires at its real onset, for its own space's share of the cycle
+        const phase = ((rhythmTime % cycleDuration) + cycleDuration) % cycleDuration;
+        const currentSpaceIndex = this.indexForPhaseTrueOnset(phase);
+
         // CRITICAL: Ensure valid index after modulo operation
         const validSpaceIndex = Math.max(0, Math.min(currentSpaceIndex, this.spacesPlot.length - 1));
-        
+
         return {
             spaceIndex: validSpaceIndex,
             exactPosition: rhythmTime % cycleDuration,
@@ -241,65 +294,142 @@ class ColliderPlayer {
         };
     }
 
-    // Layer Forces
+    // ====================================
+    // Layer Forces — compact vector-force progression
+    // ====================================
+    //
+    // The force for every pulse is a pure function of its intrinsic data
+    // (spaceValue = spacesPlot[i], layer = pulseLayers[i]) and two body-global
+    // scalars that vary per frame: the heading and forceAmplitude. So we never need
+    // to store N force vectors — we sample forceAt(i) on demand at the cached heading.
 
-    calculateLayerForces() {
-        // Skip force calculations for invulnerable players
-        if (this.isInvulnerable) {
-            return;
-        }
+    // Heading every pulse's force is aimed relative to (layer A's direction). Each
+    // body seeks its nearest living enemy: the heading is turned so the body's net
+    // drift per cycle points straight at that enemy. Steering only rotates the
+    // forces, never adds any, so small and large rhythms are steered alike (center
+    // gravity overpowered small rhythms and barely moved large ones). With no enemy
+    // left it aims at the battle center.
+    computeForceAngle() {
+        const me = this.getCenterOfMass();
+        const target = this.findNearestEnemy(me) ||
+            this.parent?.battleController?.battleCenter || { x: 400, y: 300 };
+        return Math.atan2(target.y - me.y, target.x - me.x) - this.getDriftOffset();
+    }
 
-        this.nodeForces = [];
-        
-        if (this.spacesPlot.length === 0) return;
-        
-        // Use FIXED battle center (not canvas center)
-        const battleCenter = this.parent?.battleController?.battleCenter || { x: 400, y: 300 };
-        
-        // Calculate current center of mass for this rhythm
-        const centerOfMass = this.getCenterOfMass();
-        
-        // Calculate angle from center of mass to FIXED battle center
-        const deltaX = battleCenter.x - centerOfMass.x;
-        const deltaY = battleCenter.y - centerOfMass.y;
-        const angleToCenter = Math.atan2(deltaY, deltaX);
-        
-        // Define layer directions relative to center-pointing angle
-        this.layerDirections = {
-            'A': angleToCenter,                    // Points toward center
-            'B': angleToCenter + Math.PI / 2,      // 90° counterclockwise from A  
-            'C': angleToCenter + Math.PI,          // 180° from A (away from center)
-            'D': angleToCenter + 3 * Math.PI / 2   // 270° counterclockwise from A
-        };
-        
-        // Create layer forces with increased magnitude for distant rhythms
-        for (let i = 0; i < this.spacesPlot.length; i++) {
-            const spaceValue = this.spacesPlot[i];
-            const layerNames = ['A', 'B', 'C', 'D'];
-            const primaryLayer = layerNames[i % 4];
-            
-            const direction = this.layerDirections[primaryLayer];
-            
-            // Increase force magnitude, especially for Layer A (toward center)
-            let baseMagnitude = spaceValue * 0.15; // Increased from 0.12
-            
-            // Extra boost for Layer A to pull toward center
-            if (primaryLayer === 'A') {
-                baseMagnitude *= 2.0; // Double the force for center-pointing layer
+    // Nearest living enemy's center of mass (its nearest image in a wrapping arena)
+    findNearestEnemy(me) {
+        const controller = this.parent?.battleController;
+        this.targetPlayerId = null;
+        if (!controller) return null;
+
+        let nearest = null;
+        let nearestDistance = Infinity;
+        for (const other of controller.players) {
+            if (other === this || !other.isAlive || other.nodes.length === 0) continue;
+            const center = other.getCenterOfMass();
+            const image = controller.collisionDetector.nearestImage(center.x, center.y, me.x, me.y);
+            const distance = Math.hypot(image.x - me.x, image.y - me.y);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearest = image;
+                this.targetPlayerId = other.playerId;
             }
-            
-            // Apply force amplitude multiplier
-            const forceX = Math.cos(direction) * baseMagnitude * this.forceAmplitude;
-            const forceY = Math.sin(direction) * baseMagnitude * this.forceAmplitude;
-            
-            this.nodeForces.push({
-                x: forceX,
-                y: forceY,
-                magnitude: Math.sqrt(forceX * forceX + forceY * forceY),
-                layer: primaryLayer,
-                direction: direction // Store for debugging
-            });
         }
+        return nearest;
+    }
+
+    // Angle of the body's net drift per cycle, relative to the heading. Each pulse
+    // pushes for its share of the cycle (spaceValue / cycleTotal), so the drift is
+    // the share-weighted sum of every pulse's force. Forces rotate rigidly with the
+    // heading, so this offset only changes when the plot does.
+    getDriftOffset() {
+        this.ensureSchedule();
+        const cache = this.driftCache;
+        if (cache && cache.onsets === this.onsets) {
+            return cache.offset;
+        }
+
+        const n = this.spacesPlot.length;
+        let driftX = 0, driftY = 0, totalMagnitude = 0;
+        for (let i = 0; i < n; i++) {
+            const share = this.spacesPlot[i] / this.cycleTotal;
+            const force = this.forceAt(i, 0, 1);
+            driftX += force.x * share;
+            driftY += force.y * share;
+            totalMagnitude += force.magnitude * share;
+        }
+        // A plot whose layers cancel out has no drift direction; aim layer A then
+        const balanced = Math.hypot(driftX, driftY) <= totalMagnitude * 1e-9;
+        const offset = balanced ? 0 : Math.atan2(driftY, driftX);
+
+        this.driftCache = { onsets: this.onsets, offset };
+        return offset;
+    }
+
+    // Average pulse force magnitude (includes Force Amplitude): the body's force
+    // scale, which sets how hard it rebounds. Averaged over pulses rather than
+    // taken from the touching node, so a rebound doesn't double on a layer-A node
+    // or vanish on the anchor, which has no pulse of its own.
+    getAverageForce() {
+        const n = this.spacesPlot.length;
+        if (n === 0) return 0;
+        let total = 0;
+        for (let i = 0; i < n; i++) total += this.forceAt(i, 0).magnitude;
+        return total / n;
+    }
+
+    // Pure sampler: the force vector for pulse `i`, given the shared heading.
+    // Bit-identical to the original per-pulse formula (see force-model.verify.mjs).
+    // The layer is the pulse's real membership label (position i % 4 if the plot
+    // is unlabelled).
+    forceAt(i, angleToCenter, amplitude = this.forceAmplitude) {
+        const spaceValue = this.spacesPlot[i];
+        const layerIndex = this.pulseLayers?.[i] ?? i % 4;
+        const primaryLayer = ['A', 'B', 'C', 'D'][layerIndex];
+
+        // Direction per layer, relative to the heading
+        let direction;
+        switch (layerIndex) {
+            case 0:  direction = angleToCenter;                    break; // A: toward center
+            case 1:  direction = angleToCenter + Math.PI / 2;      break; // B
+            case 2:  direction = angleToCenter + Math.PI;          break; // C: away
+            default: direction = angleToCenter + 3 * Math.PI / 2;  break; // D
+        }
+
+        let baseMagnitude = spaceValue * 0.15;
+        if (primaryLayer === 'A') baseMagnitude *= 2.0; // two-step boost (not *0.30)
+
+        const forceX = Math.cos(direction) * baseMagnitude * amplitude;
+        const forceY = Math.sin(direction) * baseMagnitude * amplitude;
+
+        return {
+            x: forceX,
+            y: forceY,
+            magnitude: Math.sqrt(forceX * forceX + forceY * forceY),
+            layer: primaryLayer,
+            direction: direction
+        };
+    }
+
+    // Force on pulse i at the cached heading, used by physics and collision
+    getNodeForce(i) {
+        if (i < 0 || i >= this.spacesPlot.length) return null;
+        return this.forceAt(i, this.heading);
+    }
+
+    // Re-aim the body: recompute the heading (seeking) and expose each layer's
+    // direction for inspection. Invulnerable bodies keep their last heading.
+    updateHeading() {
+        if (this.isInvulnerable || this.spacesPlot.length === 0) return;
+
+        const heading = this.computeForceAngle();
+        this.heading = heading;
+        this.layerDirections = {
+            'A': heading,                    // The heading (net drift aims at the target)
+            'B': heading + Math.PI / 2,      // 90° counterclockwise from A
+            'C': heading + Math.PI,          // 180° from A
+            'D': heading + 3 * Math.PI / 2   // 270° counterclockwise from A
+        };
     }
 
     // ====================================
@@ -354,7 +484,7 @@ class ColliderPlayer {
             });
         }
         
-        this.nodeCount = this.nodes.length;
+        this.nodeCount = this.getVertexCount();
         console.log(`🎮 Player ${this.playerId} chain initialized: ${this.nodes.length} nodes, ${this.segments.length} segments, total length: ${targetTotalLength}`);
     }
 
@@ -438,6 +568,12 @@ class ColliderPlayer {
                 break;
         }
 
+        // Experimental self-collision: remember where every node started the frame
+        const selfCollide = this.isSelfCollisionActive();
+        if (selfCollide) {
+            this.selfCollisionStart = this.nodes.map(node => ({ x: node.x, y: node.y }));
+        }
+
         if (shouldApplyPhysics) {
             if (allowForces) {
                 this.updateRhythmicProgression();
@@ -445,6 +581,7 @@ class ColliderPlayer {
                 this.activeForceNodes.clear();
             }
             this.applyPhysics();
+            this.applyReboundVelocity();
         }
         
         // Apply constraints
@@ -465,6 +602,180 @@ class ColliderPlayer {
                 this.tensionStrength = originalStrength;
             }
         }
+
+        // Self-collision runs alongside the length constraints: push back any
+        // crossing, let the constraints settle, and repeat, ending on a push-back
+        if (selfCollide) {
+            for (let round = 0; round < ColliderPlayer.SELF_COLLISION_ROUNDS; round++) {
+                if (this.resolveSelfCollisions() === 0) break;
+                for (let i = 0; i < 5; i++) this.constrainSegments();
+            }
+            // A push-back moves the edge's ends, which can shove an already-checked
+            // node across another edge, so finish with passes until it comes up clean
+            for (let pass = 0; pass < ColliderPlayer.SELF_COLLISION_ROUNDS + 1; pass++) {
+                if (this.resolveSelfCollisions() === 0) break;
+            }
+        }
+    }
+
+    // ====================================
+    // SELF-COLLISION (experimental)
+    // ====================================
+    //
+    // Keeps a body from passing through itself: a node pushed across one of its
+    // own segments is put back on its side and rebounds. Crossings are found by
+    // which side of each segment a node was on at the start of the frame (the
+    // cloth-simulation approach), which also catches nodes moving fast enough to
+    // jump a segment in one frame. Because that preserves whatever shape the loop
+    // already has, it only arms once the body is an untangled loop, and disarms
+    // whenever a hit rebuilds the structure.
+
+    isSelfCollisionActive() {
+        if (!this.parent?.battleController?.selfCollision) return false;
+        if (this.animationPhase !== 'settling' || this.isInvulnerable) return false;
+
+        // Arm on an untangled loop. If a crossing slipped through anyway, disarm
+        // rather than preserve it, and re-arm once the body untangles.
+        const simple = this.isSimpleLoop();
+        if (this.selfCollisionArmed && !simple) {
+            this.selfCollisionLeaks = (this.selfCollisionLeaks || 0) + 1;
+        }
+        this.selfCollisionArmed = simple;
+        return simple;
+    }
+
+    // The loop's edges for self-collision: every real segment. The closing segment
+    // only joins the end node to the anchor it sits on, so it is skipped, and the
+    // two nodes it joins count as one ("glued").
+    getSelfCollisionEdges() {
+        const edges = [];
+        let glued = null;
+        for (const segment of this.segments) {
+            if (!this.nodes[segment.nodeA] || !this.nodes[segment.nodeB]) continue;
+            if (segment.spaceIndex === -1) glued = [segment.nodeA, segment.nodeB];
+            else edges.push([segment.nodeA, segment.nodeB]);
+        }
+        const same = (i, j) => i === j || (glued !== null &&
+            ((i === glued[0] && j === glued[1]) || (i === glued[1] && j === glued[0])));
+        const touches = (node, [a, b]) => same(node, a) || same(node, b);
+        return { edges, glued, touches };
+    }
+
+    // True when no two non-adjacent edges cross (the loop is untangled)
+    isSimpleLoop() {
+        const { edges, touches } = this.getSelfCollisionEdges();
+        const orient = (p, q, r) => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x));
+        for (let i = 0; i < edges.length; i++) {
+            const p1 = this.nodes[edges[i][0]], p2 = this.nodes[edges[i][1]];
+            for (let j = i + 1; j < edges.length; j++) {
+                if (touches(edges[j][0], edges[i]) || touches(edges[j][1], edges[i])) continue;
+                const q1 = this.nodes[edges[j][0]], q2 = this.nodes[edges[j][1]];
+                if (orient(p1, p2, q1) * orient(p1, p2, q2) < 0 &&
+                    orient(q1, q2, p1) * orient(q1, q2, p2) < 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // Find every node that crossed (or came within the margin of) one of its own
+    // segments since the start of the frame, and resolve it. Returns the count.
+    resolveSelfCollisions() {
+        const start = this.selfCollisionStart;
+        if (!start || start.length !== this.nodes.length) return 0;
+
+        const { edges, touches } = this.getSelfCollisionEdges();
+        const margin = ColliderPlayer.SELF_COLLISION_MARGIN;
+        let resolved = 0;
+
+        for (let v = 0; v < this.nodes.length; v++) {
+            const p = this.nodes[v], p0 = start[v];
+
+            for (const edge of edges) {
+                if (touches(v, edge)) continue;
+                const [ia, ib] = edge;
+                const a = this.nodes[ia], b = this.nodes[ib];
+                const a0 = start[ia], b0 = start[ib];
+
+                // Cheap reject: the node's path and the edge's swept area don't meet
+                if (Math.max(p.x, p0.x) < Math.min(a.x, a0.x, b.x, b0.x) - margin ||
+                    Math.min(p.x, p0.x) > Math.max(a.x, a0.x, b.x, b0.x) + margin ||
+                    Math.max(p.y, p0.y) < Math.min(a.y, a0.y, b.y, b0.y) - margin ||
+                    Math.min(p.y, p0.y) > Math.max(a.y, a0.y, b.y, b0.y) + margin) continue;
+
+                // Position across and along the edge, at frame start and now
+                const before = this.edgeCoordinates(p0, a0, b0);
+                const now = this.edgeCoordinates(p, a, b);
+                if (!before || !now || before.across === 0) continue;
+                const side = Math.sign(before.across);
+                const distanceBefore = side * before.across;
+                const distanceNow = side * now.across;
+                if (distanceNow >= margin) continue;
+
+                // Where along the edge the node reached the margin: it must be
+                // within the edge's span, or it went round the end, not through
+                const reach = distanceBefore <= margin ? 0 :
+                    (distanceBefore - margin) / (distanceBefore - distanceNow);
+                const along = before.along + reach * (now.along - before.along);
+                if (along < 0 || along > 1) continue;
+
+                this.pushBackAcrossEdge(p, a, b, now, side, margin);
+                resolved++;
+            }
+        }
+
+        this.selfCollisionHits = (this.selfCollisionHits || 0) + resolved;
+        return resolved;
+    }
+
+    // Node p relative to edge a→b: `along` 0..1 over the edge, `across` its signed
+    // distance from the edge's line, plus the edge's unit normal
+    edgeCoordinates(p, a, b) {
+        const ex = b.x - a.x, ey = b.y - a.y;
+        const length = Math.hypot(ex, ey);
+        if (length < 1e-9) return null;
+        const rx = p.x - a.x, ry = p.y - a.y;
+        return {
+            along: (rx * ex + ry * ey) / (length * length),
+            across: (ex * ry - ey * rx) / length,
+            normal: { x: -ey / length, y: ex / length }
+        };
+    }
+
+    // Put node p back on its side of edge a-b (at the margin) and make it rebound.
+    // The correction is shared between the node and the edge's two ends in
+    // proportion to where it touched, so it adds no momentum to the body: a body
+    // can't push itself along by colliding with itself. Pinned nodes don't move.
+    pushBackAcrossEdge(p, a, b, coords, side, margin) {
+        const t = Math.max(0, Math.min(1, coords.along));
+        const nx = coords.normal.x * side, ny = coords.normal.y * side;
+        const wp = p.pinned ? 0 : 1, wa = a.pinned ? 0 : 1, wb = b.pinned ? 0 : 1;
+        const share = wp + wa * (1 - t) * (1 - t) + wb * t * t;
+        if (share === 0) return;
+
+        // Position: move along the normal so the gap returns to the margin. The
+        // previous positions move too, so the correction isn't read as velocity.
+        const gap = margin - side * coords.across;
+        const move = (node, amount) => {
+            node.x += nx * amount; node.y += ny * amount;
+            node.oldX += nx * amount; node.oldY += ny * amount;
+        };
+        move(p, gap * wp / share);
+        move(a, -gap * wa * (1 - t) / share);
+        move(b, -gap * wb * t / share);
+
+        // Velocity: reverse the closing speed along the normal, scaled by the
+        // restitution, with the same sharing
+        const vx = (node) => node.x - node.oldX, vy = (node) => node.y - node.oldY;
+        const closing = (vx(p) - (1 - t) * vx(a) - t * vx(b)) * nx +
+                        (vy(p) - (1 - t) * vy(a) - t * vy(b)) * ny;
+        if (closing >= 0) return;
+        const impulse = -(1 + ColliderPlayer.SELF_COLLISION_RESTITUTION) * closing / share;
+        const kick = (node, amount) => { node.oldX -= nx * amount; node.oldY -= ny * amount; };
+        kick(p, impulse * wp);
+        kick(a, -impulse * wa * (1 - t));
+        kick(b, -impulse * wb * t);
     }
 
     startConnectionPhase() {
@@ -528,7 +839,7 @@ class ColliderPlayer {
             this.segments.push({
                 nodeA: this.segments.length,
                 nodeB: 0,
-                restLength: this.calculateDistance(endNode, anchorNodeRef),
+                restLength: 0, // the end node is pulse 0 coming round again: it sits on the anchor
                 originalSpaceValue: 0,
                 spaceIndex: -1 // Special marker for closing segment
             });
@@ -546,8 +857,8 @@ class ColliderPlayer {
         this.activeForceNodes.clear();
         
         // Ensure force calculations are ready
-        this.calculateLayerForces();
-        
+        this.updateHeading();
+
         console.log(`🎮 Player ${this.playerId} connection complete - rhythm clock offset: ${this.rhythmClockOffset}, master time: ${currentMasterTime}, anchor will unpin in 500ms`);
     }
 
@@ -564,12 +875,6 @@ class ColliderPlayer {
         
         if (this.spacesPlot.length === 0) return;
         
-        // CRITICAL: Ensure forces are available for the current spaces plot
-        if (this.nodeForces.length !== this.spacesPlot.length) {
-            console.warn(`⚠️ Force array mismatch: ${this.nodeForces.length} forces vs ${this.spacesPlot.length} spaces - recalculating`);
-            this.calculateLayerForces();
-        }
-        
         const rhythmPos = this.getCurrentRhythmPosition();
         this.currentRhythmPosition = rhythmPos.exactPosition;
         
@@ -577,18 +882,16 @@ class ColliderPlayer {
         this.activeForceNodes.clear();
         
         // CRITICAL: Bounds checking before activating forces
-        if (rhythmPos.spaceIndex >= 0 && 
-            rhythmPos.spaceIndex < this.spacesPlot.length && 
-            rhythmPos.spaceIndex < this.nodeForces.length) {
+        if (rhythmPos.spaceIndex >= 0 && rhythmPos.spaceIndex < this.spacesPlot.length) {
             this.activeForceNodes.add(rhythmPos.spaceIndex);
-            
+
             // DEBUG: Log rhythm progression resumption after reconnection
             if (this.lastProgressionLog !== rhythmPos.spaceIndex) {
-                console.log(`🔄 Player ${this.playerId} rhythm active on space ${rhythmPos.spaceIndex}/${this.spacesPlot.length-1} (progress: ${rhythmPos.cycleProgress.toFixed(3)}, force: ${this.nodeForces[rhythmPos.spaceIndex]?.layer})`);
+                console.log(`🔄 Player ${this.playerId} rhythm active on space ${rhythmPos.spaceIndex}/${this.spacesPlot.length-1} (progress: ${rhythmPos.cycleProgress.toFixed(3)}, force: ${this.getNodeForce(rhythmPos.spaceIndex)?.layer})`);
                 this.lastProgressionLog = rhythmPos.spaceIndex;
             }
         } else {
-            console.warn(`⚠️ Player ${this.playerId} invalid rhythm position ${rhythmPos.spaceIndex} (spaces: ${this.spacesPlot.length}, forces: ${this.nodeForces.length})`);
+            console.warn(`⚠️ Player ${this.playerId} invalid rhythm position ${rhythmPos.spaceIndex} (spaces: ${this.spacesPlot.length})`);
         }
     }
 
@@ -629,9 +932,9 @@ class ColliderPlayer {
             return;
         }
 
-        // CRITICAL: Check for one-node elimination condition (automatic defeat)
-        if (this.isAlive && this.nodes.length <= 1) {
-            console.log(`💀 Player ${this.playerId} AUTO-ELIMINATED: Only ${this.nodes.length} node(s) remaining`);
+        // CRITICAL: Check for the two-node elimination condition (automatic defeat)
+        if (this.isAlive && this.getVertexCount() < ColliderPlayer.MIN_VERTICES) {
+            console.log(`💀 Player ${this.playerId} AUTO-ELIMINATED: Only ${this.getVertexCount()} node(s) remaining`);
             this.eliminate();
             return;
         }
@@ -643,20 +946,12 @@ class ColliderPlayer {
             this.lastValidation = Date.now();
         }
         
-        // Update forces every 33ms (~30fps) to reduce computation
+        // Re-aim every 33ms (~30fps) to reduce computation
         if (!this.lastForceUpdate) this.lastForceUpdate = Date.now();
         if (Date.now() - this.lastForceUpdate > 33) {
-            this.calculateLayerForces();
+            this.updateHeading();
             this.lastForceUpdate = Date.now();
         }
-        
-        // Calculate gravity force every 50ms to reduce computation
-        if (!this.lastGravityUpdate) this.lastGravityUpdate = Date.now();
-        if (!this.cachedGravity || Date.now() - this.lastGravityUpdate > 50) {
-            this.cachedGravity = this.calculateGravityForce();
-            this.lastGravityUpdate = Date.now();
-        }
-        const gravity = this.cachedGravity;
         
         // Apply physics to all non-pinned nodes
         for (let i = 1; i < this.nodes.length; i++) {
@@ -674,22 +969,16 @@ class ColliderPlayer {
             let velocityX = (node.x - node.oldX) * this.damping;
             let velocityY = (node.y - node.oldY) * this.damping;
             
-            // Apply layer forces
+            // Apply the active pulse's layer force
             const forceIndex = i - 1;
-            if (this.activeForceNodes.has(forceIndex) && this.nodeForces[forceIndex]) {
-                const force = this.nodeForces[forceIndex];
-                const forceMultiplier = 1.2;
-                
-                velocityX += force.x * forceMultiplier;
-                velocityY += force.y * forceMultiplier;
-            }
-            
-            // NEW: Apply gravity to all nodes
-            if (gravity.magnitude > 0) {
-                velocityX += gravity.x;
-                velocityY += gravity.y;
-                
-                // Gravity applied (logging removed for performance)
+            if (this.activeForceNodes.has(forceIndex)) {
+                const force = this.getNodeForce(forceIndex);
+                if (force) {
+                    const forceMultiplier = 1.2;
+
+                    velocityX += force.x * forceMultiplier;
+                    velocityY += force.y * forceMultiplier;
+                }
             }
             
             node.x += velocityX;
@@ -780,15 +1069,17 @@ class ColliderPlayer {
         // CRITICAL: Remove the destroyed space from spaces plot and update HP and node count
         if (destroyedSpaceIndex >= 0 && destroyedSpaceIndex < this.spacesPlot.length) {
             this.spacesPlot.splice(destroyedSpaceIndex, 1);
+            // The onset that opened the destroyed gap is gone; later onsets keep their layers
+            this.pulseLayers?.splice(destroyedSpaceIndex, 1);
             this.grid = this.spacesPlot.reduce((sum, space) => sum + space, 0);
             this.hp = this.grid;
-            this.nodeCount = this.nodes.length - 1; // Update node count (will be decremented by 1 in fuseNodes)
+            this.nodeCount = this.getVertexCount();
             console.log(`🎮 Player ${this.playerId} NEW SPACES PLOT: [${this.spacesPlot.join(', ')}], HP: ${this.hp}, Nodes: ${this.nodeCount}`);
         }
-        
-        // Check elimination - if no segments left, player is defeated
-        if (this.segments.length === 0 || this.spacesPlot.length === 0) {
-            console.log(`💀 Player ${this.playerId} eliminated - no segments remaining`);
+
+        // Check elimination - reduced to a straight line (or less), player is defeated
+        if (this.segments.length === 0 || this.getVertexCount() < ColliderPlayer.MIN_VERTICES) {
+            console.log(`💀 Player ${this.playerId} eliminated - only ${this.getVertexCount()} node(s) remaining`);
             this.eliminate();
             return;
         }
@@ -863,6 +1154,13 @@ class ColliderPlayer {
         return validSegments;
     }
 
+    // Distinct polygon vertices. Once the loop closes, the last node sits on the
+    // anchor (zero-length closing segment), so the visible node count is one per
+    // space, not nodes.length.
+    getVertexCount() {
+        return this.spacesPlot.length;
+    }
+
     getCenterOfMass() {
         if (this.nodes.length === 0) return { x: this.startX, y: this.startY };
         
@@ -880,19 +1178,97 @@ class ColliderPlayer {
         };
     }
 
-    applyReboundForce(forceX, forceY) {
-        // ANIMATED REBOUND: Set rebound velocity for gradual center-of-mass movement
-        // This will be applied over time during reconnection animation
-        
-        const centerOfMass = this.getCenterOfMass();
-        
-        // Set rebound velocity (will be applied gradually during animation)
-        // Scale down the force to make it a reasonable velocity
-        const velocityScale = 0.07;
-        this.reboundVelocity.x = forceX * velocityScale;
-        this.reboundVelocity.y = forceY * velocityScale;
-        
-        console.log(`🚀 Player ${this.playerId} rebound velocity set: (${this.reboundVelocity.x.toFixed(2)}, ${this.reboundVelocity.y.toFixed(2)}) - will animate from center (${centerOfMass.x.toFixed(1)}, ${centerOfMass.y.toFixed(1)})`);
+    applyRebound(normalX, normalY, speed) {
+        // NATURAL REBOUND: guarantee the body moves along the unit normal at least
+        // `speed` px/frame. Topping up (rather than adding) keeps repeated contacts
+        // from stacking into a launch, and cancels any velocity still heading in.
+        const along = this.reboundVelocity.x * normalX + this.reboundVelocity.y * normalY;
+        if (along < speed) {
+            this.reboundVelocity.x += (speed - along) * normalX;
+            this.reboundVelocity.y += (speed - along) * normalY;
+        }
+    }
+
+    // Light a node up after it ties with an enemy node. The glow lives on the node
+    // itself, so it follows the node through fusions, and fades as it is drawn.
+    flashNode(nodeIndex) {
+        const node = this.nodes[nodeIndex];
+        if (node) node.tieGlow = 1;
+    }
+
+    // Zero the Verlet velocity (oldPos := pos) so the rebound kick is the only
+    // momentum left; otherwise a fast body carries straight through what it hit.
+    cancelMomentum() {
+        for (const node of this.nodes) {
+            node.oldX = node.x;
+            node.oldY = node.y;
+        }
+    }
+
+    // Rigid translation of the whole body, including any in-flight reconnection
+    // path, so a wrap or wall push never tears the structure.
+    translate(dx, dy) {
+        for (const node of this.nodes) {
+            node.x += dx;
+            node.y += dy;
+            node.oldX += dx;
+            node.oldY += dy;
+        }
+        if (this.reconnectionData) {
+            const { originalStartPos, originalTargetPos, originalControlPoint } = this.reconnectionData;
+            for (const point of [originalStartPos, originalTargetPos, originalControlPoint]) {
+                point.x += dx;
+                point.y += dy;
+            }
+        }
+    }
+
+    applyBoundary(arena) {
+        // Chains hang open and close freely; the arena only governs formed loops
+        if (!arena || (this.animationPhase !== 'settling' && this.animationPhase !== 'reconnecting')) return;
+        if (this.nodes.length === 0) return;
+
+        if (arena.boundaryMode === 'bounce') {
+            this.bounceOffWalls(arena);
+        } else {
+            this.wrapAround(arena);
+        }
+    }
+
+    // Toroidal wrap: move the whole body once its centroid leaves the arena
+    wrapAround(arena) {
+        const center = this.getCenterOfMass();
+        let dx = 0, dy = 0;
+        if (center.x < arena.minX) dx = arena.width;
+        else if (center.x >= arena.maxX) dx = -arena.width;
+        if (center.y < arena.minY) dy = arena.height;
+        else if (center.y >= arena.maxY) dy = -arena.height;
+        if (dx !== 0 || dy !== 0) this.translate(dx, dy);
+    }
+
+    // Hard walls: push the body fully back inside, cancel its momentum, and kick
+    // it off the wall along the inward normal (same model as a body collision)
+    bounceOffWalls(arena) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const node of this.nodes) {
+            if (node.x < minX) minX = node.x;
+            if (node.x > maxX) maxX = node.x;
+            if (node.y < minY) minY = node.y;
+            if (node.y > maxY) maxY = node.y;
+        }
+
+        let dx = 0, dy = 0, nx = 0, ny = 0;
+        if (minX < arena.minX) { dx = arena.minX - minX; nx = 1; }
+        else if (maxX > arena.maxX) { dx = arena.maxX - maxX; nx = -1; }
+        if (minY < arena.minY) { dy = arena.minY - minY; ny = 1; }
+        else if (maxY > arena.maxY) { dy = arena.maxY - maxY; ny = -1; }
+        if (dx === 0 && dy === 0) return;
+
+        this.translate(dx, dy);
+        this.cancelMomentum();
+        const speed = (this.parent?.battleController?.wallReboundSpeed ?? 4) * this.forceAmplitude;
+        if (nx !== 0) this.applyRebound(nx, 0, speed);
+        if (ny !== 0) this.applyRebound(0, ny, speed);
     }
 
     applyReboundVelocity() {
@@ -913,96 +1289,6 @@ class ColliderPlayer {
             this.reboundVelocity.x *= this.reboundDamping;
             this.reboundVelocity.y *= this.reboundDamping;
         }
-    }
-
-    calculateGravityForce() {
-        // No gravity during invulnerability or if no battle controller
-        if (this.isInvulnerable || !this.parent?.battleController) {
-            return { x: 0, y: 0, magnitude: 0 };
-        }
-        
-        // CRITICAL: Ensure battle controller is in active battle state for gravity timing
-        if (this.parent.battleController.gameState !== 'battle') {
-            return { x: 0, y: 0, magnitude: 0 };
-        }
-        
-        const battleElapsed = this.parent.battleController.getBattleElapsedTime();
-        const battleCenter = this.parent.battleController.battleCenter;
-        const centerOfMass = this.getCenterOfMass();
-        
-        // Gravity calculation (logging removed for performance)
-        
-        // Gravity timing: 
-        // 0-10s: No gravity  
-        // 10-20s: Gradually increase from 0 to maximum
-        // 20s+: Maximum gravity
-        
-        // DYNAMIC PLAYER-SCALED GRAVITY TIMING
-        const alivePlayers = this.parent.battleController.players.filter(p => p.isAlive);
-        const playerCount = alivePlayers.length;
-        
-        // Scale timing based on player count - more players = earlier gravity activation
-        const baseStartTime = 20000; // 20 seconds for 4 players
-        const timeReduction = (4 - playerCount) * 5000; // Reduce by 5s per eliminated player
-        const GRAVITY_START_TIME = Math.max(5000, baseStartTime - timeReduction); // Min 5s
-        
-        const baseDuration = 20000; // 20 seconds for 4 players  
-        const durationReduction = (4 - playerCount) * 3000; // Reduce by 3s per eliminated player
-        const GRAVITY_RAMP_DURATION = Math.max(3000, baseDuration - durationReduction); // Min 3s
-        
-        // Scale strength based on remaining players - fewer players = stronger gravity
-        const baseStrength = 0.8;
-        const strengthMultiplier = 4 / Math.max(playerCount, 1); // Inverse scaling
-        const MAX_GRAVITY_STRENGTH = baseStrength * strengthMultiplier;
-        
-        if (battleElapsed < GRAVITY_START_TIME) {
-            return { x: 0, y: 0, magnitude: 0 }; // No gravity yet
-        }
-        
-        // Calculate gravity strength (0 to 1)
-        const gravityElapsed = battleElapsed - GRAVITY_START_TIME;
-        const gravityProgress = Math.min(gravityElapsed / GRAVITY_RAMP_DURATION, 1);
-        
-        // Smooth easing curve for gravity ramp-up
-        const easedProgress = gravityProgress < 0.5 
-            ? 2 * gravityProgress * gravityProgress 
-            : 1 - Math.pow(-2 * gravityProgress + 2, 2) / 2;
-        
-        const currentGravityStrength = easedProgress * MAX_GRAVITY_STRENGTH;
-        
-        // Calculate direction from center of mass to battle center
-        const deltaX = battleCenter.x - centerOfMass.x;
-        const deltaY = battleCenter.y - centerOfMass.y;
-        const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-        
-        if (distance === 0) {
-            return { x: 0, y: 0, magnitude: 0 };
-        }
-        
-        // Normalize direction and apply gravity strength
-        const normalizedX = deltaX / distance;
-        const normalizedY = deltaY / distance;
-        
-        const gravityX = normalizedX * currentGravityStrength;
-        const gravityY = normalizedY * currentGravityStrength;
-        
-        // Log gravity activation/changes with player scaling info
-        if (gravityElapsed < 1000 && gravityElapsed > 0) { // First second of gravity
-            console.log(`🌍 GRAVITY ACTIVATED for Player ${this.playerId} at ${(battleElapsed/1000).toFixed(1)}s - strength: ${currentGravityStrength.toFixed(3)} (${playerCount} players, multiplier: ${strengthMultiplier.toFixed(2)}x)`);
-        } else if (currentGravityStrength > 0 && Math.floor(battleElapsed / 5000) !== Math.floor((battleElapsed - 100) / 5000)) { // Every 5 seconds
-            console.log(`🌍 Gravity update for Player ${this.playerId}: ${currentGravityStrength.toFixed(3)} strength at ${(battleElapsed/1000).toFixed(1)}s (${playerCount} players remaining)`);
-        }
-        
-        return {
-            x: gravityX,
-            y: gravityY,
-            magnitude: currentGravityStrength,
-            progress: easedProgress,
-            playerCount: playerCount,
-            strengthMultiplier: strengthMultiplier,
-            startTime: GRAVITY_START_TIME,
-            rampDuration: GRAVITY_RAMP_DURATION
-        };
     }
 
     // ====================================
@@ -1117,11 +1403,9 @@ class ColliderPlayer {
             this.isInvulnerable = false;
             this.invulnerabilityGlow = 0;
             this.isReconnecting = false;
-            
-            // Clear rebound velocity when reconnection completes
-            this.reboundVelocity.x = 0;
-            this.reboundVelocity.y = 0;
-            
+
+            // Rebound velocity carries on decaying after reconnection (applied in settling)
+
             this.completeReconnection();
         }
     }
@@ -1150,9 +1434,9 @@ class ColliderPlayer {
         this.reconnectionData = null;
         this.animationPhase = 'settling';
         
-        // CRITICAL: Check for one-node elimination after fusion
-        if (this.isAlive && this.nodes.length <= 1) {
-            console.log(`💀 Player ${this.playerId} ELIMINATED after fusion: Only ${this.nodes.length} node(s) remaining`);
+        // CRITICAL: Check for two-node elimination after fusion
+        if (this.isAlive && this.getVertexCount() < ColliderPlayer.MIN_VERTICES) {
+            console.log(`💀 Player ${this.playerId} ELIMINATED after fusion: Only ${this.getVertexCount()} node(s) remaining`);
             this.eliminate();
             return;
         }
@@ -1166,8 +1450,8 @@ class ColliderPlayer {
         // CRITICAL: Validate and repair structure first
         this.validateAndRepairStructure();
         
-        // Recalculate layer forces for the new structure
-        this.calculateLayerForces();
+        // Re-aim for the new structure
+        this.updateHeading();
         
         // Reset rhythm timing system
         this.rhythmStartTime = Date.now();
@@ -1178,14 +1462,7 @@ class ColliderPlayer {
         const masterTime = window.colliderMasterClock ? window.colliderMasterClock.getTime() : Date.now();
         this.rhythmClockOffset = masterTime;
         
-        // Safety check: verify arrays are properly sized
-        const expectedForces = Math.max(0, this.nodes.length - 1);
-        if (this.nodeForces.length !== expectedForces) {
-            console.warn(`⚠️ Force array size mismatch after reconnection - recalculating`);
-            this.calculateLayerForces();
-        }
-        
-        console.log(`🔄 SAFE reinitialization complete: ${this.nodeForces.length} forces for ${this.nodes.length} nodes`);
+        console.log(`🔄 SAFE reinitialization complete: ${this.spacesPlot.length} pulses for ${this.nodes.length} nodes`);
     }
 
     fuseNodes(sourceIndex, targetIndex) {
@@ -1212,14 +1489,18 @@ class ColliderPlayer {
         console.log(`🗑️ Removing node ${removeIndex}, keeping node ${Math.min(sourceIndex, targetIndex)}`);
         
         this.nodes.splice(removeIndex, 1);
-        this.nodeCount = this.nodes.length; // Update node count after fusion
+        this.nodeCount = this.getVertexCount(); // Update node count after fusion
         
         console.log(`✅ Physical fusion complete: ${this.nodes.length} nodes remaining`);
     }
 
     rebuildStructureAfterFusion(destroyedSpaceIndex) {
         console.log(`🔄 REBUILDING STRUCTURE: ${this.nodes.length} nodes, ${this.spacesPlot.length} spaces`);
-        
+
+        // Fusion can leave the loop crossed: self-collision re-arms once it's untangled
+        this.selfCollisionArmed = false;
+        this.selfCollisionStart = null;
+
         // STEP 1: Rebuild segments to match new spaces plot
         this.segments = [];
         
@@ -1246,7 +1527,10 @@ class ColliderPlayer {
             this.segments.push({
                 nodeA: lastNodeIndex,
                 nodeB: 0, // Close the loop back to first node
-                restLength: this.calculateDistance(lastNode, firstNode),
+                // Always 0: the last node is pulse 0 coming round again. Using the
+                // current distance locked in any lag at every rebuild, growing a
+                // phantom vertex the rhythm doesn't have.
+                restLength: 0,
                 originalSpaceValue: 0, // Closing segment has no space value
                 spaceIndex: -1 // Mark as closing segment
             });
@@ -1265,8 +1549,8 @@ class ColliderPlayer {
         this.currentRhythmPosition = 0;
         this.activeForceNodes.clear();
         
-        // STEP 4: Recalculate layer forces for the NEW spaces plot AFTER timing is synchronized
-        this.calculateLayerForces();
+        // STEP 4: Re-aim for the NEW spaces plot AFTER timing is synchronized
+        this.updateHeading();
         
         console.log(`🔄 Rhythm timing synchronized: offset=${this.rhythmClockOffset}, masterTime=${currentMasterTime}`);
         
@@ -1285,12 +1569,11 @@ class ColliderPlayer {
         console.log(`   - Nodes: ${this.nodes.length}`);
         console.log(`   - Segments: ${this.segments.length} (${this.spacesPlot.length} space + 1 closing)`);
         console.log(`   - Spaces: [${this.spacesPlot.join(', ')}]`);
-        console.log(`   - Forces: ${this.nodeForces.length}`);
         console.log(`   - HP: ${this.hp}`);
         
-        // CRITICAL: Final check for one-node elimination after rebuild
-        if (this.isAlive && this.nodes.length <= 1) {
-            console.log(`💀 Player ${this.playerId} ELIMINATED after rebuild: Only ${this.nodes.length} node(s) remaining`);
+        // CRITICAL: Final check for two-node elimination after rebuild
+        if (this.isAlive && this.getVertexCount() < ColliderPlayer.MIN_VERTICES) {
+            console.log(`💀 Player ${this.playerId} ELIMINATED after rebuild: Only ${this.getVertexCount()} node(s) remaining`);
             this.eliminate();
             return;
         }
@@ -1391,12 +1674,6 @@ class ColliderPlayer {
             return false;
         }
         
-        // Ensure force array matches spaces plot
-        if (this.nodeForces.length !== this.spacesPlot.length) {
-            console.warn(`⚠️ Player ${this.playerId} force array mismatch - recalculating forces`);
-            this.calculateLayerForces();
-        }
-        
         // Test rhythm position calculation multiple times to ensure progression
         const testRhythmPos1 = this.getCurrentRhythmPosition();
         if (testRhythmPos1.spaceIndex < 0 || testRhythmPos1.spaceIndex >= this.spacesPlot.length) {
@@ -1444,23 +1721,11 @@ class ColliderPlayer {
         this.isInvulnerable = false;
         this.isReconnecting = false;
         
-        // CRITICAL: Clear gravity cache so remaining players get recalculated gravity
-        this.cachedGravity = null;
-        this.lastGravityUpdate = 0;
-        
-        console.log(`💀 Player ${this.playerId} has been eliminated! Remaining players will get stronger gravity.`);
+        console.log(`💀 Player ${this.playerId} has been eliminated!`);
         
         // Notify battle controller of elimination
         if (this.parent?.battleController) {
             this.parent.battleController.onPlayerEliminated(this);
-            
-            // Force gravity recalculation for all remaining players
-            for (const player of this.parent.battleController.players) {
-                if (player.isAlive && player.playerId !== this.playerId) {
-                    player.cachedGravity = null;
-                    player.lastGravityUpdate = 0;
-                }
-            }
         }
     }
 
@@ -1481,7 +1746,6 @@ class ColliderPlayer {
         this.animationPhase = 'inactive';
         
         // Reset physics parameters to defaults
-        this.gravity = 0;
         this.damping = 0.995;
         this.tensionStrength = 0.3;
         this.maxSegmentLength = 50;
@@ -1505,8 +1769,13 @@ class ColliderPlayer {
         this.nodes = [];
         this.segments = [];
         this.nodeCount = 0;
-        this.nodeForces = [];
+        this.heading = 0;
         this.activeForceNodes.clear();
+
+        // Invalidate the prefix-sum schedule cache (rebuilt lazily on next use)
+        this.onsets = null;
+        this.cycleTotal = 0;
+        this.scheduleCursor = 0;
         
         // CRITICAL: Reset all timing and animation state to ensure clean initialization
         this.isAnimating = false;
@@ -1518,6 +1787,15 @@ class ColliderPlayer {
         
         // Reset anchor pin state
         this.anchorUnpinTime = null;
+
+        // Reset layer labels and seeking state
+        this.pulseLayers = null;
+        this.targetPlayerId = null;
+        this.driftCache = null;
+        this.selfCollisionArmed = false;
+        this.selfCollisionStart = null;
+        this.selfCollisionHits = 0;
+        this.selfCollisionLeaks = 0;
         
         // Clear reconnection data
         this.reconnectionData = null;
@@ -1532,12 +1810,8 @@ class ColliderPlayer {
     clearAllCaches() {
         // Clear all performance caches and timers
         this.lastForceUpdate = 0;
-        this.lastGravityUpdate = 0;
         this.lastValidation = 0;
-        this.lastGravityLog = 0;
-        this.lastGravityCalcLog = 0;
         this.lastProgressionLog = -1; // Reset rhythm progression logging
-        this.cachedGravity = null;
         
         // Clear any other cached data
         this.layerDirections = {};

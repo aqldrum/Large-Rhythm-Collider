@@ -465,10 +465,22 @@ class CreatePlayer {
 
     lockPlayer(playerId) {
         if (this.lockedPlayers.has(playerId)) return;
-        
-        this.lockedPlayers.add(playerId);
-        
+
         const doc = this.colliderUI.popupWindow.document;
+
+        // A rhythm with fewer than 3 nodes would be eliminated on arrival
+        const player = this.battleController.getPlayer(playerId);
+        if (player && player.getVertexCount() < ColliderPlayer.MIN_VERTICES) {
+            const status = doc.getElementById(`p${playerId}-status`);
+            if (status) {
+                status.textContent = `Needs at least ${ColliderPlayer.MIN_VERTICES} nodes to battle`;
+                status.style.color = '#ff6b6b';
+            }
+            return;
+        }
+
+        this.lockedPlayers.add(playerId);
+
         const lockBtn = doc.getElementById(`lock-p${playerId}`);
         const statusDiv = doc.getElementById(`p${playerId}-status`);
         const playerDiv = doc.getElementById(`create-player-${playerId}`);
