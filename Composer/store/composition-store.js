@@ -44,7 +44,8 @@
 //              unhonored: [{ bar, ratio, asked, got }], lead: [{ phrase, lineId }], grid: { was, now } | null,
 //              p: { was, cells } | null (STEP 4c-prime: an asked drumOptions.p the new meter's cells outgrew),
 //              clave: { id, pattern } | null (phase E: a chosen clave the new composition doesn't offer),
-//              arps: [{ part, phrase, id }] (phase E: an arp pick the re-composed phrase no longer offers) } | null
+//              arps: [{ part, phrase, id }] (phase E: an arp pick the re-composed phrase no longer offers),
+//              bass: [{ bar, id }] (phase H: a bass pick the re-composed bar no longer offers) } | null
 //   progression the pin list Compose is sent: [ratio | { ratio, quality } | null] a bar (the lab's root picks are the
 //              ratio form; a Compose bakes the chord edits in here as { ratio, quality })
 // A new cycle of the same row carries the chord edits as pins (into `progression`), the typed field and the drum
@@ -69,10 +70,23 @@
 //            never does. Phase E: a pick is keyed by the phrase at its time, so a change of Time drops the part's picks
 //            (one undo step restores both); a re-compose keeps a pick its phrase still offers (an arp's id is a hash of
 //            its notes) and drops the rest into `dropped.arps`.
+//
+// The bass and the chords' voicing (BASS_VOICING_ORDER.md phase H; DESIGN_NOTES "The window: bass and voicing (phase
+// H)"; the controller acts on them):
+//   bass     { density ('roots' | 'sparse' | 'moving' | 'walking'), lock ('free' | 'kick' | 'clave'), picks ({ [bar]: a
+//            bass line's id }) } (core/bass.js' options; BASS_DEFAULTS, Sparse · Free · none, is Compose's own bass). Like
+//            the arps: in the undo snapshots, kept through a re-compose and the glyph's recall, carried to a new cycle of
+//            the same row. `spec` plays it (arrangeBass over composed + edits, unless it is the default); `composed` never
+//            does. A pick is keyed by the bar at a density and lock, so a change of either drops the picks (one undo step
+//            restores both); a re-compose keeps a pick its bar still offers and drops the rest into `dropped.bass`.
+//   voicing  'led' | 'close' (compose.js' override; 'led' is Compose's default). Live (rearrange.js `revoice`, the fold's
+//            first step, so the edits after it voice as Compose would), in the snapshots, kept and carried like the bass;
+//            Compose is sent `voicing: 'close'` when it is close, so a re-compose needs no switch.
 
 import { PART_IDS } from '../core/compose.js';
 import { DEFAULT_KIT } from '../core/drums.js';
 import { ARP_PARTS, ARP_DEFAULTS } from '../core/arp.js';
+import { BASS_DEFAULTS } from '../core/bass.js';
 
 export const STORE_VERSION = 'composition-store-v1';
 /** how many rhythms the store keeps (proposed) */
@@ -85,6 +99,10 @@ export const UNDO_LIMIT = 50;
 export const emptyEdits = () => ({ chords: {}, lead: {}, order: [], grid: null, clave: null });
 /** B2: every Arp part in Line, its knobs at the defaults (phase D: time ×1, no picks) */
 export const lineArps = () => Object.fromEntries(ARP_PARTS.map((id) => [id, { mode: 'line', time: ARP_DEFAULTS.time, picks: {} }]));
+/** phase H: Compose's own bass (Sparse, Free, no picks) */
+export const composedBass = () => ({ density: BASS_DEFAULTS.density, lock: BASS_DEFAULTS.lock, picks: {} });
+/** phase H: is this bass Compose's own (no arrangement runs)? */
+export const isComposedBass = (b) => !b || (b.density === BASS_DEFAULTS.density && b.lock === BASS_DEFAULTS.lock && !Object.keys(b.picks ?? {}).length);
 const copy = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
 /** a pin list entry copied (a ratio, { ratio, quality }, or null) */
 const copyPin = (x) => (x && typeof x === 'object' ? { ...x } : x);
@@ -112,6 +130,8 @@ export function newCompositionState({ layers = [0, 0, 0, 0], cycleSeconds = 10, 
     placements: null,
     // B2 (COMP_ARP_ORDER.md): the lead's and the inner's mode, Line or Arp, and the Arp's knobs
     arps: lineArps(),
+    // phase H (BASS_VOICING_ORDER.md): the bass's density, lock and picks, and the chords' voicing
+    bass: composedBass(), voicing: 'led',
   };
 }
 
@@ -136,6 +156,9 @@ function inheritEdits(to, from) {
   to.placements = copy(from.placements ?? null);
   // B2: the Arp modes (proposed: a choice of the row's composition, like the drum options)
   to.arps = copy(from.arps ?? lineArps());
+  // phase H: the bass and the voicing (proposed: as the arps)
+  to.bass = copy(from.bass ?? composedBass());
+  to.voicing = from.voicing ?? 'led';
   return to;
 }
 
