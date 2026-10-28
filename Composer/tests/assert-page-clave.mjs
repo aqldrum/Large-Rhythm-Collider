@@ -17,6 +17,11 @@
 //     the partner's; a frame clave picked by id (setClave, claveOf), equal to a Compose given it; a chord swap that
 //     re-reads a bar's clave said in the edit note, the comp head and the perc following; "Compose dropped" naming a
 //     frame clave by its source; the caption
+//   • phase N (BASS_VOICING_ORDER.md Amendment 2): the picker re-ranked over the chords as they play after a chord swap
+//     and after a Chords Follow (rearrange's `claveAlternates`; what plays never switched), back to the trace's on undo;
+//     the comp's Density select (live, one undo step, equal to a Compose given that compDensity both ways, kept on a
+//     re-compose; a picked clave goes with a change, one undo restoring both); the tier said in the cell and the caption
+//     (a picked clave, the bars re-read); 16:12:9's sparse falling back to medium, in amber
 //   node Composer/tests/assert-page-clave.mjs
 import { makeDom, installGlobals } from './dom-stub.mjs';
 import { siteRhythm } from './site-scripts.mjs';
@@ -26,7 +31,8 @@ import { claveText, claveSource, parseFrameId } from '../core/claves.js';
 import { materialsOf, rearrange, applyRearrange, reclave } from '../core/rearrange.js';
 import { arrangeDrums } from '../core/drums.js';
 import { plotOf, indexOfTick, highlightsOf } from '../page/plot-highlights.js';
-import { buildScene, frameAt, compDetail } from '../page/trace-frames.js';
+import { buildScene, frameAt, compDetail, tierDetail } from '../page/trace-frames.js';
+import { densityWords } from '../core/claves.js';
 import { createComposerController } from '../perform/composer-controller.js';
 import { newCompositionState } from '../store/composition-store.js';
 
@@ -332,6 +338,109 @@ console.log('\n— phase L: the frame clave in the window (768:769, unpinned)');
   const scene = buildScene({ trace: S().trace, plot, final: tab.highlights(plotted()) }), said = scene.steps.find((x) => x.event.kind === 'part' && x.event.part === 'comp')?.data.detail;
   check(`the comp's caption reads the frame ("${said}")`, said === compDetail(scene.steps.find((x) => x.event.kind === 'part' && x.event.part === 'comp').event)
     && said.startsWith(`the clave from the frame, ${claveSource(S().composed.clave)} (${claveText(S().composed.clave)})`) && /every one in frame/.test(said));
+}
+
+console.log('\n— phase N: the picker re-ranked, the comp\'s density (768:769; 16:12:9)');
+{
+  const FL = [768, 769], m = materialsOf(S().composed), own = S().composed.clave;
+  const ev = () => S().trace.events.find((e) => e.kind === 'part' && e.part === 'comp');
+  const frameIds = () => rows().filter((b) => b.classList.contains('frame')).map((b) => b.dataset.key.slice('clave:'.length));
+  const scores = () => rows().filter((b) => b.classList.contains('frame')).map((b) => q(b, '.ctab-clave-score').textContent);
+  const fr = (alts) => alts.filter((a) => a.from.frame);
+  const caption = () => buildScene({ trace: S().trace, plot: plotOf(plotted()), final: tab.highlights(plotted()) }).steps.find((x) => x.event.kind === 'part' && x.event.part === 'comp')?.data.detail;
+  check('(768:769 composed, no edits: the picker is the trace\'s)', S().edits.order.length === 0 && !S().edits.clave && core.claveOf().reranked === false && J(core.claveOf().alternates.map((a) => a.id)) === J(ev().alternates.map((a) => a.id)));
+
+  // a chord swap whose frames re-rank the list (P30)
+  let sw = null;
+  for (let k = 0; k < S().composed.knobs.bars && !sw; k++) for (const cand of core.alternatesOf(k, 'chords')?.candidates ?? []) {
+    if (cand.current) continue;
+    const r = rearrange(S().composed, m.row, m.cells, { bar: k, chord: { rootTone: cand.root.ratio, quality: cand.quality } });
+    if (r.claveAlternates && J(fr(r.claveAlternates).map((a) => [a.id, a.score.toFixed(3)])) !== J(fr(ev().alternates).map((a) => [a.id, a.score.toFixed(3)]))) { sw = { k, cand, r }; break; }
+  }
+  check(`found a chord swap that re-ranks the frame claves (bar ${sw ? sw.k + 1 : '?'})`, !!sw);
+  if (sw) {
+    await core.swapChord(sw.k, sw.cand);
+    tab.selectCell('comp', sw.k);
+    const want = fr(sw.r.claveAlternates);
+    check(`the picker after the swap: re-ranked over the chords as they play (${want.length} frame claves, rearrange's claveAlternates by id and score), the legend says so`, core.claveOf().reranked && J(frameIds()) === J(want.map((a) => a.id))
+      && J(scores()) === J(want.map((a) => a.score.toFixed(3))) && /ranked again over the chords as they play/.test(q(inspector, '.ctab-legend')?.textContent ?? ''));
+    check('… what plays is the clave re-read, never switched (P30)', S().spec.clave.id === own.id && J(S().spec.clave) === J(applyRearrange(S().composed, sw.r).clave) && q(rowOf(own.id), '.ctab-alt-mark').textContent === '●C');
+    const said = caption();
+    check(`the comp's caption says the clave as it plays: re-read where the swap moved it, and the tier ("${said}")`, said === compDetail(ev(), tab.highlights(plotted()).arrangement.clave)
+      && (sw.r.reclavedBars?.length ? said.includes(`re-read in bar${sw.r.reclavedBars.length === 1 ? '' : 's'} ${sw.r.reclavedBars.map((b) => b + 1).join(', ')}`) : !/re-read/.test(said)) && said.endsWith('; the sparse–medium (10–50 %) tier'));
+    await click('.ctab-undo', left);
+    check('undo the swap: the trace\'s list again', !core.claveOf().reranked && J(frameIds()) === J(fr(ev().alternates).map((a) => a.id)));
+  }
+
+  // a Chords Follow (a lead runner-up whose phrase's chords are chosen again over it)
+  let fo = null;
+  const phrases = S().trace.events.find((e) => e.kind === 'harmony')?.lead?.phrases ?? [];
+  for (let p = 0; p < phrases.length && !fo; p++) for (const line of core.alternatesOf(p === 0 ? 0 : S().composed.knobs.bars - 1, 'lead')?.lines ?? []) {
+    if (line.current) continue;
+    const la = core.alternatesOf(p === 0 ? 0 : S().composed.knobs.bars - 1, 'lead');
+    const r = rearrange(S().composed, m.row, m.cells, { phrase: la.phrase, line: { notes: S().trace.lines[line.id].notes }, chordsFollow: true });
+    if (r.claveAlternates) { fo = { phrase: la.phrase, id: line.id, r }; break; }
+  }
+  check(`found a lead runner-up whose Chords Follow changes a chord (phrase ${fo ? fo.phrase + 1 : '?'})`, !!fo);
+  if (fo) {
+    await core.swapLead(fo.phrase, fo.id, { chordsFollow: true });
+    tab.selectCell('comp', 0);
+    check(`the picker after a Chords Follow: re-ranked (${fr(fo.r.claveAlternates).length} frame claves, rearrange's by id and score)`, core.claveOf().reranked && J(frameIds()) === J(fr(fo.r.claveAlternates).map((a) => a.id))
+      && J(scores()) === J(fr(fo.r.claveAlternates).map((a) => a.score.toFixed(3))) && S().spec.clave.id === own.id);
+    await core.undo();
+    check('undo: the trace\'s list again', !core.claveOf().reranked);
+  }
+
+  // the comp's density (rule 10, P27)
+  tab.selectCell('comp', 0);
+  const sel = () => q(inspector, '.ctab-comp-density'), tierEl = () => q(inspector, '.ctab-comp-tier'), c0 = S().spec.clave;
+  check(`the comp cell: Density, Sparse–Med | Sparse | Medium | Dense, Sparse–Med chosen; the tier as it plays ("${tierEl()?.textContent}")`, !!sel() && qa(sel(), 'option').map((o) => o.textContent).join('|') === 'Sparse–Med|Sparse|Medium|Dense'
+    && sel().value === 'sparse-med' && c0.compDensity.asked === 'sparse-med' && tierEl()?.textContent === `${Math.round(100 * c0.share)} % of its steps (${c0.tier})` && !tierEl().classList.contains('amber'));
+  const n0 = composes, u0 = S().undo.length;
+  sel().value = 'dense'; dom.fire(sel(), 'change'); await settle();
+  const dense = compose(FL, T, { seed: S().input.seed, overrides: { compDensity: 'dense' }, worker: S().table === 'full' }), rc = reclave(S().composed, m.row, m.cells, { density: 'dense' });
+  check('Density → Dense: live (no Compose), one undo step; the comp, its clave and the perc byte for byte a Compose given compDensity dense', composes === n0 && S().undo.length === u0 + 1 && S().compDensity === 'dense'
+    && S().spec.clave.compDensity.asked === 'dense' && J(partOf('comp')) === J(partOf('comp', dense)) && J(S().spec.clave) === J(dense.clave) && J(S().drums.hits) === J(arrangeDrums(dense, S().drumOptions).hits));
+  check(`… the picker lists the dense tier's (${fr(rc.claveAlternates).length}: reclave's claveAlternates), each dense; the select and the tier say it ("${tierEl()?.textContent}")`, core.claveOf().reranked && J(frameIds()) === J(fr(rc.claveAlternates).map((a) => a.id))
+    && fr(rc.claveAlternates).every((a) => a.tier === 'dense') && sel().value === 'dense' && tierEl()?.textContent.startsWith(`${Math.round(100 * S().spec.clave.share)} % of its steps (dense)`));
+  check(`the caption says the clave as it plays and names the tier, not a pick ("${caption()}")`, caption().endsWith(`; ${tierDetail(S().spec.clave.compDensity)}`) && tierDetail(S().spec.clave.compDensity) === 'the dense (50–85 %) tier'
+    && caption().startsWith(`the clave from the frame, ${claveSource(S().spec.clave)} (${claveText(S().spec.clave)})`) && !/picked/.test(caption()));
+  await click('.ctab-undo', left);
+  check('undo: Sparse–Med, Compose\'s clave and list again', S().compDensity === 'sparse-med' && sel().value === 'sparse-med' && J(S().spec.clave) === J(S().composed.clave) && !core.claveOf().reranked);
+  await click('.ctab-redo', left);
+  check('redo: Dense again', S().compDensity === 'dense' && J(S().spec.clave) === J(dense.clave));
+  core.setSeed(S().input.seed);
+  q(left, '.ctab-go').click(); await settle();
+  check('Compose again: the density kept (sent as compDensity), nothing to switch after it', composes === n0 + 1 && S().composed.input.overrides.compDensity === 'dense' && S().compDensity === 'dense' && S().spec === S().composed
+    && J(S().spec.clave) === J(dense.clave) && q(inspector, '.ctab-comp-density')?.value === 'dense');
+  // a clave picked from the list goes with a density change; one undo restores both
+  const other = fr(core.claveOf().alternates).find((a) => a.id !== S().spec.clave.id) ?? core.claveOf().alternates.find((a) => !a.current);
+  await core.setClave({ id: other.id, relation: 'fill' });
+  check(`a clave picked in the window: the caption says so ("${caption()}")`, /, picked in the window\)/.test(caption()) && /in its gaps/.test(caption()));
+  const u1 = S().undo.length;
+  await core.setCompDensity('sparse-med');
+  const plain = compose(FL, T, { seed: S().input.seed, worker: S().table === 'full' });
+  check(`a picked clave (${other.id}) then Sparse–Med: the pick goes (Fill stays), the default tier's best plays, as a Compose given none (one undo step)`, S().undo.length === u1 + 1 && J(S().edits.clave) === J({ relation: 'fill' })
+    && S().spec.clave.id === plain.clave.id && J(S().spec.clave.patterns) === J(plain.clave.patterns) && S().spec.clave.relation === 'fill');
+  await core.undo();
+  check('… undo: Dense and the pick together', S().compDensity === 'dense' && S().spec.clave.id === other.id && J(S().edits.clave) === J({ id: other.id, relation: 'fill' }));
+  await core.undo(); await core.setCompDensity('sparse-med');
+  check('setCompDensity refuses a tier it doesn\'t know', (() => { try { core.setCompDensity('loud'); return false; } catch (e) { return /one of sparse-med, sparse, medium, dense/.test(e.message); } })());
+  check('JSON export carries the density when it isn\'t the default', core.editsExport()?.compDensity === undefined && (await core.setCompDensity('medium')).ok && core.editsExport()?.compDensity === 'medium');
+  await core.undo();
+
+  // 16:12:9: every tone in tune, no sparse clave: Sparse falls back to medium, said in amber (P27, P31)
+  setRhythm([16, 12, 9], T);
+  q(left, '.ctab-go').click(); await settle();
+  tab.selectCell('comp', 0);
+  await core.setCompDensity('sparse'); tab.selectCell('comp', 0);
+  const cd = S().spec.clave.compDensity, said = caption();
+  check(`16:12:9 asked Sparse: none in the tier, so medium's best plays, said in amber ("${tierEl()?.textContent}")`, S().status === 'ready' && cd.asked === 'sparse' && cd.fellBack && cd.played === 'medium' && tierEl()?.classList.contains('amber')
+    && tierEl()?.textContent.startsWith(`no clave in the sparse tier, so the nearest: ${densityWords('medium')}`) && S().compDensity === 'sparse' && sel().value === 'sparse');
+  check(`… and the caption ("${said}")`, said.endsWith('; no clave in the sparse tier, so the nearest, medium (25–50 %)'));
+  await core.setCompDensity('dense'); tab.selectCell('comp', 0);
+  check(`… asked Dense: a dense clave plays (${S().spec.clave.id}, ${Math.round(100 * S().spec.clave.share)} %)`, !S().spec.clave.compDensity.fellBack && S().spec.clave.tier === 'dense' && !tierEl()?.classList.contains('amber'));
+  await core.setCompDensity('sparse-med');
 }
 
 bridge.hideTab();

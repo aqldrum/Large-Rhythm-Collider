@@ -7,7 +7,7 @@
 // `tick` among the plotted onsets (binary search, exact), so every highlighted index is a real dot of the rhythm that
 // is plotted, and a spec of another rhythm maps to nothing (null).
 //
-//   highlightsOf({ spec, parts, drums }, plot) → { parts: { [id]: { indices, notes, enabled, color } }, … } | null
+//   highlightsOf({ spec, parts, drums, composed, picked }, plot) → { parts: { [id]: { indices, notes, enabled, color } }, … } | null
 //   playheadAt(plot, phaseX, p, share)        → { index, frac, tick }: where spec time p (0..1 of the cycle) is
 //   soundingAt(highlights, t)                 → [{ part, index }]: the dots sounding at spec time t (seconds)
 //
@@ -78,11 +78,27 @@ export const litTickOf = (n, sources) => (n.borrowed ? sources.get(n.from) ?? nu
  *       rings (sorted, unique: the borrowed tones' source onsets not lit otherwise; drawn hollow) } },
  *     arrangement: { voicing ('led' | 'close'), voicingStats (the voicing pass's, or null), bass: { density, lock (the one
  *       that ran), asked (the lock asked), refused (why it fell back, or null), (hits, missedHits: a lock's; walkFill:
- *       the bars a walk can't fill; phase L) } } (BASS_VOICING_ORDER.md phase H: what the trace's caption says the chords
- *       and the bass play as) }
+ *       the bars a walk can't fill; phase L) }, clave (phase N, P31: the comp's clave as it plays, a reference: { id, from,
+ *       read, steps, span, pattern, patterns?, relation, strokes (how many), partner: { pattern, patterns?, strokes, shared },
+ *       compDensity?, share?, tier?, reread (the bars a chord edit re-read the same clave in: `composed`, Compose's own
+ *       spec, given; else none), picked (`picked`: a clave chosen in the window) }; absent in notes) } (BASS_VOICING_ORDER.md phase H: what the trace's caption says the
+ *       chords, the bass and (phase N) the comp play as) }
  *   `missed` counts notes or strokes whose tick is not a plotted onset (never, for a matching spec).
  */
-export function highlightsOf({ spec, parts = null, drums = undefined } = {}, plot) {
+/** phase N: a spec clave as the caption reads it (counts, not the strokes); `was` Compose's own clave: the bars a chord edit
+ *  re-read (the same clave, its strokes moved there: phase I, P20), `reread`; `picked` a clave chosen in the window */
+function claveRefOf(c, was = null, picked = false) {
+  const p = c.partner ?? {};
+  const barKey = (x, k) => JSON.stringify((x?.strokes ?? []).filter((y) => y.bar === k).map((y) => y.node));
+  const N = Math.max(0, ...(c.strokes ?? []).map((y) => y.bar + 1), ...(was?.strokes ?? []).map((y) => y.bar + 1));
+  const reread = was && was.id === c.id && Array.isArray(c.strokes) && Array.isArray(was.strokes)
+    ? Array.from({ length: N }, (_, k) => k).filter((k) => barKey(c, k) !== barKey(was, k) || barKey(c.partner, k) !== barKey(was.partner, k)) : [];
+  return { id: c.id, from: { ...(c.from ?? {}) }, ...(c.read ? { read: c.read } : {}), steps: c.steps, span: c.span ?? 1, pattern: c.pattern, ...(c.patterns ? { patterns: [...c.patterns] } : {}),
+    relation: c.relation, strokes: Array.isArray(c.strokes) ? c.strokes.length : c.strokes ?? 0,
+    partner: { pattern: p.pattern, ...(p.patterns ? { patterns: [...p.patterns] } : {}), strokes: Array.isArray(p.strokes) ? p.strokes.length : p.strokes ?? 0, shared: p.shared ?? 0 },
+    ...(c.compDensity ? { compDensity: { ...c.compDensity } } : {}), ...(c.share != null ? { share: c.share, tier: c.tier ?? null } : {}), reread, picked: !!picked };
+}
+export function highlightsOf({ spec, parts = null, drums = undefined, composed = null, picked = false } = {}, plot) {
   if (!matchesPlot(spec, plot)) return null;
   const T = spec.knobs.cycleSeconds, phase = spec.knobs.phase, out = {};
   let missed = 0, total = 0;
@@ -113,7 +129,9 @@ export function highlightsOf({ spec, parts = null, drums = undefined } = {}, plo
     bass: arr ? { density: arr.density, lock: arr.stats?.lock ?? arr.lock, asked: arr.lock, refused: arr.refused ?? null,
       // phase L: the lock's hits covered and missed, and the bars a walk can't fill (bass.js' stats)
       ...(arr.stats?.hits != null ? { hits: arr.stats.hits, missedHits: arr.stats.missedHits } : {}), ...(arr.stats?.walkFill ? { walkFill: arr.stats.walkFill } : {}) }
-      : { density: 'sparse', lock: 'free', asked: 'free', refused: null } };
+      : { density: 'sparse', lock: 'free', asked: 'free', refused: null },
+    // phase N (P31): the comp's clave as it plays (a clave picked in the window, its tier, the bars re-read under new chords)
+    ...(spec.clave ? { clave: claveRefOf(spec.clave, composed?.clave ?? null, picked) } : {}) };
   return { grid: plot.grid, n: plot.n, cycleSeconds: T, phaseX: phase[0] / phase[1], share: loopShare(spec), plot, parts: out, missed, total, arrangement };
 }
 

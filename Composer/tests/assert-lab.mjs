@@ -412,7 +412,10 @@ console.log('\n— drums');
   check('the drums play on a bus of their own, into the master', dp.buses.drums && dp.buses.drums.outs.includes(dp.master));
   dlab.setDrums({ mode: 'partition', fills: false });
   const live = dlab.state.drums;
-  check('a mode change while playing re-arranges from the spec, nothing re-composed, still playing', dlab.state.spec === dspec && dp.playing && dlab.button() === 'Stop' && live.mode === 'partition'
+  // BASS_VOICING_ORDER.md Amendment 2, phase N: Compose's own bass (Moving · Kick) covers the kick that plays, so a mode
+  // whose kick moved arranges the bass again over it (only the bass: the other parts are Compose's own objects)
+  check('a mode change while playing re-arranges from the spec, nothing re-composed (only the bass follows the new kick), still playing', dlab.state.composed === dspec
+    && dlab.state.spec.parts.every((p) => p.id === 'bass' || dspec.parts.includes(p)) && dp.playing && dlab.button() === 'Stop' && live.mode === 'partition'
     && JSON.stringify(live) === JSON.stringify(arrangeDrums(dspec, { mode: 'partition', fills: false, enabled: true, kit: DEFAULT_KIT })) && JSON.parse(dlab.exportJSON()).drums.mode === 'partition');
   dlab.setLevel('drums', 0.4);
   check('the drums level rides the drums bus', dp.buses.drums.gain.calls.some((c) => c[0] === 'setTargetAtTime' && c[1] === 0.4));

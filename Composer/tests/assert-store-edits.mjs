@@ -64,8 +64,11 @@ const alt1 = A.c.alternatesOf(1, 'chords');
 check(`alternatesOf(bar, 'chords'): the trace's ${alt1.candidates.length} candidates (12 kept), the composed one current`, alt1.candidates.length === 12 && alt1.currentIndex === alt1.composedIndex && alt1.candidates[alt1.currentIndex].current && alt1.candidates.filter((x) => x.current).length === 1);
 const pick = alt1.candidates.find((x) => !x.current && !x.composed);
 const r1 = await A.c.swapChord(1, pick);
-const want1 = applyRearrange({ ...S.composed, drums: undefined }, rearrange({ ...S.composed, drums: undefined }, row, cells, { bar: 1, chord: { rootTone: pick.root.ratio, quality: pick.quality } }));
-check(`swapChord(1, candidate): bar 2 plays ${S.spec.chords[1].name}; the spec is rearrange's own result`, r1.ok && S.spec.chords[1].rootTone === pick.root.ratio && S.spec.chords[1].quality === pick.quality && J({ ...S.spec, drums: undefined }) === J(want1));
+// phase N (BASS_VOICING_ORDER.md Amendment 2): the fold's base keeps Compose's drums (Compose's own bass covers their kick,
+// so a swap re-mines its bar at Moving · Kick), so rearrange runs over the composed spec as it is; the drums, which the
+// window arranges itself (state.drums), are compared apart
+const want1 = applyRearrange(S.composed, rearrange(S.composed, row, cells, { bar: 1, chord: { rootTone: pick.root.ratio, quality: pick.quality } }));
+check(`swapChord(1, candidate): bar 2 plays ${S.spec.chords[1].name}; the spec is rearrange's own result`, r1.ok && S.spec.chords[1].rootTone === pick.root.ratio && S.spec.chords[1].quality === pick.quality && J({ ...S.spec, drums: undefined }) === J({ ...want1, drums: undefined }));
 check('… Compose\'s spec untouched, the entry not dirty, nothing re-solved', J(S.composed) === composedJSON && !S.dirty && A.solves() === 1 && A.c.button() === 'Perform');
 check('… the edit recorded: { rootTone, quality, from: swap }, and its result says which bars moved', J(S.edits.chords[1]) === J({ rootTone: pick.root.ratio, quality: pick.quality, from: 'swap' }) && J(S.edits.order) === J(['chord:1']) && r1.changedBars.includes(1));
 check('… the parts as they play now are the edited ones (the lead kept: decision 1)', notesOf(S.spec, 'lead') === notesOf(S.composed, 'lead') && J(A.c.currentParts().map((p) => p.notes.length)) === J(S.spec.parts.map((p) => p.notes.length)) && notesOf({ parts: A.c.currentParts() }, 'chords') === notesOf(S.spec, 'chords'));
@@ -76,7 +79,7 @@ check('alternatesOf marks the swapped candidate current now (the composed one st
 const alt3 = A.c.alternatesOf(3, 'chords'), pick3 = alt3.candidates.find((x) => !x.current);
 await A.c.swapChord(3, pick3);
 const want2 = applyRearrange(want1, rearrange(want1, row, cells, { bar: 3, chord: { rootTone: pick3.root.ratio, quality: pick3.quality } }));
-check('two swaps: rearrange twice, in the order made', J({ ...S.spec, drums: undefined }) === J(want2) && J(S.edits.order) === J(['chord:1', 'chord:3']));
+check('two swaps: rearrange twice, in the order made', J({ ...S.spec, drums: undefined }) === J({ ...want2, drums: undefined }) && J(S.edits.order) === J(['chord:1', 'chord:3']));
 // the parts' live controls, over edits
 A.c.setPart('chords', { sound: 'marimba', enabled: false });
 const alt0 = A.c.alternatesOf(0, 'chords');
@@ -119,16 +122,16 @@ console.log('\n— a lead swap');
   const line = la.lines[1];
   const { row: r2, cells: c2 } = materialsOf(s.composed);
   const res = await L.c.swapLead(la.phrase, line.id);
-  const want = applyRearrange({ ...s.composed, drums: undefined }, rearrange({ ...s.composed, drums: undefined }, r2, c2, { phrase: la.phrase, line: { notes: s.trace.lines[line.id].notes } }));
-  check('swapLead(phrase, runner-up): rearrange\'s own result; the chords stay (they don\'t follow by default)', res.ok && J({ ...s.spec, drums: undefined }) === J(want) && names(s.spec) === names(s.composed) && J(s.edits.lead[la.phrase]) === J({ lineId: line.id, chordsFollow: false }));
+  const want = applyRearrange(s.composed, rearrange(s.composed, r2, c2, { phrase: la.phrase, line: { notes: s.trace.lines[line.id].notes } }));
+  check('swapLead(phrase, runner-up): rearrange\'s own result; the chords stay (they don\'t follow by default)', res.ok && J({ ...s.spec, drums: undefined }) === J({ ...want, drums: undefined }) && names(s.spec) === names(s.composed) && J(s.edits.lead[la.phrase]) === J({ lineId: line.id, chordsFollow: false }));
   check('… the runner-up current now', L.c.alternatesOf(0, 'lead').lines[1].current && L.c.alternatesOf(0, 'lead').currentId === line.id);
   // a chord edit in the phrase gives way to chords that follow
   const a1 = L.c.alternatesOf(1, 'chords');
   await L.c.swapChord(1, a1.candidates.find((x) => !x.current));
   check('a chord edit in the phrase, over the swapped lead', 1 in s.edits.chords);
   await L.c.swapLead(la.phrase, line.id, { chordsFollow: true });
-  const want2 = applyRearrange({ ...s.composed, drums: undefined }, rearrange({ ...s.composed, drums: undefined }, r2, c2, { phrase: la.phrase, line: { notes: s.trace.lines[line.id].notes }, chordsFollow: true }));
-  check('chords follow: the phrase\'s chord edits give way, and the spec is rearrange\'s with chordsFollow', !(1 in s.edits.chords) && J({ ...s.spec, drums: undefined }) === J(want2) && s.edits.lead[la.phrase].chordsFollow === true);
+  const want2 = applyRearrange(s.composed, rearrange(s.composed, r2, c2, { phrase: la.phrase, line: { notes: s.trace.lines[line.id].notes }, chordsFollow: true }));
+  check('chords follow: the phrase\'s chord edits give way, and the spec is rearrange\'s with chordsFollow', !(1 in s.edits.chords) && J({ ...s.spec, drums: undefined }) === J({ ...want2, drums: undefined }) && s.edits.lead[la.phrase].chordsFollow === true);
   await L.c.swapLead(la.phrase, la.keptId);
   check('its own line again removes the lead edit: Compose\'s spec exactly', !L.c.hasEdits() && s.spec === s.composed);
   let threw = false; try { L.c.swapLead(0, 'no-such-line'); } catch { threw = true; }
@@ -286,9 +289,9 @@ class FakeWorker {
   const tWorker = performance.now() - t0;
   const m = materialsOf(s.composed);
   t0 = performance.now();
-  const local = rearrange({ ...s.composed, drums: undefined }, m.row, m.cells, { bar: 2, chord: { rootTone: cand.root.ratio, quality: cand.quality } });
+  const local = rearrange(s.composed, m.row, m.cells, { bar: 2, chord: { rootTone: cand.root.ratio, quality: cand.quality } });
   const tMain = performance.now() - t0;
-  check('… it lands: the same spec as rearrange on this thread', r.ok && !big.applying() && J({ ...s.spec, drums: undefined }) === J(applyRearrange({ ...s.composed, drums: undefined }, local)));
+  check('… it lands: the same spec as rearrange on this thread', r.ok && !big.applying() && J({ ...s.spec, drums: undefined }) === J({ ...applyRearrange(s.composed, local), drums: undefined }));
   const b = big.alternatesOf(3, 'chords');
   t0 = performance.now();
   await big.swapChord(3, b.candidates.find((x) => !x.current));
@@ -314,9 +317,9 @@ class FakeWorker {
   const p = small.swapLead(la.phrase, la.lines[1].id, { smooth: true });
   check('smoothPhrase always goes to the worker', small.applying() && worker.posted.includes('rearrange'));
   const r = await p, m = materialsOf(small.state.composed);
-  const step1 = applyRearrange({ ...small.state.composed, drums: undefined }, rearrange({ ...small.state.composed, drums: undefined }, m.row, m.cells, { bar: 1, chord: small.state.edits.chords[1] }));
+  const step1 = applyRearrange(small.state.composed, rearrange(small.state.composed, m.row, m.cells, { bar: 1, chord: small.state.edits.chords[1] }));
   const want = applyRearrange(step1, rearrange(step1, m.row, m.cells, { phrase: la.phrase, line: { notes: small.state.trace.lines[la.lines[1].id].notes } }, { smoothPhrase: true }));
-  check('… and lands as rearrange with smoothPhrase', r.ok && J({ ...small.state.spec, drums: undefined }) === J(want) && small.state.edits.lead[la.phrase].smooth === true);
+  check('… and lands as rearrange with smoothPhrase', r.ok && J({ ...small.state.spec, drums: undefined }) === J({ ...want, drums: undefined }) && small.state.edits.lead[la.phrase].smooth === true);
 }
 
 {

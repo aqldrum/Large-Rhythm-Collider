@@ -389,12 +389,13 @@ rule 13 asks for a check, not new code (P32).
   revised: the comp's tiers on 16:12:9 and 768:784, the bass's default with drums on and off, Roots' cents, the picker
   after a Chords Follow.
 
-## Browser and rig checklist (for Avery; finished in H4, rewritten in L4 for the whole order and Amendment 1)
+## Browser and rig checklist (for Avery; finished in H4, rewritten in L4 for the whole order and Amendment 1, revised in N3 for Amendment 2)
 
 Open the Partitions window's **Composer** tab, generate the rhythm on the main page, press **Compose**, then **Perform**.
 Everything below is live: no button should go back to Compose, and the header's **↶** (⌘Z) undoes each change. Turn on
 the header's **details** toggle where an item says "Details". Seed 1 unless an item says otherwise; the exact patterns
-and counts depend on the cycle, so read them as what to look for, not as the only right answer.
+and counts depend on the cycle, so read them as what to look for, not as the only right answer. Since Amendment 2 the
+bass opens at **Moving · Kick** (Compose's own) and the comp at **Sparse–Med**; an item that needs another setting says so.
 
 - **Voicing, the loop closed.** Click a cell in the **Chords** row. Under the cell's head: "voicing", **Close | Led**
   (Led on), and its stats beside it, ending "· loop closed" ("1 lifted · 311¢ a change · loop closed" on 768:769).
@@ -422,43 +423,89 @@ and counts depend on the cycle, so read them as what to look for, not as the onl
   the chosen clave should read "… · chord tones" (a "tones in frame" reading would be close to a pulse). Its strokes
   should sound like a clave, with gaps, not a strum on every step. Compare 768:769, whose clave reads "tones in frame".
 - **The clave picker.** On the same Comping cell, under the clave line:
-  - The claves to choose from are the frame's: each named by its source ("layer A · 16 steps · tones in frame") with its
+  - The claves to choose from are the frame's, those in the density's tier (Sparse–Med by default): each named by its source ("layer A · 16 steps · tones in frame") with its
     score beside it in green, best first; ● on the one playing, C on Compose's. With **details** on, each shows its bars'
     patterns too.
   - After them come **son**, **rumba** and **bossa** (dashed borders), each tagged "lands in frame only": their fixed
     steps land only on onsets in frame, and a step with none is silent.
   - While performing, click a frame clave: it comes in at the next bar line ("auditioning…"); the comp, the perc and the
     head's pattern change. Click it again or **Keep** to keep it ("chosen" on the line); **Revert** (or Esc) takes it back.
+- **The comp's density, 16:12:9** (Amendment 2, rule 10). Compose 16:12:9 and click a **Comping** cell.
+  - Under the clave line: "density **[Sparse–Med ▾]**" and beside it "25 % of its steps (medium)". The clave reads "layer
+    A · 8 steps · guide tones" (`...xx... x......x`): 4 strokes in 2 bars. Before Amendment 2 this row struck 15 times in
+    2 bars, close to a pulse; you should now hear a comp with gaps.
+  - Pick **Sparse**: the line turns amber, "no clave in the sparse tier, so the nearest: medium (25–50 %) · 25 % of its
+    steps (medium)". Nothing should change in the sound (this row has no sparse clave, so the same one plays).
+  - Pick **Dense**: "69 % of its steps (dense)", the clave "layer A · 8 steps · root and fifth". The comp should strike
+    nearly every step. The list under it now holds the dense claves only. ⌘Z goes back to Sparse, then Sparse–Med, one
+    step each, nothing composed.
+- **The comp's density, 768:784.** Compose 768:784 and click a **Comping** cell. The default reads about "50 % of its steps
+  (medium)" (`x.x.x.x.` each bar).
+  - Step through **Sparse**, **Medium** and **Dense** while performing. Each changes the comp and the perc at once, with no
+    Compose. Sparse should sound clearly thinner, Dense busier, and none should fall back (no amber).
+  - Leave it on **Dense**, change the seed and back, then **Compose**: the select still reads Dense, and the same clave
+    plays.
+  - Pick a clave from the list, then change the density: the pick goes (the new tier's best plays; Sync | Fill stays).
+    One ⌘Z brings back both the density and the pick.
+  - With **Show the work** on, Compose: the comp's caption ends with the tier ("…; the dense (50–85 %) tier"). A clave
+    picked in the list says ", picked in the window".
+- **The picker after a Chords Follow** (rule 14). On 768:769, click a **Lead** cell, turn on **chords follow**, and click one of
+  the phrase's other lines (while performing it lands at the next bar line; then **Keep**). Click a **Comping** cell.
+  - The frame claves' order and scores should differ from before (⌘Z and compare). With **details** on, the legend adds
+    "ranked again over the chords as they play".
+  - ● stays on Compose's clave (C). The list re-ranks, and what plays is only re-read under the new chords, never switched.
+  - The same after a chord swap (a **Chords** cell's other chord) and after a typed chord in the field. ⌘Z brings back the
+    list as composed.
 - **A chord swap re-reads the clave.** On 768:769, click a cell in the **Chords** row and click one of its other chords
   (an alternate). The note under the list should say "… · the clave re-read in bar N (its new frame)" (not every swap
   moves a stroke: if it doesn't say so, try another chord or bar). Click the
   **Comping** cell of that bar: its head shows the bar's clave read under the new chord (the shape can stay; the strokes
-  move to that chord's in-frame strikes), and you should hear the comp and the perc there change with it. **Revert** puts
-  the old chord, clave and all, back.
-- **Bass densities.** Click a cell in the **Bass** row. A row reads "density [Sparse ▾]  lands on Free | Kick | Clave".
-  - Pick each density on a sparse row (8:7:6:5) and a dense one (768:784): **Roots** one note a chord, on the change;
-    **Sparse** as before; **Moving** busier; **Walking** a note every slot (8 a bar on 16-slot rows), stepping toward each
-    next chord's root. The cell's head tag names it ("walking"). With **details** on, a line under the row counts the
-    notes a bar, the bars rooted and the ones with a note on the one.
-- **Walking fills what it can.** On 768:769 pick **Walking**, then click Bass cells bar by bar. A bar that can't walk every
+  move to that chord's in-frame strikes), and you should hear the comp and the perc there change with it. With **Show
+  the work** on, the comp's caption says "…, re-read in bar N (a new chord)". **Revert** puts the old chord, clave and
+  all, back.
+- **The bass's default, the drums on** (rule 11). Compose any row and click a cell in the **Bass** row. It opens at
+  "density **[Moving ▾]**  lands on Free | **Kick** | Clave", Kick lit. The head's tag reads "moving · covers the kick",
+  and the bar says "covers 2 of 2 kicks". You should hear a bass note with every kick, and a few more between them.
+  - On 8:7:6:5 one bar reads "covers 1 of 2 kicks · 1 missed (slot N): no onset in frame there, so it rests", the
+    missed part in amber. That kick should sound with no bass note.
+  - Pick **Sparse**, then click **Free**: that's the bass from before Amendment 2. Click **Moving**, then **Kick**:
+    Compose's own again.
+- **The bass's default, the drums off or in another mode.** With the bass at Compose's own (Moving · Kick):
+  - Turn the drums **off** (the **Drums** lane's **on** toggle). The bass cell turns amber: "Kick can't land now (the drums
+    are off: there is no kick to land on), so the bass lands anywhere". Kick greys out. The bass keeps playing, now
+    Moving · Free. Drums **on**: the amber goes, and the bass is Compose's again.
+  - Leave them off and **Compose** again (the seed changed and back): the same amber line. The bass doesn't cover a kick
+    that doesn't play.
+  - Drums on, click a **Drums** cell and pick the preset **four** (four on the floor). The bass cell says "Compose's own,
+    arranged again over the kick as the drums play now", and each bar counts 4 kicks ("covers 3 of 4 kicks …" where one
+    has no onset in frame). You should hear the bass land on the four. Back to **backbeat**: the line goes, and it's
+    Compose's bass again.
+- **Bass densities.** On a Bass cell, pick each density on a sparse row (8:7:6:5) and a dense one (768:784), with **Free**
+  clicked so the kick doesn't shape them: **Roots** one note a chord, on the change; **Sparse** as before Amendment 2;
+  **Moving** busier; **Walking** a note every slot (8 a bar on 16-slot rows), stepping toward each next chord's root. The
+  cell's head tag names it ("walking"). With **details** on, a line under the row counts the notes a bar, the bars rooted
+  and the ones with a note on the one.
+- **Walking fills what it can.** On 768:769 pick **Walking** and click **Free**, then click Bass cells bar by bar. A bar that can't walk every
   slot (bars 1 and 3 here) says "walks 6 of 8: a rest where no step fits" (or 5 or 7): you should hear a walk with one or
   two rests, not a single root note. A bar that walks full shows no such line. With **details** on, the stats end
   "· 2 walk what they can".
-- **Roots and its runner-ups.** Pick **Roots** on 768:769 and click Bass cells. "Bass lines · bar N" lists the root's other
-  notes in frame, each named by its tone and slot ("769/768, slot 1"), ● and C on Roots' own; bar 2 offers several, a bar
-  with one only lists it. "no runner-ups to choose from" is gone. While performing, click one: it comes in at the next bar
-  line; you should hear the bass note shift slightly in time or tuning (the root's ±15¢ cluster). Click it again or
-  **Keep**; **Revert** (or Esc) takes it back. With **details** on, each shows how far it sits off the change.
-- **Lands on Kick: it covers the kick.** On the same Bass cell, with the default backbeat (or another layered drum mode):
-  - Hover **Kick**: its title reads "covers the kick: every kick gets a note, and the density adds the rest". The head's
-    tag reads "moving · covers the kick" (or the density you chose).
-  - Click **Kick**: every kick should have a bass note with it, and Sparse and Moving may add notes between the kicks (on a
-    backbeat's 8 slots, Sparse plays 2–3 a bar, Moving 3–5). Walking still walks, its notes on the kicks.
-  - Each Bass cell says "covers 2 of 2 kicks". On 8:7:6:5 one bar should say "covers 1 of 2 kicks · 1 missed (slot N): no
-    onset in frame there, so it rests", the missed part in amber, and that kick should sound without a bass note.
-  - Turn the drums **off** (click **Drums** among the inspector's parts, then its **on** toggle): Kick greys out and the
-    line under the switch says "Kick: the drums are off: there is no kick to land on". If Kick was on, an amber line says
-    it can't land now and the bass lands anywhere. Drums back on: Kick is clickable again.
+- **Roots and its runner-ups, by cents.** Pick **Roots** on 768:769, click **Free**, and click Bass cells. "Bass lines · bar N"
+  lists the root's other notes in frame, each named by its cents off the chord's root and its slot (rule 12): "root
+  +5.1¢ · slot 3", or "root · slot 1" for an exact root. ● and C mark Roots' own. Hover one: its title gives the tone
+  ("769/768 at slot 1, +…¢ off its chord's root"). Bar 2 offers several; a bar with one only lists it.
+  - With **Kick** on instead, Roots plays a root on every kick. A kick with no root in frame plays a chord tone, named
+    like "+498.0¢ off the root · slot 5".
+  - While performing, click one: it comes in at the next bar line, and you should hear the bass note shift slightly in
+    time or tuning (by about the cents it names). Click it again or **Keep**; **Revert** (or Esc) takes it back. With
+    **details** on, each shows how far it sits off the change.
+- **Lands on Kick: it covers the kick.** On the same Bass cell, with the default backbeat:
+  - Hover **Kick** (on by default): its title reads "covers the kick: every kick gets a note, and the density adds the
+    rest".
+  - With Kick on, pick **Sparse** and **Walking** in turn. Every kick should keep its bass note, and the density adds
+    notes between the kicks (on a backbeat's 8 slots, Sparse plays 2–3 a bar, Moving 3–5). Walking still walks, its notes
+    on the kicks. The head's tag names the density ("sparse · covers the kick").
+  - Click **Free**, then turn the drums **off**: Kick greys out, and the line under the switch says "Kick: the drums are
+    off: there is no kick to land on". Drums back on: Kick is clickable again.
 - **Lands on Clave: it covers the comp's strokes.** Click **Clave** (its title: "covers the comp's strokes … every stroke
   gets a note, and the density adds the rest"). On 768:769 every Bass cell should say "covers N of N strokes" with
   nothing in amber (all 10 frame strokes covered; before Amendment 1 only 1 of 8 landed), and the bass should sound with
@@ -473,8 +520,9 @@ and counts depend on the cycle, so read them as what to look for, not as the onl
   (bar N) was dropped"). A chosen frame clave the new composition doesn't list is named there by its source: "the chosen
   clave (layer B · 3 steps · chord tones, from the frame) was dropped".
 - **Show the work.** With it on, Compose: the caption for the comp reads "the clave from the frame, layer … (its bars'
-  patterns): N strokes, every one in frame"; the bass's says its density and lock ("moving, covering the comp's strokes
-  (10 of 10 hits): …", and "… bars walk what they can" under Walking); the chords' says "led round the closed loop: …
+  patterns): N strokes, every one in frame; the sparse–medium (10–50 %) tier". The bass's says its density and lock, by
+  default "moving, covering the kick (N of M hits …): …" (under Clave, "moving, covering the comp's strokes (10 of 10
+  hits): …"; "… bars walk what they can" under Walking). The chords' says "led round the closed loop: …
   the wrap back to the first chord …¢" (or "close: root position …").
 - **MIDI.** On the rig, each chords and comp channel should glide by small steps under Led, and jump under Close, the
   loop's end included. Under the Clave lock, the bass channel's notes should land with the comp channel's strokes.

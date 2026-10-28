@@ -78,7 +78,9 @@
 //                     null), alternates, notes (how many), rooted, onDown, (locked: lockedSlots = hits, missedHits,
 //                     missedSlots (the spec's slots)), (walkFill: its count), (weakTies), (missed) }]
 //              alternate  { id, band, contour, motion, n, cost, perNote, rooted, notes: [{ slot (the spec's), node, octave }] }
-//                         (Roots: { id, band: 'roots', n, rooted, distance (summed, in slots), notes })
+//                         (Roots: { id, band: 'roots', n, rooted, distance (summed, in slots), notes: [{ slot, node,
+//                         octave, ratio, cents (off its chord's root: `centsOffRoot`), root (on the root's class) }]:
+//                         Amendment 2, P29) })
 // Deterministic: no draws. The same spec, materials and options give byte-identical output.
 
 import { partContext, partOf, compSourceOf } from './compose.js';
@@ -344,13 +346,24 @@ function rootsOfBar(ctx, recs, k, hits) {
 /** a ranked list kept to one onset a tone a slot (its first: the nearest), as a window keeps a tone (a note is its slot,
  *  tone and octave: two onsets of one tone in one slot would be one runner-up twice) */
 const onePerTone = (row, list, slotOf) => { const seen = new Set(); return list.filter((x) => { const key = `${slotOf(x)}:${row.tone[x.i]}`; if (seen.has(key)) return false; seen.add(key); return true; }); };
-/** Roots' offer over its ranked lists (P24): up to BASS_ALTERNATES combinations, the first Roots' own note(s) → [{ alt, notes }] */
+/** a tone's cents off chord c's root, reduced to the nearest octave of it ((−600, 600]; a root-class tone's its offset
+ *  inside the frame), to a thousandth (Amendment 2, rule 12, P29: Roots' runner-ups are named by it) */
+export function centsOffRoot(row, c, tone) {
+  let d = row.toneCents[tone] - c.rootCents;
+  d -= 1200 * Math.round(d / 1200);
+  if (d <= -600) d += 1200;
+  return Math.round(d * 1000) / 1000 || 0;
+}
+/** Roots' offer over its ranked lists (P24): up to BASS_ALTERNATES combinations, the first Roots' own note(s) → [{ alt, notes }].
+ *  Amendment 2 (rule 12, P29): each note also carries its tone (`ratio`), its cents off its chord's root (`cents`) and
+ *  whether it is on the root's class (`root`), so the window names it with no row (a big row's lives in the worker) */
 function rootsOffer(ctx, recs, k, lists, toSlots) {
   const { row } = ctx, c = recs[unitsOfBar(recs, k)[0]];
   if (!lists.length) return [];
+  const named = (n) => { const own = chordAt(recs, k, n.slot); return { ratio: row.tones[n.tone], cents: centsOffRoot(row, own, n.tone), root: inRootClass(ctx, own, n.tone) }; };
   return bestCombos(lists, BASS_ALTERNATES).map((cmb) => {
     const notes = cmb.picks.map((x) => x.note), serial = `roots|${k}|${notes.map((n) => `${n.slot}:${row.tones[n.tone]}:${n.octave}`).join(',')}`;
-    return { notes, alt: { id: `rt1:${fnv1aHex(serial)}`, band: 'roots', n: notes.length, rooted: inRootClass(ctx, c, notes[0].tone), distance: cmb.sum * toSlots, notes: notes.map((n) => ({ slot: n.slot, node: n.node, octave: n.octave })) } };
+    return { notes, alt: { id: `rt1:${fnv1aHex(serial)}`, band: 'roots', n: notes.length, rooted: inRootClass(ctx, c, notes[0].tone), distance: cmb.sum * toSlots, notes: notes.map((n) => ({ slot: n.slot, node: n.node, octave: n.octave, ...named(n) })) } };
   });
 }
 

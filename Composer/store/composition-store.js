@@ -74,19 +74,27 @@
 // The bass and the chords' voicing (BASS_VOICING_ORDER.md phase H; DESIGN_NOTES "The window: bass and voicing (phase
 // H)"; the controller acts on them):
 //   bass     { density ('roots' | 'sparse' | 'moving' | 'walking'), lock ('free' | 'kick' | 'clave'), picks ({ [bar]: a
-//            bass line's id }) } (core/bass.js' options; BASS_DEFAULTS, Sparse · Free · none, is Compose's own bass). Like
+//            bass line's id }) } (core/bass.js' options; Amendment 2, rule 11: COMPOSE_BASS, Moving · Kick · none, is
+//            Compose's own bass, and a Sparse · Free is an arrangement like any other). Like
 //            the arps: in the undo snapshots, kept through a re-compose and the glyph's recall, carried to a new cycle of
-//            the same row. `spec` plays it (arrangeBass over composed + edits, unless it is the default); `composed` never
-//            does. A pick is keyed by the bar at a density and lock, so a change of either drops the picks (one undo step
+//            the same row. `spec` plays it (arrangeBass over composed + edits, unless it is Compose's own over the kick
+//            Compose covered); `composed` never does. A pick is keyed by the bar at a density and lock, so a change of either drops the picks (one undo step
 //            restores both); a re-compose keeps a pick its bar still offers and drops the rest into `dropped.bass`.
 //   voicing  'led' | 'close' (compose.js' override; 'led' is Compose's default). Live (rearrange.js `revoice`, the fold's
 //            first step, so the edits after it voice as Compose would), in the snapshots, kept and carried like the bass;
 //            Compose is sent `voicing: 'close'` when it is close, so a re-compose needs no switch.
+//
+// The comp's density (BASS_VOICING_ORDER.md Amendment 2, phase N; DESIGN_NOTES "The window over Amendment 2 (phase N)"):
+//   compDensity  'sparse-med' | 'sparse' | 'medium' | 'dense' (compose.js' override; claves.js DEFAULT_COMP_DENSITY,
+//            sparse–medium, is Compose's default): the tier a frame clave is chosen in. Live (rearrange.js `reclave` with
+//            `{ density }`, the fold's step after the voicing's, so the chord edits after it re-read and re-rank in it),
+//            in the snapshots, kept and carried like the voicing; Compose is sent it when it isn't the default.
 
 import { PART_IDS } from '../core/compose.js';
 import { DEFAULT_KIT } from '../core/drums.js';
 import { ARP_PARTS, ARP_DEFAULTS } from '../core/arp.js';
-import { BASS_DEFAULTS } from '../core/bass.js';
+import { COMPOSE_BASS } from '../core/bass.js';
+import { DEFAULT_COMP_DENSITY } from '../core/claves.js';
 
 export const STORE_VERSION = 'composition-store-v1';
 /** how many rhythms the store keeps (proposed) */
@@ -99,10 +107,10 @@ export const UNDO_LIMIT = 50;
 export const emptyEdits = () => ({ chords: {}, lead: {}, order: [], grid: null, clave: null });
 /** B2: every Arp part in Line, its knobs at the defaults (phase D: time ×1, no picks) */
 export const lineArps = () => Object.fromEntries(ARP_PARTS.map((id) => [id, { mode: 'line', time: ARP_DEFAULTS.time, picks: {} }]));
-/** phase H: Compose's own bass (Sparse, Free, no picks) */
-export const composedBass = () => ({ density: BASS_DEFAULTS.density, lock: BASS_DEFAULTS.lock, picks: {} });
-/** phase H: is this bass Compose's own (no arrangement runs)? */
-export const isComposedBass = (b) => !b || (b.density === BASS_DEFAULTS.density && b.lock === BASS_DEFAULTS.lock && !Object.keys(b.picks ?? {}).length);
+/** phase H: Compose's own bass (Amendment 2, rule 11, P28: Moving, Kick, no picks; phase N) */
+export const composedBass = () => ({ density: COMPOSE_BASS.density, lock: COMPOSE_BASS.lock, picks: {} });
+/** phase H: is this bass Compose's own (nothing arranged over it, while the kick it covers plays; phase N)? */
+export const isComposedBass = (b) => !b || (b.density === COMPOSE_BASS.density && b.lock === COMPOSE_BASS.lock && !Object.keys(b.picks ?? {}).length);
 const copy = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
 /** a pin list entry copied (a ratio, { ratio, quality }, or null) */
 const copyPin = (x) => (x && typeof x === 'object' ? { ...x } : x);
@@ -132,6 +140,8 @@ export function newCompositionState({ layers = [0, 0, 0, 0], cycleSeconds = 10, 
     arps: lineArps(),
     // phase H (BASS_VOICING_ORDER.md): the bass's density, lock and picks, and the chords' voicing
     bass: composedBass(), voicing: 'led',
+    // phase N (Amendment 2): the comp's density tier
+    compDensity: DEFAULT_COMP_DENSITY,
   };
 }
 
@@ -159,6 +169,8 @@ function inheritEdits(to, from) {
   // phase H: the bass and the voicing (proposed: as the arps)
   to.bass = copy(from.bass ?? composedBass());
   to.voicing = from.voicing ?? 'led';
+  // phase N: the comp's density (proposed: as the voicing)
+  to.compDensity = from.compDensity ?? DEFAULT_COMP_DENSITY;
   return to;
 }
 
