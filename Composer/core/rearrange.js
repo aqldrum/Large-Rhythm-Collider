@@ -10,7 +10,8 @@
 //     → { parts, drums, chords, modulations, changedBars, retunedBars, changed, exceptions, stats, (bassDropped) }
 //   reclave(spec, row, cells, { clave, relation })   (COMP_ARP_ORDER.md Amendment 1, phase E) the clave chosen again and
 //     laid, the comp strummed again over every bar's chord, the drums arranged again: a live clave switch, equal to a
-//     Compose given the same `overrides.clave` / `compRelation` (comp and drums byte for byte); `compStyle: 'notes'` refused
+//     Compose given the same `overrides.clave` / `compRelation` (comp and drums byte for byte); `compStyle: 'notes'` refused.
+//     A clave read from the frames (phase I) is chosen again over the frame candidates under the chords as they play
 //   rearrange(spec, row, cells, { voicing })                        the chords' Close | Led (= revoice, below)
 //   revoice(spec, row, cells, { voicing: 'close' | 'led' })   (BASS_VOICING_ORDER.md phase H) every chord voiced again,
 //     close or led (compose.js `voiceLead`), the comp in chords strummed again at their octaves (P5), the drums arranged
@@ -34,8 +35,12 @@
 //               tone is never a foreign one in its own bar.
 //   chord swap  (decision 1) the lead stays. Bar k's chord voices, comping and bass are rebuilt over the new chord (the
 //               comp in its own style: in chords, the bar's clave strokes strummed again and its borrowed tones taken
-//               from the new chord's voices, COMP_ARP_ORDER.md P10; the clave itself never moves, and a bar it leaves
-//               empty is struck on the new chord's root onset),
+//               from the new chord's voices, COMP_ARP_ORDER.md P10; a bar the clave leaves empty is struck on the new
+//               chord's root onset. A clave read from the frames (BASS_VOICING_ORDER.md phase I, P20) is read again in
+//               the rebuilt bars under their new chords, the same layer, grain and set (a curated or asked clave's
+//               steps landed in frame again), its partner too: the comp re-strums there, the perc follows, the bass
+//               re-mines it under Clave, and `reclavedBars` lists the bars whose strokes moved (the result's `clave`
+//               the new spec.clave). A clave from the pattern never moves),
 //               and its inner is re-mined bar-locally (lines.js `rules: { before, after }`: the inner's notes either
 //               side of the bar as boundaries); the bar's exceptions are its lead's strong notes off the new chord (a
 //               lead note foreign under the new chord's frame and target is a passing tone; proposed). An empty bar
@@ -206,7 +211,9 @@ function changedByBar(oldParts, newParts) {
  *        | { phrase, line: an id of opts.trace.lines | { notes: [{ slot, node, octave }] }, chordsFollow (false) }
  *   opts   { parts (the parts as they play now; default spec.parts), trace (for a line id), drumOptions (default the
  *            spec's own), smoothPhrase (false: the inner re-mined bar by bar; true: over the whole phrase) }
- * → { version, parts, drums, chords, modulations, changedBars, retunedBars, changed: { part: [bar] }, exceptions, stats }
+ * → { version, parts, drums, chords, modulations, changedBars, retunedBars, changed: { part: [bar] }, exceptions, stats,
+ *     (reclavedBars, clave: a clave read from the frames, phase I P20: the rebuilt bars whose strokes moved, and the new
+ *     spec.clave when any did) }
  */
 export function rearrange(spec, row, cells, edit, opts = {}) {
   if (!spec || spec.refused) fail('nothing to rearrange in a refused spec');
@@ -522,7 +529,8 @@ function ranksOf(row) {
  * inner, every part's sound, legato and on/off, baseHz. Equal, comp and drums byte for byte, to a Compose given the
  * same `overrides.clave` / `compRelation` (assert-claves.mjs).
  *   spec   a composed spec in chords (`compStyle: 'notes'` has no clave: refused); row, cells: its materials
- *   edit   { clave ('steps:pattern' | 'son' | 'rumba' | 'bossa'; absent or null: the clave it plays), relation ('sync'
+ *   edit   { clave ('steps:pattern' | 'son' | 'rumba' | 'bossa' | a frame clave's 'frame:A/8/chord'; absent or null:
+ *            the clave it plays), relation ('sync'
  *            | 'fill'; absent: the relation it plays) }
  *   opts   { parts (the parts as they play now; default spec.parts), drumOptions (default the spec's own) }
  * → rearrange's shape ({ parts, drums, chords, modulations, changedBars, retunedBars, changed, exceptions, stats }) plus

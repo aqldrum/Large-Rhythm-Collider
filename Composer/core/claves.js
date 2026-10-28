@@ -564,7 +564,9 @@ export function claveSource(clave) {
 
 /** the ranked alternates the trace carries (R2): the top `top` mined, then the curated, each { id, name?, steps, span, pattern, onsets, score, terms, bars, from } */
 export function claveAlternates(R, top = ALTERNATES_TOP) {
-  const one = (c) => ({ id: c.id, ...(c.name ? { name: c.name } : {}), steps: c.steps, span: c.span ?? 1, pattern: c.pattern, onsets: c.onsets.length, score: c.score, terms: { ...c.terms }, bars: c.bars ?? 0, from: { ...c.from } });
+  // a frame clave (phase I) also each bar's pattern, and a clave read in frame says so (`read`)
+  const one = (c) => ({ id: c.id, ...(c.name ? { name: c.name } : {}), steps: c.steps, span: c.span ?? 1, pattern: c.pattern, onsets: c.onsets.length, score: c.score, terms: { ...c.terms }, bars: c.bars ?? 0, from: { ...c.from },
+    ...(c.patterns ? { patterns: [...c.patterns] } : {}), ...(c.read ? { read: c.read } : {}) });
   return [...R.ranked.candidates.slice(0, top).map(one), ...R.curated.map(one)];
 }
 
@@ -836,20 +838,22 @@ export function layInFrame(ctx, chordAt, clave, { units, onsets = null, only = n
   return landInFrame(ctx, chordAt, places, wide / 2, { units, onsets });
 }
 
-/** the least distance in slots between a stroke of `a` and one of `b`, round the loop (Infinity if either has none) */
-function nearestStroke(a, b, P) {
+/** the least distance in slots between a stroke of `a` and one of `b`, each at its onset's own place (a landed step's
+ *  `place` is the step's), round the loop (Infinity if either has none) */
+function nearestStroke(ctx, a, b) {
   if (!a.length || !b.length) return Infinity;
-  const xs = b.map((x) => x.place).sort((x, y) => x - y);
+  const W = loopEnd(ctx), at = (x) => placeOfNode(ctx, W, x.node), xs = b.map(at).sort((x, y) => x - y), P = ctx.P;
   let best = Infinity;
   for (const s of a) {
+    const p = at(s);
     let lo = 0, hi = xs.length;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (xs[mid] < s.place) lo = mid + 1; else hi = mid; }
-    for (const q of [xs[lo % xs.length], xs[(lo - 1 + xs.length) % xs.length]]) { const d = Math.abs(q - s.place); best = Math.min(best, d, P - d); }
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (xs[mid] < p) lo = mid + 1; else hi = mid; }
+    for (const q of [xs[lo % xs.length], xs[(lo - 1 + xs.length) % xs.length]]) { const d = Math.abs(q - p); best = Math.min(best, d, P - d); }
   }
   return best;
 }
 /** does a candidate share a stroke with the clave (P17: one of its strokes within ¼ slot of one of the clave's) */
-export const sharesStroke = (a, b, P) => nearestStroke(a.strokes, b.strokes, P) <= SHARE_SLOTS + EPS;
+export const sharesStroke = (ctx, a, b) => nearestStroke(ctx, a.strokes, b.strokes) <= SHARE_SLOTS + EPS;
 
 /**
  * The complement of a frame clave (P17's fallback): each bar's free steps of its own pattern, Euclid-thinned to the
@@ -912,7 +916,7 @@ export function chooseFrameClave(row, ctx, chordAt, { asked = null, rng = Math.r
   }
   // the partner: the best-ranked other frame candidate with a stroke and none within ¼ slot of the clave's
   const others = R.ranked.candidates.filter((c) => c.id !== chosen.id && c.strokes.length);
-  const free = others.filter((c) => !sharesStroke(c, chosen, ctx.P));
+  const free = others.filter((c) => !sharesStroke(ctx, c, chosen));
   let partner;
   if (free.length) partner = { ...free[0], source: 'partner', silent: 0 };
   else if (chosen.patterns) partner = frameComplement(ctx, chordAt, chosen, { units, onsets });

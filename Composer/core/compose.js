@@ -49,6 +49,15 @@
 //                         the voice's `lane` too); each holds at
 //                         most to the next stroke (`holdTo`), never past the span. `spec.clave` holds the clave, its
 //                         landed strokes and its partner's; the drums play it on the perc (drums.js R4).
+//                         FROM THE FRAME (`claveFrom: 'frame'`, the default; BASS_VOICING_ORDER.md phase I, Avery's rule 6,
+//                         P16–P21): the clave is read after the chords, from them. A candidate is a layer, a grain (n steps
+//                         a bar: the layer's own strikes a bar, or 3–16 when it is denser) and a tone set (the bar's chord
+//                         tones in tune, or anything in its frame); a bar's pattern is the layer's strikes at its steps
+//                         whose tones are in the set under the chord they sound under, and the strokes are those strikes,
+//                         at their own times (nothing is landed). Ranked by the same rules over the bars' patterns, ties
+//                         by the seed; Fill's partner the best candidate sharing no stroke (none within ¼ slot), else the
+//                         complement landed in frame; the curated and asked claves keep their pattern and land only on
+//                         in-frame onsets (claves.js). `claveFrom: 'pattern'` is the clave above, byte for byte.
 //                         `compStyle: 'notes'` (the frozen core): one note a stroke (rhythm-claves.js and
 //                         chunk-comping.js, ported), a slot's step sounding only where its strike is on one of the bar's
 //                         chord tones; the layer whose bars make the best claves (25–50 % of its steps sounding, a
@@ -770,7 +779,8 @@ function targetLeadNotes(row, cells, tg, base) {
  *                  modulation, foldOffsets, table, sounds: { part: id }, legato: { part: bool }, enabled: { part: bool },
  *                  baseHz, compLayer (compStyle 'notes'), presence ('cluster' | 'exact'), settlePasses (an integer 0..3),
  *                  compStyle ('chords', the default, | 'notes': the comping, above), clave ('steps:pattern' | 'son' |
- *                  'rumba' | 'bossa': the comp's clave in chords), compRelation ('sync', the default, | 'fill') }, worker (true:
+ *                  'rumba' | 'bossa' | a frame clave's 'frame:A/8/chord': the comp's clave in chords), compRelation ('sync', the
+ *                  default, | 'fill'), claveFrom ('frame', the default, | 'pattern': phase I, above) }, worker (true:
  *                  the full table unless asked), progression ([a ratio of the row | null] a bar: progression.js;
  *                  absent or all null: lead-led, exactly as without it),
  *                  drums (drums.js `arrangeDrums` options, or false: no `drums` in the spec),
