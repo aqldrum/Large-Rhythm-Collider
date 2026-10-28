@@ -105,7 +105,8 @@ const borrowed = compPart.notes.filter((n) => n.borrowed), chordNotes = spec.par
 const fromOk = borrowed.every((n) => { const src = chordNotes.find((c) => c.node === n.from); return src && src.ratio === n.ratio && Math.abs(Math.log2(n.hz / src.hz) - Math.round(Math.log2(n.hz / src.hz))) < 1e-9; });
 const offTone = borrowed.filter((n) => ratioOfNode(n.node) !== n.ratio);
 check(`a borrowed tone (${borrowed.length}) has its source voice's ratio and pitch class; ${offTone.length} of them sit on an onset of another tone`, borrowed.length > 0 && fromOk && offTone.length > 0);
-check('… and MIDI sends the note\'s own hz (the source\'s tone), not its onset\'s', offTone.every((n) => compMidi.some((m) => Math.abs(m.time - n.time) < 1e-12 && m.hz === n.hz && m.voice === n.voice)));
+// (on its lane's member: led chords lane the comp by register, BASS_VOICING_ORDER.md P6)
+check('… and MIDI sends the note\'s own hz (the source\'s tone), not its onset\'s', offTone.every((n) => compMidi.some((m) => Math.abs(m.time - n.time) < 1e-12 && m.hz === n.hz && m.voice === (n.lane ?? n.voice))));
 const oldComp = compose([41, 42, 43, 0], T, { seed: 1, worker: true, overrides: { compStyle: 'notes' } }).parts.find((p) => p.id === 'comp');
 check('the old one-note comp (compStyle \'notes\'): one lane, on channel 2 of its zone', midiNotesOf(oldComp, ST).every((n) => n.voice === 0 && channelOf('comp', n.voice) === 1));
 

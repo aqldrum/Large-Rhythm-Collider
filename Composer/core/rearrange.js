@@ -67,7 +67,7 @@ import { frameOf, classOfCents } from './frame.js';
 import { CHORD_QUALITIES, pickFor, chordRecord, spanRecord, spanMaterial, harmonyOver, targetOfBar, barMaterial, chooseChord, exceptionsOfBar, phrasesOf, isStrongBeat } from './harmony.js';
 import { FALLBACK_QUALITIES } from './progression.js';
 import { arrangeDrums } from './drums.js';
-import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, compNodesOf, compUnitsOf, layCompClave, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, PART_IDS } from './compose.js';
+import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, compNodesOf, compUnitsOf, layCompClave, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, voiceLead, voicingStats, PART_IDS } from './compose.js';
 import { readRhythm, rankRowClaves, chooseClave, claveText, claveSource, COMP_RELATIONS } from './claves.js';
 import { bassBarOf, bassLockOf, bassWalkCells, bassBarRecord, bassStatsOf } from './bass.js';
 
@@ -149,7 +149,7 @@ const givenOf = (m, chords) => chords.map((c) => ({ tone: toneOf(m, c.rootTone),
 function builderNotes(m, part) {
   const { row, cells, S } = m.ctx, chords = part.id === 'comp' && part.strokes != null;
   return part.notes.map((n) => { const tone = row.tone[n.borrowed ? n.from : n.node]; return { node: n.node, tone, octave: n.octave, pitch: row.toneCents[tone] + 1200 * n.octave, bar: n.bar, slot: n.slot, time: n.time, slotSeconds: n.slotSeconds,
-    ...(n.voice != null ? { voice: n.voice } : {}), ...(part.id === 'comp' ? (chords ? { velocity: n.velocity } : { strikes: row.strikes[n.node] }) : {}), ...(part.id === 'lead' ? { strong: isStrongBeat(cells.slots[n.slot].beat, S) } : {}),
+    ...(n.voice != null ? { voice: n.voice } : {}), ...(n.lane != null ? { lane: n.lane } : {}), ...(part.id === 'comp' ? (chords ? { velocity: n.velocity } : { strikes: row.strikes[n.node] }) : {}), ...(part.id === 'lead' ? { strong: isStrongBeat(cells.slots[n.slot].beat, S) } : {}),
     ...(n.endTime != null ? { endTime: n.endTime } : {}), ...(n.clipNote != null ? { clipNote: n.clipNote } : {}),
     ...(n.holdTo != null ? { holdTo: n.holdTo } : {}), ...(n.borrowed ? { borrowed: true, from: n.from } : {}) }; });
 }
@@ -232,15 +232,18 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   let compStrokes = compChords ? partById.comp.strokes.map((x) => ({ ...x })) : null;
   // in chords the bar's strokes are the clave's (spec.clave, unchanged by any edit), re-strummed over the new chord; a spec
   // with no clave (composed before Amendment 1) re-strums the comp's own strokes there
-  const compOf = (c, k, range = null) => {
+  const compOf = (c, k, range = null, voiced = null) => {
     if (!compChords) return compOfBar(ctx, c, k, compLayer, range);
     const r = range ?? { from: k * S, to: (k + 1) * S };
     const strokes = spec.clave ? compNodesOf(spec.clave, r.from, r.to) : partById.comp.strokes.filter((x) => x.slot >= r.from && x.slot < r.to).map((x) => x.node);
-    const got = compChordsOfBar(ctx, c, k, strokes, range);
+    const got = compChordsOfBar(ctx, c, k, strokes, range, voiced);
     compStrokes.push(...got.strokes);
     return got.notes;
   };
   const exceptions = spec.chords.map((c) => c.exceptions);
+  // led chords (BASS_VOICING_ORDER.md P8): a spec composed with the voicing pass (its stats say so; one composed before
+  // phase F, or with `voicing: 'close'`, has none and stays close)
+  const led = spec.stats?.voicing != null, ledComp = led && compChords;
 
   // `target`: the bars whose chord voices, comping and bass are built again (the edit's bars); `rebuilt`: those whose
   // chord is another one (their inner is re-mined, their exceptions counted again, their target reads the new chord)
@@ -332,8 +335,10 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
     for (const k of [...new Set([...target].map(barOf))].sort((a, b) => a - b)) {
       const own = unitsOfBar(k).map((u) => recs[u]), range = (c) => ({ from: c.from, to: c.from + c.slots });
       notes.chords = [...notes.chords.filter((n) => n.bar !== k), ...own.flatMap((c) => chordVoicesOfBar(ctx, c, k, range(c)))];
-      if (compChords) compStrokes = compStrokes.filter((x) => x.bar !== k);
-      notes.comp = [...notes.comp.filter((n) => n.bar !== k), ...own.flatMap((c) => compOf(c, k, range(c)))];
+      if (!ledComp) {   // led, the comp follows the chords' octaves: built after the voicing pass, below
+        if (compChords) compStrokes = compStrokes.filter((x) => x.bar !== k);
+        notes.comp = [...notes.comp.filter((n) => n.bar !== k), ...own.flatMap((c) => compOf(c, k, range(c)))];
+      }
       const over = harmonyOver(recs, allTargets, k, 1, S);
       const b = bassAt(own[0], k, { table, scale, over: { frames: over.frames, targets: over.targets.bars } });
       notes.bass = [...notes.bass.filter((n) => n.bar !== k), ...b.notes];
@@ -342,8 +347,10 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   } else for (const k of [...target].sort((a, b) => a - b)) {
     const c = recs[k];
     notes.chords = [...notes.chords.filter((n) => n.bar !== k), ...chordVoicesOfBar(ctx, c, k)];
-    if (compChords) compStrokes = compStrokes.filter((x) => x.bar !== k);
-    notes.comp = [...notes.comp.filter((n) => n.bar !== k), ...compOf(c, k)];
+    if (!ledComp) {
+      if (compChords) compStrokes = compStrokes.filter((x) => x.bar !== k);
+      notes.comp = [...notes.comp.filter((n) => n.bar !== k), ...compOf(c, k)];
+    }
     const b = bassAt(c, k, { table, scale, target: targets[k] });
     notes.bass = [...notes.bass.filter((n) => n.bar !== k), ...b.notes];
     bassRooted[k] = b.rooted;
@@ -354,6 +361,26 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
       const b = bassAt(recs[unitsOfBar(k)[0]], k, null);
       notes.bass = [...notes.bass.filter((n) => n.bar !== k), ...b.notes];
       bassRooted[k] = b.rooted;
+    }
+  }
+  // ── led chords (P8): the voicing pass again over every bar (a chart's span), from the first chord on. Tones never change
+  // outside the rebuilt bars, only octaves; `revoicedBars` lists the other bars whose octaves moved, and the comp (in
+  // chords) is strummed again over the rebuilt and the revoiced bars, its octaves from the chords' (P5) ──
+  const ratioOf = spans ? (bar, slot) => (recs[unitOf[slot]] ?? recs[unitsOfBar(bar)[0]]).fundamentalRatio : (bar) => recs[bar].fundamentalRatio, baseHz = K.baseHz;
+  let voicing = null, revoicedBars = null;
+  if (led) {
+    const octaveKey = (n) => `${n.bar}:${n.node}:${n.voice}`, was8 = new Map(partById.chords.notes.map((n) => [octaveKey(n), n.octave]));
+    const inUnit = (u) => (spans ? (n) => n.bar === spans[u].bar && n.slot >= spans[u].from && n.slot < spans[u].from + spans[u].slots : (n) => n.bar === u);
+    const units = recs.map((c, u) => ({ chord: c, notes: notes.chords.filter(inUnit(u)) }));
+    voicing = voicingStats(voiceLead(ctx, units, { baseHz, ratioOf }));
+    const rebuiltHere = new Set([...target].map(barOf)), moved = new Set();
+    for (const n of notes.chords) if (!rebuiltHere.has(n.bar) && was8.get(octaveKey(n)) !== n.octave) moved.add(n.bar);
+    revoicedBars = [...moved].sort((a, b) => a - b);
+    if (ledComp) {
+      for (const k of [...new Set([...rebuiltHere, ...moved])].sort((a, b) => a - b)) {
+        compStrokes = compStrokes.filter((x) => x.bar !== k);
+        notes.comp = [...notes.comp.filter((n) => n.bar !== k), ...unitsOfBar(k).flatMap((u) => compOf(recs[u], k, spans ? { from: spans[u].from, to: spans[u].from + spans[u].slots } : null, units[u].notes))];
+      }
     }
   }
   // ── the inner: bar-local over each rebuilt bar or a bar of a changed lead, with boundaries (or the whole phrase) ──
@@ -382,7 +409,6 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   }
 
   // ── the parts, rebuilt whole from their notes (re-articulated; hz at each bar's (span's) retune) ──
-  const ratioOf = spans ? (bar, slot) => (recs[unitOf[slot]] ?? recs[unitsOfBar(bar)[0]]).fundamentalRatio : (bar) => recs[bar].fundamentalRatio, baseHz = K.baseHz;
   const byVoice = (list) => { const v = []; for (const n of list.sort((a, b) => a.bar - b.bar || a.time - b.time)) (v[n.voice] ||= []).push(n); return v; };
   const newParts = PART_IDS.map((id) => {
     const p = partById[id];
@@ -424,10 +450,10 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   }
   const leadCells = new Set(notes.lead.map((n) => n.slot));
   const stats = { notes: counts, exceptions: exceptions.reduce((a, b) => a + b, 0), chordVoices: notes.chords.length / N, bassRooted: `${rooted}/${N}`, innerOnLeadSlots: notes.inner.filter((n) => leadCells.has(n.slot)).length,
-    ...(compChords ? { compStrum: notes.comp.length ? notes.comp.filter((n) => !n.borrowed).length / notes.comp.length : 0 } : {}) };
+    ...(compChords ? { compStrum: notes.comp.length ? notes.comp.filter((n) => !n.borrowed).length / notes.comp.length : 0 } : {}), ...(voicing ? { voicing } : {}) };
 
   const changedBars = [...new Set([...[...rebuilt].map(barOf), ...leadChanged])].sort((a, b) => a - b);
-  return { version: COMPOSER_REARRANGE_VERSION, parts: newParts, drums, chords, modulations, changedBars, retunedBars, changed: changedByBar(parts, newParts), exceptions: stats.exceptions, stats,
+  return { version: COMPOSER_REARRANGE_VERSION, parts: newParts, drums, chords, modulations, changedBars, retunedBars, ...(revoicedBars ? { revoicedBars } : {}), changed: changedByBar(parts, newParts), exceptions: stats.exceptions, stats,
     ...(bassArr ? { bassDropped } : {}) };
 }
 
@@ -435,7 +461,7 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
  *  a reclave's clave, its stats line and its decisions too */
 export function applyRearrange(spec, r) {
   const out = { ...spec, chords: r.chords, modulations: r.modulations, parts: r.parts, stats: { ...spec.stats, notes: r.stats.notes, exceptions: r.stats.exceptions, chordVoices: r.stats.chordVoices, bassRooted: r.stats.bassRooted, innerOnLeadSlots: r.stats.innerOnLeadSlots,
-    ...(r.stats.compStrum != null ? { compStrum: r.stats.compStrum } : {}), ...(r.stats.clave ? { clave: r.stats.clave } : {}) } };
+    ...(r.stats.compStrum != null ? { compStrum: r.stats.compStrum } : {}), ...(r.stats.clave ? { clave: r.stats.clave } : {}), ...(r.stats.voicing ? { voicing: r.stats.voicing } : {}) } };
   if (r.drums !== undefined) out.drums = r.drums;
   if (r.clave) out.clave = r.clave;
   if (r.decisions) out.decisions = r.decisions;
@@ -493,9 +519,12 @@ export function reclave(spec, row, cells, edit = {}, opts = {}) {
   const recs = walkChords(m, givenOf(m, spec.chords), { e: K.frameCentsEachSide, gridBase: frameOf(row, toneOf(m, K.root), K.frameCentsEachSide).rootCents, modulation: K.modulation, foldOffsets: spec.input.overrides?.foldOffsets ?? true }, spans);
   const voices = [], strokes = [];
   let found = 0, tones = 0;
+  // led chords (P5): each bar's (span's) chord voices as they play, for the strum's octaves
+  const chordNotes = spec.stats?.voicing != null ? builderNotes(m, partById.chords) : null;
   const strum = (c, k, range = null) => {
     const r = range ?? { from: k * S, to: (k + 1) * S };
-    const got = compChordsOfBar(ctx, c, k, compNodesOf(clave, r.from, r.to), range);
+    const voiced = chordNotes ? chordNotes.filter((n) => n.bar === k && n.slot >= r.from && n.slot < r.to) : null;
+    const got = compChordsOfBar(ctx, c, k, compNodesOf(clave, r.from, r.to), range, voiced);
     for (const n of got.notes) (voices[n.voice] ||= []).push(n);
     strokes.push(...got.strokes); found += got.found; tones += got.tones;
   };

@@ -129,7 +129,8 @@ const anchorMiss = (glideSec) => {
 const miss12 = anchorMiss(0.012);
 check('every glide is anchored at its note and lasts the Glide setting (12 ms by default)', lab.state.glideMs === 12 && !miss12, miss12);
 const chordsChains = chainsOf(lab.state.parts.chords);
-check('in the chords part a chain is one voice\'s', chordsChains.every((c) => c.notes.every((n) => n.voice === c.voice)));
+// a lane's, under the led voicing (BASS_VOICING_ORDER.md P6: its register order in the chord), else a class's
+check('in the chords part a chain is one voice\'s (one lane\'s, led)', chordsChains.every((c) => c.notes.every((n) => (n.lane ?? n.voice) === c.voice)));
 check('the second cycle starts booking after the first (loop)', oscs.some((o) => o.started >= L0 + T - 1e-9));
 
 console.log('\n— the Glide control (portamento)');

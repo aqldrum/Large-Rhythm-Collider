@@ -6,7 +6,8 @@
 //     chords following too
 //   • every note of every part, and every drum stroke, stays a real onset of the row, in its own bar and slot
 //   • only the dependent parts and bars change: a chord swap moves bar k's chords, comping, bass and inner (and the empty
-//     bars that take its chord); the lead stays (decision 1); later bars only re-pitch (`retunedBars`), never re-mine;
+//     bars that take its chord); the lead stays (decision 1); later bars only re-pitch (`retunedBars`), never re-mine,
+//     and under the led voicing their chord voices and comp tones may move by octaves (`revoicedBars`, BASS_VOICING_ORDER P8);
 //     a lead swap moves the phrase's lead and inner, the chords only under `chordsFollow`; baseHz, the comp layer and
 //     every part's sound and legato are pinned; targets.scale is fixed
 //   • lines.js `rules: { before, after }`: the picker and the scorer agree on every boundary cost; absent, nothing moves
@@ -68,8 +69,9 @@ function realOnsets(C, spec) {
   for (const x of spec.drums?.hits || []) { const i = lowerBoundTick(row, x.tick); if (!(i < row.n && row.tick[i] === x.tick)) return `drums: a stroke at tick ${x.tick} is not an onset`; }
   return '';
 }
-/** notes of a part by bar, without duration/retrigger (and without hz, for a re-pitch) */
-const barNotes = (part, bar, { hz = true } = {}) => part.notes.filter((n) => n.bar === bar).map(({ duration, retrigger, hz: h, ...rest }) => J(hz ? { ...rest, h } : rest)).join('\n');
+/** notes of a part by bar, without duration/retrigger (and without hz, for a re-pitch; without octave, lane and hz, and in
+ *  any order — simultaneous notes on one onset fall in lane order — for a led chord's revoicing: BASS_VOICING_ORDER.md P8) */
+const barNotes = (part, bar, { hz = true, octaves = true } = {}) => { const xs = part.notes.filter((n) => n.bar === bar).map(({ duration, retrigger, hz: h, octave, lane, ...rest }) => J(octaves ? { ...rest, octave, ...(lane != null ? { lane } : {}), ...(hz ? { h } : {}) } : rest)); return (octaves ? xs : xs.sort()).join('\n'); };
 const CHORD_PITCH_FIELDS = ['name', 'pcs', 'rootPc', 'offsetCents', 'rawOffsetCents', 'fundamentalRatio', 'offGrid'];
 const chordBut = (c, fields) => { const x = { ...c }; for (const f of fields) delete x[f]; return J(x); };
 
@@ -84,9 +86,11 @@ function swapBreak(C, k, cand, r, next) {
     const retuned = r.retunedBars.includes(j);
     if (retuned && j <= k) return `bar ${j} retuned, at or before the swap`;
     if (chordBut(r.chords[j], retuned ? CHORD_PITCH_FIELDS : []) !== chordBut(spec.chords[j], retuned ? CHORD_PITCH_FIELDS : [])) return `bar ${j}'s chord moved`;
+    // led chords (BASS_VOICING_ORDER.md P8): a later bar's chord voices (and the comp's tones, in chords) may move by octaves
+    const revoiced = (r.revoicedBars ?? []).includes(j);
     for (const id of PART_IDS) {
-      const a = next.parts.find((p) => p.id === id), b = spec.parts.find((p) => p.id === id);
-      if (barNotes(a, j, { hz: !retuned }) !== barNotes(b, j, { hz: !retuned })) return `${id} in bar ${j} moved`;
+      const a = next.parts.find((p) => p.id === id), b = spec.parts.find((p) => p.id === id), octaves = !(revoiced && (id === 'chords' || id === 'comp'));
+      if (barNotes(a, j, { hz: !retuned, octaves }) !== barNotes(b, j, { hz: !retuned, octaves })) return `${id} in bar ${j} moved`;
     }
   }
   // the lead stays (decision 1): only its hz in a retuned bar

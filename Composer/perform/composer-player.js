@@ -8,7 +8,8 @@
 //   graph    each part → its gain bus (a level per part) → master gain → limiter (DynamicsCompressor) → destination
 //   voices   a note with `retrigger` starts a voice of its part's sound (`note` role, its velocity the peak). The notes
 //            after it without `retrigger` are a CHAIN: the same voice, held, moved to each one's pitch with
-//            setFrequency at its time (in the chords, and the comp in chords, a chain is one voice's), released at the
+//            setFrequency at its time (in the chords, and the comp in chords, a chain is one voice's: one lane's when
+//            led, BASS_VOICING_ORDER.md P6), released at the
 //            chain's end. A note alone is planned with its own duration, so a struck sound damps where its note ends.
 //   booking  everything is booked inside the lookahead, as the clock reaches it: a chain's start when its first note
 //            comes up, then each of its moves, then its release, one tick at a time (a held chain is carried from
@@ -54,14 +55,16 @@ export function chainsOf(part) {
   return out;
 }
 function chainsOfUncached(part) {
-  // the chords' and the comp's voices each their own lane (COMP_ARP_ORDER.md A3: a comp in chords holds a voice a class)
-  const lanes = zonedPart(part.id) ? [...new Set(part.notes.map((n) => n.voice))].map((v) => part.notes.filter((n) => n.voice === v)) : [part.notes];
+  // the chords' and the comp's voices each their own lane (COMP_ARP_ORDER.md A3: a comp in chords holds a voice a class;
+  // led chords, BASS_VOICING_ORDER.md P6: a lane is the note's register order in the chord, `lane`, not its class)
+  const laneOf = (n) => n.lane ?? n.voice;
+  const lanes = zonedPart(part.id) ? [...new Set(part.notes.map(laneOf))].map((v) => part.notes.filter((n) => laneOf(n) === v)) : [part.notes];
   const out = [];
   for (const lane of lanes) {
     const sorted = [...lane].sort((a, b) => a.time - b.time || a.node - b.node);
     let chain = null;
     for (const n of sorted) {
-      if (n.retrigger || !chain) { chain = { voice: n.voice ?? null, notes: [n] }; out.push(chain); } else chain.notes.push(n);
+      if (n.retrigger || !chain) { chain = { voice: laneOf(n) ?? null, notes: [n] }; out.push(chain); } else chain.notes.push(n);
     }
   }
   return out.sort((a, b) => a.notes[0].time - b.notes[0].time);

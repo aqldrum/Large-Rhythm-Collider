@@ -10,17 +10,22 @@
 //   • the stroke's chord through a split bar (a chart's spans); at most 4 voices, one a class, root first, stacked close
 //   • velocities (0.55 + 0.1 a layer more / 0.5 / 0.45); lengths with legato on and off (`holdTo`: the next stroke, never
 //     past the span), and `rearticulate` agreeing with Compose
+//   • (every compose here is pinned to `voicing: 'close'`: the led voicing's comp octaves are assert-voicing.mjs')
 //   • `compStyle: 'notes'` byte for byte the frozen pre-refactor Compose (fixtures/compose-before.js), and the default
 //     deterministic; the drums' `with` reading the strokes
 //   • a chord swap rebuilds the bar's strum and its borrowed tones from the new chord's voices; a JSON round trip of the
 //     spec rearranges the same (the store's)
 //   • the 16,359-onset row: the comp's own cost (the bars built on the clave's strokes), and Compose lean with it
 //   node Composer/tests/assert-comp.mjs
-import { compose, partContext, compChordsOfBar, compNodesOf, rearticulate, STRUM_WINDOW, COMP_VELOCITY, MAX_COMP_VOICES } from '../core/compose.js';
+import { compose as composeLive, partContext, compChordsOfBar, compNodesOf, rearticulate, STRUM_WINDOW, COMP_VELOCITY, MAX_COMP_VOICES } from '../core/compose.js';
 import { compose as composeBefore } from './fixtures/compose-before.js';
 import { rearrange, applyRearrange, materialsOf } from '../core/rearrange.js';
 import { arrangeDrums } from '../core/drums.js';
 import { classOfCents } from '../core/frame.js';
+
+// pinned to the close voicing (BASS_VOICING_ORDER.md P7): this suite's brute force stacks the comp close from the root, as
+// the comp did before phase F; the comp's octaves under the led voicing (P5) are assert-voicing.mjs'
+const compose = (L, T, o = {}) => composeLive(L, T, { ...o, overrides: { voicing: 'close', ...o.overrides } });
 
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };
@@ -181,7 +186,7 @@ console.log('\n— compStyle');
   let same = 0;
   for (const [L, T, ov] of cases) for (const seed of [1, 4]) {
     const live = compose(L, T, { seed, overrides: { ...ov, compStyle: 'notes' } });
-    delete live.input.overrides.compStyle;   // the one field the frozen core can't have: the override itself
+    delete live.input.overrides.compStyle; delete live.input.overrides.voicing;   // the fields the frozen core can't have: the overrides themselves
     if (J(live) === J(composeBefore(L, T, { seed, overrides: ov }))) same++;
   }
   check(`compStyle 'notes': ${same}/${cases.length * 2} byte for byte the frozen pre-refactor Compose (fixtures/compose-before.js)`, same === cases.length * 2);

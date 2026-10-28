@@ -1,7 +1,7 @@
 // assert-compose.mjs — Composer/core/compose.js and compose-worker.js. Exit non-zero on any mismatch.
 //   • determinism: the same layers, cycle and seed give byte-identical JSON
 //   • every note of every part is an onset of the row: node, tick, ratio and time agree; hz is its formula
-//   • per-part legato: on, a note holds to the part's (a chord voice's) next note; off, its slot or the gap if shorter;
+//   • per-part legato: on, a note holds to the part's (a chord voice's, led: a chord lane's) next note; off, its slot or the gap if shorter;
 //     a struck sound in legato retriggers on every note, a held one only on its first
 //   • overrides, one by one; each gate's refusal; the tempo inside 90–130 BPM whenever a bar count allows it
 //   • the root by its ±frame cluster and the phase from where the cluster sounds; settling (settlePasses 0 byte-identical
@@ -39,9 +39,10 @@ function audit(spec) {
       if (!Number.isInteger(n.octave) || !near(n.hz, k.baseHz * (num / den) * 2 ** n.octave * fr[n.bar])) return `${part.id}: hz`;
       if (!(n.duration >= 0 && n.time + n.duration <= T + 1e-9 && n.velocity > 0 && n.velocity <= 1)) return `${part.id}: duration or velocity`;
     }
-    // legato, voice by voice (the comp in chords too, each tone held at most to its stroke's `holdTo`)
-    const voiced = part.id === 'chords' || (part.id === 'comp' && part.strokes);
-    const groups = voiced ? [...new Set(part.notes.map((n) => n.voice))].map((v) => part.notes.filter((n) => n.voice === v)) : [part.notes];
+    // legato, voice by voice (the comp in chords too, each tone held at most to its stroke's `holdTo`); led chords
+    // (BASS_VOICING_ORDER.md P6) lane by lane, a lane the note's register order in its chord
+    const voiced = part.id === 'chords' || (part.id === 'comp' && part.strokes), laneOf = (n) => n.lane ?? n.voice;
+    const groups = voiced ? [...new Set(part.notes.map(laneOf))].map((v) => part.notes.filter((n) => laneOf(n) === v)) : [part.notes];
     for (const g of groups) {
       const s = [...g].sort((a, b) => a.time - b.time || a.node - b.node);
       for (let i = 0; i < s.length; i++) {
@@ -185,7 +186,8 @@ console.log('\n— the root\'s cluster, and settling');
 {
   let bad = '', n = 0;
   // the baseline's comp is one note a stroke: compStyle 'notes' (COMP_ARP_ORDER.md P9), the override itself left out of the input
-  const notesCompose = (L, T, o) => { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes' } }); delete spec.input.overrides.compStyle; return spec; };
+  // the frozen core: the comp in notes and the chords close (BASS_VOICING_ORDER.md P7), the overrides themselves left out
+  const notesCompose = (L, T, o) => { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close' } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; return spec; };
   for (const [name, run] of composeCases(notesCompose)) { n++; if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) { bad = name; break; } }
   check(`settlePasses 0 with presence 'exact' reproduces e3909e1's specs byte for byte (${n} specs: 10 rows × 2 seeds, 2 on the full table, 1 with modulation off)`, !bad && n === Object.keys(COMPOSE_HASHES).length, bad);
   const L = [4099, 4093, 4091, 4079], T = 16;

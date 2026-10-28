@@ -10,7 +10,8 @@
 //   • every drum mode × fills on and off, a per-bar mode, and no drums
 //   • the trace off, `true` and `{ caps }`
 //   • thrown errors (a bad override) are the same error
-// The live core runs with `compStyle: 'notes'` (COMP_ARP_ORDER.md P9: the frozen core's comping, one note a stroke; the
+// The live core runs with `compStyle: 'notes'` and `voicing: 'close'` (BASS_VOICING_ORDER.md P7: the chords stacked close, as
+// the frozen core stacks them) (COMP_ARP_ORDER.md P9: the frozen core's comping, one note a stroke; the
 // default is now chords): the override is taken back out of the live spec's input, and out of the override list a bad
 // override's error names, before the texts are compared. The fixtures are untouched.
 //   node Composer/tests/assert-refactor-identity.mjs
@@ -23,10 +24,11 @@ import { RHYTHMS } from './rhythms.mjs';
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };
 const run = (f, L, T, o) => { try { return JSON.stringify(f(L, T, o)); } catch (err) { return `throws: ${err.message}`; } };
-/** the live core with the frozen core's comping (compStyle 'notes'), the override itself taken back out */
+/** the live core with the frozen core's comping (compStyle 'notes') and voicing (voicing 'close', BASS_VOICING_ORDER.md
+ *  P7), the overrides themselves taken back out */
 const live = (L, T, o = {}) => {
-  try { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes' } }); delete spec.input.overrides.compStyle; return spec; }
-  catch (err) { throw new Error(err.message.replace(', compStyle, clave, compRelation)', ')')); }
+  try { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close' } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; return spec; }
+  catch (err) { throw new Error(err.message.replace(', compStyle, clave, compRelation, voicing)', ')')); }
 };
 const pad = (L) => [...L, 0, 0, 0, 0].slice(0, 4);
 
