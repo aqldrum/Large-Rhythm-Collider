@@ -2247,6 +2247,89 @@ The README's Files and Tests are updated. No suite was added (83).
 - Name Roots' runner-ups by cents off the root ("+12¢, slot 3") rather than the ratio?
 - Should the comp's caption, like the bass's and the chords', say the clave as it plays (a picked one) rather than Compose's?
 
+## Comp density tiers and the bass's default (Amendment 2, phase M core; built 2026-10-28, branch `amend2/core`)
+
+`BASS_VOICING_ORDER.md` Amendment 2, phase M (M1–M4). Rulings 10, 11, 13 and 14 are Avery's; P26–P28 and P30–P32 are the builder's proposals, built as written except where noted. Pure core: `page/`, `perform/` and `store/` are untouched (phase N). Nothing here has been heard or seen in a browser.
+
+**The narrower sets (P26, `claves.js`).** The frame candidates gain `root+5th`, `guide` and `root`, each in tune as `chord` reads it. The reading order is chord, frame, root+5th, guide, root. A reading equal to an earlier set's at the same layer and grain is dropped and the earlier name kept: for the new sets that is always the wider one (root+5th and guide are disjoint, so a guide or root reading can only twin a wider set's). The phase I twin, frame equal to chord, still keeps `chord`, so no phase I id moves for that reason. Words: "root and fifth", "guide tones", "roots" (`FRAME_SET_WORDS`, `claveSource`, `claveSetText`). Ids: `frame:B/11/root`, `frame:A/8/root+5th`.
+- **The fifth** is the chord's own: its interval of 6–8 semitones (7; a dim chord's 6, an aug chord's 8). The planner's probe used 7 for every chord, so it differs from it on dim and aug chords (builder's call).
+- **One read for all five sets** (`readFrameGrain`): each step's strike is found once and read once under its chord (its class, its frame test), then each set's pattern and strokes are taken from that. `readFrameLayer` is its one-set view, unchanged in output.
+
+**The tiers (P27).** A candidate's `share` is its patterns' x's over n·N (the steps sounding, over the bars; a strike two steps share counts twice, as the probe counted). Its `tier`: sparse 10–25 %, medium 25–50 %, dense 50–85 % (under 10 % or over 85 %: none). `rankFrameClaves(…, { density })` and `chooseFrameClave(…, { density })` take `'sparse-med'` (the default, 10–50 %), `'sparse'`, `'medium'` or `'dense'`:
+- Every counted reading is scored; the ranking is the tier's candidates only, each scored again by COMP_RULES with the density term's `share` set to the tier's band (`ranks.rules`). Ties stay in the reading order, the seed breaking a tie at the top, as before.
+- **The fall-back:** with no candidate in the tier, the nearest tier with one (`DENSITY_FALLBACK`: sparse → medium, dense; medium → sparse, dense (the sparser first: builder's call, Avery's default leans sparse); dense → medium, sparse; sparse–medium → dense). With none in any tier, every candidate under COMP_RULES as phase I ranked them.
+- **Fill's partner** is the best of the same ranking (the tier's) sharing no stroke, else the complement, which keeps the clave's own onsets a bar, so it stays in the tier (builder's call).
+- **An asked frame id** outside the tier is read as asked and scored against the tier's band.
+- `ranks.density` = `{ asked, played, band, fellBack, counts: { sparse, medium, dense, none } }`. The chosen clave carries `share`, `tier` and `compDensity: { asked, played, fellBack }` (spec.clave; so a rearrange reads the tier from the spec). `rereadClave` updates a frame clave's `share` and `tier` from its new patterns; its score stays the one it was chosen by. `claveAlternates` and the trace's alternates carry `share` and `tier`.
+- **`compose.js`:** `compDensity` is an override (chords style, frame only: under `compStyle: 'notes'` or `claveFrom: 'pattern'` it throws, since a pattern clave has no tier). The clave decision names the tier (`densityWhy`, P31): "the comp's density sparse–medium (10–50 %) by default (rule 10, Avery): the frame claves ranked inside it, …", or "…: no frame clave in it (0 sparse, 3 medium, …), so the nearest tier's, medium (25–50 %), …", then "the best of 7 medium frame claves", and the clave's share. The trace's comp event carries `density` and the clave's `compDensity`. No decision was added, so the `'pattern'` hashes hold.
+
+**The default tier, seed 1** (the order's rows; every one medium and none fell back):
+
+| row | bars × slots | clave | share | tier counts (sparse / medium / dense / none) | patterns |
+|---|---|---|--:|---|---|
+| 16:12:9 | 2 × 4 | layer A · 8 steps · guide tones | 25 % | 0 / 3 / 4 / 2 | `...xx... x......x` |
+| 7:5:3:2 | 1 × 3 | layer A · 7 steps · guide tones | 29 % | 0 / 3 / 3 / 1 | `x...x..` |
+| 19:17:16:15 | 2 × 8 | layer C · 8 steps · chord tones | 38 % | 4 / 5 / 3 / 1 | `x..x.x.. .xx...x.` |
+| 119:42:15:8 | 4 × 8 | layer B · 11 steps · roots | 34 % | 1 / 3 / 36 / 12 | `..x..x..x.. ..x..xx.x.. ..x..x..x.. xx..x..x..x` |
+| 8:7:6:5 | 2 × 3 | layer B · 4 steps · roots | 50 % | 0 / 4 / 1 / 1 | `.x.x xx..` |
+| 11:9:7:5 | 2 × 4 | layer A · 6 steps · chord tones | 42 % | 3 / 6 / 2 / 0 | `xxx... xx....` |
+| 768:769 | 4 × 8 | layer B · 6 steps · tones in frame | 42 % | 12 / 27 / 1 / 12 | `xxx... .x..x. ..xx.. xxx...` |
+| 768:784 | 4 × 8 | layer B · 8 steps · chord tones | 50 % | 26 / 44 / 11 / 7 | `x.x.x.x.` each bar |
+
+Phase I's open question 1 is answered by the tiers: 16:12:9 no longer strikes 15 times in 2 bars (it plays 4 guide tones). Asked `sparse`, 16:12:9 and 7:5:3:2 have no sparse candidate and fall back to medium's best; asked `dense`, they play `frame:A/8/root+5th` (69 %) and `frame:C/3/chord` (67 %).
+
+**Compose's bass (P28, `compose.js`, `bass.js`).** Compose's bass is Moving · Kick (`COMPOSE_BASS`):
+- **How:** the spec is built with an empty bass part (its sound, legato and on/off decided as before), the drums are arranged (drums.js reads no bass), then `arrangeBass(spec, { row, cells }, { density: 'moving', lock: 'kick' })` builds the part, which replaces it. So what Compose returns is what plays, the part carries its `bass` record, and a later `arrangeBass` at those options gives it again byte for byte (assert-bass checks 10 specs). The stats' `notes.bass` and `bassRooted` follow. A `bass` decision sits where the bass was decided (after the comp's, before the legato): value "moving · kick", why "Moving · Kick by default (rule 11, Avery): the mid band (40–60 % of the slots), every kick covered on one of its in-frame onsets (9 of 9), the density adding the rest; …". The trace's bass bars are the arranged bars' played lines (`bassLineOf`), and `rec.parts` now runs after the drums and the bass (no trace event is emitted between, so a traced Sparse · Free spec is unchanged).
+- **The drums off** (`drums: false`, or not enabled) **or no kick in the mode:** arrangeBass's own fall-back, Moving · Free, its `refused` the reason; the decision says "…, but the drums are off: there is no kick to land on, so Moving · Free".
+- **The `bass` override** `{ density?, lock? }` (no picks; checked) asks another arrangement ("asked"). **`bass: { density: 'sparse', lock: 'free' }` is the bass before, byte for byte:** Compose mines it bar by bar as it did (no record, no `bass` decision), so with the override taken out of the input the spec is the old one. `assert-refactor-identity.mjs` holds it to the frozen core.
+- `arrangeBass`'s own options still default to `BASS_DEFAULTS` (Sparse · Free), so the store and the window, which read `BASS_DEFAULTS` as "Compose's own", are untouched.
+- `rearrange.js` now meets Compose's bass with a record, so a chord swap re-mines its bar at Moving · Kick (the arranged-bass path), its stats updated.
+- **What it changes, measured (seed 1):** notes a bar and kicks covered: 16:12:9 2.00 (4/4), 7:5:3:2 2.00 (2/2), 19:17:16:15 3.50 (4/4), 119:42:15:8 4.25 (9/9), 8:7:6:5 1.50 (3/4, 1 missed), 11:9:7:5 2.00 (3/4, 1 missed), 768:769 3.50 (9/9), 768:784 4.50 (9/9), the 16k row 4.38 (18/18). A kick note may sit on an onset across its slot's edge (phase J: a hit's onsets are those within ¼ slot of it), so a note's `slot` is the hit's, not always its onset's own window.
+
+**The picker re-ranked (P30, `rearrange.js`).**
+- **A chord change:** when a chord swap, a typed chord (a pin's `{ rootTone, quality }`) or a lead follow changes a chord of a spec whose clave was read in frame, the result carries `claveAlternates`: `claveAlternates(rankFrameClaves(…))` over the chords as they play, in the spec's tier (`spec.clave.compDensity.asked`, else the input's, else the default). What plays is the clave re-read (P20), never switched. A swap to the chord a bar has re-ranks nothing. A chart edit is a re-compose, so the new trace has them.
+- **`reclave` reads the tier:** `{ density }` switches it live. A new density re-chooses the tier's best (or the clave asked with it), its ties by the seed's own generator, so the result is byte for byte a Compose given that `compDensity` (parts, drums, spec.clave, its stats). A density or a clave chosen again returns `claveAlternates` too. Its decision words name the tier. `rearrange()` dispatches `{ density }` to it. A density for a pattern clave throws.
+
+**New chords voiced (P32).** The core already did it; `assert-voicing.mjs` now checks it: on 6 rows, a lead follow (chords following), a chord swap and a typed chord each give, led, the voicing pass's output over the new chords (the brute force's closed loop, and a revoice to Led changes nothing) and, close, root position (a revoice to Close changes nothing). A Close | Led flip before or after each edit gives the other setting's edit, chords and comp byte for byte.
+
+**Cost (Node, the 16k row, medians):** Compose 650–790 ms lean, the same as before phase M within the machine's noise (A/B 653–684 against 558–673 ms at f949cf7); the full table 2.0 s (1.7 s before; a worker's). The ranking (280 readings, 107 candidates) 2.8 ms warm, 6.9 ms on a fresh part context (the layers' strikes read once a context, 2.8 ms of it). A chord swap with the re-read, the re-rank and the Moving · Kick bar 13.6 ms. A density switch 4.7 ms. `arrangeBass`: Moving · Kick 11.1, Sparse · Free 8.5, Moving · Free 9.3, Walking · Kick 10.5, Sparse · Kick 10.1, Roots · Kick 2.9, Moving · Clave 5.3 ms.
+
+**Pins (P27–P28).** No fixture was re-frozen.
+- `bass: { density: 'sparse', lock: 'free' }`, taken back out of the input where specs are hashed or compared to the frozen core: `assert-refactor-identity.mjs` (its override-list message too), `assert-compose.mjs`, `assert-progression.mjs`, `assert-trace.mjs`, `assert-chord-symbols.mjs`, `assert-comp.mjs` and `assert-voicing.mjs` (each's frozen-core cases), `assert-frame-clave.mjs` (P19's 76 pattern hashes), `assert-rearrange.mjs` (every Compose), `assert-bass.mjs` (every section but the new one) and `assert-drums.mjs` ("the drums move nothing else": with Moving · Kick the drums move the bass by design; a new check says they move only it).
+- Page suite: `assert-page-bass.mjs` (its `runCompose` and `composeAs`), because the window still treats Sparse · Free as Compose's own bass (phase N).
+- `compDensity` needed no pin: the phase I suites' frame checks run against the brute force, which now reads the tiers, so `assert-frame-clave.mjs`'s brute force was rewritten from P26–P27 rather than pinned. No other suite froze a frame result.
+
+**Tests (M4).**
+- `assert-frame-clave.mjs` 15 → 22: the sets and tiers against the brute force on 8 rows × 4 densities × 2 seeds (every stroke in frame and in its set, the share and tier, the words); 7:5:3:2's fall-back from sparse to medium; the trace's density and its alternates all in the tier; the throws; no twin readings; the alternates re-ranked after chord swaps, typed chords and lead follows (the brute force's ranking, and equal to a Compose given a progression that pins the same chords where it does); 40 density switches equal to a Compose given that compDensity; the default tier's table.
+- `assert-bass.mjs` +7: Compose's default at Moving · Kick on 10 specs (arrangeBass's byte for byte, every kick covered or missed, the decision and its place); the fall-back with the drums off, disabled, or hats only; the pin byte for byte (no record, no decision, the rest of the spec the default's); an asked bass; the override checked; the trace; a chord swap of the default.
+- `assert-voicing.mjs` +1: P32.
+- `assert-drums.mjs` +1 (above). No suite was added (83).
+
+**Calls beyond the order (proposed):**
+1. The fifth is the chord's own (6–8 semitones), not always 7.
+2. A share counts steps sounding (x's), a strike two steps share twice.
+3. Medium's fall-back tries sparse before dense.
+4. Fill's partner comes from the tier's ranking.
+5. An asked frame id outside the tier is scored against the tier's band.
+6. `compDensity` throws under `claveFrom: 'pattern'` and `compStyle: 'notes'`.
+7. Compose's bass is built by `arrangeBass` itself, after the drums; Sparse · Free asked keeps the old path and adds no decision or record.
+8. Sparse · Free is still `arrangeBass`'s default (`BASS_DEFAULTS`); Compose's is `COMPOSE_BASS`.
+9. `reclave` returns no `input` for a density switch (as for a clave): the window must send `compDensity` on a re-compose.
+
+**For phase N (the window; nothing here changed it):**
+- `store/composition-store.js` `composedBass()` and `isComposedBass()` read `BASS_DEFAULTS` (Sparse · Free) as Compose's own. They should be Moving · Kick (`COMPOSE_BASS`), so `bassOf()` opens at Compose's arrangement and `bassOn` is false for it. A stored entry's Sparse · Free, once "Compose's own", is now an arrangement.
+- `composer-controller.js` `offerOf` arranges the default offer at `composedBass()`; with Compose's bass carrying its record, `bassOf()` can read `part.bass` directly (it already prefers it), so the offer memo matters only for a pinned spec.
+- **The kick:** Compose arranges its bass over its own drums (the default options), while the window plays `st.drumOptions` (and may turn them off). The window must either send its drum options to Compose (so the bass covers the kick that plays), or re-arrange the bass whenever its drums differ from Compose's: `rebass` today runs only when `bassOn(st)` and `lock === 'kick'`. With the window's drums off, Compose's bass still covers Compose's kick, a kick that doesn't play.
+- `setBass({ density: 'sparse', lock: 'free' })` must arrange (it is no longer "nothing arranged"), and the default must not be dropped as "Compose's own" when the entry says Moving · Kick.
+- The fold: rearrange's arranged-bass path (`bassDropped`) is now taken for Compose's own bass; the DESIGN_NOTES phase H line "rearrange's arranged-bass path is never taken by the window" no longer holds.
+- The Comping inspector's Density select calls `reclave({ density })`; keep the latest `claveAlternates` from any rearrange or reclave result (the fold's steps) and list them instead of the trace's; send `compDensity` on a re-compose; the caption names the tier (`spec.clave.compDensity`).
+- `assert-page-bass.mjs` is pinned to Sparse · Free (its `runCompose`, `composeAs`); phase N takes the pin out.
+
+**Open (for Avery):**
+1. Every row's default lands in medium, often at its top: 8:7:6:5 and 768:784 play 50 % (768:784 `x.x.x.x.` every bar, scoring 1.0). Should sparse–medium prefer the sparser of two equal scores, or should 50 % be dense?
+2. On 8:7:6:5 and 11:9:7:5 one kick of 4 has no onset in frame, so it rests; Moving there plays 1.5–2 notes a bar. Is Moving · Kick too thin on the small rows (fall back to Free when a quarter of the kicks miss)?
+3. The window's drums vs Compose's: should the bass cover the kick that plays (the window's drum options sent to Compose), or Compose's?
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
