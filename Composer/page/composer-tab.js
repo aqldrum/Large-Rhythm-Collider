@@ -57,10 +57,12 @@
 // their kinds instead of runner-up lines (P6: no lead swaps on a target).
 //
 // The Arp mode (COMP_ARP_ORDER.md B3, Q8; DESIGN_NOTES "Comping and Arp in the window"): the lead's and the inner's
-// cell inspectors open on a Line | Arp switch (the controller's setArp: live, one undo step). With Arp: Pattern (Up,
-// Down, Up-down, As played), Rate (1–4 a slot) and Range (1–3 octaves); Details adds the rests and the share of steps
-// holding a chord tone. A lead in Arp hides its runner-ups (Q5). On a MIDI target the lead's switch is disabled, its
-// title arpRefusal's words. The matrix's lane name and the part strip say "· arp".
+// cell inspectors open on a Line | Arp switch (the controller's setArp: live, one undo step). With Arp: Time (×1, ×2,
+// ×3 the slots a bar: the anchors the arp is mined over; COMP_ARP_ORDER.md Amendment 1, M5 — it replaced B3's Pattern,
+// Rate and Range); Details adds the rests, the share of chord tones and the phrases mined (the rest walked). The
+// phrases' ranked arps (picks) have no picker here yet: that is phase E. A lead in Arp hides its runner-ups (Q5). On a
+// MIDI target the lead's switch is disabled, its title arpRefusal's words. The matrix's lane name and the part strip
+// say "· arp".
 // Comping in chords (A4): a borrowed comp tone's dot is hollow; the comp cell says its strokes (and, with Details,
 // the share of its tones the row sounds).
 
@@ -96,9 +98,9 @@ const DETAIL = 'ctab-detail', CLEAN = 'ctab-clean-only';
 /** MIDI out (phase B): where the panel's choices are kept { ports: { [part]: name | '' (not sent) }, clock: name | '', bend } */
 export const MIDI_KEY = 'lrc.composer.midi';
 const MIDI_LABELS = Object.freeze({ lead: 'Lead', chords: 'Chords', comp: 'Comping', bass: 'Bass', inner: 'Inner', drums: 'Drums' });
-/** B3: the Arp knobs' words */
-export const ARP_PATTERN_LABELS = Object.freeze({ up: 'Up', down: 'Down', updown: 'Up-down', played: 'As played' });
-const ARP_PATTERN_TITLES = Object.freeze({ up: 'climbs the chord, then wraps to the bottom', down: 'falls through the chord, then wraps to the top', updown: 'climbs, then turns and falls', played: 'the chord tone the row sounds first in each step, the nearest octave' });
+/** M5: the Arp's Time words (× the slots a bar) */
+export const ARP_TIME_LABELS = Object.freeze({ 1: '×1', 2: '×2', 3: '×3' });
+const ARP_TIME_TITLES = Object.freeze({ 1: 'an anchor a slot: the arp mined at the bars\' own slots', 2: 'double time: two anchors a slot', 3: 'triple time: three anchors a slot' });
 /** a part's name with its mode: "Lead · arp" (B3) */
 export const partName = (id, part) => `${PART_LABELS[id]}${part?.arp ? ' · arp' : ''}`;
 /** the narrowest a matrix column gets before the matrix scrolls (px; proposed) */
@@ -932,14 +934,15 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       el('div', { className: 'ctab-muted', textContent: 'no lead alternates: the lead is the clip (its other placements are in the MIDI clip control)' })];
   }
   /**
-   * B3 (Q8): the Line | Arp switch of the lead or the inner, and with Arp its knobs; Details: the rests and the share
-   * of steps on a chord tone. Refused (a MIDI target's lead): the switch disabled, arpRefusal's words its title.
+   * B3 (Q8): the Line | Arp switch of the lead or the inner, and with Arp its Time (M5); Details: the rests, the share
+   * of chord tones and the phrases mined. Refused (a MIDI target's lead): the switch disabled, arpRefusal's words its
+   * title.
    */
   function arpControls(id) {
     const a = core.arpOf(id), refused = a.refusal, on = a.mode === 'arp' && !refused;
     const set = (x) => doEdit(() => core.setArp(id, x));
     const lineTitle = refused ?? (id === 'lead' ? 'the mined line: the melody Compose found (its runner-ups to audition)' : 'the mined inner line, in the lead\'s gaps');
-    const arpTitle = refused ?? `the chord's tones as an arpeggio, each an onset the row plays: live, no re-compose${id === 'inner' ? ' (the harp, unless you chose a sound)' : ''}`;
+    const arpTitle = refused ?? `an arpeggio mined over the chords, each note an onset the row plays: live, no re-compose${id === 'inner' ? ' (the harp, unless you chose a sound)' : ''}`;
     const sw = el('div', { className: `ctab-arp-switch${refused ? ' refused' : ''}`, title: refused ?? 'Line: the mined line · Arp: an arpeggio over the chords' },
       button('Line', `ctab-seg ctab-arp-line${on ? '' : ' on'}`, lineTitle, () => set({ mode: 'line' }), { disabled: !!refused }),
       button('Arp', `ctab-seg ctab-arp-on${on ? ' on' : ''}`, arpTitle, () => set({ mode: 'arp' }), { disabled: !!refused }));
@@ -947,18 +950,16 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const kids = [sw];
     if (on) {
       const pick = (cls, title, options, value, onPick) => {
-        const sel = el('select', { className: cls, title }, ...options.map(([v, label, t]) => el('option', { value: String(v), textContent: label, ...(t ? { title: t } : {}) })));
+        const sel = el('select', { className: cls, title }, ...options.map(([v, label, t, off]) => el('option', { value: String(v), textContent: label, ...(t ? { title: t } : {}), ...(off ? { disabled: true } : {}) })));
         sel.value = String(value);
         sel.addEventListener('change', () => onPick(sel.value));
         return sel;
       };
-      kids.push(
-        pick('ctab-arp-pattern', 'the shape: the next chord tone in its direction, whichever the row sounds', ARP_CHOICES.patterns.map((p) => [p, ARP_PATTERN_LABELS[p], ARP_PATTERN_TITLES[p]]), a.pattern, (v) => set({ pattern: v })),
-        pick('ctab-arp-rate', 'the rate: steps a slot (each step the row\'s own onsets in that part of the slot)', ARP_CHOICES.rates.map((r) => [r, `${r} a slot`]), a.rate, (v) => set({ rate: Number(v) })),
-        pick('ctab-arp-range', 'the range: the octaves the arpeggio spans', ARP_CHOICES.ranges.map((r) => [r, `${r} oct`]), a.range, (v) => set({ range: Number(v) })));
+      kids.push(pick('ctab-arp-time', 'the time: the anchors the arp is mined over, × the slots a bar (each note still sounds at its own onset\'s time)',
+        ARP_CHOICES.times.map((t) => [t, ARP_TIME_LABELS[t], a.times.includes(t) ? ARP_TIME_TITLES[t] : `${ARP_TIME_TITLES[t]}: past the 32 anchors a phrase holds at this many slots a bar`, !a.times.includes(t)]), a.time, (v) => set({ time: Number(v) })));
       const st = a.stats;
-      if (st) kids.push(el('span', { className: `ctab-muted ctab-arp-stats ${DETAIL}`, textContent: `${st.rests} rest${st.rests === 1 ? '' : 's'} of ${st.steps} · ${Math.round(100 * st.chordShare)}% of steps on a chord tone`,
-        title: `${st.notes} notes over ${st.steps} steps; a step rests where the row sounds no chord tone in it${st.restsForLead != null ? `, or (below rate 3) where the lead strikes: ${st.restsForLead}` : ''}` }));
+      if (st) kids.push(el('span', { className: `ctab-muted ctab-arp-stats ${DETAIL}`, textContent: `${st.rests} rest${st.rests === 1 ? '' : 's'} of ${st.anchors} · ${Math.round(100 * st.chordShare)}% chord tones · ${st.mined} of ${st.phrases} phrase${st.phrases === 1 ? '' : 's'} mined`,
+        title: `${st.notes} notes over ${st.anchors} anchors (×${st.time}); a phrase the miner finds nothing for is walked (the chord tone the row sounds first in each step)${st.walked ? `: ${st.walked} walked` : ''}${st.onLead != null ? `; ${st.onLead} on an anchor where the lead sounds` : ''}` }));
     }
     return el('div', { className: 'ctab-row ctab-arp' }, ...kids);
   }

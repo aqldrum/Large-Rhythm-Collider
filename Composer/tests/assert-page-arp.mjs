@@ -3,8 +3,10 @@
 // the site's own composite rhythm and a recording mock AudioContext:
 //   • the lead's and the inner's cell inspectors: a Line | Arp switch, Line by default, no knobs in Line
 //   • Arp on the inner: live, no re-compose; the inner exactly arrangeArp over the spec in Line; the harp (Q4); the
-//     matrix's lane and the part strip say "· arp"; Pattern, Rate, Range shown, Details' rests and chord-tone share
-//   • each knob (pattern, rate, range) through its select, live; a sound chosen for the inner wins over the harp
+//     matrix's lane and the part strip say "· arp"; Time shown (phase D, M5: it replaced Pattern, Rate, Range),
+//     Details' rests, chord-tone share and phrases mined
+//   • Time through its select, live; a phrase's pick through setArp (no picker yet: phase E); a sound chosen for the
+//     inner wins over the harp
 //   • undo and redo step back through the switches and the knobs (the header's buttons)
 //   • the lead in Arp: its runner-ups hidden (Q5), the inner re-arranged off the arp's onsets, the drums' *with*
 //     re-arranged over the arp lead; Back to Line: the melody exactly as before
@@ -94,7 +96,7 @@ function expected(st = S()) {
   for (const id of ['lead', 'inner']) {
     const a = st.arps[id];
     if (a.mode !== 'arp' || arpRefusal(spec, id)) continue;
-    const p = arrangeArp(spec, m, id, { pattern: a.pattern, rate: a.rate, range: a.range, legato: st.parts[id].legato });
+    const p = arrangeArp(spec, m, id, { time: a.time, picks: a.picks, legato: st.parts[id].legato });
     out[id] = p; spec = { ...spec, parts: spec.parts.map((x) => (x.id === id ? p : x)) };
   }
   return out;
@@ -112,7 +114,7 @@ console.log('\n— the switch');
 tab.selectCell('inner', 0);
 const sw = () => q(inspector, '.ctab-arp-switch');
 check('the inner\'s cell inspector: a Line | Arp switch, Line on, no knobs in Line', !!sw() && qa(sw(), '.ctab-seg').map((b) => b.textContent).join('|') === 'Line|Arp' && q(sw(), '.ctab-arp-line').classList.contains('on')
-  && !q(inspector, '.ctab-arp-pattern') && !q(inspector, '.ctab-arp-stats'));
+  && !q(inspector, '.ctab-arp-time') && !q(inspector, '.ctab-arp-stats'));
 tab.selectCell('lead', 0);
 check('the lead\'s too, above its runner-ups', !!sw() && q(sw(), '.ctab-arp-line').classList.contains('on') && qa(inspector, '.ctab-alt').length > 0 && !q(sw(), '.ctab-arp-on').disabled);
 
@@ -120,36 +122,39 @@ console.log('\n— Arp on the inner: live');
 tab.selectCell('inner', 0);
 const c0 = composes;
 await click('.ctab-arp-on');
-check('a click on Arp: no Compose; the store\'s mode and the spec\'s inner are the arp (pattern up, rate 2, range 2)', composes === c0 && S().arps.inner.mode === 'arp' && partOfSpec('inner').arp?.pattern === 'up' && partOfSpec('inner').arp.rate === 2 && partOfSpec('inner').arp.range === 2);
+check('a click on Arp: no Compose; the store\'s mode and the spec\'s inner are the arp (time ×1, no picks)', composes === c0 && S().arps.inner.mode === 'arp' && partOfSpec('inner').arp?.time === 1 && J(partOfSpec('inner').arp.picks) === '{}');
 check('… exactly arrangeArp over the spec in Line; Compose\'s own spec untouched', arpsMatch() && S().composed === composed0 && sig(composed0.parts.find((p) => p.id === 'inner')) === innerLine0 && sig(lineOf(partOfSpec('inner'))) === innerLine0);
 check(`… the harp (Q4: it played ${innerSound0}); the drums re-arranged over it`, S().parts.inner.sound === INNER_ARP_SOUND && J(S().drums.hits) === J(arrangeDrums(S().spec, S().drumOptions).hits));
-check(`the matrix's lane says so ("${laneName('inner')}"), and the inspector shows Pattern, Rate, Range`, laneName('inner') === 'Inner · arp' && laneName('lead') === 'Lead' && q(sw(), '.ctab-arp-on').classList.contains('on')
-  && q(inspector, '.ctab-arp-pattern').value === 'up' && q(inspector, '.ctab-arp-rate').value === '2' && q(inspector, '.ctab-arp-range').value === '2'
-  && qa(q(inspector, '.ctab-arp-pattern'), 'option').map((o) => o.textContent).join('|') === 'Up|Down|Up-down|As played');
+check(`the matrix's lane says so ("${laneName('inner')}"), and the inspector shows Time (no Pattern, Rate, Range)`, laneName('inner') === 'Inner · arp' && laneName('lead') === 'Lead' && q(sw(), '.ctab-arp-on').classList.contains('on')
+  && q(inspector, '.ctab-arp-time').value === '1' && qa(q(inspector, '.ctab-arp-time'), 'option').map((o) => o.textContent).join('|') === '×1|×2|×3'
+  && !q(inspector, '.ctab-arp-pattern') && !q(inspector, '.ctab-arp-rate') && !q(inspector, '.ctab-arp-range'));
 const st0 = partOfSpec('inner').arp.stats, statsEl = q(inspector, '.ctab-arp-stats');
-check(`Details: the rests and the share of steps on a chord tone ("${statsEl?.textContent}")`, !!statsEl && statsEl.classList.contains('ctab-detail') && statsEl.textContent === `${st0.rests} rest${st0.rests === 1 ? '' : 's'} of ${st0.steps} · ${Math.round(100 * st0.chordShare)}% of steps on a chord tone`);
+check(`Details: the rests, the chord tones' share and the phrases mined ("${statsEl?.textContent}")`, !!statsEl && statsEl.classList.contains('ctab-detail')
+  && statsEl.textContent === `${st0.rests} rest${st0.rests === 1 ? '' : 's'} of ${st0.anchors} · ${Math.round(100 * st0.chordShare)}% chord tones · ${st0.mined} of ${st0.phrases} phrase${st0.phrases === 1 ? '' : 's'} mined`);
 check('the inner\'s mined-line note (smoothing) is gone while it is an arp; its tag says arp', !q(inspector, '.ctab-smooth') && /arp/.test(q(inspector, '.ctab-ctx-head .ctab-tag')?.textContent ?? ''));
 check('MIDI: the arp is one note at a time (its notes never overlap)', midiNotesOf(S().parts.inner, S().spec.knobs.cycleSeconds).every((n, i, a) => i === 0 || a[i - 1].end <= n.time + 1e-9));
 
 console.log('\n— the knobs');
 const undo0 = S().undo.length;
-await pick('.ctab-arp-pattern', 'down');
-check('Pattern → Down: live, the arp falls', partOfSpec('inner').arp.pattern === 'down' && S().arps.inner.pattern === 'down' && arpsMatch() && composes === c0);
-await pick('.ctab-arp-rate', 4);
-check('Rate → 4: four steps a slot', partOfSpec('inner').arp.rate === 4 && partOfSpec('inner').arp.stats.steps === 4 * 4 * 8 && arpsMatch());
-await pick('.ctab-arp-range', 1);
-check('Range → 1 octave', partOfSpec('inner').arp.range === 1 && arpsMatch());
-await pick('.ctab-arp-pattern', 'played');
-check('Pattern → As played; each knob one undo step', partOfSpec('inner').arp.pattern === 'played' && S().undo.length === undo0 + 4 && arpsMatch());
+const pickAt = partOfSpec('inner').arp.phrases.findIndex((x) => x.alternates.length > 1), second = partOfSpec('inner').arp.phrases[pickAt]?.alternates[1];
+await core.setArp('inner', { picks: second ? { [pickAt]: second.id } : {} });
+check(`a pick through setArp (phrase ${pickAt + 1}'s second arp, ${second?.contour} · ${second?.band}): it plays`, !!second && partOfSpec('inner').arp.phrases[pickAt].picked === second.id && J(S().arps.inner.picks) === J({ [pickAt]: second.id }) && arpsMatch());
+await pick('.ctab-arp-time', 2);
+check('Time → ×2: live, mined over two anchors a slot (the pick kept in the store)', partOfSpec('inner').arp.time === 2 && S().arps.inner.time === 2 && partOfSpec('inner').arp.stats.anchors === 4 * 8 * 2
+  && J(S().arps.inner.picks) === J({ [pickAt]: second?.id }) && arpsMatch() && composes === c0);
+await pick('.ctab-arp-time', 3);
+check('Time → ×3; each knob one undo step', partOfSpec('inner').arp.time === 3 && partOfSpec('inner').arp.stats.anchors === 4 * 8 * 3 && S().undo.length === undo0 + 3 && arpsMatch());
 core.setPart('inner', { legato: !S().parts.inner.legato });
 check('legato toggled on the arp: still the arp (its lengths the steps\')', !!S().parts.inner.arp && S().parts.inner.notes.length === partOfSpec('inner').notes.length);
 core.setPart('inner', { legato: !S().parts.inner.legato });
 
 console.log('\n— undo and redo');
 await click('.ctab-undo', left);
-check('undo: the last knob back (As played → Down)', S().arps.inner.pattern === 'down' && partOfSpec('inner').arp.pattern === 'down' && arpsMatch());
-await click('.ctab-undo', left); await click('.ctab-undo', left); await click('.ctab-undo', left);
-check('undo ×3 more: the default Arp', J(S().arps.inner) === J({ mode: 'arp', pattern: 'up', rate: 2, range: 2 }) && arpsMatch());
+check('undo: the last knob back (×3 → ×2)', partOfSpec('inner').arp.time === 2 && arpsMatch());
+await click('.ctab-undo', left);
+check('undo: ×1, the pick playing again', partOfSpec('inner').arp.time === 1 && partOfSpec('inner').arp.phrases[pickAt]?.picked === second?.id && arpsMatch());
+await click('.ctab-undo', left);
+check('undo: the default Arp', J(S().arps.inner) === J({ mode: 'arp', time: 1, picks: {} }) && arpsMatch());
 await click('.ctab-undo', left);
 check('undo: the inner in Line again — its mined line, its own sound, the lane named plainly', S().arps.inner.mode === 'line' && !partOfSpec('inner').arp && sig(partOfSpec('inner')) === innerLine0 && S().parts.inner.sound === innerSound0 && laneName('inner') === 'Inner');
 await click('.ctab-redo', left);
@@ -190,7 +195,7 @@ core.setSeed(S().input.seed);   // the same seed: dirty, Compose again
 const c1 = composes;
 q(left, '.ctab-go').click(); await settle();
 check('Compose again (same seed): the modes kept, the spec plays them', composes === c1 + 1 && S().composed !== composed0 && S().arps.lead.mode === 'arp' && S().arps.inner.mode === 'arp' && !!partOfSpec('lead').arp && !!partOfSpec('inner').arp && arpsMatch());
-check('… the undo stack cleared by the Compose, the knobs as they were', S().undo.length === 0 && S().arps.inner.pattern === 'up');
+check('… the undo stack cleared by the Compose, the knobs as they were', S().undo.length === 0 && S().arps.inner.time === 1);
 const before = composes, playing = S().spec;
 const phase = await bridge.lens.press(); await settle();
 check('the glyph recalls it: no Compose, it plays the arps', phase === 'landed' && composes === before && S().spec === playing && S().status === 'playing' && !!partOfSpec('lead').arp);
@@ -220,7 +225,7 @@ console.log('\n— a big row\'s arps in the worker');
   const a = mk(true), b = mk(false);
   await a.c.compose(); await b.c.compose();
   const jobs0 = arpJobs;
-  const ra = await a.c.setArp('lead', { mode: 'arp', pattern: 'updown', rate: 3 }), rb = await b.c.setArp('lead', { mode: 'arp', pattern: 'updown', rate: 3 });
+  const ra = await a.c.setArp('lead', { mode: 'arp', time: 2 }), rb = await b.c.setArp('lead', { mode: 'arp', time: 2 });
   await a.c.setArp('inner', { mode: 'arp' }); await b.c.setArp('inner', { mode: 'arp' });
   const same = (id) => sig(a.st.spec.parts.find((p) => p.id === id)) === sig(b.st.spec.parts.find((p) => p.id === id));
   check(`past mainThreadOnsets the arps go to the worker (${arpJobs - jobs0} jobs), the same parts as on this thread`, ra.ok && rb.ok && arpJobs - jobs0 === 2 && same('lead') && same('inner') && a.st.parts.inner.sound === INNER_ARP_SOUND);
