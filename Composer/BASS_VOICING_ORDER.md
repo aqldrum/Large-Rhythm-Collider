@@ -204,3 +204,9 @@ Everything below is live: no button should go back to Compose, and the header's 
   - The loop's wrap is as large as a bar line's motion on some rows (11:9:7:5 680¢, 119:42:15:8 610¢). Close it?
   - 11:9:7:5 moves 782¢, not the nearest-octave 284¢: its second chord's least-motion voicing has a muddy 14/11 at
     159 Hz (limit 196 Hz). P1 as written.
+- 2026-10-28: phase H (the window) merged; 82/0. ORDER COMPLETE. The voicing switch is live (`revoice`, byte for byte a
+  Compose given `voicing`); the live bass runs on the main thread up to the 16k row (≤ 14 ms a change, 24 ms the first
+  runner-up list) and in the worker above. Open for Avery (from the builder): should a density or lock change audition
+  at the barline like a runner-up (today it applies at once, like the arp's Time)? Name the density on the part strip
+  ("Bass · walking", as "· arp")? Should a chord swap drop a stale bass pick at once (today it stays, marked amber, until
+  undo or a re-compose)? The browser and rig checklist above is final.
