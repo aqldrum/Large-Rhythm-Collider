@@ -109,6 +109,11 @@
 //                setClave({ id ('steps:pattern' | 'son' | 'rumba' | 'bossa' | null: Compose's), relation ('sync' | 'fill') })
 //                claveOf() → { id, text, source, relation, partner, alternates (the trace's: the mined top 12, then
 //                            the curated; each current / composed), composedId, edit, … } | null (no clave: notes)
+//              Phase L (BASS_VOICING_ORDER.md Amendment 1): a clave read from the frame (phase I, the default) is set and
+//              read by its id ('frame:A/8/chord'); claveOf adds each bar's pattern (`barTexts`: a frame clave's changes
+//              with the chord), the partner's, and on each alternate `frame` (a frame candidate) and `inFrame` (a
+//              curated clave, landed in frame only). A chord swap that re-reads a bar's clave says so in its result
+//              (`reclavedBars`, also among the `changedBars`: the comp and the perc moved there).
 //              The choice is an edit (`state.edits.clave`, only what differs from Compose's): one undo step, in the
 //              snapshots, applied LAST in the fold (every bar re-strummed over its chord as edited), auditionable. A
 //              re-compose keeps it where the new composition still offers the clave (its trace's alternates), else
@@ -119,7 +124,9 @@
 //                        ({ [bar]: a line's id }: replaces the picks whole) })   one undo step
 //                bassOf() → { density, lock, picks, densities, locks: [{ id, refusal }], playing, ran, refused, stats,
 //                           bars (each bar's runner-ups, `alternates`), pending }
-//                pickBass(bar, id)   one of a bar's runner-ups (its first again removes the pick), through setBass
+//                pickBass(bar, id)   one of a bar's runner-ups (its first again removes the pick), through setBass;
+//                                    Roots too (Amendment 1, rule 9: the root's other in-frame notes, phase L)
+//                ratioOfOnset(node)  an onset's tone in the row, to name a Roots runner-up (null: the row is the worker's)
 //              The choice is the entry's (`state.bass`, store/composition-store.js), as the arps are: in the snapshots,
 //              kept through a re-compose and the glyph's recall. Compose's own bass (Sparse, Free, no picks) arranges
 //              nothing (arrangeBass's default is it byte for byte); bassOf reads its offer from arrangeBass at the default,
@@ -190,6 +197,18 @@ export const BASS_CHOICES = Object.freeze({ densities: BASS_DENSITIES, locks: BA
 export const soundChoices = () => NOTE_INSTRUMENT_IDS.map((id) => ({ id, label: getInstrument(id).label }));
 
 // ── drums ──
+/** phase L: a clave's pattern in each of N bars as the window shows it: a frame clave's own (claveText(clave, k): it
+ *  changes with the chord), a fixed one's group of its pass (son's two bars alternate), else the one pattern */
+function barTextsOf(clave, N) {
+  if (!clave) return [];
+  return Array.from({ length: N }, (_, k) => {
+    if (Array.isArray(clave.patterns)) return claveText(clave, k);
+    const p = clave.pattern ?? '', B = clave.span ?? 1;
+    if (B <= 1 || p.length % B) return p;
+    const w = p.length / B, g = k % B;
+    return p.slice(g * w, (g + 1) * w);
+  });
+}
 const DRUM_MODE_LABELS = { backbeat: 'backbeat (default)', with: 'clave: with lead + comping', against: 'clave: against lead + comping', partition: 'partition: the downbeat layer',
   grid: 'grid: the step grid', prime: 'prime: the two-level prime partition' };   // STEP 4d: grid and prime (drums.js keeps them out of DRUM_MODES)
 /** every drum mode: the layered modes, each curated pattern, then the source modes (the step grid, the prime partition) */
@@ -460,11 +479,18 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     let i = 0, spec = f.base;
     while (i < list.length && f.steps[i] && f.steps[i].sig === sigs[i]) { spec = f.steps[i].spec; i++; }
     f.steps.length = i;
-    const commit = (r) => { spec = applyRearrange(spec, r); f.steps.push({ sig: sigs[i], spec }); i++; };
+    // phase L: the bars a step run now re-read the clave in (a chord swap, phase I P20): the comp and the perc moved there
+    const reclaved = new Set();
+    const commit = (r) => { for (const k of r.reclavedBars ?? []) reclaved.add(k); spec = applyRearrange(spec, r); f.steps.push({ sig: sigs[i], spec }); i++; };
     // stale: a newer fold of this state took over, or a Compose landed (a new fold record) while a worker step ran; a
     // stale answer, or a stale failure, never touches the state
     const stale = () => mine !== f.gen || folds.get(st) !== f || st.composed !== f.composed;
-    const finish = (arped, bassed) => { f.applying = false; settleState(st, list.length ? spec : null, arped, bassed); return { ok: true, ...movedBars(was, st.spec), edits: list.length }; };
+    const finish = (arped, bassed) => {
+      f.applying = false; settleState(st, list.length ? spec : null, arped, bassed);
+      const moved = movedBars(was, st.spec), re = [...reclaved].sort((a, b) => a - b);
+      if (re.length) moved.changedBars = [...new Set([...moved.changedBars, ...re])].sort((a, b) => a - b);
+      return { ok: true, ...moved, ...(re.length ? { reclavedBars: re } : {}), edits: list.length };
+    };
     // phase H: a big row's bass in the worker, over the spec with its arps and the drums as they play
     const bassStep = (arped) => {
       if (!bassOn(st) || !bassOnWorker(st)) return finish(arped);
@@ -1163,24 +1189,30 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     // ── phase E: the clave (COMP_ARP_ORDER.md Amendment 1; rearrange.js reclave) ──
     /**
      * The comp's clave as it plays → { id, name?, text (the pattern a bar a group), pattern, source (claveSource's words),
-     * steps, span, score, terms, from, bars, relation, partner: { pattern, text, source }, strokes (the comp's, as it plays),
-     * silent, composedId, composedRelation, edit (state.edits.clave), asked (not among the alternates), alternates: [{ …the
-     * trace's (id, steps, span, pattern, onsets, score, terms, bars, from), text, source, curated, current, composed }] }
-     * | null (nothing composed, or a composition in notes)
+     * steps, span, score, terms, from, bars, read ('frame' | 'pattern'), frame (a frame clave), barTexts (each bar's
+     * pattern, phase L), relation, partner: { pattern, text, source, barTexts }, strokes (the comp's, as it plays), silent,
+     * composedId, composedRelation, edit (state.edits.clave), asked (not among the alternates), alternates: [{ …the
+     * trace's (id, steps, span, pattern, onsets, score, terms, bars, from, patterns?, read?), text, source, label, curated,
+     * frame, inFrame, current, composed }] } | null (nothing composed, or a composition in notes)
      */
     claveOf() {
       const s = ready(state) ? state.spec : null;
       if (!s?.clave) return null;
-      const c = s.clave, own = state.composed.clave, ev = compEventOf(state.trace);
-      const alternates = (ev?.alternates ?? []).map((x) => ({ ...x, text: claveText(x), source: claveSource(x), curated: !!x.from?.pattern, current: x.id === c.id, composed: x.id === own?.id }));
+      const c = s.clave, own = state.composed.clave, ev = compEventOf(state.trace), N = s.knobs.bars;
+      // phase L: a frame candidate (`frame`) and a curated clave read in frame (`inFrame`: its fixed steps land on in-frame
+      // onsets only), named by its own label (`label`: the source without "· in frame")
+      const alternates = (ev?.alternates ?? []).map((x) => ({ ...x, text: claveText(x), source: claveSource(x), curated: !!x.from?.pattern, frame: !!x.from?.frame, inFrame: !!x.from?.pattern && x.read === 'frame',
+        label: x.read === 'frame' && !x.from?.frame ? claveSource({ ...x, read: null }) : claveSource(x), current: x.id === c.id, composed: x.id === own?.id }));
       const p = c.partner;
       return { id: c.id, ...(c.name ? { name: c.name } : {}), text: claveText(c), pattern: c.pattern, source: claveSource(c), steps: c.steps, span: c.span ?? 1, score: c.score, terms: { ...c.terms }, from: { ...c.from }, bars: c.bars,
-        relation: c.relation, partner: { pattern: p.pattern, text: claveText(p), source: p.source }, strokes: s.parts.find((x) => x.id === 'comp')?.strokes?.length ?? 0,
+        read: c.read ?? 'pattern', frame: !!c.from?.frame, barTexts: barTextsOf(c, N),
+        relation: c.relation, partner: { pattern: p.pattern, text: claveText(p), source: p.source, barTexts: barTextsOf(p, N) }, strokes: s.parts.find((x) => x.id === 'comp')?.strokes?.length ?? 0,
         silent: c.relation === 'fill' ? p.silent + p.shared : c.silent, composedId: own?.id ?? null, composedRelation: own?.relation ?? null,
         edit: state.edits?.clave ? { ...state.edits.clave } : null, asked: !alternates.some((x) => x.current), alternates };
     },
     /**
-     * Phase E: the comp's clave ({ id: 'steps:pattern' | a curated name | null (Compose's own) }) and/or its relation
+     * Phase E: the comp's clave ({ id: 'steps:pattern' | a curated name | a frame clave's 'frame:A/8/chord' (phase L) |
+     * null (Compose's own) }) and/or its relation
      * ({ relation: 'sync' | 'fill' }), live with no re-compose (rearrange.js reclave), one undo step; Compose's own
      * choice again removes the edit. A composition in notes (no clave) throws. → Promise<{ ok, kind: 'clave', … }>
      */
@@ -1241,16 +1273,24 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     /**
      * Play one of bar k's bass runner-ups (bassOf().bars[k].alternates; its first, the bar's best, again removes the
      * pick): setBass with the picks so changed, one undo step; the window auditions it as the lead's runner-ups
-     * (audition(() => pickBass(…))). Roots (one line a chord), a bar with no offer, or an id it doesn't offer throws.
+     * (audition(() => pickBass(…))). Roots too (Amendment 1, rule 9: the root's other in-frame notes; phase L). A bar
+     * with no offer, or an id it doesn't offer, throws.
      */
     pickBass(bar, altId) {
       const b = api.bassOf(), rec = b.bars?.[bar];
-      if (b.density === 'roots') throw new Error('composer: Roots plays one note a chord: no runner-ups to pick');
       if (!rec) throw new Error(`composer: the bass has no bar ${bar}${b.pending ? ' yet (its offer is on its way from the worker)' : ''}`);
       if (!rec.alternates.some((x) => x.id === altId)) throw new Error(`composer: bar ${bar + 1}'s bass offers no line ${altId}`);
       const picks = { ...b.picks };
       if (altId === rec.alternates[0].id) delete picks[bar]; else picks[bar] = altId;
       return api.setBass({ picks });
+    },
+    /** phase L: an onset's tone in the row ('3/2'), to name a Roots runner-up by the note it plays; null when the row is
+     *  the worker's (a big row's bass is arranged there: its materials are never built on this thread) or out of range */
+    ratioOfOnset(node) {
+      const st = state;
+      if (!ready(st) || bassOnWorker(st) || !Number.isInteger(node)) return null;
+      const { row } = materialsFor(st);
+      return node >= 0 && node < row.n ? row.tones[row.tone[node]] : null;
     },
     /** the chords' voicing → { voicing (the entry's), playing (the spec's, or null), stats (the voicing pass's, while led:
      *  lifted, meanMotion, …), voicings } */

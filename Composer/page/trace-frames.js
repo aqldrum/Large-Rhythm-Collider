@@ -22,34 +22,43 @@
 //              its chord tones light
 //   settle     changed bars flash; the held lead is tested against a newly mined one, and re-drawn when it loses
 //   parts      each part's notes cascade in, in its colour (the chords' caption says their voicing, the bass's its
-//              density and lock: BASS_VOICING_ORDER.md H3)
+//              density and lock: BASS_VOICING_ORDER.md H3; phase L: the comp's clave read from the frame, the bass's
+//              lock covering its hits and a walk's fill, the voicing's loop closed)
 //   drums      strokes drop in, bar by bar
 
 import { traceTimeline, capTrace, TRACE_CAPS } from '../core/trace.js';
 import { classOfCents } from '../core/frame.js';
 import { indexOfTick, PART_COLORS, PART_LABELS } from './plot-highlights.js';
 import { claveText, claveSource } from '../core/claves.js';
-/** the comp part's caption: in chords its clave by pattern and source (Amendment 1; claves.js' words), in notes its layer */
-function compDetail(event) {
+/** the comp part's caption: in chords its clave by pattern and source (Amendment 1; claves.js' words), in notes its layer;
+ *  phase L: a clave read from the frame (phase I) says so, a frame clave's patterns a bar each (they change with the chord) */
+export function compDetail(event) {
   const c = event.clave;
   if (!c) return `on layer ${event.layer} (${event.value}), the best of ${event.candidates.length} layers`;
   const fill = c.relation === 'fill' && event.partner, n = fill ? event.partner.strokes - (event.partner.shared ?? 0) : c.strokes;
-  return `the clave ${claveText(c)} (${claveSource(c) || 'asked'}${event.asked && c.from?.asked !== true ? ', asked' : ''}): ${n} stroke${n === 1 ? '' : 's'}${fill ? `, in its gaps (${event.partner.pattern})` : ''}`;
+  const frame = !!c.from?.frame, inFrame = c.read === 'frame';
+  const said = frame ? `the clave from the frame, ${claveSource(c)} (${claveText(c)}${event.asked ? ', asked' : ''})` : `the clave ${claveText(c)} (${claveSource(c) || 'asked'}${event.asked && c.from?.asked !== true ? ', asked' : ''})`;
+  return `${said}: ${n} stroke${n === 1 ? '' : 's'}${inFrame ? ', every one in frame' : ''}${fill ? `, in its gaps (${event.partner.patterns ? claveText(event.partner) : event.partner.pattern})` : ''}`;
 }
 
-/** phase H: the bass's densities and locks in the caption's words */
+/** phase H: the bass's densities and locks in the caption's words (phase L, rule 7: a lock covers its hits) */
 export const BASS_DENSITY_WORDS = Object.freeze({ roots: 'roots, one note a chord', sparse: 'sparse', moving: 'moving', walking: 'walking' });
-export const BASS_LOCK_WORDS = Object.freeze({ free: 'landing anywhere', kick: 'on the kick', clave: 'on the comp\'s strokes' });
-/** the bass part's caption (BASS_VOICING_ORDER.md H3): its density and lock as it plays (a lock refused: why, and Free) */
+export const BASS_LOCK_WORDS = Object.freeze({ free: 'landing anywhere', kick: 'covering the kick', clave: 'covering the comp\'s strokes' });
+/** the bass part's caption (BASS_VOICING_ORDER.md H3): its density and lock as it plays (a lock refused: why, and Free);
+ *  phase L: a lock's hits covered (and missed: no onset in frame), and the bars a walk can't fill */
 export function bassDetail(bass) {
   const b = bass ?? { density: 'sparse', lock: 'free', asked: 'free', refused: null };
-  return `${BASS_DENSITY_WORDS[b.density] ?? b.density}, ${b.refused ? `${b.asked} refused (${b.refused}), so ${BASS_LOCK_WORDS.free}` : BASS_LOCK_WORDS[b.lock] ?? b.lock}: bar by bar against its chord`;
+  const covered = !b.refused && b.hits != null && b.lock !== 'free' ? ` (${b.hits - (b.missedHits ?? 0)} of ${b.hits} hits${b.missedHits ? `, ${b.missedHits} missed: no onset in frame` : ''})` : '';
+  const fill = b.walkFill ? `; ${b.walkFill} bar${b.walkFill === 1 ? '' : 's'} walk${b.walkFill === 1 ? 's' : ''} what ${b.walkFill === 1 ? 'it' : 'they'} can, a rest where no step fits` : '';
+  return `${BASS_DENSITY_WORDS[b.density] ?? b.density}, ${b.refused ? `${b.asked} refused (${b.refused}), so ${BASS_LOCK_WORDS.free}` : BASS_LOCK_WORDS[b.lock] ?? b.lock}${covered}${fill}: bar by bar against its chord`;
 }
-/** the chords part's caption (H3): the voicing, and while led how many chords the mud limit lifted and the motion a chord */
+/** the chords part's caption (H3): the voicing, and while led how many chords the mud limit lifted and the motion a
+ *  change; phase L (rule 8, phase K): the loop closed, the wrap led like every change */
 export function chordsDetail(arrangement) {
   const v = arrangement?.voicingStats;
   if (arrangement?.voicing === 'close') return 'a voice a chord tone, close: root position from an octave under the root';
-  return `a voice a chord tone, led${v ? `: ${v.lifted} lifted clear of the mud limit, ${v.meanMotion}¢ of motion a chord` : ''}`;
+  if (v && v.chords <= 1) return `a voice a chord tone, led: one chord, nothing to lead${v.lifted ? ', lifted clear of the mud limit' : ''}`;
+  return `a voice a chord tone, led round the closed loop${v ? `: ${v.lifted} lifted clear of the mud limit, ${v.meanMotion}¢ of motion a change, the wrap back to the first chord ${v.wrap}¢` : ''}`;
 }
 
 export const TRACE_FRAMES_VERSION = 'composer-trace-frames-v1';
