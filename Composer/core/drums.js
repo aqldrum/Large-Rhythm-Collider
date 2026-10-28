@@ -167,6 +167,20 @@ export function drumGrid(spec) {
   return { T, rowT, W, N, S, P, grid, phase: [pn, pd], phaseX, layers, starts, barStarts, relOf, timeOf, rAt, strikesAt, nearest };
 }
 
+/**
+ * A place landed (the drums' landing, exported for claves.js R3): `gq` a place in slot units over the cycle, `h` half the
+ * spacing of its grid's places. The onset nearest it within ±h (half-way to the neighbouring places), else within ±2h
+ * (a whole place either side: 'wide'), else null. `clip` [from, to) in slot units bounds the search to those slots (a bar,
+ * or a chart's span: an onset at `from` counts, one at `to` does not). → { tick, d, snap: 'slot' | 'wide' } | null
+ */
+export function landPlace(g, gq, h, clip = null) {
+  const r = g.rAt(gq);
+  const lo = (x) => (clip ? Math.max(x, g.rAt(clip[0])) : x), hi = (x) => (clip ? Math.min(x, g.rAt(clip[1]) - 2e-12) : x);
+  let on = g.nearest(r, lo(g.rAt(gq - h)), hi(g.rAt(gq + h))), snap = 'slot';
+  if (!on) { on = g.nearest(r, lo(g.rAt(gq - 2 * h)), hi(g.rAt(gq + 2 * h))); snap = 'wide'; }
+  return on ? { tick: on.tick, d: on.d, snap } : null;
+}
+
 /** the bar a relative place falls in, and its place in slot units inside it */
 function placeOf(g, r) {
   let j = 0, lo = 0, hi = g.P - 1;
@@ -457,12 +471,10 @@ export function arrangeDrums(spec, options = {}) {
   const push = (hit) => { const s = g.strikesAt(hit.tick); hits.push({ ...hit, time: g.timeOf(hit.tick), velocity: Math.min(1, hit.velocity + STRIKE_ACCENT * Math.max(0, s.strikes - 1)), strikes: s.strikes }); };
   /** a stroke at place q (slot units) of bar `bar`, landed on the onset nearest it */
   const land = (voice, bar, q, velocity, cell = false) => {
-    const gq = bar * S + q, r = g.rAt(gq);
-    let on = g.nearest(r, g.rAt(gq - h), g.rAt(gq + h)), snap = 'slot';
-    if (!on) { on = g.nearest(r, g.rAt(gq - 2 * h), g.rAt(gq + 2 * h)); snap = 'wide'; }
+    const on = landPlace(g, bar * S + q, h);
     if (!on) { stats.silent++; if (cell) silentCells.push({ bar, voice, place: Math.round(q * m) }); return; }
-    if (snap === 'wide') stats.wide++;
-    push({ voice, bar, pos: q, slot: mod(bar * S + Math.floor(q + EPS), P), tick: on.tick, velocity, snap });
+    if (on.snap === 'wide') stats.wide++;
+    push({ voice, bar, pos: q, slot: mod(bar * S + Math.floor(q + EPS), P), tick: on.tick, velocity, snap: on.snap });
   };
   const beatSet = new Set(beats.pos.map((x) => x.toFixed(6)));
   /** a fraction of the bar → its place through the beats (slot units on the 1/m grid), or null past the bar's end */
