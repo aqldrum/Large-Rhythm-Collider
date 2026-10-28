@@ -29,6 +29,12 @@
 //                         at most ⌊S / 2⌋ a bar (at least 1), the off-beat slots first, then by the seed
 //              partition  the backbeat, and a perc line from the layer that strikes the downbeat (`partitionLine`)
 //              a pattern  one of drum-patterns.js, landed through the beats (a pattern's step is a fraction of the bar)
+//   clave      (COMP_ARP_ORDER.md Amendment 1, R4) backbeat, with and against also play the composition's clave on the
+//              perc, on its landed strokes (spec.clave.strokes: compose.js lays it with `landPlace`, the landing above),
+//              the pass's first onset accented (`drumOptions.perc`: 'clave', the default, or 'pattern', the mode's own line
+//              alone). So the perc and the comp share anchors in Sync and hocket in Fill. with / against still read the
+//              comp's strokes. partition and the curated patterns keep their own perc. A spec with no clave (compStyle
+//              'notes') plays exactly as before.
 //   fills      the last bar of each phrase of 4 bars or more (harmony.js `phrasesOf`) plays the fill over its second
 //              half (from beat 3), and a crash opens the bar after it — the loop's first bar when the fill is the last.
 //   seed       only `against` draws (a seeded generator of its own per bar, `${seed}/drums/${bar}`: STEP 4d), so the
@@ -89,7 +95,12 @@ export const ACCENT = 0.12;
 /** a stroke on an onset more layers strike is that much louder a layer (the row's own accents) */
 export const STRIKE_ACCENT = 0.04;
 export const FILL_MIN_PHRASE_BARS = 4;
-export const DRUM_OPTIONS = Object.freeze(['enabled', 'mode', 'fills', 'kit', 'seed', 'layer', 'hitsPerBar', 'perBar', 'grid', 'p']);
+export const DRUM_OPTIONS = Object.freeze(['enabled', 'mode', 'fills', 'kit', 'seed', 'layer', 'hitsPerBar', 'perBar', 'grid', 'p', 'perc']);
+/** the perc in the layered modes (COMP_ARP_ORDER.md Amendment 1, R4): 'clave' (the default) adds the composition's clave
+ *  on its landed strokes (spec.clave, compose.js); 'pattern' is the mode's own perc line alone, as before */
+export const PERC_SOURCES = Object.freeze(['clave', 'pattern']);
+/** the modes the clave's perc plays under (R4); partition and the curated patterns keep their own perc line */
+export const CLAVE_PERC_MODES = Object.freeze(['backbeat', 'with', 'against']);
 /** level-1 sources of the partition: 'layer' (a layer striking the downbeat) and 'prime' (p even lights, landed) */
 export const PARTITION_SOURCES = Object.freeze(['layer', 'prime']);
 /** what an `X` adds in a grid: the patterns' accent, but the hat's is the backbeat's own beat lift (+0.08), so a
@@ -380,10 +391,12 @@ export function readDrumOptions(options = {}) {
   for (const [b, m] of Object.entries(o.perBar || {})) { if (!ALL_DRUM_MODES.includes(m)) fail(`bar ${b}: no mode ${m}`); perBar[b] = m; }
   if (o.hitsPerBar != null && !(Number(o.hitsPerBar) > 0)) fail(`bad hitsPerBar ${o.hitsPerBar}`);
   if (o.p != null && !isPrime(o.p)) fail(`p must be a prime (the two-level prime partition's level 1), not ${JSON.stringify(o.p)}`);
+  if (o.perc != null && !PERC_SOURCES.includes(o.perc)) fail(`perc must be one of ${PERC_SOURCES.join(', ')}, not ${JSON.stringify(o.perc)}`);
   const out = { enabled: o.enabled ?? true, mode, fills: o.fills ?? true, kit, seed: o.seed ?? null, layer: o.layer ?? null, hitsPerBar: o.hitsPerBar == null ? null : Number(o.hitsPerBar), perBar };
   // only when given, so options without them resolve (and echo in `spec.drums.options`) exactly as before step 4c
   if (grid) out.grid = grid;
   if (o.p != null) out.p = o.p;
+  if (o.perc != null) out.perc = o.perc;
   return out;
 }
 
@@ -442,13 +455,15 @@ export function gridOf(d) {
  *              'prime'), fills (true), kit: { voice: choice }, seed (the spec's), layer (partition: a layer striking
  *              the downbeat, by name or value), hitsPerBar (partition, prime), perBar: { bar: mode } (a bar's own mode),
  *              grid: { voice: [one string a bar] } (read by bars in mode 'grid', and as the lit cells of 'prime'),
- *              p (prime: level 1's light count, a prime above the cells; by default a seeded random one, `drawPrime`) }
+ *              p (prime: level 1's light count, a prime above the cells; by default a seeded random one, `drawPrime`),
+ *              perc ('clave' (default) | 'pattern': the clave on the perc in backbeat / with / against, R4) }
  * → null for a refusal, else { version, enabled, mode, options, kit, beats, partition, bars: [{ bar, mode, fill, crash,
  *   why }], hits: [{ voice, bar, pos, slot, tick, time, velocity, strikes, snap }], decisions, stats }, and only when a
  *   bar is in mode 'grid' or 'prime': silentCells: [{ bar, voice, place }] (grid cells, and prime cells, no onset
  *   struck), and when one is 'prime': prime (`primePartition`'s, its lights' real times for the UI strip)
  *   snap  'slot' (the onset nearest its place), 'wide' (the second look), 'note' (a part's note), 'layer' (partition),
- *         'prime' (the prime partition: the hit also carries its `cell` and `light`)
+ *         'prime' (the prime partition: the hit also carries its `cell` and `light`), 'clave' (the clave's landed
+ *         stroke: the hit also carries its `step`)
  * With no grid read and no bar in mode 'prime', the output is byte for byte the drums of before step 4c (tested
  * against drums-baseline.mjs).
  */
@@ -542,9 +557,10 @@ export function arrangeDrums(spec, options = {}) {
   const notesBySlot = (id) => { const by = new Map(); for (const n of spec.parts.find((p) => p.id === id)?.notes || []) if (!by.has(n.slot)) by.set(n.slot, n); return by; };
   let partition = null;
   if (bars.some((b) => b.mode === 'with' || b.mode === 'against')) {
-    // the comp in chords (compose.js `compChordsOfBar`): its strokes, one a slot, not the strum's tones (COMP_ARP_ORDER.md P9)
+    // the comp in chords (compose.js `compChordsOfBar`): its strokes, not the strum's tones (COMP_ARP_ORDER.md P9), the
+    // first a slot (a clave finer than the slots may strike one twice: Amendment 1)
     const strokes = spec.parts.find((p) => p.id === 'comp')?.strokes;
-    const lead = notesBySlot('lead'), comp = strokes ? new Map(strokes.map((x) => [x.slot, x])) : notesBySlot('comp');
+    const lead = notesBySlot('lead'), comp = strokes ? strokes.reduce((by, x) => (by.has(x.slot) ? by : by.set(x.slot, x)), new Map()) : notesBySlot('comp');
     for (let k = 0; k < N; k++) {
       if (modeOf(k) === 'with') {
         for (let q = 0; q < S; q++) {
@@ -559,6 +575,13 @@ export function arrangeDrums(spec, options = {}) {
         for (const e of empty.slice(0, Math.max(1, Math.floor(S / 2))).sort((x, y) => x.q - y.q)) land('perc', k, e.q, DRUM_VELOCITY.perc + (e.off ? 0 : 0.05));
       }
     }
+  }
+  // ── the clave on the perc (R4): its landed strokes (spec.clave, compose.js) in each bar of a layered mode, unless
+  // `perc: 'pattern'`; a spec without a clave (compStyle 'notes') plays as before ──
+  if (opt.perc !== 'pattern' && spec.clave?.strokes) {
+    const C = spec.clave, first = C.onsets[0], laid = C.strokes.filter((x) => CLAVE_PERC_MODES.includes(modeOf(x.bar)));
+    for (const x of laid) push({ voice: 'perc', bar: x.bar, pos: x.place - x.bar * S, slot: x.slot, tick: x.tick, velocity: DRUM_VELOCITY.perc + (x.step === first ? ACCENT : 0), snap: 'clave', step: x.step });
+    if (laid.length) decide('drums.perc', C.id, `the clave on the perc (R4: ${C.name ? C.label : C.pattern}), its ${laid.length} landed stroke${laid.length === 1 ? '' : 's'} in the ${CLAVE_PERC_MODES.filter((m) => bars.some((b) => b.mode === m)).join(' / ')} bars, the pass's first onset accented; ${C.relation === 'fill' ? 'the comp fills its gaps' : 'the comp strikes with it'}${opt.perc === 'clave' ? ' (asked)' : ''}`);
   }
   if (bars.some((b) => b.mode === 'partition')) {
     partition = partitionLine(spec, g, { layer: opt.layer, hitsPerBar: opt.hitsPerBar });

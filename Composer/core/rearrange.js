@@ -17,14 +17,16 @@
 // the drums work as usual.
 //
 // What is decided (Avery, STEP4_ORDER.md "Decisions") and what is proposed:
-//   pinned      the comp layer (spec.stats.compLayer), baseHz (spec.knobs) and every part's sound, legato and on/off
+//   pinned      the comp's clave and its relation (spec.clave, the comp in chords: Amendment 1) or its layer
+//               (spec.stats.compLayer, compStyle 'notes'), baseHz (spec.knobs) and every part's sound, legato and on/off
 //               (the parts given): a local edit never becomes a global one. (decided, from the recommendations)
 //   fixed       targets.scale, the union of the chords' classes as composed: a swap re-mines no other bar's line.
 //               The swapped bar's own target reads its chord's classes too (scale ∪ the chord's; proposed), so a chord
 //               tone is never a foreign one in its own bar.
 //   chord swap  (decision 1) the lead stays. Bar k's chord voices, comping and bass are rebuilt over the new chord (the
-//               comp in its own style: in chords, the bar's strokes strummed again and its borrowed tones taken from
-//               the new chord's voices, COMP_ARP_ORDER.md P10),
+//               comp in its own style: in chords, the bar's clave strokes strummed again and its borrowed tones taken
+//               from the new chord's voices, COMP_ARP_ORDER.md P10; the clave itself never moves, and a bar it leaves
+//               empty is struck on the new chord's root onset),
 //               and its inner is re-mined bar-locally (lines.js `rules: { before, after }`: the inner's notes either
 //               side of the bar as boundaries); the bar's exceptions are its lead's strong notes off the new chord (a
 //               lead note foreign under the new chord's frame and target is a passing tone; proposed). An empty bar
@@ -56,7 +58,7 @@ import { frameOf, classOfCents } from './frame.js';
 import { CHORD_QUALITIES, pickFor, chordRecord, spanRecord, spanMaterial, harmonyOver, targetOfBar, barMaterial, chooseChord, exceptionsOfBar, phrasesOf, isStrongBeat } from './harmony.js';
 import { FALLBACK_QUALITIES } from './progression.js';
 import { arrangeDrums } from './drums.js';
-import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, PART_IDS } from './compose.js';
+import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, compNodesOf, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, PART_IDS } from './compose.js';
 
 export const COMPOSER_REARRANGE_VERSION = 'composer-rearrange-v1';
 const EPS = 1e-9;
@@ -215,9 +217,13 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   // the comp's style, as composed: in chords its strokes are on the part (compose.js `compChordsOfBar`), rebuilt with its bars
   const compChords = partById.comp.strokes != null;
   let compStrokes = compChords ? partById.comp.strokes.map((x) => ({ ...x })) : null;
+  // in chords the bar's strokes are the clave's (spec.clave, unchanged by any edit), re-strummed over the new chord; a spec
+  // with no clave (composed before Amendment 1) re-strums the comp's own strokes there
   const compOf = (c, k, range = null) => {
     if (!compChords) return compOfBar(ctx, c, k, compLayer, range);
-    const got = compChordsOfBar(ctx, c, k, compLayer, range);
+    const r = range ?? { from: k * S, to: (k + 1) * S };
+    const strokes = spec.clave ? compNodesOf(spec.clave, r.from, r.to) : partById.comp.strokes.filter((x) => x.slot >= r.from && x.slot < r.to).map((x) => x.node);
+    const got = compChordsOfBar(ctx, c, k, strokes, range);
     compStrokes.push(...got.strokes);
     return got.notes;
   };
@@ -292,8 +298,8 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   const allTargets = { scale, bars: targets };
 
   // ── the rebuilt bars: chord voices, comping (the layer pinned), bass ──
-  const compLayer = 'ABCD'.indexOf(spec.stats.compLayer.layer);
-  if (compLayer < 0) fail('the spec names no comp layer');
+  const compLayer = compChords ? null : 'ABCD'.indexOf(spec.stats.compLayer?.layer);
+  if (compLayer != null && compLayer < 0) fail('the spec names no comp layer');
   const bassRooted = [];
   if (spans) {
     // a split bar is rebuilt whole: each span's voices and comping, the bar's bass over each span's target
