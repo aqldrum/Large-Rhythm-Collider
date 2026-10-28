@@ -226,6 +226,143 @@ the other. A1–A2 and B1 can run side by side.
 - How the inner arp sounds at rate 2 on small rows. It rests a lot: 41:42:43 at 4 × 8 rests 50 of 64 steps.
 - The inner sits a fixed octave under the lead (the core's open question 2).
 
+## Amendment 1 (Avery, 2026-10-27, after the first build): the clave leads the comp; arps are mined
+
+Avery's note, after A and B were built: in chunk-tunes, comping is tied to the percussion clave, either synced to it or
+filling its gaps. On dense rows the Composer comps nearly every slot. The clave should transcend the scale of the
+numbers, so that it is the authority on which anchors are comping nodes. And the arps give one fixed line per pattern.
+In chunk-tunes the arps came from the partitioned anchors of the grid superrow, closer to As played. They should be
+found around the slots per bar as anchors, or around double or triple that number for double- or triple-time arps.
+
+### What the code already holds
+
+- **chunk-tunes' clave** (`rhythm-claves.js`, `chunk-comping.js` in the Overworld runtime) is a `steps:pattern` of
+  3–16 steps a bar. It's scale-free: laid on a bar as fractions of it, a 5-of-16 clave strikes 5 places on any row. A
+  clave's *partners* are claves of the same layer and bar under a tone set disjoint from its own, so they never share a
+  step. Laid together, the two make the clave of the two sets joined.
+- **The arp line type.** chunk-lines' `arp` type is already in `lines.js` `LINE_TYPES`: no rests, `maxGap: 1`,
+  contours rise, fall, arch, valley and wave over the octave. It's mined by the same DP as the lead. B1 didn't use it.
+- **Partitioned anchors** at any resolution: `buildCells(row, { bars, slotsPerBar: S·m, anchors, phase })`, Partitions'
+  own G / G±1 cut.
+
+### The probe (2026-10-27): mined arps over S × m partitioned anchors
+
+Seed 1, `mineLines(types: [arp])` over the chords' targets, an octave under the lead. Two variants:
+- **chunk-lines' band alone** ("no rests"): fails wherever an anchor has no candidate. That's 8:7:6:5 and 11:9:7:5 at
+  ×2–3, 19:17:16:15 at ×2–3, and 768:769 at every m.
+- **With a second band, "few rests"** (60–95% of the anchors, `maxGap: 2`): the table below. Arps per phrase are the
+  distinct ranked lines.
+
+| row | ×1 | ×2 | ×3 | time (all phrases) |
+|---|---|---|---|---|
+| 119:42:15:8 | 10 | 10 | 9–10 | 1–2 ms |
+| 16:12:9 | 10 | 9 | 4 | ≤ 2 ms |
+| 426:317:285 | 10 | 10 | 9–10 | 3–8 ms |
+| 768:784 | 10 | 10 | 10 | 7–10 ms |
+| 4099:4093:4091:4079 (modulation off) | 10 | 5–10 | 5–10 | 18 / 31 / 39 ms |
+| 19:17:16:15 | 9 | 4 | none | ≤ 2 ms |
+| 8:7:6:5, 11:9:7:5 | 4–8 | none | none | — |
+| 768:769 | none | none | none | — |
+
+Chord tones are 78–100% of the best line's notes. Two flaws to fix:
+- The ranking (cost per note) prefers the sparser "few rests" lines even where "no rests" exists.
+- 768:769 finds nothing at any m. Its tones bunch in time; the builder should find out why. The comp probe found a
+  chord tone in 25 of its 32 slots.
+
+The scripts are in the planner's scratchpad.
+
+### Decided (Avery, 2026-10-27)
+
+5. **The clave is mined from the row**, and it is the comp's authority. This replaces decision 2: the comp no longer
+   strikes every strike of a layer.
+   - The row's claves come from chunk-tunes' clave table, ported. Each layer is read at the bar sizes where other layers
+     meet it, under tone sets from coarse to fine. Each bar is a `steps:pattern` of 3–16 steps.
+   - They're ranked by recurrence, density (25–50% of steps) and fit (straight or triplet).
+   - The curated claves (son, rumba, bossa's rim) stay as choices.
+6. **The comp syncs to the clave by default.** A Sync | Fill switch in the comp's inspector makes it strike the clave's
+   gaps instead.
+7. **Mined arps replace the walked patterns.**
+   - Arps are mined with the `arp` line type, over partitioned anchors at ×1, ×2 or ×3 the slots per bar (double and
+     triple time), shaped by its contours.
+   - Each note sounds at its onset's own time: the arp moves in polyrhythmic time, around the anchors.
+   - The walk survives only as a fallback, for a phrase where nothing can be mined.
+8. **Ranked arps are chosen like the lead's runner-ups.** The arp cell's inspector lists the phrase's arps. Click one
+   to audition it at the next bar, then Keep or Revert, undoable.
+
+### Proposed: Phase C, the clave (the builder's calls; Avery may overrule)
+
+- **R1. `core/claves.js`.** A port of `rhythm-claves.js` (`readRhythm`, `barSizes` with 'meeting', `claveTable`,
+  `toneSets`) and of `chunk-comping.js` (`scoreClave`, `compCandidates`, `clavePartners`) onto the Composer's row (its
+  layers, strikes, owners and tones). The rules are the same: `COMP_RULES` sizes 3–16, at least 2 onsets, share
+  0.25–0.5, straight / triplet / other fit. The same Overworld parity tests as the other ports run where chunk-tunes is
+  present.
+- **R2. One clave a composition,** chosen in Compose. The best `compCandidates` clave wins, with ties by the seed.
+  `spec.clave = { id, steps, pattern, onsets, score, from: { layer, size, toneSet } | { pattern: 'son' … }, partner }`.
+  `partner` is its best partner clave, for Fill. With no partner, the complement of its steps, Euclid-thinned to its
+  own onset count. A decision line names it and why. The ranked list (top 12, plus the curated claves) goes into the
+  trace as the alternates (the `compLayer`-style override becomes `clave: 'steps:pattern' | patternName`).
+- **R3. Laying it on the bars:** a pass of the clave a bar. Step j of n sits at j·S/n slots (a place, as drums.js
+  places strokes) and lands on the row's onset nearest that place. The window is half-way to the neighbouring places of
+  the clave's own n-step grid, then one place wider (drums.js `land` semantics, reused). With no onset there, the step
+  is silent. A landed step is a comp stroke. The strum and the borrowed tones (P3–P7) are unchanged.
+  `compRelation: 'sync' | 'fill'` picks the clave's onsets or its partner's.
+- **R4. The drums hear the clave.** In the layered modes (backbeat, with, against), the perc plays the clave's landed
+  strokes by default (`drumOptions.perc: 'clave'`). So the perc and the comp share anchors in Sync and hocket in Fill.
+  *with* / *against* keep reading the comp's strokes, now clave-born, so nothing is circular. A curated pattern keeps its
+  own perc line. The drums baseline stays byte-identical under `compStyle: 'notes'` and `perc: 'pattern'` in the tests'
+  calls, never in the fixtures.
+- **R5. What retires:** the comp layer's score (P2) and decision 2's every-strike strokes. `compStyle: 'notes'` (the
+  frozen core) stays.
+
+### Proposed: Phase D, mined arps (the builder's calls; Avery may overrule)
+
+- **M1. `arrangeArp(spec, materials, partId, { time, picks, legato })`** keeps its live, no-re-compose contract.
+  - `time` ∈ {1, 2, 3}: the anchors are `buildCells` at S·time slots a bar, with the spec's anchors mode and phase.
+    It's cached per time on the materials.
+  - The chords are rebuilt as records from the spec. Export the rearrange path for it; don't duplicate it.
+  - A phrase is `phrasesOf` over the S·time cells, so a line is ≤ 32 anchors.
+  - Each phrase is mined with the arp type plus the "few rests" band.
+- **M2. Ranking:** "no rests" lines first, then "few rests", then cost per note. Each phrase keeps its top 10 as
+  alternates `{ id, contour, band, notes }`. `picks: { [phrase]: id }` chooses one; the default is the first.
+- **M3. Register and avoidance,** as B1's builder set them: the lead is centred on its line's median, and the inner an
+  octave under the lead (a `register` on the miner). The inner never takes the lead's onsets (`avoidNodes`). It pays
+  `weights.avoid` on anchors where the lead sounds (`avoidSlots`, on the S·time grid), rather than resting outright.
+- **M4. The fallback:** a phrase with no mined line is walked (B1's ladder, 'played', the closest to As played) and
+  marked `walked`. The part's `arp.stats` says how many phrases were mined and how many walked.
+- **M5. Knobs:** Time (×1, ×2, ×3) replaces Rate. Contours replace Pattern: each alternate is named by its contour and
+  band ("arch · no rests"). Range goes: a mined arp lives in the line type's own range (`RANGE_WIDTH`). Legato stays.
+- **M6. Find out why 768:769 finds nothing** (the lattice, the frame, the `repeat` rule?), and fix it if it's a bug.
+- **M7. Timing.** The 16k row at ×3 is ~40 ms for every phrase. Above `MAIN_THREAD_ONSETS` it goes to the worker
+  (`runCompose.arp`, built in B2), as now.
+
+### Phases C and D
+
+- **C (core):** `core/claves.js` and its tests (`assert-claves.mjs`, with Overworld parity); `compose.js` (R2, R3, R5);
+  `drums.js` (R4); `rearrange.js` (a chord swap re-strums the bar's strokes, and the clave stays).
+- **D (core):** `core/arp.js` rewritten (M1–M7); `assert-arp.mjs` rewritten:
+  - every note a real onset of a chord class, inside its anchor's window;
+  - the ranking, picks, the fallback marked;
+  - the inner's avoidance;
+  - a split bar;
+  - a target's lead refused;
+  - ×1–×3 on the 16k row's timing.
+- **E (window, after C and D):**
+  - the comp inspector: the clave by name and pattern (`x..x..x.`), its ranked alternates and the curated claves,
+    audition / Keep / Revert, and Sync | Fill;
+  - the arp inspector: Time, and the phrase's ranked arps by contour (audition / Keep / Revert, as the lead's
+    runner-ups);
+  - the store: `arps[part] = { mode, time, picks }`, the clave choice and the relation, undoable, kept through a
+    re-compose where the phrase's chords are unchanged, dropped (and listed under "Compose dropped") where they changed;
+  - page tests;
+  - the checklist rewritten.
+
+C and D touch different core files and can run side by side. E goes after both.
+
+### Later (recorded, not ruled)
+
+- chunk-song's arp-first scene: an arp's accents (its first note, and each note that tops its neighbours) set where the
+  perc, the kick and the comp strike. That's the clave and the arp meeting, and a candidate for the improvise thread.
+
 ## Log
 - **2026-10-27, B1 merged (223be9c, `arp/core`).** `core/arp.js` `arrangeArp` + `assert-arp.mjs`; 75/0. 16k row ~2.5 ms
   a part. Builder's calls where Q1–Q6 left room: the lead's floor is its line's median − 600 × range; the inner's a fixed
