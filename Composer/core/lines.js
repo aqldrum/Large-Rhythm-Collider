@@ -26,8 +26,14 @@
 //              (BASS_VOICING_ORDER.md G1: `BASS_BANDS`, the type's `extraBands`) are mined only when `bands` names them:
 //              `mid` (40–60 %, strictness 1.5: the lead's mid band, for the bass's Moving) and `walking` (every slot,
 //              `maxGap` 1, under the stepwise motion only). A mine that names no bands mines what it always did.
-//   lock       `rules.allowNodes` (opt-in; bass.js' Kick and Clave locks): the lattice keeps only candidates on those
-//              onsets, and a band's share is of the slots left with one (`lockedNotes`). Absent, nothing changes.
+//   lock       `rules.allowNodes` (opt-in; phase G's bass lock): the lattice keeps only candidates on those onsets, and a
+//              band's share is of the slots left with one (`lockedNotes`). Absent, nothing changes.
+//   cover      `rules.requireNodes` (opt-in; bass.js' Kick and Clave locks, BASS_VOICING_ORDER.md P23): [{ cell, nodes }],
+//              each a hit, its lattice slot and the onsets it may sound on. A slot holding a hit keeps only those onsets
+//              and must sound; the other slots are free; a band counts the whole line, at least the hits
+//              (`coveredNotes`). Absent, nothing changes.
+//   most       a band's `most: true` (opt-in; Walking's fill, P22): of its counts, the most notes any line can sound,
+//              not the cheapest per note. Absent, nothing changes.
 //   tables     'full': every type × density band × contour × motion; 'lean': each type at its first motion only (the
 //              cost probe: the picker is nearly all of Compose, and the lean table about a tenth of it).
 //   ids        `cl1:` + a hash of the line's type, span, phase and notes (slot, exact fraction, register).
@@ -171,15 +177,19 @@ export function downbeats(row, P, count = 6, tone = null, { anchors = 'even', cl
  * every register inside [low, low + width). A slot is WEAK (a fringe tone may sound there) when its strikes are under
  * the span's median; with `weakTies` (opt-in: the arps, arp.js — a row struck evenly ties every slot at the median, and
  * then none is weak) a slot AT the median and off the bar's strong beats (its downbeat and, S even, its middle) is weak
- * too. Absent, nothing changes (Compose's own lines never ask for it). With `allowNodes` (opt-in: the bass's lock, bass.js;
+ * too. Absent, nothing changes (Compose's own lines never ask for it). With `allowNodes` (opt-in: phase G's bass lock;
  * BASS_VOICING_ORDER.md P12) a slot's candidates are only those onsets: each tone the slot's window holds on one of them
  * stands on the one nearest the anchor (then the one before it, then the earlier onset), keeping its window's count and
- * share; a slot whose window holds none of them has no candidates. Absent, nothing changes.
+ * share; a slot whose window holds none of them has no candidates. Absent, nothing changes. With `requireNodes` (opt-in:
+ * the bass's covering lock, P23: [{ cell, nodes }]) a slot named by an entry is REQUIRED (`required: true`, the picker
+ * sounds it) and its candidates are only the entries' onsets (entries naming one slot are one), each tone on its onset
+ * nearest the anchor, as allowNodes stands them, whether or not the slot's window holds it: its count the window's (else
+ * how many of the onsets are that tone). Every other slot is as it was. Absent, nothing changes.
  * → { P, S, bars, from, mode, phase, swing, moments, low, width, frame: { root, frameCentsEachSide }, slots }
- *   slot { index (in the line), cell (in the cells), bar (of the cycle), beat, anchor, strikes, accent, weak, cands }
+ *   slot { index (in the line), cell (in the cells), bar (of the cycle), beat, anchor, strikes, accent, weak, cands, (required) }
  *   cand { tone, fraction, cents, octave, pitch, pc, outside, share, close, count, node, offset }
  */
-export function buildLattice(row, cells, frame, { from = 0, bars = cells.bars - from, low = 0, width = RANGE_WIDTH, weakTies = false, allowNodes = null } = {}) {
+export function buildLattice(row, cells, frame, { from = 0, bars = cells.bars - from, low = 0, width = RANGE_WIDTH, weakTies = false, allowNodes = null, requireNodes = null } = {}) {
   const S = cells.slotsPerBar, P = bars * S;
   if (!(Number.isInteger(from) && from >= 0 && Number.isInteger(bars) && bars >= 1 && from + bars <= cells.bars)) fail(`bars ${from}..${from + bars} are not in the cells' ${cells.bars}`);
   if (P > MAX_SLOTS) fail(`a line is at most ${MAX_SLOTS} slots, not ${bars} × ${S}`);
@@ -188,11 +198,13 @@ export function buildLattice(row, cells, frame, { from = 0, bars = cells.bars - 
   let heaviest = 0; for (const s of own) if (s.strikes > heaviest) heaviest = s.strikes;
   const median = own.map((s) => s.strikes).sort((a, b) => a - b)[P >> 1];
   const allowed = allowNodes ? allowedTones(row, cells, own, allowNodes) : null;
+  const required = requireNodes ? requiredTones(row, own, requireNodes) : null;
   const slots = own.map((s, k) => {
-    const frame = frames.length === P ? frames[k] : frames[Math.floor(k / S)];
+    const frame = frames.length === P ? frames[k] : frames[Math.floor(k / S)], need = required ? required[k] : null;
     let most = 0; for (const t of s.tones) if (t.count > most) most = t.count;
+    if (need) for (const t of need) if (t.count > most) most = t.count;
     const cands = [];
-    for (const t of allowed ? allowed[k] : s.tones) {
+    for (const t of need ?? (allowed ? allowed[k] : s.tones)) {
       const cents = row.toneCents[t.tone], fraction = row.tones[t.tone], close = closeCost(fraction);
       for (let octave = Math.ceil((low - cents) / 1200 - EPS); cents + 1200 * octave < low + width - EPS; octave++) {
         cands.push({ tone: t.tone, fraction, cents, octave, pitch: cents + 1200 * octave, pc: frame.pc[t.tone], outside: !frame.inside[t.tone],
@@ -201,7 +213,7 @@ export function buildLattice(row, cells, frame, { from = 0, bars = cells.bars - 
     }
     cands.sort((a, b) => a.pitch - b.pitch || a.tone - b.tone);
     const weak = s.strikes < median || (weakTies && s.strikes === median && !(s.beat === 0 || (S % 2 === 0 && s.beat === S / 2)));
-    return { index: k, cell: s.index, bar: s.bar, beat: s.beat, anchor: s.anchor, strikes: s.strikes, accent: heaviest ? s.strikes / heaviest : 0, weak, cands };
+    return { index: k, cell: s.index, bar: s.bar, beat: s.beat, anchor: s.anchor, strikes: s.strikes, accent: heaviest ? s.strikes / heaviest : 0, weak, cands, ...(need ? { required: true } : {}) };
   });
   return { P, S, bars, from, mode: cells.mode, phase: cells.phase, swing: cells.swing, moments: cells.moments, low, width, frame: frameSummary(frames), slots };
 }
@@ -216,6 +228,31 @@ function allowedTones(row, cells, own, allowNodes) {
     if (!was || Math.abs(offset) < Math.abs(was.offset) - EPS || (Math.abs(Math.abs(offset) - Math.abs(was.offset)) <= EPS && (offset < was.offset - EPS || (Math.abs(offset - was.offset) <= EPS && i < was.node)))) by[j - lo].set(row.tone[i], { node: i, offset });
   }
   return own.map((s, k) => s.tones.flatMap((t) => { const a = by[k].get(t.tone); return a ? [{ ...t, node: a.node, offset: a.node === t.node ? t.offset : a.offset }] : []; }));
+}
+/** `requireNodes` read into the span's slots: [slot → null (free) | the tone entries ({ tone, count, node, offset }) of its
+ *  hits' onsets, each tone on its onset nearest the anchor (then the one before it, then the earlier onset), its count the
+ *  window's for a tone the window holds, else how many of the onsets are that tone; in the window's tone order, then by tone] */
+function requiredTones(row, own, entries) {
+  const lo = own[0].index, hi = lo + own.length, by = own.map(() => null);
+  for (const { cell, nodes } of entries) {
+    if (!(cell >= lo && cell < hi)) continue;
+    const s = own[cell - lo], m = (by[cell - lo] ??= new Map());
+    for (const i of nodes) {
+      if (!(i >= 0 && i < row.n)) continue;
+      const d = row.x[i] - s.anchor, offset = d - Math.round(d), t = row.tone[i], was = m.get(t);
+      if (!was) { m.set(t, { node: i, offset, n: 1 }); continue; }
+      if (was.node === i) continue;
+      was.n++;
+      if (Math.abs(offset) < Math.abs(was.offset) - EPS || (Math.abs(Math.abs(offset) - Math.abs(was.offset)) <= EPS && (offset < was.offset - EPS || (Math.abs(offset - was.offset) <= EPS && i < was.node)))) { was.node = i; was.offset = offset; }
+    }
+  }
+  return own.map((s, k) => {
+    const m = by[k];
+    if (!m || !m.size) return null;
+    const order = new Map(s.tones.map((t, j) => [t.tone, j]));
+    return [...m.entries()].sort((a, b) => (order.get(a[0]) ?? Infinity) - (order.get(b[0]) ?? Infinity) || a[0] - b[0])
+      .map(([tone, a]) => { const w = s.tones[order.get(tone)]; return { tone, count: w ? w.count : a.n, node: a.node, offset: a.offset }; });
+  });
 }
 /** one frame for every bar of a span, one per bar (phase 3: each bar's frame centred on its chord's root tone), or one per
  *  slot (a chart's split bars, CHART_ORDER.md P6: each span's slots in its own chord's frame) */
@@ -314,6 +351,11 @@ export function pickLines(lattice, rules = {}) {
   const cost = new Float64Array(total * WIDTH).fill(Infinity), back = new Int32Array(total * WIDTH).fill(-1);
   const avoidNodes = r.avoidNodes ? new Set(r.avoidNodes) : null, startTones = r.startTones ? new Set(r.startTones) : null, allowNodes = r.allowNodes ? new Set(r.allowNodes) : null;
   const before = r.before ?? null, after = r.after ?? null;   // STEP 4a: { pitch } either side of the span, or null
+  // P23 (opt-in: buildLattice's `requireNodes`): a required slot sounds, so no line opens after one, closes before one or
+  // steps over one. With none, firstReq = P, lastReq = −1 and every prevReq 0: nothing changes.
+  let firstReq = P, lastReq = -1;
+  const prevReq = new Int32Array(P);
+  for (let k = 0, at = 0; k < P; k++) { prevReq[k] = at; if (slots[k].required) { if (firstReq === P) firstReq = k; lastReq = k; at = k; } }
   for (let k = 0; k < P; k++) {
     const slot = slots[k], busy = r.avoidSlots && r.avoidSlots[k] ? w.avoid : 0;
     for (let bi = 0; bi < slot.cands.length; bi++) {
@@ -323,8 +365,8 @@ export function pickLines(lattice, rules = {}) {
       if (allowNodes && !allowNodes.has(b.node)) continue;
       const own = busy + w.accent * (1 - slot.accent) + w.support * (1 - b.share) + (rb.foreign ? w.outside : 0) + w.chord * rb.chord
         + (r.contour ? w.contour * Math.abs(b.pitch - contourAt(r.contour, k, P)) / 600 : 0), sb = (base[k] + bi) * WIDTH;
-      if (k < maxGap && (!startTones || startTones.has(b.tone))) cost[sb + F] = w.gap * (k / S) ** 2 + own + (before ? r.strict * w.interval * intervalCost(Math.abs(b.pitch - before.pitch), r) : 0);
-      for (let j = Math.max(0, k - maxGap); j < k; j++) {
+      if (k < maxGap && k <= firstReq && (!startTones || startTones.has(b.tone))) cost[sb + F] = w.gap * (k / S) ** 2 + own + (before ? r.strict * w.interval * intervalCost(Math.abs(b.pitch - before.pitch), r) : 0);
+      for (let j = Math.max(0, k - maxGap, prevReq[k]); j < k; j++) {
         const gap = w.gap * ((k - j) / S) ** 2, from = slots[j].cands;
         for (let ai = 0; ai < from.length; ai++) {
           const a = from[ai], d = b.pitch - a.pitch, ad = Math.abs(d);
@@ -349,7 +391,7 @@ export function pickLines(lattice, rules = {}) {
   const out = [];
   for (let n = nMin; n <= nMax; n++) {
     let best = Infinity, at = -1;
-    for (let k = Math.max(0, P - maxGap); k < P; k++) for (let ci = 0; ci < slots[k].cands.length; ci++) {
+    for (let k = Math.max(0, P - maxGap, lastReq); k < P; k++) for (let ci = 0; ci < slots[k].cands.length; ci++) {
       if (roles[k][ci].foreign) continue;
       const end = w.close * roles[k][ci].close + w.gap * ((P - 1 - k) / S) ** 2 + (after ? r.strict * w.interval * intervalCost(Math.abs(after.pitch - slots[k].cands[ci].pitch), r) : 0);
       for (let f = 0; f < F; f++) { const i = (base[k] + ci) * WIDTH + n * F + f, v = cost[i] + end; if (v < best) { best = v; at = i; } }
@@ -373,6 +415,10 @@ export const bandNotes = (band, P) => band.notes || [Math.max(2, Math.ceil(band.
 /** a locked line's fewest and most notes over the L slots holding a locked onset (`allowNodes`; BASS_VOICING_ORDER.md P12):
  *  the band's share of L to the nearest note (halves up), at least 1 — Moving on 3 locked slots plays 1–2, Walking all 3 */
 export const lockedNotes = (band, L) => { const lo = Math.max(1, Math.floor(band.share[0] * L + 0.5 + EPS)); return [lo, Math.max(lo, Math.floor(band.share[1] * L + 0.5 + EPS))]; };
+/** a covering line's fewest and most notes (`requireNodes`; BASS_VOICING_ORDER.md P23): the band's share of the whole
+ *  line's P slots to the nearest note (lockedNotes' rounding: a backbeat's 8 slots give Sparse 2–3, Moving 3–5), at least
+ *  the H hits; a band's own `notes`, as given */
+export const coveredNotes = (band, P, H) => { if (band.notes) return band.notes; const [lo, hi] = lockedNotes(band, P); return [Math.max(H, lo), Math.max(H, hi)]; };
 
 /**
  * A picked line as a record. Each note is an onset of the row: `node` is its index, `tick` its place, `cell` the cells'
@@ -421,9 +467,14 @@ export function describeLine(row, lattice, pick, rules, tag = {}) {
  *            to them priced as a move inside the line, strict × interval × I; absent, nothing changes), weakTies
  *            (buildLattice's: a slot tied at the median, off the strong beats, weak too; default false), bands (names: the
  *            bands mined, each type's of its `bands` and `extraBands`; absent, each type's own `bands`) }
- *   rules.allowNodes  [onset index] (BASS_VOICING_ORDER.md P12, the bass's lock; opt-in): the lattice is built on those
+ *   rules.allowNodes  [onset index] (BASS_VOICING_ORDER.md P12, phase G's lock; opt-in): the lattice is built on those
  *            onsets only (buildLattice's `allowNodes`) and a band's share counts only the slots left with a candidate
  *            (`lockedNotes`: to the nearest note, at least 1)
+ *   rules.requireNodes  [{ cell, nodes: [onset index] }] (P23, the bass's covering lock; opt-in): each hit's slot keeps only
+ *            its onsets and sounds (buildLattice's `requireNodes`); a band counts the whole line, at least the H required
+ *            slots (`coveredNotes`). An empty list requires nothing but still counts so.
+ *   a band's `most: true` (P22, Walking's fill; opt-in): the line kept is the one with the most notes of the band's counts
+ *            (the cheapest at that count), not the cheapest per note
  * → { version, table, from, bars, slotsPerBar, root, over, frame, runs, lines } | { tooFewTones, tones, min }
  */
 export function mineLines(row, cells, frame, opts = {}) {
@@ -437,8 +488,8 @@ export function mineLines(row, cells, frame, opts = {}) {
   const harmonyWeights = targets.scale ? HARMONY_WEIGHTS : {};
   const lattices = new Map(), P = bars * cells.slotsPerBar;
   const low = first.anchor + register;
-  const allowNodes = extra.allowNodes ?? null;
-  const latticeFor = (width) => { if (!lattices.has(width)) lattices.set(width, buildLattice(row, cells, frame, { from, bars, low, width, weakTies, ...(allowNodes ? { allowNodes } : {}) })); return lattices.get(width); };
+  const allowNodes = extra.allowNodes ?? null, requireNodes = extra.requireNodes ?? null;
+  const latticeFor = (width) => { if (!lattices.has(width)) lattices.set(width, buildLattice(row, cells, frame, { from, bars, low, width, weakTies, ...(allowNodes ? { allowNodes } : {}), ...(requireNodes ? { requireNodes } : {}) })); return lattices.get(width); };
   // a type's bands: its own, or the ones named (of its own and its extra bands)
   const bandsOf = (type) => (bandNames ? [...type.bands, ...(type.extraBands || [])].filter((b) => bandNames.includes(b.band)) : type.bands);
   const lines = [], bySerial = new Map();
@@ -449,15 +500,17 @@ export function mineLines(row, cells, frame, opts = {}) {
     if (pass >= motions.length) continue;
     const motion = motions[pass], lattice = latticeFor(type.width ?? RANGE_WIDTH);
     // locked (allowNodes): a band's share is of the slots left with a candidate (lockedNotes)
-    const sounding = allowNodes ? lattice.slots.filter((x) => x.cands.length).length : P;
+    const sounding = allowNodes ? lattice.slots.filter((x) => x.cands.length).length : P, H = requireNodes ? lattice.slots.filter((x) => x.required).length : 0;
     for (const band of bandsOf(type)) for (const contour of type.contours) {
       if (band.motions && motion && !band.motions.includes(motion)) continue;
-      const [nMin, nMax] = allowNodes ? lockedNotes(band, sounding) : bandNotes(band, P);
+      const [nMin, nMax] = allowNodes ? lockedNotes(band, sounding) : requireNodes ? coveredNotes(band, P, H) : bandNotes(band, P);
       const rules = { ...type.rules, ...(motion ? MOTIONS[motion] : {}), ...(band.rules || {}), ...extra, strict: band.strict, contour: { ...contour, low: contour.low + low }, targets,
         weights: { ...(type.rules.weights || {}), ...harmonyWeights, ...weights }, nMin, nMax };
       runs++;
       let best = null;
-      for (const pick of pickLines(lattice, rules)) if (!best || pick.cost / pick.n < best.cost / best.n - EPS) best = pick;
+      const picked = pickLines(lattice, rules);
+      if (band.most) best = picked.length ? picked[picked.length - 1] : null;   // P22: the most notes (picks come in rising n)
+      else for (const pick of picked) if (!best || pick.cost / pick.n < best.cost / best.n - EPS) best = pick;
       if (!best) continue;
       const line = describeLine(row, lattice, best, rules, { type: type.type, band: band.band, ...(motion ? { motion } : {}), contour, root: first.tone });
       const had = bySerial.get(line.serial);
