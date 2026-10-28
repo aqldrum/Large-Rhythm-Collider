@@ -59,9 +59,16 @@ function audit(spec) {
     const c = spec.chords[n.bar], rc = row.toneCents[row.tones.indexOf(c.rootTone)], cl = classOfCents(row.toneCents[row.tone[n.borrowed ? n.from : n.node]] - rc);
     if (!(Math.abs(cl.dev) <= e + 1e-9 && c.intervals.includes(cl.pc))) return `${part.id}: ${n.ratio} in bar ${n.bar} is not a tone of ${c.name}`;
   }
-  const comp = spec.parts.find((p) => p.id === 'comp'), b = 'ABCD'.indexOf(spec.stats.compLayer.layer);
-  // in chords the strokes are the layer's strikes (the strum's tones any onset near them: assert-comp.mjs); in notes, every note
-  for (const n of comp.strokes ?? comp.notes) if (!(row.owners[n.node] & (1 << b)) && n.node !== spec.chords[n.bar].rootNode) return `comp: node ${n.node} is not a strike of layer ${spec.stats.compLayer.layer}`;
+  const comp = spec.parts.find((p) => p.id === 'comp');
+  // in chords the strokes are the clave's landed steps (Amendment 1: Sync its own, Fill its partner's; the landing is
+  // assert-claves.mjs'; the strum's tones any onset near them: assert-comp.mjs); in notes, every note a strike of the layer
+  if (spec.clave) {
+    const src = new Set((spec.clave.relation === 'fill' ? spec.clave.partner.strokes.filter((x) => !x.shared) : spec.clave.strokes).map((x) => x.node));
+    for (const n of comp.strokes) if (!src.has(n.node) && n.node !== spec.chords[n.bar].rootNode) return `comp: node ${n.node} is not a landed step of the clave ${spec.clave.id}`;
+  } else {
+    const b = 'ABCD'.indexOf(spec.stats.compLayer.layer);
+    for (const n of comp.notes) if (!(row.owners[n.node] & (1 << b)) && n.node !== spec.chords[n.bar].rootNode) return `comp: node ${n.node} is not a strike of layer ${spec.stats.compLayer.layer}`;
+  }
   return '';
 }
 
@@ -88,7 +95,7 @@ console.log('\n— determinism and real onsets');
   const pitches = s1.parts[0].notes.map((n) => { const [a, b] = n.ratio.split('/').map(Number); return 1200 * Math.log2(a / b) + 1200 * n.octave; }).sort((a, b) => a - b), m = pitches.length >> 1;
   const mid = s1.knobs.baseHz * 2 ** ((pitches.length % 2 ? pitches[m] : (pitches[m - 1] + pitches[m]) / 2) / 1200);
   check(`the base fundamental puts the lead's median pitch at √(440·660) ≈ ${mid.toFixed(1)} Hz (before any bar's retune)`, near(mid, LEAD_TARGET_HZ, 1e-9));
-  check('every decision Compose made is listed with a why', ['frameCentsEachSide', 'presence', 'settlePasses', 'root', 'bars', 'slotsPerBar', 'tempoBpm', 'anchors', 'phase', 'modulation', 'table', 'leader', 'compLayer', 'baseHz', ...PART_IDS.flatMap((p) => [`legato.${p}`, `sound.${p}`, `enabled.${p}`])].every((w) => s1.decisions.some((d) => d.what === w)));
+  check('every decision Compose made is listed with a why', ['frameCentsEachSide', 'presence', 'settlePasses', 'root', 'bars', 'slotsPerBar', 'tempoBpm', 'anchors', 'phase', 'modulation', 'table', 'leader', 'compStyle', 'clave', 'compRelation', 'compStrum', 'baseHz', ...PART_IDS.flatMap((p) => [`legato.${p}`, `sound.${p}`, `enabled.${p}`])].every((w) => s1.decisions.some((d) => d.what === w)));
   check('the sounds are each part\'s proposed pair, and real Audio/voices note instruments', s1.parts.every((p) => SOUND_PAIRS[p.id].includes(p.sound) && typeof isStruck(p.sound) === 'boolean'));
 }
 
@@ -131,7 +138,8 @@ console.log('\n— overrides, one by one');
   s = one({ legato: { comp: true } }); check('legato', s.parts[2].legato && asked(s, 'legato.comp') && !audit(s));
   s = one({ enabled: { comp: false } }); check('enabled', s.parts[2].enabled === false && s.parts[0].enabled && asked(s, 'enabled.comp'));
   s = one({ baseHz: 220 }); check('baseHz', s.knobs.baseHz === 220 && asked(s, 'baseHz') && !audit(s));
-  s = one({ compLayer: 'A' }); check('compLayer', s.stats.compLayer.layer === 'A' && asked(s, 'compLayer') && !audit(s));
+  s = one({ compStyle: 'notes', compLayer: 'A' }); check('compLayer (compStyle \'notes\')', s.stats.compLayer.layer === 'A' && asked(s, 'compLayer') && !audit(s));
+  s = one({ clave: 'son', compRelation: 'fill' }); check('clave and compRelation', s.clave.id === 'son' && s.clave.relation === 'fill' && s.decisions.find((d) => d.what === 'compRelation').why.startsWith('asked') && s.decisions.find((d) => d.what === 'clave').why.startsWith('asked') && !audit(s));
   {
     const row = buildRow(L), phase = downbeats(row, 64, 1, defaultRoot(row))[0], knobs = { bars: 8, slotsPerBar: 8, anchors: 'even', phase, table: 'lean' };
     const raw = one({ ...knobs, foldOffsets: false }), named = one(knobs);
@@ -142,7 +150,7 @@ console.log('\n— overrides, one by one');
       && named.chords[deep.bar].rootPc === mod(raw.chords[deep.bar].rootPc + 1, 12) && named.chords.every((c, k) => c.fundamentalRatio === raw.chords[k].fundamentalRatio));
   }
   check('every override is in the input, as given', one({ bars: 2, sounds: { lead: 'harp' } }).input.overrides.sounds.lead === 'harp' && base.input.seed === 1);
-  check('unknown overrides, sounds and layers throw', throws(() => one({ tempo: 100 }), /no override/) && throws(() => one({ sounds: { lead: 'kazoo' } }), /no note instrument/) && throws(() => one({ compLayer: 'D' }), /no layer/));
+  check('unknown overrides, sounds and layers throw', throws(() => one({ tempo: 100 }), /no override/) && throws(() => one({ sounds: { lead: 'kazoo' } }), /no note instrument/) && throws(() => one({ compStyle: 'notes', compLayer: 'D' }), /no layer/));
 }
 
 console.log('\n— gates');

@@ -1721,6 +1721,71 @@ A4's checks are in `assert-page-highlights.mjs` (rings, the hollow draw) and `as
 The small rows take under 4 ms. The 16k row's walked phrase at ×3 is bar 4, the first modulation: its last two anchors hold only foreign tones, and a line may not end on one. M7: the 16k row (16,359 onsets) stays on the main thread under `MAIN_THREAD_ONSETS` (32,768), so lead and inner together at ×3 are ~110 ms there. The planner's ~40 ms was measured with modulation off.
 
 **Tests:** `assert-arp.mjs` is rewritten. Over 8 rows × both parts × ×1–×3 (legato on and off at ×2), every mined note is a real onset inside its anchor's window on the test's own S × time cells, at its own time, one a window. Its class under the anchor's chord is a chord tone, a parent-scale tone, or a foreign tone resolved by step. hz, velocity and lengths are checked, and the part plays the picked alternate. Each walked phrase is exactly B1's 'played' steps, and the stats are recounted. It also covers `chordRecordsOf` against the spec's chords; the ranking ("no rests" over cheaper "few rests" in 38 of 64 mined phrases); picks and a missed pick; the fallback marked; 768:769's weak ties; the inner over a Line lead and an arp lead; register; a chart's split bar and a 16-slot chart's ×3 → ×2; a target's lead refused and its inner in three windows; determinism and Back to Line; the options; and ×1–×3 on the 16k row (each part under 150 ms). `assert-page-arp.mjs` follows the knobs: the Time select, a pick through `setArp`, and undo through them.
+## The clave (Amendment 1, phase C core; built 2026-10-27, branch `clave/core`)
+
+`Composer/COMP_ARP_ORDER.md` Amendment 1, phase C: R1–R5. Decisions 5 (the clave is mined from the row and is the comp's authority) and 6 (Sync by default, Fill a switch) are Avery's. R1–R5 are the builder's proposals, built as written except where noted below. Nothing here has been heard. The window (the clave picker, Sync | Fill) is Phase E.
+
+**The port** (`core/claves.js`, R1). rhythm-claves.js (`readRhythm`, `layerTones`, `tonesOfPitchClasses`, `barSizes`, `toneSets`, `layerClaves`, `claveTable`) and chunk-comping.js (`COMP_RULES`, `claveOf`, `chunkClaves` as `rowClaves`, `scoreClave`, `compCandidates`, `clavePartners`), rule for rule, on the Composer's row. Where chunk-tunes is on the machine, `assert-claves.mjs` checks them against it on 32 rhythms: whole, meeting and 4-strike tables row for row, the pools, the rankings and the top claves' partners. It skips rows whose tones the kernel rounds (a denominator past 1000) and rows with a repeated layer value, which chunk-tunes reads as one layer twice. Four things are adapted:
+- **Recurrence.** chunk-tunes' `held` is the share of a chunk's rhythms that hold a clave. A composition is one rhythm, so that term is always 1 and says nothing. The Composer reads `held` as recurrence: the bars of the table that hold the clave, over the most any clave of the same step count holds (`compCandidates(pool, { held: 'bars' })`). Per step count, so short claves, which have more bars to recur in, don't win on that alone. The port's default is still chunk-tunes' `'rhythms'`.
+- **Size tiers.** 'meeting' finds nothing up to 16 strikes on a row whose layers share no small factor: 768:769, 768:784, 426:317:285 and the 16k row (a bar of 4099 strikes meets nothing short of the whole layer). Decided 5 says the clave transcends the numbers' scale, so `rankRowClaves` tries 'meeting', then 'whole' (every size that cuts a layer whole), then 'every' (each size 3–16, a clipped last bar left out). The first tier with a candidate wins. `claveTable` gains `sizes: 'every'` for it.
+- **Cost.** A dense row has thousands of tones a layer, so thousands of one-tone sets. A one-tone set is read from the bars' own strikes, and a coarse set (every tone but 1/1, a 12-step grid step) is keyed by bit mask, with the same rows in the same order. The test checks 40 tables and 69 claves' partners against a line-for-line reference. A tone that never sounds twice in a bar is skipped: it leaves no row.
+- **The superrow.** Its nodes are (tick, tone) pairs, so a layer's strike is its tick's first node.
+
+The curated claves are the drum patterns' perc lines: son and rumba (two bars of 8 steps, `span: 2`) and bossa's rim (16 steps). They're scored by the same rules: held by the row where their pattern is in the pool, else 0.
+
+**One clave a composition** (`compose.js`, R2). `chooseClave` takes the best ranked clave. Ties (scores within 1e-9) go by `seededRandom(`${seed}/clave`)`, a generator of the clave's own. Compose's generator still makes the draws the comp layer's ties took, one per active layer, so no sound or phase moves. With no mined candidate at all, the best curated clave wins the same way. Its partner, for Fill, is the best `clavePartners` at the winning tier, else `complementClave`: the clave's gaps, Euclid-thinned to its own onset count.
+- `spec.clave = { id, (name, label,) steps, span, pattern, onsets (its steps), score, terms: { held, density, fit }, bars (the table's bars holding it), from: { layer, name, size, set, row } | { pattern: 'son' } | { asked: true }, relation, strokes, silent, partner: { id, steps, span, pattern, onsets, source: 'partner' | 'complement', together?, strokes, silent, shared } }`. A stroke is `{ bar, step, place, node, tick, time, slot, snap }`; a partner stroke landed on one of the clave's onsets is marked `shared`.
+- Two new decisions, `clave` and `compRelation`, say what was chosen and why: the tier, the layer, cut and tone set it came from, the score's terms, the ties, how many steps landed, and the partner or complement.
+- `stats.clave = { id, relation, strokes, silent }` replaces `stats.compLayer` in chords (`compLayer` stays for `compStyle: 'notes'`).
+- The trace's comp `part` event carries `clave`, `partner`, `tier`, `asked` and `alternates`: the top 12 ranked, then the three curated, each `{ id, steps, span, pattern, onsets, score, terms, bars, from }`. It keeps `layer`, `value` and `candidates` (= `alternates`) so the page's trace frames still read it until Phase E.
+- New overrides: `clave` ('steps:pattern', or 'son' | 'rumba' | 'bossa') and `compRelation` ('sync', the default, | 'fill'). `compLayer` under chords, and `clave` or `compRelation` under notes, are refused with a message.
+
+**Laid on the bars** (`claves.js` `layClave`, R3). A pass of the clave a bar, or two for son and rumba. Step j of n sits at place j·S·span/n slots and is landed by `drums.js` `landPlace`: the drums' own landing, now exported, which `arrangeDrums`' strokes use too, byte for byte. The window is half-way to the neighbouring places of the clave's n-step grid, then one place wider, else the step is silent. It's clipped to the step's bar, or in a chart's split bar to the span its place falls in, so the stroke plays that span's chord. The comp strokes are the clave's landed onsets (Sync), or its partner's not on a clave onset (Fill), one a node. The strum, borrowed tones, voicing, velocities and lengths (P3–P7) are unchanged. A bar or span with no stroke is struck once on its root onset, as before.
+
+**The drums hear the clave** (`drums.js`, R4). In backbeat, with and against, the perc also plays the clave's landed strokes (`snap: 'clave'`, with its `step`), the pass's first onset accented, unless `drumOptions.perc: 'pattern'`. So the perc and the comp share anchors in Sync and hocket in Fill. with / against still read the comp's strokes. A clave finer than the slots may strike a slot twice, so they take the first stroke a slot. partition, the curated patterns, grid and prime keep their own perc. A `drums.perc` decision names it. The drums only read `spec.clave`, so a spec with none (`compStyle: 'notes'`) arranges exactly as before. That's what keeps `drums-baseline.mjs` byte-identical: its calls were already pinned to `compStyle: 'notes'`, and they needed no `perc: 'pattern'`.
+
+**What retired** (R5). The chords style's comp layer score (P2) and decision 2's every-strike strokes (`compStrokesOf`). `compChoicesOf` is the notes style's only, and `compChordsOfBar(ctx, c, k, strokes, range)` takes the stroke onsets in place of a layer. `compStyle: 'notes'` is the frozen core, unchanged.
+
+**Edits** (`rearrange.js`). A chord swap re-strums the bar's clave strokes (`compNodesOf(spec.clave, from, to)`) over the new chord, and its borrowed tones follow the new chord's voices. The clave, its strokes and the perc never move: they're pinned like the comp layer was. A bar the clave leaves empty is struck on the new chord's root onset. A spec with comp strokes but no `spec.clave` (composed before this phase) re-strums its own strokes.
+
+**On the probe rows** (seed 1). Clave, where it was found, its partner, and the comp in Sync and Fill: strokes, and the share of tones from the row.
+
+| row | meter | clave (layer / bar size, tone set; tier) | ties | partner | Sync | Fill |
+|---|---|---|--:|---|---|---|
+| 8:7:6:5 (4 s) | 2×3 | `4:.xx.` (A 8 / 4, 7/4; meeting) | 4 | `x..x` (complement) | 4, 40 % | 4, 50 % |
+| 11:9:7:5 (6 s) | 2×4 | `5:...xx` (D 5 / 5, 5/4; meeting) | 4 | `xx...` | 4, 8 % | 4, 33 % |
+| 19:17:16:15 (3 s) | 1×8 | `16:.......x....x.xx` (C 16 / 16, step 10; meeting) | 2 | `...x..x.........` | 4, 42 % | 2, 17 % |
+| 16:12:9 (4 s) | 2×4 | `8:...x...x` (A 16 / 8, 1/1; meeting) | 9 | `.xx..x..` | 4, 58 % | 6, 44 % |
+| 119:42:15:8 (8 s) | 4×8 | `8:...x..x.` (D 8 / 8, 4/3; meeting) | 3 | `xxx.x...` | 8, 33 % | 16, 38 % |
+| 426:317:285 (8 s) | 4×8 | `6:x..x..` (A 426 / 6, step 0; whole) | 1 | `..x..x` | 8, 58 % | 8, 54 % |
+| 768:769 (8 s) | 4×8 | `4:..xx` (A 768 / 4, step 0; whole) | 2 | `xx..` | 8, 33 % | 8, 29 % |
+| 768:784 (8 s) | 4×8 | `4:..xx` (B 784 / 4, rest; whole) | 2 | `xx..` | 8, 80 % | 8, 80 % |
+| 4099:4093:4091:4079 (16 s) | 8×8 | `4:..xx` (A 4099 / 4, step 0; every) | 3 | `xx..` | 16, 93 % | 16, 84 % |
+
+Every step landed on these rows. Phase A's every-strike comp struck 6, 8, 32 and 64 times on 8:7:6:5, 19:17:16:15, 768:784 and the 16k row. The clave strikes 2–4 times a bar on every row, whatever its density. On the dense rows the winners are short, bunched claves (`..xx`): their tones come in pairs, as two near-equal layers' strikes nearly coincide.
+
+**Timing** (the 16k row, this machine, the same session). Compose lean is ~625 ms before and ~685 ms after; full is ~1.65 s both (within noise). The clave's own cost is ~60 ms for the table (the 'every' tier) and ~8 ms for the partners. Laying it is under 1 ms.
+
+**The frozen fixtures, kept.** No fixture or hash was edited. The baselines already compose with `compStyle: 'notes'` (phase A), which has no clave, so they hold unchanged. The test edits for the new default:
+- `assert-refactor-identity.mjs` strips ", clave, compRelation" from the bad-override message, as it strips ", compStyle".
+- `assert-trace.mjs`: the "comp asked" case adds `compStyle: 'notes'` (its `compLayer` is notes-only). A new "clave asked, fill" case. The comp event is checked by its clave in chords.
+- `assert-compose.mjs`: the audit reads the clave's strokes. The decisions list names `compStyle`, `clave`, `compRelation` and `compStrum`. The `compLayer` checks pin `compStyle: 'notes'`. A `clave` + `compRelation` check.
+- `assert-comp.mjs`: the brute force takes its strokes from the clave. Overrides now include Fill and asked claves. The 16k cost is the bars on the clave's strokes. "768:784 mostly pure" is ≥ 75 % (it's 80 %). The *with* check reads each slot's first stroke, with `perc: 'pattern'`.
+- `assert-drums.mjs`: *with* / *against* are checked with `perc: 'pattern'`, plus a new check of the clave over each layered mode.
+- `assert-rearrange.mjs`: the pin is the clave (or the layer in notes), and the strokes the clave's.
+- `assert-page-matrix.mjs`: the comp layer pin is gone in chords. The page's `if (L)` guard simply doesn't draw it, and the test expects none. The page itself wasn't touched.
+
+**For Phase E** (the window):
+- The picker's list is the trace's comp event `alternates` (top 12 mined + curated, with scores and terms). It's in the trace the page already composes with, as the lead's runner-ups are. The chosen one is `spec.clave.id`. Its pattern for display is `spec.clave.pattern` (`x..x..x.`), its source is `spec.clave.from`, and `span` is 2 for son and rumba.
+- A clave switch or Sync | Fill today means re-composing with `overrides.clave` / `compRelation`. A live switch needs a rearrange-style step: re-lay (`layClave` over `drumGrid`), re-strum every bar (`compChordsOfBar` with `compNodesOf`), re-arrange the drums. All the pieces are exported. It isn't built here.
+- `trace-frames.js` still says "on layer X (v), the best of N layers" for the comp. In chords, X is the clave's source layer (null for a curated clave). It needs rewording.
+- The page's comp-layer pin is gone in chords; the clave line replaces it.
+
+**Open (for Avery):**
+- On dense rows, the 4-step bunched claves (`..xx`) tie at the top with 8- and 16-step ones, and the seed picks. Should longer claves win ties (more shape per bar)?
+- The size tiers ('whole', then 'every') are proposed. Rows with coprime layers otherwise get no mined clave at all.
+- A Fill partner step that lands on one of the clave's onsets is silent (`shared`), so the comp never strikes with the perc. None did on the probe rows.
+- The tone sets are read from 1/1 (the Collider's 12-step grid, chunk-tunes' `centre` 0), not from the composition's root.
 
 ## Layout (agreed earlier, 2026-10-21)
 

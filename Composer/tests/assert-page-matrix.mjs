@@ -222,7 +222,8 @@ console.log('\n— bass, comping, inner');
 tab.selectCell('bass', 2);
 check('bass: "follows bar 3\'s chord", a way to its chord, its notes', /follows bar 3's chord/.test(q(inspector, '.ctab-ctx').textContent) && qa(inspector, '.ctab-notes tr').length === tab.state.parts.bass.notes.filter((n) => n.bar === 2).length + 1);
 tab.selectCell('comp', 2);
-check(`comping: the comp layer pin, read-only (${tab.state.spec.stats.compLayer.layer})`, q(inspector, '.ctab-pin')?.textContent.includes(`comp layer: ${tab.state.spec.stats.compLayer.layer}`));
+// the comp in chords has no layer since Amendment 1 (the clave leads it; its picker is the window's Phase E): no layer pin
+check(`comping: no comp layer pin (the clave ${tab.state.spec.clave.id} leads the comp)`, !q(inspector, '.ctab-pin') && !tab.state.spec.stats.compLayer);
 tab.selectCell('inner', spans[1].from);
 check('inner: smooth the phrase offered (the phrase\'s lead is swapped)', !q(inspector, '.ctab-smooth').disabled);
 q(inspector, '.ctab-ctx-action').click();

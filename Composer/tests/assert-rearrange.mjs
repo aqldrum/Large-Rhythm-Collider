@@ -92,13 +92,21 @@ function swapBreak(C, k, cand, r, next) {
   // the lead stays (decision 1): only its hz in a retuned bar
   const leadA = next.parts[0], leadB = spec.parts[0];
   if (leadA.notes.length !== leadB.notes.length || leadA.notes.some((n, i) => n.node !== leadB.notes[i].node || n.octave !== leadB.notes[i].octave || (!moved.has(n.bar) && n.hz !== leadB.notes[i].hz))) return 'the lead moved';
-  // pinned: baseHz, the comp layer, every part's sound and legato; targets.scale fixed (no other bar re-mined, above)
-  if (next.knobs.baseHz !== spec.knobs.baseHz || next.stats.compLayer.layer !== spec.stats.compLayer.layer) return 'baseHz or the comp layer moved';
+  // pinned: baseHz, the comp's clave (in chords: Amendment 1) or its layer (notes), every part's sound and legato;
+  // targets.scale fixed (no other bar re-mined, above)
+  if (next.knobs.baseHz !== spec.knobs.baseHz || JSON.stringify(next.clave) !== JSON.stringify(spec.clave) || next.stats.compLayer?.layer !== spec.stats.compLayer?.layer) return 'baseHz, the clave or the comp layer moved';
   for (const p of next.parts) { const q = spec.parts.find((x) => x.id === p.id); if (p.sound !== q.sound || p.legato !== q.legato || p.enabled !== q.enabled) return `${p.id}'s sound or legato moved`; }
-  // the comping on the pinned layer: every stroke of bar k struck by it (or the bar's root onset alone); in chords the
-  // strokes are on the part (the strum's tones any onset near them, and of the new chord: assert-comp.mjs)
-  const comp = next.parts.find((p) => p.id === 'comp'), layer = 'ABCD'.indexOf(spec.stats.compLayer.layer);
-  for (const n of (comp.strokes ?? comp.notes).filter((x) => x.bar === k)) if (!(C.row.owners[n.node] & (1 << layer)) && n.node !== next.chords[k].rootNode) return `bar ${k}: a comp stroke off the pinned layer`;
+  // the comping: in chords every stroke of bar k a landed step of the pinned clave (Sync its own, Fill its partner's), or
+  // the bar's root onset alone (the strum's tones any onset near them, and of the new chord: assert-comp.mjs); in notes
+  // every note struck by the pinned layer
+  const comp = next.parts.find((p) => p.id === 'comp');
+  if (spec.clave) {
+    const src = new Set((spec.clave.relation === 'fill' ? spec.clave.partner.strokes.filter((x) => !x.shared) : spec.clave.strokes).map((x) => x.node));
+    for (const n of comp.strokes.filter((x) => x.bar === k)) if (!src.has(n.node) && n.node !== next.chords[k].rootNode) return `bar ${k}: a comp stroke off the pinned clave`;
+  } else {
+    const layer = 'ABCD'.indexOf(spec.stats.compLayer.layer);
+    for (const n of comp.notes.filter((x) => x.bar === k)) if (!(C.row.owners[n.node] & (1 << layer)) && n.node !== next.chords[k].rootNode) return `bar ${k}: a comp stroke off the pinned layer`;
+  }
   // the new chord's tones: every chord voice of bar k is a class of the chord, inside the frame
   const c = r.chords[k], rootCents = C.row.toneCents[C.row.tones.indexOf(c.rootTone)];
   for (const n of next.parts.find((p) => p.id === 'chords').notes.filter((x) => x.bar === k)) { const q = classOfCents(C.row.toneCents[C.row.tone[n.node]] - rootCents); if (!(c.intervals.includes(q.pc) && Math.abs(q.dev) <= spec.knobs.frameCentsEachSide + 1e-9)) return `bar ${k}: a chord voice off the chord`; }

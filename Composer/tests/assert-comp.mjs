@@ -1,7 +1,8 @@
-// assert-comp.mjs — comping in chords (Composer/COMP_ARP_ORDER.md phase A, A1–A2; A5's core checks): compose.js
-// `compChordsOfBar` and `strumOf`, the comp layer's new score, `compStyle`, and rearrange.js' chord swap over it.
+// assert-comp.mjs — comping in chords (Composer/COMP_ARP_ORDER.md phase A, A1–A2; A5's core checks; the strokes since
+// Amendment 1, phase C): compose.js `compChordsOfBar` and `strumOf`, `compStyle`, and rearrange.js' chord swap over it.
 // Every comp spec here is checked against a brute force written from the order, not from compose.js:
-//   • every strike is a stroke: each slot the comp layer strikes, at its first strike there (a bar with none: the root onset)
+//   • the strokes are the clave's landed steps (Sync) or its partner's off the clave's onsets (Fill), one an onset, a bar
+//     or span with none struck on its root onset (the clave's laying itself: assert-claves.mjs)
 //   • every strum tone is a real onset within ±¼ slot of its stroke, inside the bar (a split bar's span), of a chord class,
 //     the class's nearest (ties: the most strikes, then the earliest)
 //   • borrowed tones are exactly the classes missing from the window that the chords part has a voice of: at the stroke's
@@ -13,9 +14,9 @@
 //     deterministic; the drums' `with` reading the strokes
 //   • a chord swap rebuilds the bar's strum and its borrowed tones from the new chord's voices; a JSON round trip of the
 //     spec rearranges the same (the store's)
-//   • the 16,359-onset row: the comp's own cost, and Compose lean with it
+//   • the 16,359-onset row: the comp's own cost (the bars built on the clave's strokes), and Compose lean with it
 //   node Composer/tests/assert-comp.mjs
-import { compose, partContext, compChoicesOf, compChordsOfBar, rearticulate, STRUM_WINDOW, COMP_VELOCITY, MAX_COMP_VOICES } from '../core/compose.js';
+import { compose, partContext, compChordsOfBar, compNodesOf, rearticulate, STRUM_WINDOW, COMP_VELOCITY, MAX_COMP_VOICES } from '../core/compose.js';
 import { compose as composeBefore } from './fixtures/compose-before.js';
 import { rearrange, applyRearrange, materialsOf } from '../core/rearrange.js';
 import { arrangeDrums } from '../core/drums.js';
@@ -48,16 +49,18 @@ function geometryOf(spec) {
 /** a chord class of tone t under chord c (from its root tone), or −1 */
 const classOf = (G, c, t) => { const k = classOfCents(G.row.toneCents[t] - G.row.toneCents[G.toneOf.get(c.rootTone)]); return Math.abs(k.dev) <= G.e + EPS && c.intervals.includes(k.pc) ? k.pc : -1; };
 
-/** the comp the order asks for, by brute force over the spec's chords, chords part and comp layer → { notes, strokes } */
+/** the comp the order asks for, by brute force over the spec's chords, chords part and clave → { notes, strokes } */
 function expectedComp(spec, G) {
-  const { row, slot, time, slotSeconds, T, P, starts } = G, b = 'ABCD'.indexOf(spec.stats.compLayer.layer);
+  const { row, slot, time, slotSeconds, T, P, starts } = G, C = spec.clave;
+  // the strokes' source (Amendment 1, decided 5–6): the clave's landed steps in Sync, its partner's not on a clave onset in Fill
+  const took = new Set(C.strokes.map((x) => x.node)), source = C.relation === 'fill' ? C.partner.strokes.filter((x) => !took.has(x.node)) : C.strokes;
   const chordsPart = spec.parts.find((p) => p.id === 'chords').notes;
   const notes = [], strokes = [];
   for (const U of G.units) {
     const inside = []; for (let i = 0; i < row.n; i++) if (slot[i] >= U.from && slot[i] < U.to) inside.push(i);
     const byTime = (a, z) => time[a] - time[z] || a - z;
     let mine = [];
-    for (let j = U.from; j < U.to; j++) { const s = inside.filter((i) => slot[i] === j && row.owners[i] & (1 << b)).sort(byTime)[0]; if (s !== undefined) mine.push(s); }
+    for (const x of source) if (slot[x.node] >= U.from && slot[x.node] < U.to && !mine.includes(x.node)) mine.push(x.node);
     if (!mine.length && U.c.rootNode != null && slot[U.c.rootNode] >= U.from && slot[U.c.rootNode] < U.to) mine = [U.c.rootNode];
     mine.sort(byTime);
     const end = U.to < P ? starts[U.to] * T : T;
@@ -87,7 +90,7 @@ let lastG = null;   // the last audit's geometry
 function audit(spec) {
   const G = lastG = geometryOf(spec), comp = spec.parts.find((p) => p.id === 'comp'), want = expectedComp(spec, G);
   if (!Array.isArray(comp.strokes)) return 'no strokes on the comp part';
-  if (J(comp.strokes) !== J([...want.strokes].sort((a, b) => a.time - b.time || a.node - b.node))) return 'the strokes are not every slot the layer strikes, at its first strike';
+  if (J(comp.strokes) !== J([...want.strokes].sort((a, b) => a.time - b.time || a.node - b.node))) return 'the strokes are not the clave\'s landed steps (its partner\'s in Fill)';
   const a = comp.notes.map(noteKey).sort(), b = want.notes.map(noteKey).sort();
   if (J(a) !== J(b)) { const miss = b.find((k) => !a.includes(k)), extra = a.find((k) => !b.includes(k)); return `the strum and borrowed tones differ from the order's (missing ${miss}, extra ${extra})`; }
   const { row, time, slot, slotSeconds, units } = G;
@@ -129,28 +132,28 @@ function audit(spec) {
 const probe = (spec) => { const c = spec.parts.find((p) => p.id === 'comp'); return `${c.strokes.length} strokes, ${c.notes.length} tones, ${(100 * spec.stats.compStrum).toFixed(0)} % from the row`; };
 
 // ── the comp against the order's rules ──
-console.log('\n— every strike a stroke, the strum, the borrowed tones, the voicing, the lengths');
+console.log('\n— the clave\'s strokes, the strum, the borrowed tones, the voicing, the lengths');
 const ROWS = [[[8, 7, 6, 5], 4], [[11, 9, 7, 5], 6], [[19, 17, 16, 15], 3], [[16, 12, 9], 4], [[119, 42, 15, 8], 8], [[426, 317, 285], 8], [[768, 769], 8], [[768, 784], 8], [[41, 42, 43], 8]];
 {
   const bad = []; let n = 0;
-  for (const [L, T] of ROWS) for (const seed of [1, 7]) { n++; const spec = compose(L, T, { seed }), why = audit(spec); if (why) bad.push(`${L.join(':')} seed ${seed}: ${why}`); if (seed === 1) console.log(`    · ${L.join(':')}: ${probe(spec)} (layer ${spec.stats.compLayer.layer})`); }
+  for (const [L, T] of ROWS) for (const seed of [1, 7]) { n++; const spec = compose(L, T, { seed }), why = audit(spec); if (why) bad.push(`${L.join(':')} seed ${seed}: ${why}`); if (seed === 1) console.log(`    · ${L.join(':')}: ${probe(spec)} (clave ${spec.clave.id})`); }
   check(`${n} composes (${ROWS.length} rows × 2 seeds): the comp is the order's, tone for tone`, !bad.length, bad.slice(0, 3).join('; '));
 }
 {
   const bad = []; let n = 0;
-  for (const [L, T] of ROWS.slice(0, 6)) for (const ov of [{ legato: { comp: true } }, { legato: { comp: false } }, { compLayer: 'A' }, { compLayer: 'B' }, { bars: 2 }, { slotsPerBar: 4 }, { anchors: 'even' }]) {
+  for (const [L, T] of ROWS.slice(0, 6)) for (const ov of [{ legato: { comp: true } }, { legato: { comp: false } }, { compRelation: 'fill' }, { clave: 'son' }, { clave: '8:x..x..x.', compRelation: 'fill' }, { bars: 2 }, { slotsPerBar: 4 }, { anchors: 'even' }]) {
     const spec = compose(L, T, { seed: 3, overrides: ov }); n++;
     const why = spec.refused ? '' : audit(spec); if (why) bad.push(`${L.join(':')} ${J(ov)}: ${why}`);
   }
-  check(`${n} composes with overrides (legato on and off, an asked layer, other meters): the comp is the order's, lengths included`, !bad.length, bad.slice(0, 3).join('; '));
+  check(`${n} composes with overrides (legato on and off, Fill, an asked clave, other meters): the comp is the order's, lengths included`, !bad.length, bad.slice(0, 3).join('; '));
 }
 {
   const spec = compose([8, 7, 6, 5], 4, { seed: 1 }), comp = spec.parts.find((p) => p.id === 'comp');
   const own = comp.notes.filter((n) => !n.borrowed && comp.strokes.some((s) => s.node === n.node)), strum = comp.notes.filter((n) => !n.borrowed && !own.includes(n)), bor = comp.notes.filter((n) => n.borrowed);
   check(`8:7:6:5: borrowed tones there (${bor.length}), and velocities 0.55+ / 0.5 / 0.45`, bor.length > 0 && bor.every((n) => n.velocity === 0.45) && strum.every((n) => n.velocity === 0.5) && own.every((n) => n.velocity >= 0.55));
   const dense = compose([768, 784], 8, { seed: 1 });
-  check(`768:784: mostly pure strums (${(100 * dense.stats.compStrum).toFixed(0)} % from the row, over 80 %)`, dense.stats.compStrum > 0.8);
-  check('the decisions say the style, the layer and the strum', spec.decisions.some((d) => d.what === 'compStyle' && d.value === 'chords') && spec.decisions.some((d) => d.what === 'compStrum' && d.value === spec.stats.compStrum && /strokes?/.test(d.why)) && /strike/.test(spec.decisions.find((d) => d.what === 'compLayer').why));
+  check(`768:784: mostly pure strums (${(100 * dense.stats.compStrum).toFixed(0)} % from the row, 75 % or more)`, dense.stats.compStrum >= 0.75);
+  check('the decisions say the style, the clave, the relation and the strum (no layer)', spec.decisions.some((d) => d.what === 'compStyle' && d.value === 'chords') && spec.decisions.some((d) => d.what === 'compStrum' && d.value === spec.stats.compStrum && /strokes?/.test(d.why)) && spec.decisions.find((d) => d.what === 'clave').value === spec.clave.id && spec.decisions.find((d) => d.what === 'compRelation').value === 'sync' && !spec.decisions.some((d) => d.what === 'compLayer'));
   check('the comp\'s voices: at most 4, one a class', comp.notes.every((n) => n.voice >= 0 && n.voice < 4) && new Set(comp.notes.map((n) => `${n.bar}|${n.holdTo}|${n.voice}`)).size === comp.notes.length);
 }
 
@@ -206,12 +209,14 @@ console.log('\n— rearticulate and the drums');
   let ok = 0, n = 0;
   for (const [L, T] of ROWS.slice(0, 6)) {
     const spec = compose(L, T, { seed: 2 }), comp = spec.parts.find((p) => p.id === 'comp'), leadNotes = spec.parts.find((p) => p.id === 'lead').notes, lead = new Set(leadNotes.map((x) => x.slot));
-    const hits = arrangeDrums(spec, { mode: 'with' }).hits.filter((h) => h.voice === 'perc' && h.snap === 'note');
-    // each comp stroke on a slot the lead leaves: a perc stroke on its tick (two on one tick merge); every perc stroke on a lead note's or a stroke's tick
-    const ticks = new Set([...leadNotes.map((x) => x.tick), ...comp.strokes.map((x) => x.tick)]);
-    n++; if (comp.strokes.filter((s) => !lead.has(s.slot)).every((s) => hits.some((h) => h.tick === s.tick)) && hits.every((h) => ticks.has(h.tick))) ok++;
+    // the with line alone (perc 'pattern': the clave over it is assert-claves.mjs' and assert-drums.mjs')
+    const hits = arrangeDrums(spec, { mode: 'with', perc: 'pattern' }).hits.filter((h) => h.voice === 'perc' && h.snap === 'note');
+    // each slot's first comp stroke on a slot the lead leaves (a clave finer than the slots may strike one twice): a perc
+    // stroke on its tick (two on one tick merge); every perc stroke on a lead note's or a stroke's tick
+    const ticks = new Set([...leadNotes.map((x) => x.tick), ...comp.strokes.map((x) => x.tick)]), firsts = comp.strokes.filter((s, i) => comp.strokes.findIndex((x) => x.slot === s.slot) === i);
+    n++; if (firsts.filter((s) => !lead.has(s.slot)).every((s) => hits.some((h) => h.tick === s.tick)) && hits.every((h) => ticks.has(h.tick))) ok++;
   }
-  check(`drums 'with': a perc stroke on each comp stroke's own onset, none on a strum tone's (${ok}/${n} rows)`, ok === n);
+  check(`drums 'with': a perc stroke on each slot's first comp stroke's own onset, none on a strum tone's (${ok}/${n} rows)`, ok === n);
 }
 
 // ── a chord swap ──
@@ -247,17 +252,17 @@ console.log('\n— the 16,359-onset row');
   const L = [4099, 4093, 4091, 4079], T = 16;
   let t0 = performance.now(); const lean = compose(L, T, { seed: 1 }); const tLean = performance.now() - t0;
   t0 = performance.now(); const notes = compose(L, T, { seed: 1, overrides: { compStyle: 'notes' } }); const tNotes = performance.now() - t0;
-  console.log(`    · 16k: ${probe(lean)} (layer ${lean.stats.compLayer.layer})`);
+  console.log(`    · 16k: ${probe(lean)} (clave ${lean.clave.id})`);
   check(`16k: the comp is the order's (lean)`, !audit(lean), audit(lean));
-  // the comp's own cost: the scoring and the bars, over records rebuilt from the spec (what they read: root, classes, root onset)
+  // the comp's own cost: the bars built on the clave's strokes, over records rebuilt from the spec (what they read: root, classes, root onset)
   const { row, cells } = materialsOf(lean), K = lean.knobs, ctx = partContext(row, cells, { cycleSeconds: K.cycleSeconds, phase: K.phase, frameCentsEachSide: K.frameCentsEachSide });
   const toneOf = new Map(row.tones.map((t, i) => [t, i])), recs = lean.chords.map((c) => ({ rootCents: row.toneCents[toneOf.get(c.rootTone)], intervals: c.intervals, rootNode: c.rootNode }));
   void ctx.inSlot;
   t0 = performance.now();
-  const choices = compChoicesOf(ctx, recs, { style: 'chords' }), b = 'ABCD'.indexOf(lean.stats.compLayer.layer), built = recs.map((c, k) => compChordsOfBar(ctx, c, k, b));
+  const S = K.slotsPerBar, built = recs.map((c, k) => compChordsOfBar(ctx, c, k, compNodesOf(lean.clave, k * S, (k + 1) * S)));
   const tComp = performance.now() - t0;
-  const same = built.reduce((n, x) => n + x.notes.length, 0) === lean.parts.find((p) => p.id === 'comp').notes.length && Math.abs(choices.find((x) => x.layer === b).score - lean.stats.compLayer.score) < 1e-12;
-  check(`16k: the comp's own cost (every layer scored, the bars built) ${tComp.toFixed(1)} ms (under 50 ms), the same comp`, tComp < 50 && same);
+  const same = built.reduce((n, x) => n + x.notes.length, 0) === lean.parts.find((p) => p.id === 'comp').notes.length;
+  check(`16k: the comp's own cost (the bars built on the clave's strokes) ${tComp.toFixed(1)} ms (under 50 ms), the same comp`, tComp < 50 && same);
   check(`16k: Compose lean ${tLean.toFixed(0)} ms with chords, ${tNotes.toFixed(0)} ms with notes (under 1 s)`, tLean < 1000);
 }
 

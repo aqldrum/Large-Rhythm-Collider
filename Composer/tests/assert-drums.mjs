@@ -235,16 +235,26 @@ console.log('\n— fills, with and against');
     // the comp in chords: its strokes, one a slot, not the strum's tones (COMP_ARP_ORDER.md P9); in notes, its notes
     const compPart = spec.parts.find((p) => p.id === 'comp'), lead = spec.parts.find((p) => p.id === 'lead').notes, comp = compPart.strokes ?? compPart.notes, Sx = spec.knobs.slotsPerBar;
     const busy = new Set([...lead, ...comp].map((n) => n.slot));
-    const w = arrangeDrums(spec, { mode: 'with' }).hits.filter((h) => h.voice === 'perc');
+    // the mode's own line, without the clave on the perc (Amendment 1, R4: perc 'pattern'; the clave over it is checked below)
+    const w = arrangeDrums(spec, { mode: 'with', perc: 'pattern' }).hits.filter((h) => h.voice === 'perc');
     // (two slots may hold one onset: a lead note's slot is its window's, a comping note's its place's — then one stroke)
     const ticks = new Set(w.map((h) => h.tick)), first = (j) => (lead.find((n) => n.slot === j) ?? comp.find((n) => n.slot === j));
     if ([...busy].some((j) => !ticks.has(first(j).tick)) || w.some((h) => ![...lead, ...comp].some((n) => n.slot === h.slot && n.tick === h.tick))) withBad ||= `${name}: ${w.length} strokes for ${busy.size} busy slots`;
-    const a = arrangeDrums(spec, { mode: 'against' }).hits.filter((h) => h.voice === 'perc');
+    const a = arrangeDrums(spec, { mode: 'against', perc: 'pattern' }).hits.filter((h) => h.voice === 'perc');
     const perBar = new Map(); for (const h of a) perBar.set(h.bar, (perBar.get(h.bar) || 0) + 1);
     if (a.some((h) => busy.has(h.slot)) || [...perBar.values()].some((c) => c > Math.max(1, Math.floor(Sx / 2)))) againstBad ||= `${name}: ${a.length} strokes`;
   }
   check('with: a perc stroke on every slot the lead or comping strikes, on that note\'s (that stroke\'s) own onset', !withBad, withBad);
   check('against: perc only on slots both leave empty, at most ⌊S/2⌋ a bar', !againstBad, againstBad);
+  // R4: backbeat, with and against add the clave on the perc, on its landed strokes; the line's own strokes stay
+  let claveBad = '';
+  for (const { name, spec } of specs) for (const mode of ['backbeat', 'with', 'against']) {
+    const d = arrangeDrums(spec, { mode }), line = arrangeDrums(spec, { mode, perc: 'pattern' }), clave = new Set(spec.clave.strokes.map((x) => x.tick));
+    const perc = d.hits.filter((h) => h.voice === 'perc'), own = line.hits.filter((h) => h.voice === 'perc');
+    if (!spec.clave.strokes.every((x) => perc.some((h) => h.tick === x.tick)) || !own.every((h) => perc.some((x) => x.tick === h.tick)) || perc.some((h) => !clave.has(h.tick) && !own.some((x) => x.tick === h.tick))) claveBad ||= `${name} ${mode}`;
+    if (JSON.stringify(d.hits.filter((h) => h.voice !== 'perc')) !== JSON.stringify(line.hits.filter((h) => h.voice !== 'perc'))) claveBad ||= `${name} ${mode}: the other voices moved`;
+  }
+  check('the clave on the perc (R4): backbeat, with and against play its landed strokes over their own line, the other voices unmoved', !claveBad, claveBad);
   const mixed = arrangeDrums(s, { perBar: { 1: 'halftime', 2: 'partition' } });
   check('a bar may have a mode of its own (perBar)', mixed.bars[1].mode === 'halftime' && mixed.bars[2].mode === 'partition' && mixed.hits.some((h) => h.bar === 2 && h.snap === 'layer') && !mixed.hits.some((h) => h.bar !== 2 && h.snap === 'layer'));
 }
