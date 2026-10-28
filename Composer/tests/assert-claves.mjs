@@ -11,7 +11,11 @@
 //     neighbouring places of the clave's grid, then one place wider) and inside its bar or span; the silent steps are
 //     exactly those with no onset there; sync and fill (fill never shares a step or an onset with the clave); the comp's
 //     strokes; the perc on the clave (R4); a chart's split bars; the overrides; determinism; a chord swap keeps the clave
-//   • the 16,359-onset row's timing
+//   • the live clave step (phase E, rearrange.js `reclave`): equal, comp and drums byte for byte (and spec.clave, its
+//     stats line, the strum's share), to a Compose given the same `overrides.clave` / `compRelation`, on plain bars, a
+//     chart's split bars and a MIDI target; deterministic; `compStyle: 'notes'` refused; through rearrange (the worker's
+//     door); the window's words (claveText, claveSource)
+//   • the 16,359-onset row's timing (and the live step's on it)
 //   node Composer/tests/assert-claves.mjs
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,13 +23,16 @@ import { pathToFileURL } from 'node:url';
 import { buildRow } from '../core/row.js';
 import {
   readRhythm, layerTones, barSizes, toneSets, layerClaves, claveTable, rowClaves, scoreClave, compCandidates, clavePartners, complementClave,
-  claveOf, curatedClaves, rankRowClaves, chooseClave, claveAlternates, COMP_RULES, SIZE_TIERS, CURATED_NAMES,
+  claveOf, curatedClaves, rankRowClaves, chooseClave, claveAlternates, claveText, claveSource, claveSetText, COMP_RULES, SIZE_TIERS, CURATED_NAMES,
 } from '../core/claves.js';
 import { compose, compNodesOf, compSourceOf } from '../core/compose.js';
 import { arrangeDrums } from '../core/drums.js';
 import { DRUM_PATTERNS } from '../core/drum-patterns.js';
 import { euclidPattern } from '../core/cells.js';
-import { rearrange, applyRearrange, materialsOf } from '../core/rearrange.js';
+import { rearrange, applyRearrange, materialsOf, reclave } from '../core/rearrange.js';
+import { answer } from '../core/compose-worker.js';
+import { decodeClip, readMidi } from '../core/midi.js';
+import { CLIPS, clipBytes } from './fixtures/midi-clips.mjs';
 import { RHYTHMS, OVERWORLD_RUNTIME } from './rhythms.mjs';
 
 let PASS = true, checks = 0;
@@ -338,6 +345,50 @@ console.log('\n— a chord swap re-strums the bar\'s clave strokes; the clave ne
   check(`${swaps} chord swaps: the clave and its perc byte for byte, the bar's strokes the same onsets, the comp still the clave's`, !bad.length && swaps > 10, bad.slice(0, 3).join('; '));
 }
 
+// ── the live clave step (phase E) ──
+console.log('\n— the live clave step (rearrange.js reclave): equal to a Compose given the clave and the relation');
+/** a reclave against the Compose it stands for: [comp, drums, clave, stats.clave, compStrum] all the same? */
+const sameAsCompose = (got, want) => {
+  const pc = (s) => J(s.parts.find((p) => p.id === 'comp'));
+  return pc(got) === pc(want) && J(got.drums) === J(want.drums) && J(got.clave) === J(want.clave) && J(got.stats.clave) === J(want.stats.clave) && got.stats.compStrum === want.stats.compStrum
+    && J(got.parts.filter((p) => p.id !== 'comp')) === J(want.parts.filter((p) => p.id !== 'comp'));
+};
+{
+  const bad = []; let n = 0;
+  const cases = [[[8, 7, 6, 5], 4, {}], [[19, 17, 16, 15], 3, {}], [[16, 12, 9], 4, {}], [[119, 42, 15, 8], 8, {}], [[768, 769], 8, {}], [[768, 784], 8, {}],
+    [[19, 17, 16, 15], 6, { changes: [[1, 1], [1], [2, 1], [1]] }], [[8, 7, 6, 5], 4, { changes: [[1, 1], [1]] }],
+    [[41, 42, 43], 8, { target: { clip: decodeClip(readMidi(clipBytes(CLIPS.find((c) => c.name === 'ode-to-joy')))) } }]];
+  for (const [L, T, extra] of cases) {
+    const full = compose(L, T, { seed: 1, trace: true, ...extra }), { trace, ...spec } = full, { row, cells } = materialsOf(spec);
+    const ev = trace.events.find((e) => e.kind === 'part' && e.part === 'comp');
+    const tries = [...ev.alternates.slice(0, 4).map((a) => [a.id, 'sync']), ...ev.alternates.slice(1, 3).map((a) => [a.id, 'fill']), ['son', 'sync'], ['rumba', 'fill'], ['bossa', 'sync'], [null, 'fill'], ['5:x.x.x', 'sync']];
+    for (const [clave, relation] of tries) {
+      n++;
+      const got = applyRearrange(spec, reclave(spec, row, cells, { clave, relation }));
+      const want = compose(L, T, { seed: 1, ...extra, overrides: { ...(clave ? { clave } : {}), compRelation: relation } });
+      if (!sameAsCompose(got, want)) bad.push(`${L.join(':')}${extra.changes ? ' (chart)' : extra.target ? ' (target)' : ''} ${clave ?? 'its own'} ${relation}`);
+    }
+  }
+  check(`${n} switches over 6 rows, 2 charts and a MIDI target: comp, drums, every other part, spec.clave, its stats and the strum's share byte for byte a Compose's with that clave and relation`, !bad.length, bad.slice(0, 4).join('; '));
+  const full = compose([119, 42, 15, 8], 8, { seed: 1, trace: true }), { trace, ...spec } = full, { row, cells } = materialsOf(spec);
+  const untouched = J(spec), a = reclave(spec, row, cells, { clave: 'son', relation: 'fill' }), b = reclave(spec, row, cells, { clave: 'son', relation: 'fill' });
+  check('deterministic; the spec untouched; nothing but the comp, the drums, the clave, its stats and decisions moves', J(a) === J(b) && J(spec) === untouched
+    && J(a.chords) === J(spec.chords) && J(a.modulations) === J(spec.modulations) && a.retunedBars.length === 0 && J(Object.keys(a.changed).filter((id) => a.changed[id].length)) === J(['comp']));
+  const sw = applyRearrange(spec, a), dec = (s, w) => s.decisions.find((d) => d.what === w);
+  check(`its decisions said again ("${dec(sw, 'clave').why.slice(0, 60)}…"), the rest as composed`, dec(sw, 'clave').value === 'son' && /chosen in the window/.test(dec(sw, 'clave').why) && dec(sw, 'compRelation').value === 'fill' && dec(sw, 'compStrum').value === sw.stats.compStrum
+    && J(sw.decisions.filter((d) => !['clave', 'compRelation', 'compStrum'].includes(d.what))) === J(spec.decisions.filter((d) => !['clave', 'compRelation', 'compStrum'].includes(d.what))));
+  const back = applyRearrange(sw, reclave(sw, row, cells, { clave: spec.clave.id, relation: 'sync' }));
+  check('switched back to its own clave and Sync: the composed comp, drums and clave byte for byte', J(back.parts) === J(spec.parts) && J(back.drums) === J(spec.drums) && J(back.clave) === J(spec.clave) && back.stats.compStrum === spec.stats.compStrum);
+  const viaRearrange = applyRearrange(spec, rearrange(spec, row, cells, { relation: 'fill' })), viaWorker = answer({ id: 1, kind: 'rearrange', spec, edit: { clave: 'rumba' } });
+  check('through rearrange ({ clave, relation }: the worker\'s door) the same step', J(viaRearrange) === J(applyRearrange(spec, reclave(spec, row, cells, { relation: 'fill' }))) && viaWorker.ok && J(viaWorker.result) === J(reclave(spec, row, cells, { clave: 'rumba' })));
+  const notes = compose([8, 7, 6, 5], 4, { seed: 1, overrides: { compStyle: 'notes' } }), nm = materialsOf(notes);
+  check('compStyle \'notes\' refused (no clave); a bad relation or clave throws', throws(() => reclave(notes, nm.row, nm.cells, { relation: 'fill' }), /comps in notes/) && throws(() => reclave(spec, row, cells, { relation: 'hocket' }), /a relation is one of sync, fill/)
+    && throws(() => reclave(spec, row, cells, { clave: '3:xxxx' }), /is not a clave/));
+  const son = claveOf('son'), mined = { steps: 4, pattern: '.xx.', from: { layer: 8, name: 'A', size: 4, set: 'tone:7/4' } };
+  check(`the window's words: "${claveText(son)}", "${claveSource(mined)}", "${claveSource({ from: { pattern: 'bossa' } })}", "${claveSetText('step:10')}"`, claveText(son) === 'x..x..x. ..x.x...' && claveText(mined) === '.xx.' && claveSource(mined) === 'from layer A · 4 steps'
+    && claveSource({ from: { pattern: 'son' } }) === 'son clave 3-2' && claveSource({ from: { pattern: 'bossa' } }) === 'bossa\'s rim' && claveSource({ from: { asked: true } }) === 'asked' && claveSetText('rest') === 'every tone but 1/1');
+}
+
 // ── the 16k row ──
 console.log('\n— the 16,359-onset row');
 {
@@ -353,6 +404,14 @@ console.log('\n— the 16,359-onset row');
   check(`16k: laid and landed by the rule, sync and fill`, !auditLaid(lean, G, lean.clave) && !auditLaid(lean, G, lean.clave.partner) && !auditComp(lean) && !auditComp(fill), auditLaid(lean, G, lean.clave) || auditComp(lean) || auditComp(fill));
   check(`16k: the clave's own cost — the table ranked ${tRank.toFixed(0)} ms, the partners ${tPartners.toFixed(0)} ms (under 300 ms together); tier '${R.tier}'`, tRank + tPartners < 300 && R.tier === 'every' && ch.clave.id);
   check(`16k: Compose lean ${tLean.toFixed(0)} ms (sync), ${tFill.toFixed(0)} ms (fill), ${tNotes.toFixed(0)} ms (notes) — under 1.5 s`, tLean < 1500 && tFill < 1500);
+  // the live step: Sync | Fill re-strums only; another clave ranks the row once (kept per row), then lays and strums
+  const { row: r16, cells: c16 } = materialsOf(lean), alt = R.ranked.candidates.find((c) => c.id !== lean.clave.id);
+  t0 = performance.now(); const relOnly = reclave(lean, r16, c16, { relation: 'fill' }), tRel = performance.now() - t0;
+  t0 = performance.now(); reclave(lean, r16, c16, { clave: alt.id }); const tFirst = performance.now() - t0;
+  t0 = performance.now(); const cl = reclave(lean, r16, c16, { clave: 'son', relation: 'fill' }), tNext = performance.now() - t0;
+  const wantFill = sameAsCompose(applyRearrange(lean, relOnly), fill), wantSon = sameAsCompose(applyRearrange(lean, cl), compose(L, T, { seed: 1, overrides: { clave: 'son', compRelation: 'fill' } }));
+  console.log(`    · 16k live step: Sync → Fill ${tRel.toFixed(1)} ms; another clave ${tFirst.toFixed(1)} ms (the row ranked once), then ${tNext.toFixed(1)} ms`);
+  check(`16k live step: Fill ${tRel.toFixed(0)} ms, a clave ${tFirst.toFixed(0)} ms the first time and ${tNext.toFixed(0)} ms after (each under 150 ms, a tenth of a Compose), equal to Compose's`, tRel < 150 && tFirst < 150 && tNext < 150 && wantFill && wantSon);
 }
 
 console.log(PASS ? `\n✓✓✓ THE CLAVE PASSES (${checks} checks)` : `\n✗ THE CLAVE FAILED`);
