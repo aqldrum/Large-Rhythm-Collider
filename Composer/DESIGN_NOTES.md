@@ -1832,6 +1832,63 @@ Every step landed on these rows. Phase A's every-strike comp struck 6, 8, 32 and
 
 **Not verifiable in Node (for Avery's pass):** how the monospace pattern and the 15-row list fit at narrow widths; whether auditioning a clave at the bar boundary sounds seamless, given that the perc and the comp change together; and whether Fill on the dense rows' bunched claves (`..xx` → `xx..`) reads as a hocket.
 
+## Voice-led chords (phase F core; built 2026-10-28, branch `voicing/core`)
+
+`Composer/BASS_VOICING_ORDER.md` phase F, F1–F4. Rulings 3 (nearest octave with a mud limit, inversions allowed) and 4 (on by default, the comp shares it, a Close | Led switch) are Avery's; P1–P9 are the builder's proposals, built as written except where noted below. The window's switch is phase H. Nothing here has been heard.
+
+**The pass** (`core/compose.js`, `voiceLead`, run after every bar's or span's chord voices are chosen):
+- **Only octaves change.** Which onset each class sounds is `chordVoicesOfBar`'s, as before. Every note is still an onset the row plays, at its own time.
+- **The mud limit (P1, `muddyPairs`).** Two neighbouring voices (in pitch order) less than an octave apart are muddy when the lower sounds under 27 Hz × log2(n·d), n/d their interval in lowest terms (exact: the row's tones are fractions, reduced with BigInt). Hz is the note as it sounds: baseHz × its tone × 2^octave × its bar's fundamentalRatio. Both notes of a pair share the bar's retune, so the interval is exact.
+- **The first chord (P2).** Its close voicing (root first, each voice the lowest above the one under it, from an octave under the root less 50¢), lifted by whole octaves until no pair is muddy.
+- **Each chord after (P2–P3).** Every assignment of octaves in the window is scored: motion (each tone to its nearest tone of the chord before, in cents as they sound, the retune included) plus 10⁶ a muddy pair. The cheapest wins, ties to the lower centre, then the first in order (voice 0's lowest octave first). The window: no tone under 1/1 − 1250¢ (close's floor, `VOICING_FLOOR`), each tone within ±1800¢ of the first chord's centre (3 octaves a tone, so at most 81 voicings), and the voicing's mean within ±600¢ of the first chord's. If no assignment's mean is inside, those nearest it are scored (none of the rows tested needs it; `stats.voicing.outside` counts them).
+- **baseHz is needed before the chords.** It is read from the lead's median pitch, which is known once the lead is mined, so it is computed there. Its decision stays in its old place among the decisions.
+- **The loop (P4).** Each chord is led from the one before, bar 0 from nothing. The wrap (the last chord to the first) is `stats.voicing.wrap`, not optimized.
+- **Idempotent.** The first chord is re-stacked close from its tones and root, and every later choice reads only tones, so running the pass on its own output changes nothing. A rearrange relies on this.
+
+**The comp (P5, `compChordsOfBar`'s new `voiced` argument).** In chords, a strum tone takes the octave nearest its class's chord voice in its bar (or span); a borrowed tone is the voice itself, octave and all. `compStyle: 'notes'` is untouched.
+
+**Lanes (P6).** Chords and comp notes keep `voice` (the class: the highlights, the matrix and `rearrange` read it) and gain `lane`, the note's register order in its chord as led (0 the lowest). A comp note's lane is its class's chord lane in that bar. `partOf`, `rearticulate`, the player's chains (`chainsOf`) and the MIDI zones (`midiNotesOf`) group by `lane` when a note has one, else by `voice`. So legato holds a lane to its next note, and an MPE member channel moves by the voice leading's steps: on 119:42:15:8 a channel's mean step is 168¢ laned, 312¢ by class. `midiNotesOf`'s `voice` field is now the member the note goes on.
+
+**`voicing: 'close' | 'led'` (P7).** An override, `'led'` by default. `'close'` is today's output byte for byte: no `lane`, no `stats.voicing`, no `voicing` decision. A led spec adds `stats.voicing` `{ mode, chords, lifted, muddy, motion, meanMotion, wrap, outside }` (cents rounded) and a `voicing` decision after the chord voices.
+
+**The trace (P9).** The `voicing` decision says the voicing, whether the first chord was lifted, the motion a chord, how many chords the mud limit moved (the first if lifted, and any later one whose least-motion voicing alone was muddy), any left muddy, and the wrap. The trace's chords `part` event carries `voicing` (the stats) and each note's `lane`. Without `spec.trace`, the spec is byte-identical to one composed with the trace off.
+
+**Edits (P8, `core/rearrange.js`).**
+- A spec is led when it has `stats.voicing`. One composed close, or before phase F, rearranges exactly as before.
+- A chord swap rebuilds bar k's chord voices (close), then re-runs the pass over every bar. Tones never change outside the rebuilt bars, only octaves. `revoicedBars` lists the other bars whose octaves moved. In chords, the comp is strummed again over the rebuilt and revoiced bars, from the chords' octaves. `builderNotes` keeps `lane`; `applyRearrange` writes `stats.voicing`. A swap to the chord a bar already has is still the spec byte for byte, and a JSON round trip rearranges the same.
+- `reclave` hands each bar's led chord voices to `compChordsOfBar`, so a clave switch still equals a Compose given the same override.
+- The arp (`arp.js`) reads the chords' records, not their voices, so it is unaffected.
+
+**The probe, before (close) and after (led)** (seed 1; seeds 2 and 3 are the same; muddy by P1's rule, motion summed over the chords):
+
+| row | chords | motion, close → led | muddy, close → led | lowest chord note, close → led | lifted | wrap |
+|---|--:|---|---|---|--:|--:|
+| 8:7:6:5 | 2 | 0¢ → 0¢ | 0 → 0 | 241 → 241 Hz | 0 | 316¢ |
+| 11:9:7:5 | 2 | 1119¢ → 782¢ | 1 → 0 | 127 → 191 Hz | 1 | 680¢ |
+| 19:17:16:15 | 2 | 380¢ → 380¢ | 2 → 0 | 181 → 363 Hz | 1 | 293¢ |
+| 7:5:3:2 | 1 | — | 0 → 0 | 156 → 156 Hz | 0 | — |
+| 119:42:15:8 | 4 | 2387¢ → 702¢ | 1 → 0 | 180 → 180 Hz | 0 | 610¢ |
+| 768:769 | 4 | 2690¢ → 873¢ | 4 → 0 | 181 → 722 Hz | 1 | 372¢ |
+| 768:784 | 4 | 748¢ → 237¢ | 0 → 0 | 253 → 253 Hz | 0 | 125¢ |
+| 4099:4093:4091:4079 | 8 | 8525¢ → 5717¢ | 8 → 0 | | | |
+
+Over the probe's 57 chords (seeds 1–3): motion 21,972¢ → 8,922¢, muddy 24 → 0 by P1. By the probe's own looser count (a third or closer under 180 Hz, a fifth under 110 Hz) 9 → 6. The 6 left are a 5/4 over 1/1 at 156 Hz (7:5:3:2) and at 180 Hz (119:42:15:8's first chord), both clear of P1's 117 Hz for 5/4.
+
+**Cost.** The pass is about 1.8 ms on the 16k row (8 chords of 4 tones), microseconds on the small rows. Compose's lean time is unchanged within noise (868 ms led, 875 ms close on a loaded machine).
+
+**The frozen fixtures, kept.** No fixture or hash was edited. The tests that compare against frozen output compose with `voicing: 'close'` and delete the override from the input before comparing, beside `compStyle: 'notes'`: `assert-refactor-identity.mjs` (and the override list in its bad-override error), `settle-baseline.mjs`'s cases in `assert-compose.mjs`, `assert-trace.mjs` and `assert-progression.mjs`, and `assert-chord-symbols.mjs`'s b69a39e hashes. `assert-comp.mjs` composes with `'close'` throughout, since its brute force stacks the comp close; the led comp's octaves are `assert-voicing.mjs`'s. The audits that read the new rules learned them: `assert-compose.mjs`'s legato audit lanes by `lane`, `assert-rearrange.mjs` lets a revoiced bar's chords and comp move by octaves, and `assert-composer-midi.mjs` and `assert-lab.mjs` check the lane.
+
+**Calls beyond the order (proposed):**
+1. **The floor is 1/1 − 1250¢,** close's own (an octave under the root less 50¢, with the root's cents near 0), not exactly 1/1 − 1200¢, so the first chord's close voicing is always inside the window.
+2. **Motion and the centre are read as the notes sound** (the bar's retune included); the floor on the tone's own pitch, as close's floor is.
+3. **The per-tone reach of ±1800¢** around the first chord's centre makes P2's "about 3 octaves a tone" exact.
+4. **"Lifted" counts** the first chord when lifted, and a later chord when the mud limit changed its choice.
+
+**Open, for Avery:**
+1. **P1 is steep on dense rows.** log2(n·d) grows with the ratio's size, not its width: on 768:769 the first chord (192/191, 24/19, 3/2) has a 191/152 third whose limit is 400 Hz, so the chord is lifted two octaves and its lowest note goes from 181 Hz to 722 Hz, above the lead's median (539 Hz). Every chord after stays near it (the window). Should the limit be capped (say at 16/15's 213 Hz), or read from the interval's width?
+2. **The wrap** (P4) is as large as a bar line's motion on some rows (11:9:7:5 680¢, 119:42:15:8 610¢). A second pass could close it.
+3. **11:9:7:5 moves 782¢, not the nearest-octave 284¢:** the least-motion voicing of its second chord has a muddy 14/11 at 159 Hz (limit 196 Hz), so the chord goes up an octave. That is P1 working as written.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

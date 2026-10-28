@@ -25,9 +25,12 @@
 //              is built from the final chords and targets.
 //   parts      lead (harmonize's), chords, comping, bass, one inner voice:
 //                chords   each bar's chord, a voice a chord class (root first, then up): the bar's onset of that class,
-//                         inside the bar's frame, with the most strikes (then the earliest); stacked close from an octave
-//                         under the bar's root up, each voice the lowest register above the one under it. A voice's
-//                         notes sound at their onsets, so a chord builds as its tones arrive.
+//                         inside the bar's frame, with the most strikes (then the earliest). A voice's notes sound at their
+//                         onsets, so a chord builds as its tones arrive. The octaves (`voicing`; BASS_VOICING_ORDER.md
+//                         phase F, decided 3–4, P1–P7 proposed): led (the default), the first chord close and lifted clear
+//                         of the mud limit, each chord after in the octaves nearest the one before inside a window
+//                         (`voiceLead`), each note's `lane` its register order in its chord; close, stacked close from an
+//                         octave under the bar's root up, each voice the lowest register above the one under it.
 //                comping  in chords (`compStyle: 'chords'`, the default; COMP_ARP_ORDER.md, decided 1 and 5–6, P3–P9 and
 //                         R1–R5 proposed): ONE CLAVE for the composition (claves.js), mined from this rhythm's layers (each
 //                         read at the bar sizes where another layer meets it, then every size that cuts it whole, then
@@ -41,7 +44,9 @@
 //                         time (ties: the most strikes, then the earliest); a class the row doesn't sound there is
 //                         BORROWED, the chord voice of that class at the stroke's time (`borrowed`, `from`: the voice's
 //                         onset), velocity 0.45 (the strum's other tones 0.5, the stroke's own 0.55 + 0.1 a layer more).
-//                         A voice a class (root first, ≤ 4), stacked close from an octave under the root; each holds at
+//                         A voice a class (root first, ≤ 4), stacked close from an octave under the root (led chords: a
+//                         strum tone the octave nearest its class's chord voice, a borrowed tone the voice itself, P5;
+//                         the voice's `lane` too); each holds at
 //                         most to the next stroke (`holdTo`), never past the span. `spec.clave` holds the clave, its
 //                         landed strokes and its partner's; the drums play it on the perc (drums.js R4).
 //                         `compStyle: 'notes'` (the frozen core): one note a stroke (rhythm-claves.js and

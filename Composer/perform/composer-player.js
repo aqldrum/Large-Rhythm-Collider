@@ -8,7 +8,8 @@
 //   graph    each part → its gain bus (a level per part) → master gain → limiter (DynamicsCompressor) → destination
 //   voices   a note with `retrigger` starts a voice of its part's sound (`note` role, its velocity the peak). The notes
 //            after it without `retrigger` are a CHAIN: the same voice, held, moved to each one's pitch with
-//            setFrequency at its time (in the chords, and the comp in chords, a chain is one voice's), released at the
+//            setFrequency at its time (in the chords, and the comp in chords, a chain is one voice's: one lane's when
+//            led, BASS_VOICING_ORDER.md P6), released at the
 //            chain's end. A note alone is planned with its own duration, so a struck sound damps where its note ends.
 //   booking  everything is booked inside the lookahead, as the clock reaches it: a chain's start when its first note
 //            comes up, then each of its moves, then its release, one tick at a time (a held chain is carried from
