@@ -586,3 +586,16 @@ bass opens at **Moving · Kick** (Compose's own) and the comp at **Sparse–Med*
   Moving · Kick; Roots' runner-ups by cents off the root; new chords voiced with the current setting; the picker
   re-ranked on a chord change). The planner fixed a held line losing "chords follow" (composer-tab.js; a check in
   assert-page-matrix.mjs). Probe and Amendment 2 (P26–P32, phase M then N) written; not yet committed or started.
+- 2026-10-28: Amendment 2 committed f949cf7 (the held-follow fix f69d525). Phase M (core) merged 04445c8; phase N (the
+  window) merged 196ad45; 83/0 (the wall-clock budgets pass alone; they missed in the parallel run with Chrome busy, and
+  timed the same before and after N). AMENDMENT 2 COMPLETE. Every probe row's default comp lands in medium, none fell
+  back; 16:12:9 plays 4 guide-tone strokes in 2 bars (15 before). Compose's bass is Moving · Kick, covering the kick that
+  PLAYS (the planner's call: the window re-arranges it when its drums differ, Moving · Free with the drums off). The
+  checklist above is revised. Open for Avery (from the builders):
+  - Default claves often sit right at 50 % (768:784 plays `x.x.x.x.`, score 1.0): prefer the sparser on a tie, or count
+    exactly 50 % as dense?
+  - Moving · Kick is thin on small rows (8:7:6:5, 11:9:7:5: a kick in four has no onset in frame, so 1.5–2 notes a bar),
+    and four on the floor misses 5 of 16 kicks on 41:42:43. Too thin?
+  - The fifth of a dim or aug chord is its own (6 or 8 semitones) in the root+5th set. Right?
+  - Should a re-compose take the window's drum options, so Compose covers that kick itself?
+  - A density change drops a clave picked from the list (one undo restores both). Keep it instead?
