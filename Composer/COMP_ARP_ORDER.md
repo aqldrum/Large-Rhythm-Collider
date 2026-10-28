@@ -412,3 +412,11 @@ C and D touch different core files and can run side by side. E goes after both.
   and 16-step claves, broken by the seed). The comp now strikes 2–4 times a bar on every row. A live clave switch needs
   a rearrange-style step (pieces exported, step not built: E). Open: longer claves win ties?; accept the size tiers?;
   Fill silent on shared onsets?; tone sets read from 1/1 (chunk-tunes) rather than the root?
+- **2026-10-27, amendment 1 phase E merged (`ui/clave-arp`; 79/0 with `assert-page-clave.mjs`).** `rearrange.js`
+  `reclave` (a live clave or Sync | Fill switch: byte-identical to a full Compose with the same overrides over 99
+  switches; 16k row ~5 ms, ~63 ms the first switch to another clave while the row's ranking is cached); the comp
+  inspector's clave block (pattern, source, Sync | Fill, the 12 mined + 3 curated alternates auditioned at the barline);
+  the arp phrase picker (audition / Keep / Revert); `state.edits.clave` and `state.arps[part].picks` undoable, kept
+  through a re-compose where still offered, else listed under "Compose dropped"; a Time change drops the picks (one
+  undo restores both); the animation's comp caption names the clave. The checklist above is now final for A–E. Avery's
+  browser and rig pass owed.
