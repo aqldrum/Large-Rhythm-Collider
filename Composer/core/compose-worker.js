@@ -26,7 +26,7 @@
 // `edit.line` must be the line's record ({ notes }), not an id: the trace stays on the page.
 //
 // The Arp mode (COMP_ARP_ORDER.md B2): a big row's arps are arranged here too, from the same kept materials:
-//   worker.postMessage({ id, kind: 'arp', key, spec, parts: [{ id: 'lead' | 'inner', options }] })   arp.js'
+//   worker.postMessage({ id, kind: 'arp', key, spec, parts: [{ id: 'lead' | 'inner', options: { time, picks, legato } }] })   arp.js'
 //                     arrangeArp over the spec (in Line), part by part in the order given (the lead first: the inner
 //                     reads the lead as it sounds)
 //   ← { id, ok: true, result: [the arranged parts, in that order] }  |  { id, ok: false, error }

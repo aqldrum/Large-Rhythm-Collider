@@ -56,8 +56,8 @@
 // A new cycle of the same row carries both (proposed: a placement is the row's, its phase a share of the cycle).
 //
 // The Arp mode (COMP_ARP_ORDER.md B2, Q7; DESIGN_NOTES "Comping and Arp in the window"; the controller acts on it):
-//   arps     { lead, inner }: each { mode: 'line' | 'arp', pattern, rate, range } (core/arp.js' options; the knobs are
-//            kept while the part is in Line, so Arp comes back as it was). A choice saved with the composition, like the
+//   arps     { lead, inner }: each { mode: 'line' | 'arp', time (1 | 2 | 3), picks ({ [phrase]: an arp's id }) }
+//            (core/arp.js' options, phase D; the knobs are kept while the part is in Line, so Arp comes back as it was). A choice saved with the composition, like the
 //            drum grid: in the undo snapshots, kept through a re-compose and the glyph's recall, and (proposed) carried
 //            to a new cycle of the same row. `spec` plays the arps (composed + edits, then arrangeArp); `composed`
 //            never does.
@@ -75,8 +75,8 @@ export const KNOB_NAMES = Object.freeze(['bars', 'slotsPerBar', 'frameCentsEachS
 export const UNDO_LIMIT = 50;
 /** no edits */
 export const emptyEdits = () => ({ chords: {}, lead: {}, order: [], grid: null });
-/** B2: every Arp part in Line, its knobs at the defaults */
-export const lineArps = () => Object.fromEntries(ARP_PARTS.map((id) => [id, { mode: 'line', pattern: ARP_DEFAULTS.pattern, rate: ARP_DEFAULTS.rate, range: ARP_DEFAULTS.range }]));
+/** B2: every Arp part in Line, its knobs at the defaults (phase D: time ×1, no picks) */
+export const lineArps = () => Object.fromEntries(ARP_PARTS.map((id) => [id, { mode: 'line', time: ARP_DEFAULTS.time, picks: {} }]));
 const copy = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
 /** a pin list entry copied (a ratio, { ratio, quality }, or null) */
 const copyPin = (x) => (x && typeof x === 'object' ? { ...x } : x);

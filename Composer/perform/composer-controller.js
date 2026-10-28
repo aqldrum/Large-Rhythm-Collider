@@ -83,23 +83,26 @@
 //              Compose, the edits of the old shape are dropped, the entry goes dirty. A swap writes its chord into the
 //              chart where the chord is written once, else the chart is written out played (repeats and holds unrolled).
 //   arps       (COMP_ARP_ORDER.md B2; DESIGN_NOTES "Comping and Arp in the window") the lead and the inner voice each
-//              play Line (the mined line) or Arp (core/arp.js arrangeArp: the chord's tones in a shape, at a rate):
-//                setArp(part, { mode: 'line' | 'arp', pattern, rate, range })   live, no re-compose; one undo step
-//                arpOf(part) → { mode, pattern, rate, range, playing, refusal, stats }
+//              play Line (the mined line) or Arp (core/arp.js arrangeArp: an arpeggio mined over the chords at ×1–×3
+//              the slots a bar, COMP_ARP_ORDER.md Amendment 1, phase D; each phrase's ranked arps, one picked):
+//                setArp(part, { mode: 'line' | 'arp', time (1 | 2 | 3), picks ({ [phrase]: id }) })   live, no
+//                                                                      re-compose; one undo step
+//                arpOf(part) → { mode, time, picks, times, playing, refusal, stats, phrases }
 //              The choice is the entry's (`state.arps`, store/composition-store.js): in the undo snapshots, kept through
 //              a re-compose and the glyph's recall. `state.spec` is composed + edits in Line (the fold), THEN the arps
 //              over it, the lead first (the inner keeps off the lead as it sounds, Q4); the drums are arranged over
 //              that. So a chord swap, a lead swap, an undo or a re-compose rebuilds the Line part and re-arps it from
 //              the fresh line, an inner arp follows the lead's mode, and the drums' *with* hears the arp lead. A big
 //              row's arps (past MAIN_THREAD_ONSETS) are arranged in the module worker (runCompose.arp), from its kept
-//              materials; arrangeArp is ~2.5 ms on the 16k row, so every other row arranges on this thread. While the
+//              materials; arrangeArp is ~20 / 35 / 50 ms a part on the 16k row at ×1 / ×2 / ×3 (phase D), so every
+//              other row arranges on this thread. While the
 //              lead is an arp its runner-ups are hidden (Q5: alternatesOf(bar, 'lead') is null). A MIDI target's lead
 //              is the clip (arpRefusal): its Arp is refused, and setting a clip puts the lead back in Line (proposed).
 //              An inner in Arp sounds the harp (INNER_ARP_SOUND, Q4) unless a sound was chosen for it: a part's sound
 //              carries through a rebuild only where it differs from the spec's own.
 
 import { compose, rearticulate, chooseMeter, PART_IDS, TARGET_SETS } from '../core/compose.js';
-import { arrangeArp, arpRefusal, ARP_PARTS, ARP_PATTERNS, ARP_RATES, ARP_RANGES } from '../core/arp.js';   // B2: the Arp mode
+import { arrangeArp, arpRefusal, arpTimes, ARP_PARTS, ARP_TIMES, ARP_DEFAULTS } from '../core/arp.js';   // B2: the Arp mode (phase D: mined)
 import { rootCandidates, chooseChordOnRoot, qualityById } from '../core/progression.js';
 import { NOTE_INSTRUMENT_IDS, getInstrument } from '../../Audio/voices/recipes.js';
 import { createPlayer } from './composer-player.js';
@@ -140,8 +143,8 @@ export const MAIN_THREAD_ONSETS = 32768;
 export const MAIN_THREAD_LEAD_FULL_ONSETS = 2048;
 /** B2 (Q4): an inner voice in Arp sounds this, unless a sound was chosen for it */
 export const INNER_ARP_SOUND = 'harp';
-/** B2: the Arp parts and their knobs' choices, for a view */
-export const ARP_CHOICES = Object.freeze({ parts: ARP_PARTS, patterns: ARP_PATTERNS, rates: ARP_RATES, ranges: ARP_RANGES });
+/** B2: the Arp parts and their knob's choices, for a view (phase D, M5: Time replaced Pattern, Rate and Range) */
+export const ARP_CHOICES = Object.freeze({ parts: ARP_PARTS, times: ARP_TIMES });
 /** every sound a part can play: the note-role instruments of Audio/voices, in the catalog's order */
 export const soundChoices = () => NOTE_INSTRUMENT_IDS.map((id) => ({ id, label: getInstrument(id).label }));
 
@@ -237,10 +240,10 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   // ── B2: the Arp mode (COMP_ARP_ORDER.md; arrangeArp over the spec in Line, the lead first) ──
   /** the parts this entry plays as arps over this spec: Arp chosen and not refused (a target's lead), the lead first */
   const arpsOn = (st, spec) => ARP_PARTS.filter((id) => st.arps?.[id]?.mode === 'arp' && !arpRefusal(spec, id));
-  /** the arp jobs for a spec: [{ id, options: its knobs and its legato as it plays }] */
+  /** the arp jobs for a spec: [{ id, options: its time, its picks and its legato as it plays }] */
   const arpJobs = (st, spec) => arpsOn(st, spec).map((id) => {
     const a = st.arps[id];
-    return { id, options: { pattern: a.pattern, rate: a.rate, range: a.range, legato: st.parts?.[id]?.legato ?? spec.parts.find((p) => p.id === id)?.legato ?? false } };
+    return { id, options: { time: a.time ?? ARP_DEFAULTS.time, picks: { ...(a.picks ?? {}) }, legato: st.parts?.[id]?.legato ?? spec.parts.find((p) => p.id === id)?.legato ?? false } };
   });
   /** arranged arp parts into a spec in Line; an inner arp's own sound the harp (Q4: a sound chosen for it wins in settleState) */
   function placeArps(spec, parts) {
@@ -950,26 +953,28 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       });
     },
     // ── B2: the Arp mode (COMP_ARP_ORDER.md Q1–Q8) ──
-    /** a part's Arp mode → { part, mode, pattern, rate, range, playing (it sounds as an arp now), refusal (why Arp is
-     *  refused on this composition: arpRefusal's words; null), stats (arrangeArp's, while it plays) } */
+    /** a part's Arp mode → { part, mode, time, picks, times (the times this composition can run: arp.js arpTimes),
+     *  playing (it sounds as an arp now), refusal (why Arp is refused on this composition: arpRefusal's words; null),
+     *  stats and phrases (arrangeArp's, while it plays: each phrase's ranked arps and the one picked, for phase E) } */
     arpOf(id) {
       if (!ARP_PARTS.includes(id)) throw new Error(`composer: only the lead and the inner voice have an Arp mode, not ${id}`);
       const a = (state.arps ??= lineArps())[id], s = state.spec && !state.spec.refused ? state.spec : null, part = s?.parts.find((p) => p.id === id);
-      return { part: id, mode: a.mode, pattern: a.pattern, rate: a.rate, range: a.range, playing: !!part?.arp, refusal: s ? arpRefusal(s, id) : null, stats: part?.arp?.stats ?? null };
+      return { part: id, mode: a.mode, time: a.time ?? ARP_DEFAULTS.time, picks: { ...(a.picks ?? {}) }, times: s ? arpTimes(s) : [...ARP_TIMES], playing: !!part?.arp,
+        refusal: s ? arpRefusal(s, id) : null, stats: part?.arp?.stats ?? null, phrases: part?.arp?.phrases ?? null };
     },
     /**
-     * Line or Arp for the lead or the inner voice, and the Arp's knobs: { mode: 'line' | 'arp', pattern ('up' | 'down'
-     * | 'updown' | 'played'), rate (1–4), range (1–3) }, any of them. Live, no re-compose; one undo step. Before any
+     * Line or Arp for the lead or the inner voice, and the Arp's knobs: { mode: 'line' | 'arp', time (1 | 2 | 3: × the
+     * slots a bar), picks ({ [phrase index]: an arp's id }: replaces the part's picks whole) }, any of them. Live, no
+     * re-compose; one undo step. Before any
      * Compose it is only kept (the Compose arranges it). A refused Arp (a MIDI target's lead) → { ok: false, error }.
      * → Promise<{ ok, kind: 'arp', part, changedBars, … }>
      */
-    setArp(id, { mode, pattern, rate, range } = {}) {
+    setArp(id, { mode, time, picks } = {}) {
       if (!ARP_PARTS.includes(id)) throw new Error(`composer: only the lead and the inner voice have an Arp mode, not ${id}`);
-      const given = { mode, pattern, rate: rate == null || rate === '' ? undefined : Number(rate), range: range == null || range === '' ? undefined : Number(range) };
+      const given = { mode, time: time == null || time === '' ? undefined : Number(time), picks: picks == null ? undefined : { ...picks } };
       if (given.mode !== undefined && given.mode !== 'line' && given.mode !== 'arp') throw new Error(`composer: a part's mode is 'line' or 'arp', not ${JSON.stringify(mode)}`);
-      if (given.pattern !== undefined && !ARP_PATTERNS.includes(given.pattern)) throw new Error(`composer: an arp pattern is one of ${ARP_PATTERNS.join(', ')}, not ${JSON.stringify(pattern)}`);
-      if (given.rate !== undefined && !ARP_RATES.includes(given.rate)) throw new Error(`composer: an arp rate is 1..4, not ${JSON.stringify(rate)}`);
-      if (given.range !== undefined && !ARP_RANGES.includes(given.range)) throw new Error(`composer: an arp range is 1..3 octaves, not ${JSON.stringify(range)}`);
+      if (given.time !== undefined && !ARP_TIMES.includes(given.time)) throw new Error(`composer: an arp's time is 1, 2 or 3 (× the slots a bar), not ${JSON.stringify(time)}`);
+      if (given.picks !== undefined && (typeof picks !== 'object' || Array.isArray(picks) || !Object.entries(given.picks).every(([p, v]) => /^\d+$/.test(p) && typeof v === 'string'))) throw new Error(`composer: an arp's picks are { [phrase index]: an arp's id }, not ${JSON.stringify(picks)}`);
       const st = state;
       st.arps ??= lineArps();
       const next = { ...st.arps[id], ...Object.fromEntries(Object.entries(given).filter(([, v]) => v !== undefined)) };
