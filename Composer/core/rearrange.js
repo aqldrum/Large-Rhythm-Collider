@@ -11,6 +11,11 @@
 //   reclave(spec, row, cells, { clave, relation })   (COMP_ARP_ORDER.md Amendment 1, phase E) the clave chosen again and
 //     laid, the comp strummed again over every bar's chord, the drums arranged again: a live clave switch, equal to a
 //     Compose given the same `overrides.clave` / `compRelation` (comp and drums byte for byte); `compStyle: 'notes'` refused
+//   rearrange(spec, row, cells, { voicing })                        the chords' Close | Led (= revoice, below)
+//   revoice(spec, row, cells, { voicing: 'close' | 'led' })   (BASS_VOICING_ORDER.md phase H) every chord voiced again,
+//     close or led (compose.js `voiceLead`), the comp in chords strummed again at their octaves (P5), the drums arranged
+//     again: a live voicing switch, equal byte for byte (input, parts, stats, decisions, drums) to a Compose given the
+//     same `overrides.voicing` (Led: none, Compose's default)
 //   applyRearrange(spec, result) → the spec with the result written in (a new object; the spec is not touched)
 //   materialsOf(spec) → { row, cells }: the row and cells a spec was composed over, rebuilt from its input and knobs
 //   materialsKey(spec) → the key they can be kept under (STEP 4d)
@@ -67,7 +72,7 @@ import { frameOf, classOfCents } from './frame.js';
 import { CHORD_QUALITIES, pickFor, chordRecord, spanRecord, spanMaterial, harmonyOver, targetOfBar, barMaterial, chooseChord, exceptionsOfBar, phrasesOf, isStrongBeat } from './harmony.js';
 import { FALLBACK_QUALITIES } from './progression.js';
 import { arrangeDrums } from './drums.js';
-import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, compNodesOf, compUnitsOf, layCompClave, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, voiceLead, voicingStats, PART_IDS } from './compose.js';
+import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, compNodesOf, compUnitsOf, layCompClave, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, voiceLead, voicingStats, voicingWhy, VOICINGS, PART_IDS } from './compose.js';
 import { readRhythm, rankRowClaves, chooseClave, claveText, claveSource, COMP_RELATIONS } from './claves.js';
 import { bassBarOf, bassLockOf, bassWalkCells, bassBarRecord, bassStatsOf } from './bass.js';
 
@@ -207,6 +212,8 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   if (!spec || spec.refused) fail('nothing to rearrange in a refused spec');
   // phase E: a clave switch ({ clave, relation }) is `reclave`, so the worker's rearrange message carries it too
   if (edit && edit.bar == null && edit.span == null && edit.phrase == null && ('clave' in edit || 'relation' in edit)) return reclave(spec, row, cells, edit, opts);
+  // phase H: the chords' voicing ({ voicing }) is `revoice`, the same way
+  if (edit && edit.bar == null && edit.span == null && edit.phrase == null && 'voicing' in edit) return revoice(spec, row, cells, edit, opts);
   const K = spec.knobs, N = K.bars, S = K.slotsPerBar;
   // a chart's split bars: the chords a span's each, and a chord swap names its span
   const spans = spec.chords.some((c) => c.slots != null) ? spec.chords.map((c) => ({ bar: c.bar, from: c.from, slots: c.slots })) : null, U = spans ? spans.length : N;
@@ -465,6 +472,15 @@ export function applyRearrange(spec, r) {
   if (r.drums !== undefined) out.drums = r.drums;
   if (r.clave) out.clave = r.clave;
   if (r.decisions) out.decisions = r.decisions;
+  // phase H: a revoice writes the input's override, and the stats' `voicing` where Compose keeps it (after chordVoices) or none
+  if (r.input) out.input = r.input;
+  if (r.voicing) out.stats = statsVoiced(out.stats, r.stats.voicing ?? null);
+  return out;
+}
+/** stats with `voicing` in Compose's place (right after chordVoices), or without it (close) */
+function statsVoiced(stats, voicing) {
+  const out = {};
+  for (const [k, v] of Object.entries(stats)) { if (k === 'voicing') continue; out[k] = v; if (k === 'chordVoices' && voicing) out.voicing = voicing; }
   return out;
 }
 
@@ -552,6 +568,79 @@ export function reclave(spec, row, cells, edit = {}, opts = {}) {
     stats: { notes, exceptions: spec.stats.exceptions, chordVoices: spec.stats.chordVoices, bassRooted: spec.stats.bassRooted, innerOnLeadSlots: spec.stats.innerOnLeadSlots, compStrum,
       clave: { id: clave.id, relation, strokes: strokes.length, silent } },
     clave, ...(decisions ? { decisions } : {}) };
+}
+
+/**
+ * Switch the chords' voicing, Close | Led, with no re-compose (BASS_VOICING_ORDER.md phase H): every bar's (a chart's
+ * span's) chord voices built again as Compose builds them (`chordVoicesOfBar`: the same onsets, stacked close), then,
+ * led, the voicing pass over them (`voiceLead`: only their octaves move, each note a `lane`); in chords the comp is
+ * strummed again bar by bar over its clave's strokes, its octaves from the chords' (P5; close: stacked from the root, as
+ * before); the drums arranged again. Nothing else moves: the chords, the lead, the bass, the inner, the clave, every
+ * part's sound, legato and on/off, baseHz. The input's override, the stats' `voicing` and the voicing decision follow,
+ * so the result is, byte for byte, a Compose given the same `overrides.voicing` (Led as Compose's default: no override;
+ * assert-page-bass.mjs). A spec voiced so already comes back the same.
+ *   spec   a composed spec; row, cells: its materials
+ *   edit   { voicing: 'close' | 'led' }
+ *   opts   { parts (the parts as they play now; default spec.parts), drumOptions (default the spec's own) }
+ * → rearrange's shape plus `voicing` (the one it plays now), `input` and `decisions`: applyRearrange writes them in
+ */
+export function revoice(spec, row, cells, edit = {}, opts = {}) {
+  if (!spec || spec.refused) fail('nothing to revoice in a refused spec');
+  const voicing = edit.voicing;
+  if (!VOICINGS.includes(voicing)) fail(`a voicing is one of ${VOICINGS.join(', ')}, not ${JSON.stringify(voicing)}`);
+  const K = spec.knobs, N = K.bars, S = K.slotsPerBar, led = voicing === 'led';
+  if (cells.bars !== N || cells.slotsPerBar !== S) fail(`the cells are ${cells.bars} × ${cells.slotsPerBar}, the spec ${N} × ${S}`);
+  const m = materialCache(row, cells, spec), { ctx } = m;
+  const parts = opts.parts ?? spec.parts, partById = Object.fromEntries(parts.map((p) => [p.id, p]));
+  for (const id of PART_IDS) if (!partById[id]) fail(`no ${id} part`);
+  const spans = spec.chords.some((c) => c.slots != null) ? spec.chords.map((c) => ({ bar: c.bar, from: c.from, slots: c.slots })) : null;
+  const recs = walkChords(m, givenOf(m, spec.chords), { e: K.frameCentsEachSide, gridBase: frameOf(row, toneOf(m, K.root), K.frameCentsEachSide).rootCents, modulation: K.modulation, foldOffsets: spec.input.overrides?.foldOffsets ?? true }, spans);
+  const unitOf = spans ? spans.flatMap((sp, i) => Array.from({ length: sp.slots }, () => i)) : null;
+  const ratioOf = spans ? (bar, slot) => (recs[unitOf[slot]] ?? recs[spans.findIndex((sp) => sp.bar === bar)]).fundamentalRatio : (bar) => recs[bar].fundamentalRatio;
+
+  // the chord voices as Compose builds them (a unit a bar, or a chart's span), then led or left close
+  const units = recs.map((c, u) => {
+    const bar = spans ? spans[u].bar : u, range = spans ? { from: spans[u].from, to: spans[u].from + spans[u].slots } : null;
+    return { chord: c, bar, range, notes: chordVoicesOfBar(ctx, c, bar, range) };
+  });
+  const voiced = led ? voiceLead(ctx, units, { baseHz: K.baseHz, ratioOf }) : null;
+  const voices = [];
+  for (const u of units) for (const n of u.notes) (voices[n.voice] ||= []).push(n);
+  const was = (id) => partById[id], art = (id) => ({ sound: was(id).sound, legato: was(id).legato, enabled: was(id).enabled, baseHz: K.baseHz, ratioOf });
+  const chords = partOf(ctx, 'chords', voices, { ...art('chords'), voice: true });
+
+  // the comp in chords: each unit strummed again over its clave's strokes, at the chords' octaves (led) or close
+  let comp = was('comp'), compStrum = null;
+  if (spec.clave) {
+    const cv = [], strokes = [];
+    let found = 0, tones = 0;
+    for (const u of units) {
+      const r = u.range ?? { from: u.bar * S, to: (u.bar + 1) * S };
+      const got = compChordsOfBar(ctx, u.chord, u.bar, compNodesOf(spec.clave, r.from, r.to), u.range, led ? u.notes : null);
+      for (const n of got.notes) (cv[n.voice] ||= []).push(n);
+      strokes.push(...got.strokes); found += got.found; tones += got.tones;
+    }
+    comp = partOf(ctx, 'comp', cv, { ...art('comp'), voice: true, strokes });
+    compStrum = tones ? found / tones : 0;
+  }
+  const newParts = PART_IDS.map((id) => (id === 'chords' ? chords : id === 'comp' ? comp : partById[id]));
+  const next = { ...spec, parts: newParts };
+  const drums = spec.drums === undefined && opts.drumOptions === undefined ? undefined : arrangeDrums(next, opts.drumOptions ?? spec.drums?.options ?? {});
+
+  // the input's override (Led is Compose's default: no override), the stats' voicing, the voicing decision
+  const { voicing: _was, ...rest } = spec.input.overrides ?? {};
+  const input = { ...spec.input, overrides: led ? rest : { ...rest, voicing } };
+  const stats = { notes: { ...spec.stats.notes, chords: chords.notes.length, comp: comp.notes.length }, exceptions: spec.stats.exceptions, chordVoices: spec.stats.chordVoices, bassRooted: spec.stats.bassRooted, innerOnLeadSlots: spec.stats.innerOnLeadSlots,
+    ...(compStrum != null ? { compStrum } : {}), ...(led ? { voicing: voicingStats(voiced) } : {}) };
+  let decisions = spec.decisions?.filter((d) => d.what !== 'voicing');
+  if (decisions && led) {
+    // Compose decides it right after the chords' voices, before the comp's style (in chords) or its layer (in notes)
+    const at = decisions.findIndex((d) => d.what === 'compStyle' || d.what === 'compLayer');
+    decisions.splice(at < 0 ? decisions.length : at, 0, { what: 'voicing', value: 'led', why: voicingWhy(voiced, false) });
+  }
+  const changed = changedByBar(parts, newParts);
+  return { version: COMPOSER_REARRANGE_VERSION, parts: newParts, drums, chords: spec.chords, modulations: spec.modulations, changedBars: [...new Set([...changed.chords, ...changed.comp])].sort((a, b) => a - b), retunedBars: [], changed,
+    exceptions: spec.stats.exceptions, stats, voicing, input, ...(decisions ? { decisions } : {}) };
 }
 
 /**

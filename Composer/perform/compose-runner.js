@@ -14,6 +14,8 @@
 //     and every smoothPhrase here
 //   runCompose.arp({ key, spec, parts }) → Promise<[the arranged parts]>   (COMP_ARP_ORDER.md B2) a big row's arps
 //     (arp.js arrangeArp, part by part) in the same worker, from the same kept row and cells
+//   runCompose.bass({ key, spec, options }) → Promise<the arranged bass part>   (BASS_VOICING_ORDER.md phase H) a big
+//     row's bass (bass.js arrangeBass) in the same worker, from the same kept row and cells
 //
 // Chord charts (Composer/CHART_ORDER.md): `changes` ([[shares] × bars]) goes through as it is, both ways.
 // MIDI targets (phase B): `target` ({ clip, placement?, tonic?, maxDriftCents? }, compose.js) goes through as it is,
@@ -52,5 +54,7 @@ export function createComposeRunner({ makeWorker = () => new Worker(new URL('../
   run.rearrange = ({ key = null, spec, edit, opts = {} }) => post({ kind: 'rearrange', key, spec, edit, opts }, (d) => d.result);
   /** B2: a big row's arps in the worker → the arranged parts */
   run.arp = ({ key = null, spec, parts }) => post({ kind: 'arp', key, spec, parts }, (d) => d.result);
+  /** phase H: a big row's bass in the worker → the arranged part */
+  run.bass = ({ key = null, spec, options = {} }) => post({ kind: 'bass', key, spec, options }, (d) => d.result);
   return run;
 }

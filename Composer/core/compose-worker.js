@@ -30,11 +30,17 @@
 //                     arrangeArp over the spec (in Line), part by part in the order given (the lead first: the inner
 //                     reads the lead as it sounds)
 //   ← { id, ok: true, result: [the arranged parts, in that order] }  |  { id, ok: false, error }
+//
+// The bass (BASS_VOICING_ORDER.md phase H): a big row's bass is arranged here too, from the same kept materials:
+//   worker.postMessage({ id, kind: 'bass', key, spec, options: { density, lock, picks } })   bass.js' arrangeBass over the
+//                     spec as it plays (its arps placed, `drums` the drums as they play: the Kick lock's)
+//   ← { id, ok: true, result: the arranged bass part }  |  { id, ok: false, error }
 
 import { compose } from './compose.js';
 import { buildRow, isRow, ONSET_GATE } from './row.js';
 import { rearrange, materialsOf, materialsKey } from './rearrange.js';
 import { arrangeArp } from './arp.js';
+import { arrangeBass } from './bass.js';
 
 /** how many rows' materials the worker keeps for edits (proposed) */
 export const REARRANGE_ROWS = 3;
@@ -78,6 +84,16 @@ export function answerArp(data) {
   }
 }
 
+/** a bass message's answer (phase H): the bass arranged over the spec */
+export function answerBass(data) {
+  const { id = null, key = null, spec, options = {} } = data || {};
+  try {
+    return { id, ok: true, result: arrangeBass(spec, materialsFor(spec, key ?? materialsKey(spec)), options) };
+  } catch (err) {
+    return { id, ok: false, error: String(err && err.message ? err.message : err) };
+  }
+}
+
 /**
  * k onsets of a row, evenly spaced in row order (all of them when the row has ≤ k): → { n (the row's onsets), grid,
  * index (Uint32Array: row indices), tick (Float64Array), cents (Float32Array: each onset's tone), octave (Int8Array) }
@@ -96,6 +112,7 @@ export function sampleRowDust(row, k) {
 export function answer(data) {
   if (data && data.kind === 'rearrange') return answerRearrange(data);
   if (data && data.kind === 'arp') return answerArp(data);
+  if (data && data.kind === 'bass') return answerBass(data);
   const { id = null, layers, cycleSeconds, options = {} } = data || {};
   try {
     const { dust = 0, ...opts } = options || {};
