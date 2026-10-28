@@ -1832,6 +1832,64 @@ Every step landed on these rows. Phase A's every-strike comp struck 6, 8, 32 and
 
 **Not verifiable in Node (for Avery's pass):** how the monospace pattern and the 15-row list fit at narrow widths; whether auditioning a clave at the bar boundary sounds seamless, given that the perc and the comp change together; and whether Fill on the dense rows' bunched claves (`..xx` → `xx..`) reads as a hocket.
 
+## Bass densities and the lock (phase G core; built 2026-10-28, branch `bass/core`)
+
+`BASS_VOICING_ORDER.md` phase G (G1–G4). Decided 1 (Roots, Sparse, Moving, Walking) and 2 (Free | Kick | Clave) are Avery's. The rest is the builder's, following P10–P15, with the calls below marked. Compose's own output is unchanged: every identity fixture holds, and the default arrangement is Compose's bass byte for byte. There is no window yet (phase H), and nothing here has been heard.
+
+**`core/bass.js`** `arrangeBass(spec, materials, { density, lock, picks })` is a live arrangement over a finished spec, like `arrangeArp`. It rebuilds the bass part from the spec and `materialsOf(spec)` with no re-compose. The chords are `rearrange.js` `chordRecordsOf`, the targets `harmony.js` `targetsOf` over them (Compose's own), and the part's sound, legato and on/off are the spec's. The result is `partOf`'s shape plus `bass: { density, lock, picks, stats, bars, (refused) }`.
+- **Sparse, Free, no picks is Compose's bass (P10).** Each bar is mined as `compose.js` `bassOfBar` mines it: lines.js' bass type over the bar (a chart's split bar over the whole bar, each span's target, opening on the first span's root), two octaves under the lead's range, opening on a tone of the root's class where it can, else the cheapest line, else the chord's root onset. The hz retune is Compose's too (a bar's chord; in a split bar, the slot's span). 12 specs (6 rows, 2 charts, a MIDI target, a spec in notes, seed 2, the full table) and the 16k row match byte for byte.
+- **Roots (P11):** a chord (a span) gets one note. Of the onsets its slots' windows hold, the root-class one (inside the frame) nearest the chord's first anchor, ties to the one before it, then the earlier onset. None: the chord's root onset, Compose's fallback. The register is the lowest octave at or over the root less 2450¢, as Compose's fallback places it. (Builder's call: the windows, not the slots by time, so an onset just before the downbeat counts, as it does for the mined lines.)
+- **Sparse, Moving, Walking (P11):** lines.js' bass bands `sparse`, `mid` and `walking`. Moving and Walking, mining nothing, mine again with `weakTies` (arp.js M6); Sparse is Compose's and never does. A mined density with no line falls back as Compose does: Free, the chord's root onset; locked, Roots at the lock (builder's call).
+- **Walking:** every slot of its clock, the stepwise motion only, the next chord's root as the line's `after` boundary (STEP 4a's rule; the last bar's next is bar 1's). The pitch is the root's in the bass's register (root less 2400¢), as a candidate's cents, the bars' retunes aside, as STEP 4a reads its boundaries (builder's call). The clock is the bar's slots, halved while above 8 and even (16 → 8, 12 → 6), mined on `buildCells` at that many anchors a bar with the spec's anchors mode and phase, as arp.js builds its S × time cells; a note's slot is its clock slot × 2. In a split bar on the halved clock, each clock slot reads the chord of the spec slot its anchor sits on.
+- **The lock (P12):** `lines.js` `rules.allowNodes`. Kick: the onsets within ¼ of a slot (the hit's own slot in `spec.drums`) of a kick hit, in time, around the cycle. With `drums: false`, the drums not enabled, or no kick in the mode, the lock falls back to Free and keeps the reason (`bassLockRefusal(spec, lock)`, for the window to grey Kick; `stats.lock` says what ran). Clave: the onsets of `compose.js` `compSourceOf(spec.clave)`, so it follows Sync | Fill; a spec in notes has no clave and falls back the same way.
+- **Shares of the locked slots (P12).** Locked, a band's share counts only the slots holding a locked onset, to the nearest note and at least 1 (`lines.js` `lockedNotes`). That follows the order's example (Moving on 3 kicks plays 1–2, Walking all 3). `bandNotes`' "at least 2, ceiling and floor" gives Moving on 3 slots 2–1, nothing, and most locked bars would mine nothing (builder's call). Walking locked plays every locked slot, with `maxGap` lifted, since the locked slots needn't be neighbours. Roots locked: of the chord's locked onsets, the root-class one nearest the first, else the chord-tone one nearest it, else the first itself. A chord with no locked onset rests.
+- **Offers and picks (P13):** each bar offers up to 8 lines (`BASS_ALTERNATES`). The lines opening on the root's class come first, then the rest, each in mineLines' order (cost per note, the whole cost, the id), one of an id. The first is Compose's choice. That takes a second mine a bar (the root-opening mine and the plain one), and the lean table's 4 contours give 1–7 lines a bar, about 5 on average (builder's call: Compose stops after the first mine when it finds a line). Roots offers its one line (open question). An alternate is `{ id, band, contour, motion, n, cost, perNote, rooted, notes: [{ slot, node, octave }] }`. `picks: { [bar]: id }` plays another. A pick the bar doesn't offer plays the first and is recorded as `missed`. A line's id hashes its notes and its bar's chord names, not its band, so a pick from another density is offered only if the same notes are; the window drops picks on a change of density or lock (phase H).
+- **Stats (P15):** `{ density, lock (what ran), bars, notes, perBar, rooted, onDown, mined, fallback, rests, (lockedSlots), (weakTies) }`. `rooted` is Compose's `bassRooted` (the bar's first note on its first chord's root class), and `onDown` counts the bars with a note on their first slot. Compose's `spec.stats` is not touched.
+- Each bar's record is `{ bar, how ('mined' | 'roots' | 'root onset' | 'locked roots' | 'rest'), picked, alternates, notes, rooted, onDown, (lockedSlots), (weakTies), (missed) }`.
+
+**`lines.js` (G1).**
+- The bass type gains `extraBands` (`BASS_BANDS`): `mid` (40–60 %, strictness 1.5) and `walking` (100 %, its own `rules: { maxGap: 1 }`, `motions: ['stepwise']`). They are mined only when `mineLines`' new `bands` option names them. A band's own `rules` are laid over its type's and its motion's, and its `motions` limit the passes it runs in. A mine that names no bands is unchanged (`assert-lines.mjs`' run counts hold).
+- `rules.allowNodes` is opt-in. With it, `buildLattice` builds each slot's candidates on the allowed onsets only: each tone the window holds on one of them stands on the one nearest the anchor, keeping its window's count and share. A slot with none has no candidates, and `pickLines` checks the rule too. It is built into the lattice rather than as a filter on the candidates because a window keeps one onset a tone (the nearest the anchor), and a locked onset that isn't that one would otherwise be lost (builder's call; the order says "a lattice slot keeps only candidates on those onsets").
+
+**`rearrange.js` (G3, P14).** A chord swap on a spec whose bass carries a `bass` record re-mines the bar (or the split bar) at the part's density and lock, through the same per-bar function (`bass.js` `bassBarOf`) with the rearrange's own targets. A pick is kept only where the bar's new offer holds it. Otherwise it's removed from the record's picks and listed in the result's `bassDropped: [{ bar, id }]` (phase H's "Compose dropped"). Under Walking the bar before is re-mined too, since its approach targets the new chord (builder's call). The part keeps its `bass` record with the bars and stats updated. A bass with no record is rebuilt with `bassOfBar` as before, and an edit to what is there is byte for byte. The change is in the bass path only.
+
+**Measured (seed 1; notes a bar · bars with a note on the downbeat; fb = bars on the fallback; free / kick / clave):**
+
+| row | Roots | Sparse | Moving | Walking |
+|---|---|---|---|---|
+| 8:7:6:5 (2 × 3) | 1·2/2 / 1·2/2 / 1·0/2 | 1·1/2 2 fb / 1·1/2 / 1·0/2 1 fb | 1·1/2 2 fb / 1·1/2 / 1·0/2 1 fb | 3·2/2 / 1.5·2/2 1 fb / 1·0/2 1 fb |
+| 11:9:7:5 (2 × 4) | 1·1/2 / 1·2/2 / 1·0/2 | 1·1/2 2 fb / 1·1/2 / 1·0/2 1 fb | 2·1/2 / 1·1/2 / 1·0/2 1 fb | 2.5·1/2 1 fb / 1.5·2/2 1 fb / 1·0/2 2 fb |
+| 19:17:16:15 (2 × 8) | 1·2/2 / 1·2/2 / 1·1/2 | 2·2/2 / 1·2/2 / 1·0/2 | 4·2/2 / 1·2/2 / 1.5·1/2 1 fb | 8·2/2 / 1.5·2/2 1 fb / 1·1/2 2 fb |
+| 119:42:15:8 (4 × 8) | 1·4/4 / 1·3/4 / 1·0/4 | 2·0/4 / 1·0/4 / 1·0/4 | 4·1/4 / 1·0/4 / 1·0/4 | 8·4/4 / 2.25·4/4 / 2·0/4 |
+| 768:769 (4 × 8) | 1·1/4 / 1·2/4 / 1·0/4 | 2·1/4 / 1·2/4 / 1·0/4 4 fb | 4·4/4 / 1.25·3/4 / 1·0/4 4 fb | 4.5·2/4 2 fb / 2·4/4 1 fb / 1·0/4 4 fb |
+| 768:784 (4 × 8) | 1·1/4 / 1·3/4 / 1·0/4 | 2·0/4 / 1·0/4 / 1·0/4 | 4·1/4 / 1·0/4 / 1·0/4 | 8·4/4 / 2.25·4/4 / 2·0/4 |
+| 119:42:15:8 chart (8 spans) | 2·4/4 / 1.75·4/4 / 1.5·0/4 | 2·0/4 / 1·1/4 / 1·0/4 | 4·3/4 / 1·1/4 / 1·0/4 | 8·4/4 / 2.25·4/4 / 2·0/4 |
+| 768:784 chart, 16 slots (7 spans) | 1.75·0/4 / 1.5·4/4 / 1.25·0/4 | 4.5·0/4 / 1·0/4 / 1·0/4 | 7·0/4 / 1·0/4 / 1·0/4 | 8·4/4 / 2·4/4 / 2·0/4 |
+| 4099:4093:4091:4079 (8 × 8) | 1·4/8 / 1·7/8 / 1·0/8 | 2·2/8 / 1·2/8 / 1·0/8 3 fb | 4·3/8 / 1.13·2/8 / 1·0/8 3 fb | 8·8/8 / 2.25·8/8 / 1.13·0/8 7 fb |
+
+- **Cost.** Under 3 ms on the small rows. The 16-slot chart's Sparse and Moving take ~7–8 ms (16-slot lattices), and the 16k row ≤ 9 ms for any density and lock (median of 3). The second mine a bar roughly doubles Sparse's time over Compose's bass, which is still small.
+- **What the numbers say.** Walking free fills every bar of the 8-slot rows except where a slot holds only foreign tones on a strong slot or at the end (768:769's bars 1 and 3, 11:9:7:5's bar 1), which fall back to one root onset. The backbeat's two kicks a bar make Kick's Sparse and Moving one note a bar, close to Roots. Clave rarely lands on the downbeat (its strokes are off the one on these rows), and on 768:769 and the 16k row its strokes are mostly fringe tones that no line may end on, so those bars fall back to Roots at the lock, which plays the stroke's own tone.
+
+**Tests.** `assert-bass.mjs` (new, 38 checks) reads every rule from the order with its own slots, windows, kick reach, clave strokes and shares, not bass.js':
+- the default byte for byte (12 specs and the 16k row);
+- every density × lock on 6 rows and 2 charts: real onsets, time, hz, velocity and lengths; each density's notes within its band of the bar's slots (or of the locked slots, to the nearest note); Walking on every slot of its clock (every locked slot locked); Roots and the locked fallback equal to a brute force of the order's rule; the offers' count, order and tiers; the picked line playing; rooted, onDown and the stats;
+- Walking's approach: its last move never farther from the next root than the same mine without it (lines.js directly), and 16 slots walking 8;
+- every locked note on a locked onset; four on the floor; Kick with the drums off, not enabled and striking no kick, and Clave on a spec in notes, all Free with the reason; Clave following Sync | Fill;
+- picks, a missed pick, and another density's pick not offered;
+- a chord swap re-mining one bar at Moving / Kick (the other bars untouched, a pick dropped into `bassDropped`, another kept), the stats, a no-op swap byte for byte, a JSON round trip, a bass with no record as before, and Walking re-mining the bar before;
+- determinism, the spec untouched, the options; the 16k row under 150 ms each; and the report's rows.
+
+**Open (for Avery).**
+- A Walking bar that can't sound every slot falls back to one note. A walk with rests (the arp's "few rests": 60–95 %, `maxGap` 2) could be its second try.
+- Roots offers no runner-ups. The other root-class onsets of the chord could be its runner-ups.
+- Clave on the fringe-heavy rows plays a stroke's own tone where no line fits, even a fringe one. It could rest there instead.
+- Under Kick with the backbeat, Sparse and Moving both play one note a bar.
+
+**For phase H.**
+- `arrangeBass`, `readBassOptions`, `bassLockRefusal(spec, 'kick')` (the disabled Kick's title), `BASS_DENSITIES`, `BASS_LOCKS`, `BASS_DEFAULTS` and `BASS_ALTERNATES`. Each bar's `alternates` and `picked` feed the runner-ups list, and `missed` marks a stale pick.
+- A bass arranged before the edits are folded is carried through a chord swap by rearrange (with `bassDropped`). One arranged after the fold, as the arps are, reports a stale pick as `missed` instead. Either works.
+- arrangeBass reads `materialsOf`, so a big row's would go to the worker as the arps do.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

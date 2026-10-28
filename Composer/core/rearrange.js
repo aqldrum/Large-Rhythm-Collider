@@ -7,7 +7,7 @@
 //   rearrange(spec, row, cells, { bar, chord })                     a chord swap at bar k
 //   rearrange(spec, row, cells, { phrase, line, chordsFollow })     a lead swap over phrase p
 //   rearrange(spec, row, cells, { clave, relation })                the comp's clave or Sync | Fill (= reclave, below)
-//     → { parts, drums, chords, modulations, changedBars, retunedBars, changed, exceptions, stats }
+//     → { parts, drums, chords, modulations, changedBars, retunedBars, changed, exceptions, stats, (bassDropped) }
 //   reclave(spec, row, cells, { clave, relation })   (COMP_ARP_ORDER.md Amendment 1, phase E) the clave chosen again and
 //     laid, the comp strummed again over every bar's chord, the drums arranged again: a live clave switch, equal to a
 //     Compose given the same `overrides.clave` / `compRelation` (comp and drums byte for byte); `compStyle: 'notes'` refused
@@ -52,6 +52,11 @@
 // its whole BAR (every span's chord voices and comping, the bar's bass over each span's target), and the inner of that
 // bar is re-mined as above. `changedBars` and `retunedBars` stay bars. A lead swap with chordsFollow re-derives each span.
 //
+// An arranged bass (bass.js `arrangeBass`: the bass part carries `bass`; BASS_VOICING_ORDER.md G3, P14): a rebuilt bar's
+// bass is re-mined at the part's density and lock (`bassBarOf`), its pick kept only where the bar still offers it, else
+// dropped (the result's `bassDropped: [{ bar, id }]`); under Walking the bar before is re-mined too (its approach to the
+// new chord). The part keeps its `bass` record, its bars and stats updated. A bass with no record: `bassOfBar`, as before.
+//
 // `changedBars`: the bars whose material was rebuilt. `changed`: per part, the bars whose notes differ other than in
 // their durations (a legato note before an edit may hold to a new next note). `retunedBars`: the bars after the edit
 // whose fundamentalRatio moved.
@@ -64,6 +69,7 @@ import { FALLBACK_QUALITIES } from './progression.js';
 import { arrangeDrums } from './drums.js';
 import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, compNodesOf, compUnitsOf, layCompClave, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, PART_IDS } from './compose.js';
 import { readRhythm, rankRowClaves, chooseClave, claveText, claveSource, COMP_RELATIONS } from './claves.js';
+import { bassBarOf, bassLockOf, bassWalkCells, bassBarRecord, bassStatsOf } from './bass.js';
 
 export const COMPOSER_REARRANGE_VERSION = 'composer-rearrange-v1';
 const EPS = 1e-9;
@@ -308,6 +314,19 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   const compLayer = compChords ? null : 'ABCD'.indexOf(spec.stats.compLayer?.layer);
   if (compLayer != null && compLayer < 0) fail('the spec names no comp layer');
   const bassRooted = [];
+  // BASS_VOICING_ORDER.md G3 (P14): a bass arranged by bass.js (the part's `bass`) is re-mined at its density and lock, a
+  // pick kept only where the bar still offers it (else dropped: `bassDropped`); Walking re-mines the bar before too, its
+  // approach to the new chord. A bass with no arrangement is Compose's, rebuilt as Compose builds it.
+  const bassArr = partById.bass.bass ?? null, bassLock = bassArr ? bassLockOf(spec, ctx, bassArr.lock) : null;
+  const bassWalk = bassArr?.density === 'walking' ? bassWalkCells(spec, { row, cells }) : null;
+  const bassBars = bassArr ? bassArr.bars.slice() : null, bassPicks = bassArr ? { ...bassArr.picks } : null, bassDropped = [];
+  const bassAt = (c, k, opts) => {
+    if (!bassArr) return bassOfBar(ctx, c, k, opts);
+    const b = bassBarOf(ctx, k, { recs, targets: allTargets, density: bassArr.density, nodes: bassLock.nodes, pick: bassPicks[k] ?? null, table, walkCells: bassWalk });
+    if (b.missed != null) { bassDropped.push({ bar: k, id: b.missed }); delete bassPicks[k]; delete b.missed; }
+    bassBars[k] = bassBarRecord(k, b);
+    return b;
+  };
   if (spans) {
     // a split bar is rebuilt whole: each span's voices and comping, the bar's bass over each span's target
     for (const k of [...new Set([...target].map(barOf))].sort((a, b) => a - b)) {
@@ -316,7 +335,7 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
       if (compChords) compStrokes = compStrokes.filter((x) => x.bar !== k);
       notes.comp = [...notes.comp.filter((n) => n.bar !== k), ...own.flatMap((c) => compOf(c, k, range(c)))];
       const over = harmonyOver(recs, allTargets, k, 1, S);
-      const b = bassOfBar(ctx, own[0], k, { table, scale, over: { frames: over.frames, targets: over.targets.bars } });
+      const b = bassAt(own[0], k, { table, scale, over: { frames: over.frames, targets: over.targets.bars } });
       notes.bass = [...notes.bass.filter((n) => n.bar !== k), ...b.notes];
       bassRooted[k] = b.rooted;
     }
@@ -325,9 +344,17 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
     notes.chords = [...notes.chords.filter((n) => n.bar !== k), ...chordVoicesOfBar(ctx, c, k)];
     if (compChords) compStrokes = compStrokes.filter((x) => x.bar !== k);
     notes.comp = [...notes.comp.filter((n) => n.bar !== k), ...compOf(c, k)];
-    const b = bassOfBar(ctx, c, k, { table, scale, target: targets[k] });
+    const b = bassAt(c, k, { table, scale, target: targets[k] });
     notes.bass = [...notes.bass.filter((n) => n.bar !== k), ...b.notes];
     bassRooted[k] = b.rooted;
+  }
+  if (bassWalk) {
+    const swapped = new Set([...target].map(barOf));
+    for (const k of [...new Set([...swapped].map((x) => (x + N - 1) % N))].filter((x) => !swapped.has(x)).sort((a, b) => a - b)) {
+      const b = bassAt(recs[unitsOfBar(k)[0]], k, null);
+      notes.bass = [...notes.bass.filter((n) => n.bar !== k), ...b.notes];
+      bassRooted[k] = b.rooted;
+    }
   }
   // ── the inner: bar-local over each rebuilt bar or a bar of a changed lead, with boundaries (or the whole phrase) ──
   const innerBars = new Set([...[...rebuilt].map(barOf), ...leadChanged]);
@@ -360,7 +387,8 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   const newParts = PART_IDS.map((id) => {
     const p = partById[id];
     const voiced = id === 'chords' || (id === 'comp' && compChords);
-    return partOf(ctx, id, voiced ? byVoice(notes[id]) : notes[id], { sound: p.sound, legato: p.legato, enabled: p.enabled, baseHz, ratioOf, voice: voiced, strokes: id === 'comp' ? compStrokes : null });
+    const built = partOf(ctx, id, voiced ? byVoice(notes[id]) : notes[id], { sound: p.sound, legato: p.legato, enabled: p.enabled, baseHz, ratioOf, voice: voiced, strokes: id === 'comp' ? compStrokes : null });
+    return id === 'bass' && bassArr ? { ...built, bass: { ...bassArr, picks: bassPicks, stats: bassStatsOf(bassArr.density, bassLock.lock, bassBars), bars: bassBars } } : built;
   });
   // ── the chords and modulations, as the spec has them ──
   const targeted = spec.chords.some((c) => 'targeted' in c);
@@ -399,7 +427,8 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
     ...(compChords ? { compStrum: notes.comp.length ? notes.comp.filter((n) => !n.borrowed).length / notes.comp.length : 0 } : {}) };
 
   const changedBars = [...new Set([...[...rebuilt].map(barOf), ...leadChanged])].sort((a, b) => a - b);
-  return { version: COMPOSER_REARRANGE_VERSION, parts: newParts, drums, chords, modulations, changedBars, retunedBars, changed: changedByBar(parts, newParts), exceptions: stats.exceptions, stats };
+  return { version: COMPOSER_REARRANGE_VERSION, parts: newParts, drums, chords, modulations, changedBars, retunedBars, changed: changedByBar(parts, newParts), exceptions: stats.exceptions, stats,
+    ...(bassArr ? { bassDropped } : {}) };
 }
 
 /** a spec with a rearrangement written in: parts, drums, chords, modulations and the stats it moves (a new object);
