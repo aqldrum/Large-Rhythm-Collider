@@ -2184,6 +2184,69 @@ Before, the strokes in frame were 1/4, 1/4, 5/8, 2/2, 8/8, 1/8 and 8/8 on the fi
 2. **A partner can leave a bar empty.** On 19:17:16:15, Fill's partner strikes nothing in bar 2, so the comp plays its root onset there. Should a partner need a stroke in every bar the clave has?
 3. **Ties on dense rows.** The 16k row ties 4 candidates at 0.656, and the seed picks. Prefer the chord set, or the straighter grain?
 
+## The window over Amendment 1 (phase L; built 2026-10-28, branch `ui/amend1`)
+
+`BASS_VOICING_ORDER.md` Amendment 1, phase L (L1–L4): the window over phases I, J and K. Rulings 5–9 are Avery's; the rest is the builder's, proposed. No core file changed (`core/*.js` untouched), and Compose's output is unchanged. Nothing here has been seen in a browser or heard.
+
+**L1, the clave** (`page/composer-tab.js` `claveBlock`, `compHeadClave`; the controller's `claveOf`).
+- **The picker.** A frame candidate (`from.frame`) is listed by its source words (`claveSource`: "layer A · 8 steps · chord tones" / "tones in frame") with its score beside it in the clean view. Each bar's pattern (`claveText`, a bar a group) goes in Details, since it is long on 8-bar rows. The curated claves come after, each by its fixed pattern and its own label ("son clave 3-2", without the "· in frame" `claveSource` adds), tagged "lands in frame only". A clave from the pattern (`claveFrom: 'pattern'`) is listed exactly as phase E listed it, so the pinned suite reads the same window.
+- **Ids.** `setClave` and `claveOf` already took `frame:A/8/chord` (claves.js `claveOf` parses it), so nothing changed there. `claveOf` adds `read`, `frame`, `barTexts` (each bar's pattern: a frame clave's own, a fixed clave's group of its pass, so son alternates its two bars), `partner.barTexts`, and on each alternate `frame`, `inFrame` and `label`.
+- **The Comping cell head** shows the bar's own pattern (`barTexts[k]`, which is `claveText(clave, k)` for a frame clave), and in Fill the partner's beside it, since that is what the comp strikes there. The clave line under it keeps every bar's pattern and the source.
+- **"Compose dropped".** A dropped frame clave is named by its source: "the chosen clave (layer B · 3 steps · chord tones, from the frame) was dropped". claves.js' `claveOf` gives a frame id's source words as its `pattern`, so the controller's record is unchanged.
+- **A chord swap's `reclavedBars`.** The window re-renders whole on every change, and the player and the drums read the spec as it plays, so the comp and the perc already followed a re-read. What was missing is the edit's result: the fold now collects `reclavedBars` from the rearrange steps it runs (not the cached ones) and returns them, also merged into `changedBars`. A re-read can move only the perc (in Fill the comp plays the partner), and `movedBars` compares only the parts. The edit note says "the clave re-read in bar N (its new frame)".
+
+**L2, the bass** (`bassBlock`, `bassHitsLine`, `bassFillLine`).
+- **Roots' runner-ups** (rule 9). `pickBass` no longer refuses Roots, and its alternates are listed, auditioned, kept and reverted like the mined lines. A Roots alternate has no contour or cost, so it is named by what it plays, "287/172, slot 3" a note: its tone and its slot in the bar. A bar's offer can hold one tone at two slots (one onset per tone per slot), so the tone alone repeats names. The tone comes from a new controller method, `ratioOfOnset(node)`, which reads the composed row (the materials the bass is arranged from on this thread). When the row is the worker's (past `MAIN_THREAD_ONSETS`), it gives null and the name is the slot alone. Details: how far it sits off the change ("0.04 off", the summed `distance` in slots). The legend says "the root's other notes in frame, nearest the change first".
+- **A walk's fill** (rule 5). A bar with `walkFill` reads "walks 6 of 8: a rest where no step fits". 8 is Walking's clock (bass.js `walkClock` of the bar's slots, so 8 on a 16-slot row) less the bar's missed hits, which rest anyway. It's in the clean view: it says why the walk has gaps. The stats (Details) add "· 2 walk what they can".
+- **The hits covered** (rule 7). A locked bar reads "covers 2 of 2 kicks" (or "strokes"), and with missed hits " · 1 missed (slot 5): no onset in frame there, so it rests" in amber (`ctab-bass-missed-hits`, the slots from `missedSlots`, bar-relative). A locked bar with no hit reads "no kick in this bar: nothing to cover". The stats add "· 6 of 9 hits covered".
+- **The words.** The lock titles say "covers the kick: every kick gets a note, and the density adds the rest" (the Clave one says the same of the comp's strokes). The switch's title reads "what the bass covers: …". The head's tag is "moving · covers the kick". `BASS_HOW_WORDS`: 'rest' is now "no hit to cover in this bar", and 'locked roots' is "no line could cover every hit, so it plays a root on each hit". The Roots and Walking density titles mention their runner-ups and the fill. No "only on" wording is left.
+
+**L3, the words.**
+- **The voicing** (`voicingRow`, `voicingTitle`). The stats read "1 lifted · 311¢ a change · loop closed" ("a change": phase K's `meanMotion` is over the loop's N changes); a one-chord loop reads "… lifted · one chord". The title says the loop is closed, then gives the bar lines' motion and "the wrap back to the first chord W¢ (led, as every change)"; "(…, not led)" is gone. The Led button's and the switch's titles say the octaves are chosen together round the loop.
+- **The captions** (`trace-frames.js`). The comp: "the clave from the frame, layer B · 6 steps · tones in frame (xxx... .x..x. …): 10 strokes, every one in frame" (a curated clave read in frame: "every one in frame" too; Fill's gaps a bar each). `compDetail` is exported for the suite. The bass: "moving, covering the comp's strokes (10 of 10 hits): …", with the missed counted and "; 2 bars walk what they can, a rest where no step fits" under Walking. For that, `highlightsOf`'s `arrangement.bass` now carries the stats' `hits`, `missedHits` and `walkFill`. The chords: "a voice a chord tone, led round the closed loop: 1 lifted clear of the mud limit, 311¢ of motion a change, the wrap back to the first chord 372¢"; one chord: "led: one chord, nothing to lead".
+- **Cache-bust:** `index.html`'s composer-tab.css and composer-bridge.js `?v=20261028.2`.
+
+**Tests (L4).**
+- `assert-page-bass.mjs`, 59 → 73 checks:
+  - The locks' "covers" titles (nothing says "only"), and the head's tag.
+  - Under Kick on 41:42:43 at 4 × 8: a bar with every kick covered (no amber), and a bar with a missed kick (the amber line's slot and words, and the CSS colour).
+  - The stats counting hits, then fills.
+  - Roots' runner-ups: named by tone and slot from the row, every name different; Details' distance; audition, Revert with no step, Keep as one; `pickBass` taking the first again; `ratioOfOnset`.
+  - Walking's fill line on a filled bar (its notes the count) and none on a full one.
+  - The voicing's stats and title; the closed-loop and covering captions.
+- `assert-page-clave.mjs`, 34 → 53. The pin (`claveFrom: 'pattern'`) is lifted for a last section on 768:769:
+  - the frame candidates by source and score, in the trace's order, the patterns in Details; the curated last, "lands in frame only";
+  - the legend;
+  - the head's pattern bar by bar (equal to `claveText(clave, k)`, not all the same), and the partner's in Fill;
+  - a frame clave kept from the list, equal to a Compose given its id;
+  - a chord swap that re-reads a bar: the note, the head and the perc; the controller's `reclavedBars`, among its `changedBars`, and absent on a later edit whose swap step is cached;
+  - a frame id the list doesn't offer, set, then dropped on a re-compose and named by its source;
+  - the comp's caption.
+
+The README's Files and Tests are updated. No suite was added (83).
+
+**Calls beyond the order (proposed):**
+1. Roots' runner-ups are named "tone, slot k" (the tone alone repeats). When the row is in the worker, the slot alone.
+2. The Comping head shows the partner's bar too in Fill.
+3. A frame candidate's score is in the clean view; the curated ones' only in Details. They're scored as fixed patterns with recurrence 0, and on 41:42:43 they read 0.667, above every frame candidate (the chosen 0.436), though they rank after them. Shown side by side, the numbers would mislead.
+4. "walks N of W": W is the clock less the bar's missed hits.
+5. `reclavedBars` joins `changedBars`, since the perc moved there even when the comp didn't.
+
+**Looked at in the core, not changed (for the planner):**
+- **The picker's frame candidates are the trace's**: ranked and read under Compose's chords. After a chord swap, the list's patterns and scores for that bar are Compose's, not the new chord's. A clave picked from it is read fresh (`reclave` ranks under the chords as they play), so what plays is right; only the list is stale until a re-compose. The fix would be a re-rank in the window (`rankFrameClaves` over the spec as it plays, ~3.5 ms on the 16k row), which needs the part context the controller doesn't keep. Not done.
+- **The comp's caption reads Compose's clave** (the trace's event), not one chosen in the picker, as in phase E. The bass and chords captions read the arrangement as it plays.
+- On 41:42:43 (4 × 8) Roots' own note in bar 2 is at slot 3, its runner-up the same tone at slot 7: no root-class onset sits nearer the downbeat. As P24 reads ("nearest the chord's first anchor"), not a bug.
+
+**Not verifiable in Node (for Avery's pass):**
+- whether the frame candidates' source words read well in a narrow inspector (they wrap);
+- whether a Roots runner-up is audible (the root's ±15¢ cluster, or a slot's shift);
+- whether "walks 6 of 8" matches what is heard.
+
+**Open (for Avery):**
+- Should the picker re-rank the frame candidates after a chord swap (their patterns and scores for the swapped bar), or is the list as composed enough?
+- Name Roots' runner-ups by cents off the root ("+12¢, slot 3") rather than the ratio?
+- Should the comp's caption, like the bass's and the chords', say the clave as it plays (a picked one) rather than Compose's?
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

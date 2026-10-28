@@ -80,7 +80,7 @@
 //               refused — Kick with the drums off, Clave on a comp in notes — disabled, its reason its title and said
 //               under the switch), both live (the controller's setBass: one undo step; a change drops the bar picks),
 //               then the selected bar's runner-ups (up to 8, by contour and band, the one playing marked), auditioned
-//               from the next bar, kept or reverted as the lead's; Roots offers none and says so, a bar that fell back
+//               from the next bar, kept or reverted as the lead's (Roots' too, phase L); a bar that fell back
 //               says why; Details: the stats (notes a bar, rooted, on the one), each line's cost a note, notes, motion
 //   chords cell under its head, a Close | Led switch (setVoicing: live, one undo step) with the voicing's stats beside
 //               it, in the clave line's quiet style ("2 lifted · 240¢ a chord")
