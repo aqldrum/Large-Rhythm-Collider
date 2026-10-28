@@ -11,20 +11,24 @@
 //   • Kick covering the kick's hits (phase J, P23: each covered or missed); the drums turned off under Kick: the bass
 //     re-arranged Free and said; Kick disabled with its reason while the drums are off (and setBass refuses it); Clave
 //     covering the comp's strokes, following Sync | Fill
-//   • Roots: no runner-ups, said plainly; pickBass refuses
+//   • Roots: its runner-ups (Amendment 1, rule 9; phase L): the root's other in-frame notes, named by the tone each
+//     plays, auditioned, kept and reverted as the others; pickBass takes them
+//   • phase L: the lock's titles and the head's tag say it covers; under Kick a bar's hits covered and the missed in amber
+//     (slot and reason); Walking's fill ("walks 6 of 8: a rest where no step fits"); the stats count hits and fills
 //   • a chord swap carries the arrangement (arrangeBass over the edited spec)
 //   • the chords cell: Close | Led with the voicing's stats; Close live, the spec byte for byte a Compose given
 //     `voicing: 'close'`; Led back byte for byte Compose's; a swap under Close is the swap of the close Compose; a
 //     re-compose sends the override
 //   • a re-compose keeps the density, the lock and the picks its bars still offer; one they don't is dropped and listed
-//     with "Compose dropped"; the trace's caption says the voicing and the bass's density and lock
+//     with "Compose dropped"; the trace's caption says the voicing (the loop closed) and the bass's density and lock
+//     (covering its hits)
 //   • the store: the snapshot, a new cycle of the same row, JSON export; a big row's bass (and its offer) in the worker
 //   node Composer/tests/assert-page-bass.mjs
 import { makeDom, installGlobals } from './dom-stub.mjs';
 import { siteRhythm } from './site-scripts.mjs';
 import { compose, compSourceOf } from '../core/compose.js';
 import { answer } from '../core/compose-worker.js';
-import { arrangeBass, bassLockOf, bassLockRefusal, BASS_ALTERNATES } from '../core/bass.js';
+import { arrangeBass, bassLockOf, bassLockRefusal, BASS_ALTERNATES, walkClock } from '../core/bass.js';
 import { materialsOf, rearrange, applyRearrange, chordRecordsOf } from '../core/rearrange.js';
 import { partContext } from '../core/compose.js';
 import { arrangeDrums } from '../core/drums.js';
@@ -33,6 +37,9 @@ import { buildScene, bassDetail, chordsDetail } from '../page/trace-frames.js';
 import { createComposerController } from '../perform/composer-controller.js';
 import { newCompositionState, createCompositionStore, composedBass } from '../store/composition-store.js';
 import { snapshotOf, restoreSnapshot } from '../store/composition-edits.js';
+import { readFileSync } from 'node:fs';
+
+const CSS = readFileSync(new URL('../page/composer-tab.css', import.meta.url), 'utf8');
 
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };
@@ -186,6 +193,20 @@ console.log('\n— Kick, and the drums off');
   const kicks = bassLockOf({ ...S().spec, drums: S().drums }, ctx, 'kick').nodes;
   const kickHits = bassLockOf({ ...S().spec, drums: S().drums }, ctx, 'kick').hits, kb = partOfSpec('bass'), kOn = kickHits.filter((h) => kb.notes.some((n) => h.nodes.includes(n.node))).length;
   check(`Lands on → Kick: every kick hit covered by a bass note on one of its onsets, or counted missed (${kOn} of ${kickHits.length} kicks covered, ${kb.bass.stats.missedHits} missed; P23)`, S().bass.lock === 'kick' && kb.bass.stats.lock === 'kick' && kicks.size > 0 && kOn >= kb.bass.stats.hits - kb.bass.stats.missedHits && bassMatches());
+  // phase L (rule 7): the words say a lock covers its hits; a bar's hits covered, the missed in amber
+  check(`the locks' titles say they cover ("${seg('kick').title}"); none says "only on"`, /^covers the kick: every kick gets a note, and the density adds the rest/.test(seg('kick').title) && /^covers the comp's strokes/.test(seg('clave').title)
+    && segs().every((b) => !/only on|only with/.test(b.title)) && !/only/.test(lockSw().title) && /covers/.test(lockSw().title));
+  check(`the head's tag: "${q(inspector, '.ctab-ctx-head .ctab-tag')?.textContent}"`, q(inspector, '.ctab-ctx-head .ctab-tag')?.textContent === 'moving · covers the kick');
+  const bars = kb.bass.bars, mk = bars.findIndex((b) => b.missedHits > 0), ok = bars.findIndex((b) => b.hits > 0 && !b.missedHits);
+  tab.selectCell('bass', ok);
+  const okLine = q(inspector, '.ctab-bass-hits'), okRec = bars[ok];
+  check(`bar ${ok + 1}, every kick covered: "${okLine?.textContent}", nothing in amber`, ok >= 0 && okLine?.textContent === `covers ${okRec.hits} of ${okRec.hits} kick${okRec.hits === 1 ? '' : 's'}` && !q(inspector, '.ctab-bass-missed-hits'));
+  tab.selectCell('bass', mk);
+  const mRec = bars[mk], mLine = q(inspector, '.ctab-bass-hits'), amber = q(inspector, '.ctab-bass-missed-hits'), mSlots = mRec.missedSlots.map((j) => j - mk * 8 + 1);
+  check(`bar ${mk + 1}, a kick missed (no onset in frame): "${mLine?.textContent}", the missed in amber`, mk >= 0 && mLine?.textContent.startsWith(`covers ${mRec.hits - mRec.missedHits} of ${mRec.hits} kick`) && !!amber
+    && amber.textContent === ` · ${mRec.missedHits} missed (slot ${mSlots.join(', ')}): no onset in frame there, so ${mRec.missedHits === 1 ? 'it rests' : 'they rest'}` && /\.ctab-bass-missed-hits \{ color: #ffb347; \}/.test(CSS));
+  const kst = kb.bass.stats;
+  check(`Details' stats count the hits ("${q(inspector, '.ctab-bass-stats')?.textContent}")`, q(inspector, '.ctab-bass-stats')?.textContent.includes(` · ${kst.hits - kst.missedHits} of ${kst.hits} hits covered`));
   core.setDrums({ enabled: false }); await settle();
   const why = bassLockRefusal({ ...S().spec, drums: S().drums }, 'kick');
   check(`the drums off under Kick: the bass re-arranged Free, and said ("${q(inspector, '.ctab-bass-refused')?.textContent}")`, !!why && partOfSpec('bass').bass.stats.lock === 'free' && partOfSpec('bass').bass.refused === why && core.bassOf().refused === why
@@ -199,13 +220,40 @@ console.log('\n— Kick, and the drums off');
   check('the drums on again: Kick free to pick', !seg('kick').disabled && !q(inspector, '.ctab-bass-refusal'));
 }
 
-console.log('\n— Roots');
+console.log('\n— Roots and its runner-ups (Amendment 1, rule 9; phase L)');
 {
   await pick('.ctab-bass-density', 'roots');
   const recs = chordRecordsOf(S().spec, ...Object.values(materialsOf(S().composed)));
-  check(`Roots: one note a chord (${partOfSpec('bass').notes.length} for ${recs.length}); no runner-ups, said plainly`, partOfSpec('bass').notes.length === recs.length && bassMatches() && !q(inspector, '.ctab-bass-alt')
-    && /Roots plays one note a chord, on the change: no runner-ups/.test(q(inspector, '.ctab-bass-none')?.textContent ?? ''));
-  check('pickBass refuses Roots', (() => { try { core.pickBass(0, 'x'); return false; } catch (e) { return /no runner-ups to pick/.test(e.message); } })());
+  check(`Roots: one note a chord (${partOfSpec('bass').notes.length} for ${recs.length}); "no runner-ups" is gone`, partOfSpec('bass').notes.length === recs.length && bassMatches()
+    && ![...qa(inspector, '.ctab-muted')].some((e) => /no runner-ups to choose from/.test(e.textContent)));
+  const bars = partOfSpec('bass').bass.bars, k = bars.findIndex((b) => b.alternates.length > 1), alt = bars[k].alternates, { row } = materialsOf(S().composed);
+  tab.selectCell('bass', k);
+  const rows = () => qa(inspector, '.ctab-bass-alt'), names = alt.map((x) => x.notes.map((n) => `${row.tones[row.tone[n.node]]}, slot ${n.slot - k * 8 + 1}`).join(' · '));
+  check(`bar ${k + 1} offers ${alt.length} roots (at most ${BASS_ALTERNATES}), listed by the tone each plays and its slot (${names.join('; ')}), each a different name, the first Roots' own (●C)`, k >= 0 && alt.every((x) => x.band === 'roots') && rows().length === alt.length
+    && rows().every((b, i) => q(b, '.ctab-alt-name').textContent === names[i] && b.classList.contains('ctab-bass-root')) && new Set(names).size === names.length && q(rows()[0], '.ctab-alt-mark').textContent === '●C' && q(inspector, '.ctab-bass-sub')?.textContent === `Bass lines · bar ${k + 1}`);
+  check('… Details: how far each sits off the change', q(rows()[1], '.ctab-alt-cents').classList.contains('ctab-detail') && q(rows()[1], '.ctab-alt-cents').textContent === `${alt[1].distance.toFixed(2)} off`);
+  const undoR = S().undo.length, redoR = S().redo.length, sigR = sig(partOfSpec('bass')), cR = composes;
+  rows()[1].click(); await settle();
+  check('a click auditions the second root (stopped: at once): it plays, no Compose', core.auditioning() && J(S().bass.picks) === J({ [k]: alt[1].id }) && partOfSpec('bass').bass.bars[k].picked === alt[1].id && bassMatches() && composes === cR
+    && partOfSpec('bass').notes.filter((n) => n.bar === k).map((n) => n.node).join() === alt[1].notes.map((n) => n.node).join());
+  await click('.ctab-revert');
+  check('Revert: Roots\' own again, no undo or redo step', !core.auditioning() && J(S().bass.picks) === '{}' && sig(partOfSpec('bass')) === sigR && S().undo.length === undoR && S().redo.length === redoR);
+  rows()[1].click(); await settle(); await click('.ctab-keep');
+  check('Keep: one undo step, marked as playing', !core.auditioning() && S().undo.length === undoR + 1 && rows()[1].classList.contains('current') && J(S().bass.picks) === J({ [k]: alt[1].id }));
+  const r = await core.pickBass(k, alt[0].id);
+  check('pickBass takes Roots\' first again (the pick removed, one undo step)', r.ok && J(S().bass.picks) === '{}' && sig(partOfSpec('bass')) === sigR && S().undo.length === undoR + 2);
+  check('core.ratioOfOnset names an onset by its tone (the row\'s)', core.ratioOfOnset(alt[0].notes[0].node) === row.tones[row.tone[alt[0].notes[0].node]] && core.ratioOfOnset(-1) === null);
+}
+
+console.log('\n— Walking\'s fill (rule 5; phase L)');
+{
+  await pick('.ctab-bass-density', 'walking');
+  const bars = partOfSpec('bass').bass.bars, k = bars.findIndex((b) => b.walkFill != null), full = bars.findIndex((b) => b.walkFill == null), W = walkClock(8), st = partOfSpec('bass').bass.stats;
+  tab.selectCell('bass', k);
+  check(`bar ${k + 1} walks less than full: "${q(inspector, '.ctab-bass-fill')?.textContent}"`, k >= 0 && q(inspector, '.ctab-bass-fill')?.textContent === `walks ${bars[k].walkFill} of ${W}: a rest where no step fits` && bars[k].walkFill < W
+    && partOfSpec('bass').notes.filter((n) => n.bar === k).length === bars[k].walkFill);
+  check(`… Details' stats count the fills ("${q(inspector, '.ctab-bass-stats')?.textContent}")`, q(inspector, '.ctab-bass-stats')?.textContent.endsWith(` · ${st.walkFill} walk${st.walkFill === 1 ? 's' : ''} what ${st.walkFill === 1 ? 'it' : 'they'} can`));
+  if (full >= 0) { tab.selectCell('bass', full); check(`bar ${full + 1} walks full: no fill line`, !q(inspector, '.ctab-bass-fill')); }
   await pick('.ctab-bass-density', 'moving');
 }
 
@@ -225,7 +273,8 @@ console.log('\n— the chords\' Close | Led');
   tab.selectCell('chords', 0);
   const vs = () => q(inspector, '.ctab-voicing-switch'), v = composed0.stats.voicing;
   check(`the chords cell: Close | Led under the head, Led on, its stats ("${q(inspector, '.ctab-voicing-stats')?.textContent}")`, !!vs() && qa(vs(), '.ctab-seg').map((b) => b.textContent).join('|') === 'Close|Led'
-    && q(vs(), '.ctab-voicing-led').classList.contains('on') && q(inspector, '.ctab-voicing-stats')?.textContent === `${v.lifted} lifted · ${v.meanMotion}¢ a chord`);
+    && q(vs(), '.ctab-voicing-led').classList.contains('on') && q(inspector, '.ctab-voicing-stats')?.textContent === `${v.lifted} lifted · ${v.meanMotion}¢ a change · loop closed`
+    && /the loop closed/.test(q(inspector, '.ctab-voicing').title) && q(inspector, '.ctab-voicing').title.includes(`the wrap back to the first chord ${v.wrap}¢ (led, as every change)`) && !/not led/.test(q(inspector, '.ctab-voicing').title));
   const cV = composes, undoV = S().undo.length;
   await click('.ctab-voicing-close');
   const close = composeAs({ voicing: 'close' });
@@ -268,12 +317,12 @@ console.log('\n— a re-compose, and the caption');
   await core.setVoicing('close');
   const plot = plotOf({ compositeRhythm: win.lrcVisuals.compositeRhythm, grid: win.lrcVisuals.grid }), final = tab.highlights({ compositeRhythm: win.lrcVisuals.compositeRhythm, grid: win.lrcVisuals.grid });
   const scene = buildScene({ trace: S().trace, plot, final }), said = (id) => scene.steps.find((x) => x.event.kind === 'part' && x.event.part === id)?.data.detail;
-  check(`the trace's caption says the bass's density and lock ("${said('bass')}")`, said('bass') === bassDetail(final.arrangement.bass) && /^moving, on the comp's strokes/.test(said('bass')));
+  check(`the trace's caption says the bass's density and lock ("${said('bass')}")`, said('bass') === bassDetail(final.arrangement.bass) && /^moving, covering the comp's strokes \(\d+ of \d+ hits/.test(said('bass')));
   check(`… and the voicing ("${said('chords')}")`, said('chords') === chordsDetail(final.arrangement) && /close/.test(said('chords')));
   await core.setVoicing('led');
   const led = buildScene({ trace: S().trace, plot, final: tab.highlights({ compositeRhythm: win.lrcVisuals.compositeRhythm, grid: win.lrcVisuals.grid }) });
   const ledSaid = led.steps.find((x) => x.event.kind === 'part' && x.event.part === 'chords')?.data.detail, vs = S().spec.stats.voicing;
-  check(`… led, with its lifts and motion ("${ledSaid}")`, ledSaid === `a voice a chord tone, led: ${vs.lifted} lifted clear of the mud limit, ${vs.meanMotion}¢ of motion a chord`);
+  check(`… led, with its lifts and motion ("${ledSaid}")`, ledSaid === `a voice a chord tone, led round the closed loop: ${vs.lifted} lifted clear of the mud limit, ${vs.meanMotion}¢ of motion a change, the wrap back to the first chord ${vs.wrap}¢`);
   const plain = highlightsOf({ spec: composed0 }, plot);
   check(`Compose's own bass in the caption: "${bassDetail(plain.arrangement.bass)}"`, bassDetail(plain.arrangement.bass) === 'sparse, landing anywhere: bar by bar against its chord');
 }

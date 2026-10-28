@@ -80,11 +80,23 @@
 //               refused — Kick with the drums off, Clave on a comp in notes — disabled, its reason its title and said
 //               under the switch), both live (the controller's setBass: one undo step; a change drops the bar picks),
 //               then the selected bar's runner-ups (up to 8, by contour and band, the one playing marked), auditioned
-//               from the next bar, kept or reverted as the lead's; Roots offers none and says so, a bar that fell back
+//               from the next bar, kept or reverted as the lead's (Roots' too, phase L); a bar that fell back
 //               says why; Details: the stats (notes a bar, rooted, on the one), each line's cost a note, notes, motion
 //   chords cell under its head, a Close | Led switch (setVoicing: live, one undo step) with the voicing's stats beside
 //               it, in the clave line's quiet style ("2 lifted · 240¢ a chord")
 //   dropped     a re-compose that can't keep a bass pick says so with the rest
+//
+// The window over Amendment 1 (BASS_VOICING_ORDER.md phase L; DESIGN_NOTES "The window over Amendment 1 (phase L)"):
+//   comp cell   the head shows the bar's own clave (a frame clave's pattern changes with the chord: claveText(clave, k);
+//               in Fill, the partner's beside it); the picker lists the frame candidates by their source ("layer A · 8
+//               steps · chord tones") and score, the pattern in Details, then the curated, each tagged "lands in frame
+//               only"; a clave read from the pattern (claveFrom 'pattern') is listed as phase E listed it
+//   bass cell   Roots' runner-ups (rule 9: the root's other in-frame notes, by the tone each plays) in the same list, with
+//               audition, Keep and Revert; a bar that walks less than full says so ("walks 6 of 8: a rest where no step
+//               fits"); under a lock the bar's hits covered, and any missed (no onset in frame) in amber; Kick and Clave
+//               COVER their hits (rule 7): every kick (or stroke) gets a note, and the density adds the rest
+//   chords cell the voicing's stats and title say the loop is closed (rule 8: the wrap led like every change)
+//   edit note   a chord swap that re-read a bar's clave says so (`reclavedBars`)
 
 import { soundChoices, drumModeChoices, DRUM_LAB_VOICES, TEMPO_LIMITS, ARP_CHOICES } from '../perform/composer-controller.js';
 import { KNOB_FIELDS, TABLE_FIELD, fieldValue, refusalText, readoutItems, knobChosen, decisionRows, rootGroups, strayRootOption, chordGot, progressionNote,
@@ -96,7 +108,8 @@ import { createComposeAnimator, paintFrame, paintShimmer, readShowWork, writeSho
 import { matrixModel, moveCell, nextStep, fieldStrip, candidateRow, lineRow, primeStrip, barsLabel, retuneRanges, barAt, qualityName, phraseSpans, compLine } from './matrix.js';
 import { createAudition } from './audition.js';
 import { MIDI_PARTS, matchPort, midiFileOf } from '../perform/composer-midi.js';
-import { claveSetText } from '../core/claves.js';   // phase E: the clave's tone set, in words
+import { claveSetText, parseFrameId } from '../core/claves.js';   // phase E: the clave's tone set, in words; phase L: a frame clave's id
+import { walkClock } from '../core/bass.js';   // phase L: Walking's clock, for "walks 6 of 8"
 import { arrangeDrums, gridOf, DRUM_VOICES, beatsOf } from '../core/drums.js';
 // MIDI targets (phase B)
 import { TARGET_SETS } from '../core/compose.js';
@@ -124,13 +137,17 @@ export const ARP_TIME_LABELS = Object.freeze({ 1: '×1', 2: '×2', 3: '×3' });
 const ARP_TIME_TITLES = Object.freeze({ 1: 'an anchor a slot: the arp mined at the bars\' own slots', 2: 'double time: two anchors a slot', 3: 'triple time: three anchors a slot' });
 /** phase H: the bass's densities and locks in the window's words, and their titles */
 export const BASS_DENSITY_LABELS = Object.freeze({ roots: 'Roots', sparse: 'Sparse', moving: 'Moving', walking: 'Walking' });
-const BASS_DENSITY_TITLES = Object.freeze({ roots: 'one note a chord, on the change', sparse: 'Compose\'s own: 20–35% of the slots', moving: 'the lead\'s mid band, two octaves down: 40–60% of the slots',
-  walking: 'every slot (8 a bar on 16-slot rows), stepwise, approaching the next chord\'s root' });
+const BASS_DENSITY_TITLES = Object.freeze({ roots: 'one note a chord, on the change (locked: a root on every hit); its runner-ups the root\'s other notes in frame', sparse: 'Compose\'s own: 20–35% of the slots', moving: 'the lead\'s mid band, two octaves down: 40–60% of the slots',
+  walking: 'every slot (8 a bar on 16-slot rows), stepwise, approaching the next chord\'s root; a bar that can\'t fill walks what it can, a rest where no step fits' });
 export const BASS_LOCK_LABELS = Object.freeze({ free: 'Free', kick: 'Kick', clave: 'Clave' });
-const BASS_LOCK_TITLES = Object.freeze({ free: 'anywhere: the miner\'s own choice', kick: 'only on onsets the kick strikes', clave: 'only on the comp\'s strokes (the clave\'s in Sync, its partner\'s in Fill)' });
-/** phase H: why a bar offers no bass lines (bass.js' `how`) */
+// phase L (rule 7): a lock COVERS its hits, and the density adds the rest
+const BASS_LOCK_TITLES = Object.freeze({ free: 'anywhere: the miner\'s own choice', kick: 'covers the kick: every kick gets a note, and the density adds the rest',
+  clave: 'covers the comp\'s strokes (the clave\'s in Sync, its partner\'s in Fill): every stroke gets a note, and the density adds the rest' });
+/** phase L: what a lock's hits are, in words (a bar's "covers 3 of 3 kicks") */
+const BASS_HIT_WORDS = Object.freeze({ kick: ['kick', 'kicks'], clave: ['stroke', 'strokes'] });
+/** phase H: why a bar offers no bass lines (bass.js' `how`; phase L: the lock covers its hits) */
 const BASS_HOW_WORDS = Object.freeze({ 'root onset': 'nothing could be mined here, so it plays the chord\'s root onset — no runner-ups',
-  'locked roots': 'nothing could be mined on the locked onsets, so it plays one of them, rooted where it can — no runner-ups', rest: 'no locked onset in this bar, so the bass rests here — no runner-ups' });
+  'locked roots': 'no line could cover every hit, so it plays a root on each hit (its chord tone where it has no root) — no runner-ups', rest: 'no hit to cover in this bar, so the bass rests here — no runner-ups' });
 /** a part's name with its mode: "Lead · arp" (B3) */
 export const partName = (id, part) => `${PART_LABELS[id]}${part?.arp ? ' · arp' : ''}`;
 /** the narrowest a matrix column gets before the matrix scrolls (px; proposed) */
@@ -397,7 +414,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (d.grid) out.push(`the drum grid was dropped: the meter moved${d.grid.was ? ` (${d.grid.was.bars} × ${d.grid.was.slotsPerBar} → ${d.grid.now.bars} × ${d.grid.now.slotsPerBar})` : ''}`);
     if (d.p) out.push(`the asked prime p = ${d.p.was} was dropped: the new meter has ${d.p.cells} cells (p must be above them)`);
     // phase E: a chosen clave the new composition doesn't offer; arp picks their re-composed phrases don't
-    if (d.clave) out.push(`the chosen clave ${d.clave.pattern} was dropped: the new composition doesn't offer it (its own clave plays)`);
+    // phase L: a frame clave is named by its source words (claves.js claveOf gives them as its `pattern`)
+    if (d.clave) out.push(`the chosen clave ${parseFrameId(d.clave.id) ? `(${d.clave.pattern}, from the frame)` : d.clave.pattern} was dropped: the new composition doesn't offer it (its own clave plays)`);
     // phase H: bass picks their re-composed bars don't offer
     if (d.bass?.length) out.push(`${d.bass.length === 1 ? 'a bass pick' : `${d.bass.length} bass picks`} (bar ${d.bass.map((x) => x.bar + 1).join(', ')}) ${d.bass.length === 1 ? 'was' : 'were'} dropped: the re-composed bar no longer offers ${d.bass.length === 1 ? 'it' : 'them'} (its best line plays)`);
     if (d.arps?.length) out.push(`${d.arps.length === 1 ? 'an arp pick' : `${d.arps.length} arp picks`} (${d.arps.map((x) => `${PART_LABELS[x.part]} phrase ${x.phrase + 1}`).join(', ')}) ${d.arps.length === 1 ? 'was' : 'were'} dropped: the re-composed phrase no longer offers ${d.arps.length === 1 ? 'it' : 'them'} (its first arp plays)`);
@@ -915,6 +933,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const parts = [];
     if (r.changedBars?.length) parts.push(`changed ${barsLabel({ from: Math.min(...r.changedBars), to: Math.max(...r.changedBars) })}`);
     if (r.retunedBars?.length) parts.push(`retunes ${retuneRanges(r.retunedBars).map(barsLabel).join(', ')}`);
+    // phase L: a chord swap re-reads the clave under the new frame (phase I, P20): the comp and the perc moved there
+    if (r.reclavedBars?.length) parts.push(`the clave re-read in ${r.reclavedBars.length === 1 ? `bar ${r.reclavedBars[0] + 1}` : `bars ${r.reclavedBars.map((k) => k + 1).join(', ')}`} (its new frame)`);
     if (r.silentCells?.length) parts.push(`${r.silentCells.length} silent cell${r.silentCells.length === 1 ? '' : 's'} (no onset there)`);
     return parts.length ? el('div', { className: 'ctab-editnote', textContent: parts.join(' · ') }) : null;
   }
@@ -928,19 +948,29 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   /** Phase H: the chords' Close | Led (live, one undo step) and, while led, the voicing's stats in the clave line's quiet style */
   function voicingRow() {
     const v = core.voicingOf(), led = v.voicing === 'led', s = v.stats, set = (x) => doEdit(() => core.setVoicing(x));
-    const sw = el('div', { className: 'ctab-arp-switch ctab-voicing-switch', title: 'Close: every chord root position, stacked from an octave under its root · Led: each tone the octave nearest the chord before' },
+    const sw = el('div', { className: 'ctab-arp-switch ctab-voicing-switch', title: 'Close: every chord root position, stacked from an octave under its root · Led: the octaves that move least round the whole loop, the last chord back to the first included' },
       button('Close', `ctab-seg ctab-voicing-close${led ? '' : ' on'}`, 'the old voicing: root position, stacked close from an octave under the root (the bar lines can lurch an octave): live, no re-compose', () => set('close')),
-      button('Led', `ctab-seg ctab-voicing-led${led ? ' on' : ''}`, 'voice-led (the default): each tone in the octave nearest the chord before, clear of the mud limit: live, no re-compose', () => set('led')));
+      button('Led', `ctab-seg ctab-voicing-led${led ? ' on' : ''}`, 'voice-led (the default): every chord\'s octaves chosen together, so the loop moves least, each change weighed the same (the last chord back to the first too), clear of the mud limit: live, no re-compose', () => set('led')));
     sw.setAttribute('role', 'group');
-    const said = led ? (s ? `${s.lifted} lifted · ${s.meanMotion}¢ a chord` : '') : 'root position';
-    return el('div', { className: 'ctab-row ctab-voicing', title: led && s ? `led: the mud limit lifted ${s.lifted} of ${s.chords} chord${s.chords === 1 ? '' : 's'}${s.muddy ? `, ${s.muddy} left muddy` : ''}; ${s.meanMotion}¢ of motion a chord (the loop's wrap ${s.wrap}¢, not led)` : 'close: the voicing before phase F' },
+    // phase L (rule 8, phase K): the loop is closed, so the motion is a change's, the wrap one of them
+    const said = led ? (s ? (s.chords > 1 ? `${s.lifted} lifted · ${s.meanMotion}¢ a change · loop closed` : `${s.lifted} lifted · one chord`) : '') : 'root position';
+    return el('div', { className: 'ctab-row ctab-voicing', title: led && s ? voicingTitle(s) : 'close: the voicing before phase F' },
       el('span', { className: 'ctab-muted', textContent: 'voicing' }), sw, said ? el('span', { className: 'ctab-muted ctab-voicing-stats', textContent: said }) : null);
+  }
+  /** phase L: the led voicing's stats in words (phase K's closed loop: the wrap led like every change) */
+  function voicingTitle(s) {
+    if (s.chords <= 1) return `led: one chord, so no wrap and nothing to lead; the mud limit lifted ${s.lifted} of 1`;
+    return `led, the loop closed: every chord's octaves chosen together, so the loop's motion is least, each change weighed the same, the last chord back to the first included; `
+      + `the mud limit lifted ${s.lifted} of ${s.chords} chords${s.muddy ? `, ${s.muddy} left muddy` : ''}; ${s.meanMotion}¢ of motion a change over the loop's ${s.chords} changes, `
+      + `${s.motion}¢ at the bar lines and the wrap back to the first chord ${s.wrap}¢ (led, as every change)`;
   }
   /**
    * Phase H: the bass's Density and Lands on (a lock refused disabled, its reason its title and said under the switch),
    * live, one undo step each (a change drops the bar picks); then bar k's runner-ups (up to 8, by contour and band, the
    * one playing marked), auditioned from the next bar, kept (one undo step: setBass's picks) or reverted as the lead's.
-   * Roots offers none and says so. Details: the stats, each line's cost a note, its notes and motion. → [elements]
+   * Phase L (Amendment 1): Roots' runner-ups in the same list (the root's other in-frame notes, named by the tone each
+   * plays); under a lock the bar's hits covered and any missed (amber); a walk that can't fill says how far it walks.
+   * Details: the stats, each line's cost a note, its notes and motion. → [elements]
    */
   function bassBlock(bar) {
     const b = core.bassOf(), set = (x) => doEdit(() => core.setBass(x));
@@ -948,7 +978,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       ...b.densities.map((d) => el('option', { value: d, textContent: BASS_DENSITY_LABELS[d], title: BASS_DENSITY_TITLES[d] })));
     density.value = b.density;
     density.addEventListener('change', () => set({ density: density.value }));
-    const lock = el('div', { className: 'ctab-arp-switch ctab-bass-lock', title: 'where the bass may land: Free anywhere · Kick only with the kick · Clave only with the comp' },
+    const lock = el('div', { className: 'ctab-arp-switch ctab-bass-lock', title: 'what the bass covers: Free nothing (it lands anywhere) · Kick every kick · Clave every comp stroke; the density adds the rest' },
       ...b.locks.map((x) => button(BASS_LOCK_LABELS[x.id], `ctab-seg ctab-bass-${x.id}${b.lock === x.id ? ' on' : ''}${x.refusal ? ' refused' : ''}`, x.refusal ?? `${BASS_LOCK_TITLES[x.id]}: live, no re-compose`, () => set({ lock: x.id }), { disabled: !!x.refusal })));
     lock.setAttribute('role', 'group');
     const out = [el('div', { className: 'ctab-row ctab-bass' }, el('span', { className: 'ctab-muted', textContent: 'density' }), density, el('span', { className: 'ctab-muted', textContent: 'lands on' }), lock)];
@@ -956,27 +986,57 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (b.refused) out.push(el('div', { className: 'ctab-muted ctab-bass-refused', textContent: `${BASS_LOCK_LABELS[b.lock]} can't land now (${b.refused}), so the bass lands anywhere` }));
     if (refusals.length) out.push(el('div', { className: 'ctab-muted ctab-bass-refusal', textContent: refusals.join(' · ') }));
     const st = b.stats;
-    if (st) out.push(el('div', { className: `ctab-muted ctab-bass-stats ${DETAIL}`, textContent: `${st.notes} note${st.notes === 1 ? '' : 's'} · ${st.perBar.toFixed(1)} a bar · ${st.rooted} of ${st.bars} rooted · ${st.onDown} on the one${st.fallback ? ` · ${st.fallback} fell back` : ''}${st.rests ? ` · ${st.rests} resting` : ''}`,
-      title: `${BASS_DENSITY_LABELS[st.density]}, ${BASS_LOCK_LABELS[st.lock]}: ${st.mined} bar${st.mined === 1 ? '' : 's'} mined${st.lockedSlots != null ? `, ${st.lockedSlots} locked slots` : ''}${st.weakTies ? `, ${st.weakTies} mined only with weak ties` : ''}` }));
+    if (st) out.push(el('div', { className: `ctab-muted ctab-bass-stats ${DETAIL}`, textContent: `${st.notes} note${st.notes === 1 ? '' : 's'} · ${st.perBar.toFixed(1)} a bar · ${st.rooted} of ${st.bars} rooted · ${st.onDown} on the one${st.fallback ? ` · ${st.fallback} fell back` : ''}${st.rests ? ` · ${st.rests} resting` : ''}`
+        + `${st.hits != null ? ` · ${st.hits - st.missedHits} of ${st.hits} hits covered` : ''}${st.walkFill ? ` · ${st.walkFill} walk${st.walkFill === 1 ? 's' : ''} what ${st.walkFill === 1 ? 'it' : 'they'} can` : ''}`,
+      title: `${BASS_DENSITY_LABELS[st.density]}, ${BASS_LOCK_LABELS[st.lock]}: ${st.mined} bar${st.mined === 1 ? '' : 's'} mined${st.hits != null ? `, ${st.hits} hit${st.hits === 1 ? '' : 's'} to cover (${st.missedHits} missed: no onset in frame)` : ''}`
+        + `${st.walkFill ? `, ${st.walkFill} bar${st.walkFill === 1 ? '' : 's'} walking less than full (${st.walkFillNotes} notes)` : ''}${st.weakTies ? `, ${st.weakTies} mined only with weak ties` : ''}` }));
     out.push(el('div', { className: `ctab-muted ${DETAIL}`, textContent: `re-mined with its chord at this density and lock: swap bar ${bar + 1}'s chord to move it` }));
-    if (b.density === 'roots') return [...out, el('div', { className: 'ctab-muted ctab-bass-none', textContent: 'Roots plays one note a chord, on the change: no runner-ups to choose from' })];
     if (b.pending) return [...out, el('div', { className: 'ctab-muted ctab-bass-none', textContent: 'the bar\'s bass lines are on their way from the worker…' })];
     const rec = b.bars?.[bar], sub = el('div', { className: 'ctab-sub ctab-bass-sub', textContent: `Bass lines · bar ${bar + 1}` });
-    if (!rec?.alternates?.length) return [...out, sub, el('div', { className: 'ctab-muted ctab-bass-none', textContent: BASS_HOW_WORDS[rec?.how] ?? 'no bass lines for this bar' })];
+    const said = [...bassHitsLine(rec, st?.lock, bar), ...bassFillLine(rec)];
+    if (!rec?.alternates?.length) return [...out, ...said, sub, el('div', { className: 'ctab-muted ctab-bass-none', textContent: BASS_HOW_WORDS[rec?.how] ?? 'no bass lines for this bar' })];
+    const roots = rec.alternates[0].band === 'roots', S = tab.state.spec.knobs.slotsPerBar;
     const rows = rec.alternates.map((x, i) => {
-      const k = `bass:${bar}:${x.id}`, trying = audition.key === k, current = x.id === rec.picked, name = `${x.contour} · ${x.band}`;
-      const btn = el('button', { className: `ctab-alt ctab-bass-alt${current ? ' current' : ''}${i === 0 ? ' composed' : ''}${trying ? ' auditioning' : ''}`,
-        title: `${i === 0 ? 'the bar\'s best line (the default)' : `ranked ${i + 1} of ${rec.alternates.length}`}: ${name}, ${x.n} note${x.n === 1 ? '' : 's'}${x.rooted ? ', opening on the root' : ''}${x.motion ? `, ${x.motion} motion` : ''}, cost ${x.perNote.toFixed(4)} a note` },
+      const k = `bass:${bar}:${x.id}`, trying = audition.key === k, current = x.id === rec.picked;
+      // phase L (rule 9): a Roots runner-up is the root's other note in frame, named by the tone it plays and its slot (two
+      // onsets of a tone in different slots are two runner-ups); the slot alone when the row is the worker's
+      const slots = x.notes.map((n) => n.slot - bar * S + 1), tones = roots ? x.notes.map((n) => core.ratioOfOnset(n.node)) : [];
+      const name = roots ? x.notes.map((n, j) => (tones[j] != null ? `${tones[j]}, slot ${slots[j]}` : `slot ${slots[j]}`)).join(' · ') : `${x.contour} · ${x.band}`;
+      const title = roots
+        ? `${i === 0 ? 'Roots\' own note (the default)' : `ranked ${i + 1} of ${rec.alternates.length}`}: ${name}, ${x.n} note${x.n === 1 ? '' : 's'} at slot ${slots.join(', ')} of the bar, ${x.distance.toFixed(2)} slot${x.distance === 1 ? '' : 's'} off the change${x.rooted ? '' : ' (not on the root\'s class)'}`
+        : `${i === 0 ? 'the bar\'s best line (the default)' : `ranked ${i + 1} of ${rec.alternates.length}`}: ${name}, ${x.n} note${x.n === 1 ? '' : 's'}${x.rooted ? ', opening on the root' : ''}${x.motion ? `, ${x.motion} motion` : ''}, cost ${x.perNote.toFixed(4)} a note`;
+      const btn = el('button', { className: `ctab-alt ctab-bass-alt${roots ? ' ctab-bass-root' : ''}${current ? ' current' : ''}${i === 0 ? ' composed' : ''}${trying ? ' auditioning' : ''}`, title },
         el('span', { className: 'ctab-alt-mark', textContent: `${current ? '●' : ''}${i === 0 ? 'C' : ''}` }), el('b', { className: 'ctab-alt-name', textContent: name }),
-        el('span', { className: `ctab-alt-ratio ${DETAIL}`, textContent: `${x.perNote.toFixed(3)}/note` }), el('span', { className: `ctab-alt-cents ${DETAIL}`, textContent: `${x.n} note${x.n === 1 ? '' : 's'}` }),
-        el('span', { className: `ctab-alt-support ${DETAIL}`, textContent: x.motion ?? '' }));
+        ...(roots
+          ? [el('span', { className: `ctab-alt-cents ${DETAIL}`, textContent: `${x.distance.toFixed(2)} off` })]
+          : [el('span', { className: `ctab-alt-ratio ${DETAIL}`, textContent: `${x.perNote.toFixed(3)}/note` }), el('span', { className: `ctab-alt-cents ${DETAIL}`, textContent: `${x.n} note${x.n === 1 ? '' : 's'}` }),
+            el('span', { className: `ctab-alt-support ${DETAIL}`, textContent: x.motion ?? '' })]));
       btn.dataset.key = k;
       btn.addEventListener('click', () => audition.tryAlt(k, () => core.pickBass(bar, x.id), name));
       return btn;
     });
-    return [...out, sub, rec.missed != null ? el('div', { className: 'ctab-muted ctab-bass-missed', textContent: 'the line picked here is gone (its chord changed): the bar\'s best plays' }) : null,
-      el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: '● plays now · C the bar\'s best · cost a note: lower is closer to the rules' }),
+    return [...out, ...said, sub, rec.missed != null ? el('div', { className: 'ctab-muted ctab-bass-missed', textContent: 'the line picked here is gone (its chord changed): the bar\'s best plays' }) : null,
+      el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: roots ? '● plays now · C Roots\' own note · the root\'s other notes in frame, nearest the change first' : '● plays now · C the bar\'s best · cost a note: lower is closer to the rules' }),
       el('div', { className: 'ctab-alts ctab-bass-alts' }, ...rows), auditionBar()].filter(Boolean);
+  }
+  /** phase L (rule 7): a locked bar's hits covered ("covers 3 of 4 kicks"), the missed ones in amber (no onset in frame
+   *  there, so the slot rests) → [element] | [] (Free, or no record) */
+  function bassHitsLine(rec, lock, bar) {
+    if (rec?.hits == null || !BASS_HIT_WORDS[lock]) return [];
+    const [one, many] = BASS_HIT_WORDS[lock], n = rec.hits, missed = rec.missedHits ?? 0, S = tab.state.spec.knobs.slotsPerBar;
+    if (!n) return [el('div', { className: 'ctab-muted ctab-bass-hits', textContent: `no ${one} in this bar: nothing to cover` })];
+    const slots = (rec.missedSlots ?? []).map((j) => +(j - bar * S + 1).toFixed(2));
+    return [el('div', { className: 'ctab-muted ctab-bass-hits', title: `the lock covers its hits (rule 7, Avery): every ${one} in this bar gets a bass note on one of its onsets in frame, and the density adds the rest` },
+      `covers ${n - missed} of ${n} ${n === 1 ? one : many}`,
+      missed ? el('span', { className: 'ctab-bass-missed-hits', textContent: ` · ${missed} missed (slot ${slots.join(', ')}): no onset in frame there, so ${missed === 1 ? 'it rests' : 'they rest'}` }) : null)];
+  }
+  /** phase L (rule 5): a walk that can't fill its clock says how far it walks ("walks 6 of 8: a rest where no step
+   *  fits") → [element] | [] */
+  function bassFillLine(rec) {
+    if (rec?.walkFill == null) return [];
+    const full = walkClock(tab.state.spec.knobs.slotsPerBar) - (rec.missedHits ?? 0);
+    return [el('div', { className: 'ctab-muted ctab-bass-fill', title: 'Walking fills what it can (rule 5, Avery): no walk sounds every slot here, so it walks the most notes it can, stepwise, still approaching the next chord\'s root' },
+      `walks ${rec.walkFill} of ${full}: a rest where no step fits`)];
   }
   /** chord u's alternates (u: its index in spec.chords; a bar's, unless a chart splits it) */
   function chordUnitContext(u, title, more = false) {
@@ -1081,10 +1141,22 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: '● plays now · C the best-ranked · cost a note: lower is closer to the rules' }),
       el('div', { className: 'ctab-alts ctab-arp-alts' }, ...rows), auditionBar()].filter(Boolean);
   }
+  /** phase L (P21): the comp cell's head shows the bar's own clave (a frame clave's pattern changes with the chord), and
+   *  in Fill the partner's bar beside it, the strokes the comp plays → an element | null (no clave: a comp in notes) */
+  function compHeadClave(bar) {
+    const c = core.claveOf();
+    if (!c) return null;
+    const own = c.barTexts[bar] ?? '', fill = c.relation === 'fill', theirs = c.partner.barTexts[bar] ?? '';
+    return el('span', { className: 'ctab-clave-bar', title: `bar ${bar + 1}'s clave: ${own}${c.frame ? ' (read from the frame: it changes with the chord)' : ''}, ${c.source || 'asked'}${fill ? `; in Fill the comp strikes its gaps, ${theirs}` : ''}` },
+      el('code', { className: 'ctab-clave-pattern ctab-clave-bar-own', textContent: own }),
+      fill ? el('span', { className: 'ctab-muted', textContent: ' fill ' }) : null, fill ? el('code', { className: 'ctab-clave-pattern ctab-clave-bar-fill', textContent: theirs }) : null);
+  }
   /**
    * Phase E: the comp's clave — its pattern (monospace, a bar a group) and its source, Sync | Fill (live, one undo
    * step), and the claves to choose from (the mined top 12, then the curated), auditioned from the next bar, kept or
    * reverted as a chord's alternates are. Details: the score and its terms, the tone set, the partner Fill strikes.
+   * Phase L: a frame candidate is listed by its source and score (its bars' patterns in Details), a curated clave read in
+   * frame tagged "lands in frame only"; a clave from the pattern (claveFrom 'pattern') as phase E listed it.
    * → [elements] (none for a composition in notes)
    */
   function claveBlock() {
@@ -1101,17 +1173,29 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const t = c.terms ?? {};
     const detail = el('div', { className: `ctab-muted ctab-clave-detail ${DETAIL}`, textContent: `score ${c.score.toFixed(3)} (recurrence ${t.held?.toFixed(2)}, density ${t.density?.toFixed(2)}, fit ${t.fit?.toFixed(2)})${c.from?.set ? ` · under ${claveSetText(c.from.set)}` : ''} · Fill strikes ${c.partner.text} (${c.partner.source})` });
     const key = (x) => `clave:${x.id}`;
+    const terms = (x) => `score ${x.score.toFixed(3)} (recurrence ${x.terms.held.toFixed(2)}, density ${x.terms.density.toFixed(2)}, fit ${x.terms.fit.toFixed(2)})`;
     const rows = c.alternates.map((x) => {
-      const k = key(x), trying = audition.key === k;
-      const b = el('button', { className: `ctab-alt ctab-clave-alt${x.current ? ' current' : ''}${x.composed ? ' composed' : ''}${x.curated ? ' curated' : ''}${trying ? ' auditioning' : ''}`,
-        title: `${x.text}: ${x.source}${x.curated ? ' (curated)' : ''}; score ${x.score.toFixed(3)} (recurrence ${x.terms.held.toFixed(2)}, density ${x.terms.density.toFixed(2)}, fit ${x.terms.fit.toFixed(2)})${x.bars ? `, held by ${x.bars} bar${x.bars === 1 ? '' : 's'} of the table` : ''}` },
-        el('span', { className: 'ctab-alt-mark', textContent: `${x.current ? '●' : ''}${x.composed ? 'C' : ''}` }), el('code', { className: 'ctab-alt-name ctab-clave-pattern', textContent: x.text }),
-        el('span', { className: 'ctab-alt-q', textContent: x.source }), el('span', { className: `ctab-alt-support ${DETAIL}`, textContent: x.score.toFixed(3) }));
+      const k = key(x), trying = audition.key === k, mark = el('span', { className: 'ctab-alt-mark', textContent: `${x.current ? '●' : ''}${x.composed ? 'C' : ''}` });
+      const cls = `ctab-alt ctab-clave-alt${x.current ? ' current' : ''}${x.composed ? ' composed' : ''}${x.curated ? ' curated' : ''}${x.frame ? ' frame' : ''}${trying ? ' auditioning' : ''}`;
+      let b;
+      if (x.frame) {
+        // phase L (P21): a frame candidate by its source and score; each bar's pattern (it changes with the chord) in Details
+        b = el('button', { className: cls, title: `${x.source}: read from the frame, each bar's own pattern ${x.text}; ${terms(x)}` },
+          mark, el('b', { className: 'ctab-alt-name ctab-clave-name', textContent: x.source }), el('span', { className: 'ctab-alt-q ctab-clave-score', textContent: x.score.toFixed(3) }),
+          el('code', { className: `ctab-alt-support ctab-clave-pattern ${DETAIL}`, textContent: x.text }));
+      } else {
+        // a curated clave read in frame keeps its fixed steps, each landed on an in-frame onset (P18): tagged so
+        b = el('button', { className: cls, title: `${x.text}: ${x.label}${x.curated ? ' (curated)' : ''}${x.inFrame ? ', its fixed steps landed on in-frame onsets only (a step with none is silent); scored as a fixed pattern, so it comes after the frame\'s claves' : ''}; ${terms(x)}${x.bars ? `, held by ${x.bars} bar${x.bars === 1 ? '' : 's'} of the table` : ''}` },
+          mark, el('code', { className: 'ctab-alt-name ctab-clave-pattern', textContent: x.text }), el('span', { className: 'ctab-alt-q', textContent: x.inFrame ? x.label : x.source }),
+          x.inFrame ? el('span', { className: 'ctab-tag ctab-clave-inframe', textContent: 'lands in frame only' }) : null, el('span', { className: `ctab-alt-support ${DETAIL}`, textContent: x.score.toFixed(3) }));
+      }
       b.dataset.key = k;
-      b.addEventListener('click', () => audition.tryAlt(k, () => core.setClave({ id: x.id }), x.text));
+      b.addEventListener('click', () => audition.tryAlt(k, () => core.setClave({ id: x.id }), x.frame ? x.source : x.text));
       return b;
     });
-    return [line, detail, rows.length ? el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: '● plays now · C Compose\'s · the mined claves ranked, then the curated · score: recurrence, density, fit' }) : null,
+    const legend = c.read === 'frame' ? '● plays now · C Compose\'s · the frame\'s claves by score (a layer\'s strikes in frame, each bar its own pattern), then the curated, landed in frame only · score: recurrence, density, fit'
+      : '● plays now · C Compose\'s · the mined claves ranked, then the curated · score: recurrence, density, fit';
+    return [line, detail, rows.length ? el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: legend }) : null,
       rows.length ? el('div', { className: 'ctab-alts ctab-clave-alts' }, ...rows) : null, rows.length ? auditionBar() : null].filter(Boolean);
   }
   function leadContext(bar) {
@@ -1151,9 +1235,10 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const composedNotes = (tab.state.composed?.parts?.find((p) => p.id === id)?.notes ?? []).filter((n) => n.bar === bar);
     const edited = notes.map((n) => `${n.slot}:${n.node}:${n.octave}`).join() !== composedNotes.map((n) => `${n.slot}:${n.node}:${n.octave}`).join();
     const arp = !!part?.arp;   // B3: an inner in Arp
-    // phase H: an arranged bass's tag says its density (and its lock, when it lands on one)
-    const arranged = id === 'bass' && part?.bass ? `${part.bass.density}${part.bass.stats.lock !== 'free' ? ` · on the ${part.bass.stats.lock}` : ''}` : null;
-    const head = ctxHead(`Bar ${bar + 1} · ${PART_LABELS[id]}`, arp ? el('span', { className: 'ctab-tag', textContent: 'arp' }) : arranged ? el('span', { className: 'ctab-tag', textContent: arranged }) : edited ? el('span', { className: 'ctab-tag', textContent: 're-mined' }) : null);
+    // phase H: an arranged bass's tag says its density (and its lock, when it covers one: phase L, rule 7)
+    const arranged = id === 'bass' && part?.bass ? `${part.bass.density}${part.bass.stats.lock !== 'free' ? ` · covers the ${part.bass.stats.lock === 'kick' ? 'kick' : 'clave'}` : ''}` : null;
+    const head = ctxHead(`Bar ${bar + 1} · ${PART_LABELS[id]}`, arp ? el('span', { className: 'ctab-tag', textContent: 'arp' }) : arranged ? el('span', { className: 'ctab-tag', textContent: arranged }) : edited ? el('span', { className: 'ctab-tag', textContent: 're-mined' }) : null,
+      id === 'comp' ? compHeadClave(bar) : null);
     const follows = el('div', { className: 'ctab-row' }, el('span', {}, ch.empty ? `bar ${bar + 1} has no chord: it plays its root's onset` : `follows bar ${bar + 1}'s chord: ${ch.name}`,
       ch.empty ? null : el('span', { className: DETAIL, textContent: ` (root ${ch.rootTone}, ${qualityName(ch.quality)})` })),
       button('the chord ▸', 'ctab-btn ctab-ctx-action', `select bar ${bar + 1}'s chord: swapping it re-mines this part's bar`, () => tab.selectCell('chords', bar)));

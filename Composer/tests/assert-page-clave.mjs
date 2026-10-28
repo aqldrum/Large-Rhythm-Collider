@@ -12,16 +12,21 @@
 //   • a re-compose keeps the choice where the composition still offers it, drops one it doesn't ("Compose dropped")
 //   • the glyph's recall plays the chosen clave with no Compose; the Compose animation's caption names the clave
 //   • a composition in notes has no clave (claveOf null, setClave refused); a big row's switch in the worker
+//   • phase L (BASS_VOICING_ORDER.md Amendment 1): the frame clave (the default, unpinned) on 768:769 — the picker by
+//     source and score, the curated "lands in frame only"; the comp head's bar pattern (claveText(clave, k)) and in Fill
+//     the partner's; a frame clave picked by id (setClave, claveOf), equal to a Compose given it; a chord swap that
+//     re-reads a bar's clave said in the edit note, the comp head and the perc following; "Compose dropped" naming a
+//     frame clave by its source; the caption
 //   node Composer/tests/assert-page-clave.mjs
 import { makeDom, installGlobals } from './dom-stub.mjs';
 import { siteRhythm } from './site-scripts.mjs';
 import { compose } from '../core/compose.js';
 import { answer } from '../core/compose-worker.js';
-import { claveText, claveSource } from '../core/claves.js';
+import { claveText, claveSource, parseFrameId } from '../core/claves.js';
 import { materialsOf, rearrange, applyRearrange, reclave } from '../core/rearrange.js';
 import { arrangeDrums } from '../core/drums.js';
 import { plotOf, indexOfTick, highlightsOf } from '../page/plot-highlights.js';
-import { buildScene, frameAt } from '../page/trace-frames.js';
+import { buildScene, frameAt, compDetail } from '../page/trace-frames.js';
 import { createComposerController } from '../perform/composer-controller.js';
 import { newCompositionState } from '../store/composition-store.js';
 
@@ -68,7 +73,8 @@ const audio = makeCtx();
 let composes = 0, rearranges = 0;
 // the clave from the pattern (BASS_VOICING_ORDER.md P19): this suite freezes the window over the clave before phase I, as
 // `voicing: 'close'` pinned phase F's; the frame clave's own checks are assert-frame-clave.mjs (the window's, phase L)
-const PIN = Object.freeze({ claveFrom: 'pattern' });
+// phase L: the last section lifts the pin (the frame clave, Compose's default) for the window's frame checks
+let PIN = Object.freeze({ claveFrom: 'pattern' });
 const runCompose = async (l, T, o) => { composes++; return compose(l, T, { ...o, overrides: { ...(o?.overrides ?? {}), ...PIN } }); };
 runCompose.rearrange = (job) => { rearranges++; return new Promise((resolve) => setTimeout(() => resolve(answer({ id: 1, kind: 'rearrange', ...job }).result), 1)); };
 runCompose.arp = (job) => Promise.resolve(answer({ id: 1, kind: 'arp', ...job }).result);
@@ -239,6 +245,93 @@ console.log('\n— no clave in notes; a big row\'s switch in the worker');
   const r0 = rearranges, ra = await a.c.setClave({ id: 'bossa', relation: 'fill' }), rb = await b.c.setClave({ id: 'bossa', relation: 'fill' });
   check(`past mainThreadOnsets the switch goes to the worker (${rearranges - r0} job), the same comp, clave and drums as on this thread`, ra.ok && rb.ok && rearranges - r0 === 1
     && J(a.s.spec.parts.find((p) => p.id === 'comp')) === J(b.s.spec.parts.find((p) => p.id === 'comp')) && J(a.s.spec.clave) === J(b.s.spec.clave) && J(a.s.drums) === J(b.s.drums) && a.s.spec.clave.id === 'bossa');
+}
+
+console.log('\n— phase L: the frame clave in the window (768:769, unpinned)');
+{
+  PIN = Object.freeze({});
+  const FL = [768, 769];
+  setRhythm(FL, T);
+  q(left, '.ctab-go').click(); await settle();
+  const sp = S().composed, c = sp.clave, evF = S().trace.events.find((e) => e.kind === 'part' && e.part === 'comp');
+  check(`composed ${FL.join(':')} from the frame: ${c.id} (${claveSource(c)}), each bar its own pattern (${claveText(c)})`, S().status === 'ready' && c.read === 'frame' && !!parseFrameId(c.id) && core.claveOf().frame && core.claveOf().read === 'frame'
+    && new Set(c.patterns).size > 1);
+  tab.selectCell('comp', 0);
+  const frames = rows().filter((b) => b.classList.contains('frame')), curated = rows().filter((b) => b.classList.contains('curated'));
+  const fAlts = evF.alternates.filter((a) => a.from.frame), cAlts = evF.alternates.filter((a) => a.from.pattern);
+  check(`the picker: ${frames.length} frame claves by source and score (the source the name, the score in the clean view, each bar's pattern in Details), in the trace's order`, frames.length === fAlts.length && frames.length > 0
+    && frames.every((b, i) => b.dataset.key === `clave:${fAlts[i].id}` && q(b, '.ctab-clave-name').textContent === claveSource(fAlts[i]) && q(b, '.ctab-clave-score').textContent === fAlts[i].score.toFixed(3) && !q(b, '.ctab-clave-score').classList.contains('ctab-detail')
+      && q(b, '.ctab-clave-pattern').classList.contains('ctab-detail') && q(b, '.ctab-clave-pattern').textContent === claveText(fAlts[i]))
+    && q(rowOf(c.id), '.ctab-alt-mark').textContent === '●C');
+  check(`… then the ${curated.length} curated, each tagged "lands in frame only", named without "· in frame"`, curated.length === 3 && J(curated.map((b) => b.dataset.key)) === J(cAlts.map((a) => `clave:${a.id}`)) && rows().slice(-3).every((b) => b.classList.contains('curated'))
+    && curated.every((b) => q(b, '.ctab-clave-inframe')?.textContent === 'lands in frame only' && !/in frame$/.test(q(b, '.ctab-alt-q').textContent)) && q(rowOf('son'), '.ctab-alt-q').textContent === 'son clave 3-2');
+  check(`the legend says the frame's claves (Details)`, /the frame's claves by score/.test(q(inspector, '.ctab-legend')?.textContent ?? ''));
+  const headOf = () => q(inspector, '.ctab-ctx-head .ctab-clave-bar-own')?.textContent;
+  const bars = [];
+  for (let k = 0; k < sp.knobs.bars; k++) { tab.selectCell('comp', k); bars.push(headOf()); }
+  check(`the comp head shows the bar's own clave (${bars.join(' | ')}), claveText(clave, k), not one pattern for the whole clave`, bars.every((t, k) => t === claveText(c, k)) && new Set(bars).size > 1);
+  await click('.ctab-clave-fill');
+  tab.selectCell('comp', 1);
+  check(`Fill: the head adds the partner's bar ("${q(inspector, '.ctab-clave-bar-fill')?.textContent}")`, q(inspector, '.ctab-clave-bar-fill')?.textContent === claveText(S().spec.clave.partner, 1) && headOf() === claveText(S().spec.clave, 1));
+  await click('.ctab-clave-sync');
+
+  // a frame candidate picked from the list, by its id
+  const other = fAlts.find((a) => a.id !== c.id);
+  rowOf(other.id).click(); await settle(); rowOf(other.id).click(); await settle();
+  const want = compose(FL, T, { seed: S().input.seed, overrides: { clave: other.id }, worker: S().table === 'full' });
+  check(`a frame clave kept from the list (${other.id}): setClave took its id, claveOf reads it, equal to a Compose given it`, !core.auditioning() && S().spec.clave.id === other.id && core.claveOf().id === other.id && J(S().edits.clave) === J({ id: other.id })
+    && J(partOf('comp')) === J(partOf('comp', want)) && J(S().spec.clave) === J(want.clave) && J(percTicks()) === J(want.clave.strokes.map((x) => x.tick)));
+  tab.selectCell('comp', 2);
+  check('… the head shows its bar', headOf() === claveText(S().spec.clave, 2));
+  await core.undo();
+  check('undo: Compose\'s frame clave again', S().spec.clave.id === c.id && S().edits.clave === null);
+
+  // a chord swap that re-reads a bar's clave (phase I, P20): said, the comp and the perc following
+  const m = materialsOf(S().composed);
+  let swap = null;
+  for (let k = 0; k < sp.knobs.bars && !swap; k++) for (const cand of core.alternatesOf(k, 'chords')?.candidates ?? []) {
+    if (cand.current) continue;
+    const r = rearrange(S().spec, m.row, m.cells, { bar: k, chord: { rootTone: cand.root.ratio, quality: cand.quality } });
+    if (r.reclavedBars?.length) { swap = { k, cand, r }; break; }
+  }
+  check(`found a swap that re-reads a clave (bar ${swap ? swap.k + 1 : '?'})`, !!swap);
+  if (swap) {
+    tab.selectCell('chords', swap.k);
+    const key = `chord:${swap.k}:${swap.cand.root.ratio}:${swap.cand.quality}`, btn = [...qa(inspector, '.ctab-alt')].find((b) => b.dataset.key === key);
+    btn.click(); await settle();
+    const res = [...qa(inspector, '.ctab-editnote')].map((e) => e.textContent).join(' ');
+    check(`auditioning it: the clave re-read in bar ${swap.k + 1}, the edit note says so ("${res}")`, core.auditioning() && J(S().spec.clave) === J(applyRearrange(S().composed, swap.r).clave)
+      && res.includes(`the clave re-read in bar${swap.r.reclavedBars.length === 1 ? '' : 's'} ${swap.r.reclavedBars.map((b) => b + 1).join(', ')}`));
+    tab.selectCell('comp', swap.r.reclavedBars[0]);
+    check(`… the comp head and the perc follow the new bar ("${headOf()}")`, headOf() === claveText(S().spec.clave, swap.r.reclavedBars[0]) && J(percTicks()) === J(S().spec.clave.strokes.map((x) => x.tick))
+      && /the clave re-read/.test(q(inspector, '.ctab-editnote')?.textContent ?? ''));
+    await click('.ctab-revert');
+    check('Revert: the composed clave', S().spec.clave === S().composed.clave || J(S().spec.clave) === J(S().composed.clave));
+    const got = await core.swapChord(swap.k, swap.cand);
+    check(`the controller's result carries reclavedBars (${J(got.reclavedBars)}), each among its changedBars (the comp and the perc moved there)`, got.ok && J(got.reclavedBars) === J(swap.r.reclavedBars) && got.reclavedBars.every((b) => got.changedBars.includes(b)));
+    const again = await core.setClave({ relation: 'fill' });
+    check('… a later edit (the cached swap not run again) says no re-read', again.ok && again.reclavedBars === undefined);
+    await core.undo(); await core.undo();
+    check('two undos: the composed chords and clave', S().edits.clave === null && J(S().spec.chords) === J(S().composed.chords));
+  }
+
+  // a frame clave the new composition doesn't offer: "Compose dropped" names it by its source
+  const offered = new Set(evF.alternates.map((a) => a.id)), letter = c.from.name;
+  let gone = null;
+  for (const set of ['chord', 'frame']) for (let n = 3; n <= 16 && !gone; n++) { const id = `frame:${letter}/${n}/${set}`; if (!offered.has(id)) gone = id; }
+  const r = await core.setClave({ id: gone });
+  check(`a frame clave set by id though the list doesn't offer it (${gone}): it plays, said by its source`, r.ok && S().spec.clave.id === gone && core.claveOf().asked && core.claveOf().source === claveSource(S().spec.clave) && /^layer /.test(core.claveOf().source));
+  core.setSeed(S().input.seed);
+  q(left, '.ctab-go').click(); await settle();
+  const words = claveSource({ from: { frame: true, name: parseFrameId(gone).name, grain: parseFrameId(gone).grain, set: parseFrameId(gone).set } });
+  check(`Compose again: dropped, and "Compose dropped" names it by its source ("${q(left, '.ctab-dropped').textContent}")`, S().dropped?.clave?.id === gone && S().spec.clave.id === S().composed.clave.id
+    && q(left, '.ctab-dropped').textContent.includes(`the chosen clave (${words}, from the frame) was dropped`));
+
+  // the caption
+  const plot = plotOf({ compositeRhythm: win.lrcVisuals.compositeRhythm, grid: win.lrcVisuals.grid });
+  const scene = buildScene({ trace: S().trace, plot, final: tab.highlights(plotted()) }), said = scene.steps.find((x) => x.event.kind === 'part' && x.event.part === 'comp')?.data.detail;
+  check(`the comp's caption reads the frame ("${said}")`, said === compDetail(scene.steps.find((x) => x.event.kind === 'part' && x.event.part === 'comp').event)
+    && said.startsWith(`the clave from the frame, ${claveSource(S().composed.clave)} (${claveText(S().composed.clave)})`) && /every one in frame/.test(said));
 }
 
 bridge.hideTab();

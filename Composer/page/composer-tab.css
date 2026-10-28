@@ -275,6 +275,15 @@
 .ctab-bass-refused, .ctab-bass-missed { color: #ffb347; font-size: 10px; }
 .ctab-bass-refusal, .ctab-voicing-stats { font-size: 10px; }
 .ctab-bass-sub { margin-top: 4px; }
+/* phase L (BASS_VOICING_ORDER.md Amendment 1): the comp head's bar clave, the frame claves by source, a lock's hits
+   covered (the missed in amber), a walk's fill */
+.ctab-clave-bar { margin-left: 6px; font-size: 10px; }
+.ctab-clave-bar .ctab-clave-pattern { font-size: 11px; }
+.ctab-clave-name { font-size: 10px; }
+.ctab-clave-score { color: #00ff88; }
+.ctab-inspector .ctab-alt.ctab-clave-alt .ctab-clave-inframe { margin-left: 4px; }
+.ctab-bass-hits, .ctab-bass-fill { font-size: 10px; }
+.ctab-bass-missed-hits { color: #ffb347; }
 .ctab-clip-notes tr.fringe .ctab-clip-kind, .ctab-clip-notes tr.shift .ctab-clip-kind, .ctab-clip-notes tr.late td:last-child { color: #ffb347; }
 .ctab-clip-notes tr.hard td { color: #ff6b6b; }
 .ctab-clip-tag { color: #fff; border-color: #555; }
