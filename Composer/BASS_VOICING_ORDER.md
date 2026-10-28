@@ -165,3 +165,17 @@ F and G can run in parallel: F touches the chord voices, the comp's octaves and 
 ## Log
 
 - 2026-10-27: probe and rulings 1–4 (Avery). Order written; not yet committed or started.
+- 2026-10-28: phase G (bass densities and the lock) merged 9c3d36a; phase F (voice-led chords) merged 29a987c; 81/0.
+  The planner capped the mud limit at 16/15's 213 Hz (88764e1): uncapped, 768:769's first third (191/152, limit 400 Hz)
+  lifted the chords to 722 Hz, over the lead's median of about 539 Hz; capped, they open at 361 Hz. Avery may overrule.
+  Open for Avery (from the builders):
+  - Walking that can't fill a slot (only foreign tones on a strong slot or at the end: 768:769 bars 1 and 3, 11:9:7:5
+    bar 1) falls back to one root onset. Retry as a walk with rests (the arp's few-rests band, 60–95 %, `maxGap` 2)?
+  - Roots offers its one line only. Offer the chord's other root-class onsets as runner-ups?
+  - Clave on fringe-heavy rows (768:769, the 16k row): the strokes are mostly fringe tones no line may end on, so those
+    bars play Roots at the lock, the stroke's own tone, fringe or not. Rest instead?
+  - Kick with a backbeat (two kicks a bar) makes Sparse and Moving one note a bar, close to Roots. Intended?
+  - The Clave lock rarely lands on the downbeat on the test rows (the strokes fall off the one): expected from the rule.
+  - The loop's wrap is as large as a bar line's motion on some rows (11:9:7:5 680¢, 119:42:15:8 610¢). Close it?
+  - 11:9:7:5 moves 782¢, not the nearest-octave 284¢: its second chord's least-motion voicing has a muddy 14/11 at
+    159 Hz (limit 196 Hz). P1 as written.
