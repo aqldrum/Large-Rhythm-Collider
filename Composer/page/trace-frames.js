@@ -21,7 +21,8 @@
 //   chords     per bar, the candidates flick through on their root onsets (and in the lane), then the pick lands and
 //              its chord tones light
 //   settle     changed bars flash; the held lead is tested against a newly mined one, and re-drawn when it loses
-//   parts      each part's notes cascade in, in its colour
+//   parts      each part's notes cascade in, in its colour (the chords' caption says their voicing, the bass's its
+//              density and lock: BASS_VOICING_ORDER.md H3)
 //   drums      strokes drop in, bar by bar
 
 import { traceTimeline, capTrace, TRACE_CAPS } from '../core/trace.js';
@@ -34,6 +35,21 @@ function compDetail(event) {
   if (!c) return `on layer ${event.layer} (${event.value}), the best of ${event.candidates.length} layers`;
   const fill = c.relation === 'fill' && event.partner, n = fill ? event.partner.strokes - (event.partner.shared ?? 0) : c.strokes;
   return `the clave ${claveText(c)} (${claveSource(c) || 'asked'}${event.asked && c.from?.asked !== true ? ', asked' : ''}): ${n} stroke${n === 1 ? '' : 's'}${fill ? `, in its gaps (${event.partner.pattern})` : ''}`;
+}
+
+/** phase H: the bass's densities and locks in the caption's words */
+export const BASS_DENSITY_WORDS = Object.freeze({ roots: 'roots, one note a chord', sparse: 'sparse', moving: 'moving', walking: 'walking' });
+export const BASS_LOCK_WORDS = Object.freeze({ free: 'landing anywhere', kick: 'on the kick', clave: 'on the comp\'s strokes' });
+/** the bass part's caption (BASS_VOICING_ORDER.md H3): its density and lock as it plays (a lock refused: why, and Free) */
+export function bassDetail(bass) {
+  const b = bass ?? { density: 'sparse', lock: 'free', asked: 'free', refused: null };
+  return `${BASS_DENSITY_WORDS[b.density] ?? b.density}, ${b.refused ? `${b.asked} refused (${b.refused}), so ${BASS_LOCK_WORDS.free}` : BASS_LOCK_WORDS[b.lock] ?? b.lock}: bar by bar against its chord`;
+}
+/** the chords part's caption (H3): the voicing, and while led how many chords the mud limit lifted and the motion a chord */
+export function chordsDetail(arrangement) {
+  const v = arrangement?.voicingStats;
+  if (arrangement?.voicing === 'close') return 'a voice a chord tone, close: root position from an octave under the root';
+  return `a voice a chord tone, led${v ? `: ${v.lifted} lifted clear of the mud limit, ${v.meanMotion}¢ of motion a chord` : ''}`;
 }
 
 export const TRACE_FRAMES_VERSION = 'composer-trace-frames-v1';
@@ -204,8 +220,9 @@ export function buildScene({ trace: given, plot, final, timeline = null } = {}) 
       case 'part': {
         const h = final.parts[event.part];
         data.part = event.part; data.notes = h ? h.notes : [];
-        data.detail = event.part === 'comp' ? compDetail(event) : event.part === 'bass' ? `mined bar by bar from the root`
-          : event.part === 'inner' ? 'in the lead\'s gaps' : event.part === 'chords' ? 'a voice a chord tone' : `the kept line${(event.phrases || []).length === 1 ? '' : 's'}`;
+        // phase H: the bass's density and lock and the chords' voicing as they play (final's arrangement), not as Compose made them
+        data.detail = event.part === 'comp' ? compDetail(event) : event.part === 'bass' ? bassDetail(final.arrangement?.bass)
+          : event.part === 'inner' ? 'in the lead\'s gaps' : event.part === 'chords' ? chordsDetail(final.arrangement) : `the kept line${(event.phrases || []).length === 1 ? '' : 's'}`;
         if (h) state.landed[event.part] = true;
         if (event.part === 'lead') state.leads = {};
         if (event.part === 'chords') state.picks = {};
