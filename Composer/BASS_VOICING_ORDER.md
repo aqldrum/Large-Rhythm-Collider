@@ -361,3 +361,21 @@ Everything below is live: no button should go back to Compose, and the header's 
   and Clave; the loop's wrap led like every change; Roots offers the root's other in-frame notes). Probe and Amendment 1
   (P16–P25, phases I ∥ J ∥ K, then L) written; not yet committed or started. Still unruled: a density or lock change at
   the barline, "Bass · walking" on the strip, a stale pick after a chord swap, 11:9:7:5's 782¢.
+- 2026-10-28: Amendment 1 committed c009aaa. Phase J (bass/fills) merged 5c0d5e5, phase K (voicing/loop) merged 74e6b22,
+  phase I (clave/frame) merged b474832; 83/0 (`assert-frame-clave.mjs` new). Merged, the bass's Clave lock covers every
+  frame stroke on the probe rows (768:769: 10 of 10, from 1 of 8). The loop closed: 11:9:7:5's 782¢ is now 284¢ at the
+  bar line and the wrap; 119:42:15:8's wrap 610 → 112¢; the 16k row sits about 500¢ higher. Builders' calls beyond the
+  order are in DESIGN_NOTES (phases I, J, K). Open for Avery (from the builders):
+  - Frame clave: rows whose every tone is in tune read near-pulses (16:12:9's best scores 0.375, 15 strokes in 2 bars).
+    Give way under a floor (say 0.5) to the pattern clave, or to a curated one landed in frame?
+  - A Fill partner can leave a bar empty (19:17:16:15 bar 2 plays its root onset). Require a stroke in every bar?
+  - Dense-row ties (the 16k row: 4 candidates at 0.656, the seed picks): prefer the chord set, or the straighter grain?
+  - A missed hit's slot rests outright; or may the density put an extra on that slot's other onsets?
+  - A mined hit sounds on its 12 nearest in-frame onsets (the budget); Roots reads all of them.
+  - A locked bar with no hit uses the covering band (Sparse 2–3 of 8, Free's 2–2): a lock can change a bar with no kick.
+  - On Walking's halved clock, two kicks in neighbouring 16ths are one hit.
+  - The loop's ties go to the cycle nearest the anchor (the order said "lower centre", which sank whole loops 400¢ and
+    undid the mud cap on 768:769). Keep?
+  - The 16k row rises about 500¢ under the closed loop. Should the anchor pull harder (a cost a cent off its centre)?
+  - `meanMotion` now averages the loop's changes, the wrap included.
+  Phase L (the window) next.
