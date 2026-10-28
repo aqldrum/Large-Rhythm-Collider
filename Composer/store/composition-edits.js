@@ -3,7 +3,8 @@
 // through core/rearrange.js and keeps the derived spec; this module only reads and writes the records an entry holds.
 //
 //   orderedEdits(edits) → [{ kind: 'chord', bar, rootTone, quality, from, asked? } | { kind: 'lead', phrase, lineId,
-//                         chordsFollow, smooth? }] in the order they apply (edits.order)
+//                         chordsFollow, smooth? } | { kind: 'clave', id?, relation? }] in the order they apply
+//                         (edits.order; the clave choice, phase E, always last)
 //   setChordEdit / removeChordEdit / setLeadEdit / removeLeadEdit (edits, …)   the records and their order kept in step
 //   hasEdits(state), snapshotOf(state), restoreSnapshot(state, snap), pushUndo(state, snap)   (a snapshot holds the
 //                       edits, the field, the pins, the drum mode and grid, and (B2) the Arp modes)
@@ -26,7 +27,7 @@ const copy = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
 export const chordKey = (bar) => `chord:${bar}`;
 export const leadKey = (phrase) => `lead:${phrase}`;
 
-/** the edits in the order they apply */
+/** the edits in the order they apply; the clave choice last (phase E: it re-strums every bar over the chords as edited) */
 export function orderedEdits(edits) {
   const out = [];
   for (const key of edits?.order ?? []) {
@@ -34,6 +35,7 @@ export function orderedEdits(edits) {
     if (kind === 'chord' && edits.chords[n]) out.push({ kind, bar: n, ...edits.chords[n] });
     else if (kind === 'lead' && edits.lead[n]) out.push({ kind, phrase: n, ...edits.lead[n] });
   }
+  if (edits?.clave) out.push({ kind: 'clave', ...edits.clave });
   return out;
 }
 const moveToEnd = (edits, key) => { edits.order = [...edits.order.filter((k) => k !== key), key]; };
@@ -45,8 +47,8 @@ export function removeLeadEdit(edits, phrase) { if (!(phrase in edits.lead)) ret
 /** are two records the same (key order aside)? */
 export const sameRecord = (a, b) => !!a && !!b && Object.keys(a).length === Object.keys(b).length && Object.keys(a).every((k) => a[k] === b[k]);
 
-/** does the entry hold a chord or lead edit (the drum grid is apart: it lives in drumOptions) */
-export const hasEdits = (state) => !!state?.edits && state.edits.order.length > 0;
+/** does the entry hold a chord, lead or clave edit (the drum grid is apart: it lives in drumOptions) */
+export const hasEdits = (state) => !!state?.edits && (state.edits.order.length > 0 || !!state.edits.clave);
 
 /** what an undo step restores: the edits, the field, the pins, the drum mode and grid, (B2) the Arp modes */
 export function snapshotOf(state) {

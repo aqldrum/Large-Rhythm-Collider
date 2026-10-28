@@ -100,6 +100,19 @@
 //              is the clip (arpRefusal): its Arp is refused, and setting a clip puts the lead back in Line (proposed).
 //              An inner in Arp sounds the harp (INNER_ARP_SOUND, Q4) unless a sound was chosen for it: a part's sound
 //              carries through a rebuild only where it differs from the spec's own.
+//              Phase E (COMP_ARP_ORDER.md Amendment 1): pickArp(part, phrase, id) plays one of a phrase's ranked arps (its
+//              first again removes the pick), one undo step through setArp, and auditionable as the runner-ups are; a
+//              change of Time drops the part's picks (they are keyed by the phrase at a time; one undo step restores
+//              both); a re-compose keeps the picks its phrases still offer and says the rest (`state.dropped.arps`).
+//   clave      (COMP_ARP_ORDER.md Amendment 1, phase E; DESIGN_NOTES "The clave and arp pickers") the comp's clave and
+//              Sync | Fill, live (rearrange.js `reclave`: no re-compose):
+//                setClave({ id ('steps:pattern' | 'son' | 'rumba' | 'bossa' | null: Compose's), relation ('sync' | 'fill') })
+//                claveOf() → { id, text, source, relation, partner, alternates (the trace's: the mined top 12, then
+//                            the curated; each current / composed), composedId, edit, … } | null (no clave: notes)
+//              The choice is an edit (`state.edits.clave`, only what differs from Compose's): one undo step, in the
+//              snapshots, applied LAST in the fold (every bar re-strummed over its chord as edited), auditionable. A
+//              re-compose keeps it where the new composition still offers the clave (its trace's alternates), else
+//              drops it and says so (`state.dropped.clave`); Sync | Fill is always kept.
 
 import { compose, rearticulate, chooseMeter, PART_IDS, TARGET_SETS } from '../core/compose.js';
 import { arrangeArp, arpRefusal, arpTimes, ARP_PARTS, ARP_TIMES, ARP_DEFAULTS } from '../core/arp.js';   // B2: the Arp mode (phase D: mined)
@@ -119,6 +132,7 @@ import { phrasesOf, isStrongBeat } from '../core/harmony.js';
 // MIDI targets (phase B)
 import { readMidi, decodeClip } from '../core/midi.js';
 import { onsetCount } from '../core/row.js';
+import { claveOf as readClave, claveText, claveSource, COMP_RELATIONS } from '../core/claves.js';   // phase E: the clave picker
 import { orderedEdits, setChordEdit, removeChordEdit, setLeadEdit, removeLeadEdit, sameRecord, hasEdits, snapshotOf, restoreSnapshot, pushUndo, pinOf, asksOf,
   rewriteToken, rewriteChart, chordAlternates, leadAlternates, leadAlternatesOf, phraseOfBar } from '../store/composition-edits.js';
 
@@ -321,10 +335,13 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     if (!runRearrange) return false;
     if (e.kind === 'lead' && e.smooth) return true;
     const n = st.composed.stats.onsets;
+    if (e.kind === 'clave') return n > mainThreadOnsets;
     return n > mainThreadOnsets || (e.kind === 'lead' && st.composed.knobs.table === 'full' && n > leadFullOnsets);
   }
   /** an edit record → rearrange's edit and options */
   function jobOf(st, e) {
+    // phase E: the clave choice, rearrange's `reclave` door ({ clave, relation }: only what differs from Compose's)
+    if (e.kind === 'clave') return { edit: { ...(e.id != null ? { clave: e.id } : {}), relation: e.relation ?? st.composed.clave?.relation ?? 'sync' }, opts: {} };
     if (e.kind === 'chord') return { edit: { [splitSpec(st.composed) ? 'span' : 'bar']: e.bar, chord: { rootTone: e.rootTone, quality: e.quality } }, opts: {} };
     const line = st.trace?.lines?.[e.lineId];
     if (!line) throw new Error(`composer: no line ${e.lineId} in the trace`);
@@ -458,7 +475,19 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   /** decision 5, as a compose lands: pins the new row lacks dropped (amber), lead edits dropped, the grid kept on the
    *  same meter only; the edits cleared (they are pins now) and the undo stack with them */
   function landEdits(st, spec, sent) {
-    const dropped = { pins: [], unhonored: [], lead: [], grid: null, p: null };
+    const dropped = { pins: [], unhonored: [], lead: [], grid: null, p: null, clave: null, arps: [] };
+    // phase E: the clave choice kept where the new composition still offers that clave (its trace's alternates), else
+    // dropped and said; Sync | Fill kept (a composition in notes has no clave: both go)
+    let clave = st.edits?.clave ? { ...st.edits.clave } : null;
+    if (clave && !spec.refused) {
+      if (!spec.clave) { if (clave.id != null) dropped.clave = { id: clave.id, pattern: readClave(clave.id).pattern }; clave = null; }
+      else {
+        if (clave.id != null && !(compEventOf(st.trace)?.alternates ?? []).some((a) => a.id === clave.id)) { dropped.clave = { id: clave.id, pattern: readClave(clave.id).pattern }; delete clave.id; }
+        if (clave.id === spec.clave.id) delete clave.id;
+        if (clave.relation === spec.clave.relation) delete clave.relation;
+        if (!Object.keys(clave).length) clave = null;
+      }
+    }
     for (const [phrase, e] of Object.entries(st.edits?.lead ?? {})) dropped.lead.push({ phrase: Number(phrase), lineId: e.lineId });
     if (!spec.refused) {
       const N = spec.knobs.bars, U = spec.chords.length, p = [...st.progression];
@@ -493,10 +522,33 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
           : units.reduce((text, k) => rewriteToken(text, k, '-'), st.field.text) };
       }
     }
-    st.edits = { ...emptyEdits(), grid: st.drumOptions.grid ? st.edits?.grid ?? null : null };
+    st.edits = { ...emptyEdits(), grid: st.drumOptions.grid ? st.edits?.grid ?? null : null, clave: spec.refused ? st.edits?.clave ?? null : clave };
     st.undo = []; st.redo = [];
-    st.dropped = dropped.pins.length || dropped.unhonored.length || dropped.lead.length || dropped.grid || dropped.p ? dropped : null;
+    st.dropped = droppedOrNull(dropped);
     folds.delete(st);
+  }
+  const droppedOrNull = (d) => (d.pins.length || d.unhonored.length || d.lead.length || d.grid || d.p || d.clave || d.arps?.length ? d : null);
+  /** phase E, after a re-compose's fold: an arp pick its phrase no longer offers (`missed`) is dropped from the entry
+   *  and said (state.dropped.arps) → whether any was */
+  function dropMissedPicks(st) {
+    const out = [];
+    for (const id of ARP_PARTS) {
+      const part = st.spec?.parts?.find((p) => p.id === id);
+      if (!part?.arp) continue;
+      const picks = { ...(st.arps[id].picks ?? {}) };
+      part.arp.phrases.forEach((ph, i) => { if (ph.missed != null && picks[i] === ph.missed) { out.push({ part: id, phrase: i, id: ph.missed }); delete picks[i]; } });
+      if (out.some((x) => x.part === id)) st.arps = { ...st.arps, [id]: { ...st.arps[id], picks } };
+    }
+    if (!out.length) return false;
+    st.dropped = { ...(st.dropped ?? { pins: [], unhonored: [], lead: [], grid: null, p: null, clave: null }), arps: out };
+    return true;
+  }
+  /** the trace's comp event (the clave's alternates: R2), memoized per trace */
+  const compEvents = new WeakMap();
+  function compEventOf(trace) {
+    if (!trace?.events) return null;
+    if (!compEvents.has(trace)) compEvents.set(trace, trace.events.find((e) => e.kind === 'part' && e.part === 'comp' && e.clave) ?? null);
+    return compEvents.get(trace);
   }
 
   // ── MIDI targets (phase B) ──────────────────────────────────────────────────────────────────────────────────────
@@ -519,7 +571,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   const dropFlight = (st) => { if (st.status === 'composing') { bump(st); flights.delete(st); st.status = settled(st); } };
   /** a new clip, or none: the pins, the field and the edits were another meter's bars (proposed) */
   function freshTarget(st) {
-    st.progression = []; st.field = null; st.edits = emptyEdits(); st.undo = []; st.redo = []; st.dropped = null;
+    st.progression = []; st.field = null; st.edits = { ...emptyEdits(), clave: st.edits?.clave ?? null }; st.undo = []; st.redo = []; st.dropped = null;
     delete st.drumOptions.grid; if (st.drumOptions.mode === 'grid') st.drumOptions.mode = 'backbeat';
     folds.delete(st); auditions.delete(st); placementMarks.delete(st);
   }
@@ -610,9 +662,13 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
             st.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); st.drums = arrangeDrums(spec, st.drumOptions);
             // B2: the entry's arps over the new spec (the fold: this thread, or the worker for a big row); the drums
             // re-arranged over them. An arp that can't be made leaves the parts in Line.
-            if (arpsOn(st, spec).length) {
-              try { const out = runFold(st); if (out && typeof out.then === 'function') await out; }
-              catch { st.spec = spec; st.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); st.drums = arrangeDrums(spec, st.drumOptions); }
+            // Phase E: the clave choice kept through it is applied the same way (the fold's last step), and an arp pick
+            // its phrase no longer offers is dropped (said in state.dropped.arps), the arps then arranged again without it.
+            if (arpsOn(st, spec).length || st.edits.clave) {
+              try {
+                const out = runFold(st); if (out && typeof out.then === 'function') await out;
+                if (dropMissedPicks(st)) { const again = runFold(st); if (again && typeof again.then === 'function') await again; }
+              } catch { st.spec = spec; st.parts = Object.fromEntries(spec.parts.map((p) => [p.id, p])); st.drums = arrangeDrums(spec, st.drumOptions); }
             }
             st.status = 'ready'; st.tempoBpm = seedTempoOf(spec);
           }
@@ -781,14 +837,14 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     onEdit(f) { editListeners.add(f); return () => editListeners.delete(f); },
     /** the bars whose fundamental differs from Compose's (a swap's modulation re-pitching later bars) */
     retunedBars: () => (ready(state) ? [...new Set(state.spec.chords.flatMap((c, k) => (Math.abs(c.fundamentalRatio - state.composed.chords[k].fundamentalRatio) > 1e-12 ? [c.bar] : [])))] : []),
-    /** the edits as JSON export carries them (null with none); B2: `arps` when a part is in Arp */
+    /** the edits as JSON export carries them (null with none); B2: `arps` when a part is in Arp; phase E: `clave` when chosen */
     editsExport() {
       const e = state.edits, grid = state.drumOptions.grid && (state.drumOptions.mode === 'grid' || state.drumOptions.mode === 'prime');
       const arps = ARP_PARTS.some((id) => state.arps?.[id]?.mode === 'arp') ? JSON.parse(JSON.stringify(state.arps)) : null;
       if (!hasEdits(state) && !grid && !state.field && !arps) return null;
       return { chords: JSON.parse(JSON.stringify(e.chords)), lead: JSON.parse(JSON.stringify(e.lead)), order: [...e.order],
         drums: grid ? { mode: state.drumOptions.mode, grid: JSON.parse(JSON.stringify(state.drumOptions.grid)), from: e.grid?.from ?? null } : null, field: state.field ? state.field.text : null,
-        ...(arps ? { arps } : {}) };
+        ...(arps ? { arps } : {}), ...(e.clave ? { clave: { ...e.clave } } : {}) };
     },
     /**
      * A bar's alternates (a pure read of the kept trace): part 'chords' → the bar's 12 candidates; 'lead' → the bar's
@@ -863,7 +919,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
         while (pins.length && pins[pins.length - 1] == null) pins.pop();
         st.progression = pins; st.field = { text: value };
         // the edits were the old shape's bars: dropped (proposed); the grid is kept or dropped by the Compose, as ever
-        if (reshape && hasEdits(st)) { st.edits = { ...emptyEdits(), grid: st.edits.grid ?? null }; st.undo = []; st.redo = []; folds.delete(st); settleState(st, null); }
+        if (reshape && st.edits.order.length) { st.edits = { ...emptyEdits(), grid: st.edits.grid ?? null, clave: st.edits.clave ?? null }; st.undo = []; st.redo = []; folds.delete(st); settleState(st, null); }
         touch();
         return Promise.resolve({ ok: true, resolution, live: false, ...(reshape ? { reshape: true } : {}) });
       }
@@ -965,7 +1021,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     /**
      * Line or Arp for the lead or the inner voice, and the Arp's knobs: { mode: 'line' | 'arp', time (1 | 2 | 3: × the
      * slots a bar), picks ({ [phrase index]: an arp's id }: replaces the part's picks whole) }, any of them. Live, no
-     * re-compose; one undo step. Before any
+     * re-compose; one undo step. A change of Time without picks drops the part's picks (phase E: they are keyed by the
+     * phrase at a time). Before any
      * Compose it is only kept (the Compose arranges it). A refused Arp (a MIDI target's lead) → { ok: false, error }.
      * → Promise<{ ok, kind: 'arp', part, changedBars, … }>
      */
@@ -978,6 +1035,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       const st = state;
       st.arps ??= lineArps();
       const next = { ...st.arps[id], ...Object.fromEntries(Object.entries(given).filter(([, v]) => v !== undefined)) };
+      // phase E (ruled): a pick is keyed by the phrase at its time, so a change of Time drops the part's picks
+      if (given.time !== undefined && given.picks === undefined && given.time !== (st.arps[id].time ?? ARP_DEFAULTS.time)) next.picks = {};
       const why = next.mode === 'arp' && st.spec && !st.spec.refused ? arpRefusal(st.spec, id) : null;
       if (why) return Promise.resolve({ ok: false, error: why, refused: true, kind: 'arp', part: id });
       const same = (s) => JSON.stringify(s.arps[id]) === JSON.stringify(next);
@@ -988,7 +1047,62 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       }
       return edit('arp', { part: id }, (s) => { if (same(s)) return false; s.arps = { ...s.arps, [id]: next }; return true; });
     },
-    /** back one edit (chords, lead, the field, the drum grid, an Arp mode) → Promise<{ ok, … }> */
+    /**
+     * Phase E: play one of phrase p's ranked arps (arpOf(part).phrases[p].alternates; its first, the default, again
+     * removes the pick): setArp with the part's picks so changed, one undo step; the window auditions it as a runner-up
+     * (audition(() => pickArp(…))). A part not playing as an arp, a walked phrase or an id it doesn't offer throws.
+     */
+    pickArp(id, phrase, altId) {
+      const a = api.arpOf(id);
+      if (!a.playing) throw new Error(`composer: the ${id} isn't playing as an arp`);
+      const ph = a.phrases?.[phrase];
+      if (!ph) throw new Error(`composer: the ${id}'s arp has no phrase ${phrase}`);
+      if (ph.walked) throw new Error(`composer: phrase ${phrase + 1} is walked (nothing mined there): no arp to pick`);
+      if (!ph.alternates.some((x) => x.id === altId)) throw new Error(`composer: phrase ${phrase + 1} offers no arp ${altId}`);
+      const picks = { ...a.picks };
+      if (altId === ph.alternates[0].id) delete picks[phrase]; else picks[phrase] = altId;
+      return api.setArp(id, { picks });
+    },
+    // ── phase E: the clave (COMP_ARP_ORDER.md Amendment 1; rearrange.js reclave) ──
+    /**
+     * The comp's clave as it plays → { id, name?, text (the pattern a bar a group), pattern, source (claveSource's words),
+     * steps, span, score, terms, from, bars, relation, partner: { pattern, text, source }, strokes (the comp's, as it plays),
+     * silent, composedId, composedRelation, edit (state.edits.clave), asked (not among the alternates), alternates: [{ …the
+     * trace's (id, steps, span, pattern, onsets, score, terms, bars, from), text, source, curated, current, composed }] }
+     * | null (nothing composed, or a composition in notes)
+     */
+    claveOf() {
+      const s = ready(state) ? state.spec : null;
+      if (!s?.clave) return null;
+      const c = s.clave, own = state.composed.clave, ev = compEventOf(state.trace);
+      const alternates = (ev?.alternates ?? []).map((x) => ({ ...x, text: claveText(x), source: claveSource(x), curated: !!x.from?.pattern, current: x.id === c.id, composed: x.id === own?.id }));
+      const p = c.partner;
+      return { id: c.id, ...(c.name ? { name: c.name } : {}), text: claveText(c), pattern: c.pattern, source: claveSource(c), steps: c.steps, span: c.span ?? 1, score: c.score, terms: { ...c.terms }, from: { ...c.from }, bars: c.bars,
+        relation: c.relation, partner: { pattern: p.pattern, text: claveText(p), source: p.source }, strokes: s.parts.find((x) => x.id === 'comp')?.strokes?.length ?? 0,
+        silent: c.relation === 'fill' ? p.silent + p.shared : c.silent, composedId: own?.id ?? null, composedRelation: own?.relation ?? null,
+        edit: state.edits?.clave ? { ...state.edits.clave } : null, asked: !alternates.some((x) => x.current), alternates };
+    },
+    /**
+     * Phase E: the comp's clave ({ id: 'steps:pattern' | a curated name | null (Compose's own) }) and/or its relation
+     * ({ relation: 'sync' | 'fill' }), live with no re-compose (rearrange.js reclave), one undo step; Compose's own
+     * choice again removes the edit. A composition in notes (no clave) throws. → Promise<{ ok, kind: 'clave', … }>
+     */
+    setClave({ id, relation } = {}) {
+      requireSpec(state);
+      if (!state.composed.clave) throw new Error('composer: this composition comps in notes (compStyle \'notes\'): it has no clave');
+      if (relation !== undefined && relation !== null && !COMP_RELATIONS.includes(relation)) throw new Error(`composer: a relation is one of ${COMP_RELATIONS.join(', ')}, not ${JSON.stringify(relation)}`);
+      const want = id === undefined || id === null ? id : readClave(id).id;   // throws on a bad clave
+      return edit('clave', { id: want ?? null, relation: relation ?? null }, (st) => {
+        const own = st.composed.clave, next = { ...(st.edits.clave ?? {}) };
+        if (want !== undefined) { if (want === null || want === own.id) delete next.id; else next.id = want; }
+        if (relation !== undefined) { if (relation === null || relation === own.relation) delete next.relation; else next.relation = relation; }
+        const value = Object.keys(next).length ? next : null;
+        if (JSON.stringify(value) === JSON.stringify(st.edits.clave ?? null)) return false;
+        st.edits.clave = value;
+        return true;
+      });
+    },
+    /** back one edit (chords, lead, the field, the drum grid, an Arp mode, the clave) → Promise<{ ok, … }> */
     undo() {
       const st = state;
       if (!ready(st) || !st.undo.length) return Promise.resolve({ ok: false, empty: true, kind: 'undo' });
