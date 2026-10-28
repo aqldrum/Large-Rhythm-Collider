@@ -37,10 +37,6 @@ class BattleController {
         this.arenaSmoothing = 0.01;  // fraction of the gap to its target the walls close per frame
         this.arenaFitFactor = 0.6;   // short side ≥ this × the largest living body's length
 
-        // Center gravity was the unbounded map's way of keeping fighters together.
-        // The finite arena replaces it, so it is off by default.
-        this.centerGravity = false;
-
         // Experimental: bodies can't pass through themselves (see ColliderPlayer
         // SELF-COLLISION). Off by default.
         this.selfCollision = false;
@@ -329,11 +325,6 @@ class BattleController {
         console.log(`🎮 Battle starting with ${activePlayers.length} active players - master clock synchronized`);
     }
 
-    getBattleElapsedTime() {
-        if (!this.battleStartTime || this.gameState !== 'battle') return 0;
-        return Date.now() - this.battleStartTime;
-    }
-    
     updateCollisionDetectorThickness() {
         // Get the current visual thickness from the collider instance
         const colliderUI = this.getColliderUI();

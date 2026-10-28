@@ -48,12 +48,6 @@ class CollisionDetector {
         }
     }
     
-    // Legacy method for backward compatibility - now uses geometric calculation
-    getCollisionTolerance() {
-        // For backward compatibility when no player is provided
-        return this.baseCollisionTolerance + 1.5; // Conservative default
-    }
-    
     getGeometricCollisionTolerance(player) {
         // Calculate collision tolerance based on the actual geometry of the player's rhythm
         if (!player || !player.segments || player.segments.length === 0) {

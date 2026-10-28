@@ -42,7 +42,7 @@ class LRCCollider {
 
     deactivate() {
         this.stopAnimation();
-        this.colliderUI.removePlayerDivs();
+        this.colliderUI.closePopup();
     }
 
     setupCanvas() {
@@ -602,11 +602,6 @@ if (typeof window !== 'undefined') {
             }
         }, 100);
     });
-}
-
-// Initialize the speed control when setting up the UI
-if (window.colliderUI) {
-    window.colliderUI.initializeSpeedControl();
 }
 
 // Set the initial master clock

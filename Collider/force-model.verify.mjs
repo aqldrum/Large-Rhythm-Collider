@@ -2,8 +2,8 @@
 //
 // Proves the REAL ColliderPlayer force sampler (forceAt) and schedule are bit-identical
 // to the original materialized formulas, that pulses are labelled by real layer
-// membership, and that the wiring around them agrees: materialized vs
-// derive-on-demand reads, and seeking (net drift aimed at the nearest enemy).
+// membership, and that the wiring around them agrees: force reads at the cached
+// heading, and seeking (net drift aimed at the nearest enemy).
 //
 // Run:  node "Collider/force-model.verify.mjs"
 //
@@ -218,7 +218,7 @@ function partMembership() {
         'every onset carries the first layer whose beat lands on it');
 }
 
-// ============ PART 4: wiring — materialized vs derived reads, seeking ============
+// ============ PART 4: wiring — physics force reads, seeking ============
 function makeBattle(boundaryMode, players) {
     const collisionDetector = new CollisionDetector();
     collisionDetector.arena = { minX: 0, minY: 0, maxX: 1000, maxY: 1000, width: 1000, height: 1000, boundaryMode };
@@ -239,7 +239,7 @@ function oracleDriftAngle(player, sp, amp, labels) {
     const total = sp.reduce((s, v) => s + v, 0);
     let x = 0, y = 0;
     forces.forEach((f, i) => {
-        const share = player.trueOnsetTiming ? sp[i] / total : 1 / sp.length;
+        const share = sp[i] / total;
         x += f.x * share;
         y += f.y * share;
     });
@@ -259,37 +259,28 @@ function partWiring() {
             const labels = randLabels(n);
             const amp = 0.1 + Math.random() * 3;
 
-            for (const trueOnsetTiming of [false, true]) {
-                // Me, a near enemy, a farther enemy, and a dead one closest of all
-                const me = placeAt(makePlayer(sp, amp, labels), 200 + Math.random() * 100, 200 + Math.random() * 100);
-                const near = placeAt(makePlayer([1, 1, 1]), 400 + Math.random() * 200, 300 + Math.random() * 200);
-                const far = placeAt(makePlayer([1, 1, 1]), 900, 900);
-                const dead = placeAt(makePlayer([1, 1, 1]), me.nodes[0].x + 5, me.nodes[0].y + 5, false);
-                me.playerId = 1; near.playerId = 2; far.playerId = 3; dead.playerId = 4;
-                makeBattle('bounce', [me, near, far, dead]);
-                me.trueOnsetTiming = trueOnsetTiming;
+            // Me, a near enemy, a farther enemy, and a dead one closest of all
+            const me = placeAt(makePlayer(sp, amp, labels), 200 + Math.random() * 100, 200 + Math.random() * 100);
+            const near = placeAt(makePlayer([1, 1, 1]), 400 + Math.random() * 200, 300 + Math.random() * 200);
+            const far = placeAt(makePlayer([1, 1, 1]), 900, 900);
+            const dead = placeAt(makePlayer([1, 1, 1]), me.nodes[0].x + 5, me.nodes[0].y + 5, false);
+            me.playerId = 1; near.playerId = 2; far.playerId = 3; dead.playerId = 4;
+            makeBattle('bounce', [me, near, far, dead]);
 
-                // Seeking: the cycle's net drift points straight at the nearest living enemy
-                const toNear = Math.atan2(near.nodes[0].y - me.nodes[0].y, near.nodes[0].x - me.nodes[0].x);
-                checks += 2;
-                if (angleGap(oracleDriftAngle(me, sp, amp, labels), toNear) > 1e-9) fail({ n, trueOnsetTiming, kind: 'drift misses target' });
-                if (me.targetPlayerId !== 2) fail({ n, trueOnsetTiming, kind: `targeted P${me.targetPlayerId}` });
+            // Seeking: the cycle's net drift points straight at the nearest living enemy
+            const toNear = Math.atan2(near.nodes[0].y - me.nodes[0].y, near.nodes[0].x - me.nodes[0].x);
+            checks += 2;
+            if (angleGap(oracleDriftAngle(me, sp, amp, labels), toNear) > 1e-9) fail({ n, kind: 'drift misses target' });
+            if (me.targetPlayerId !== 2) fail({ n, kind: `targeted P${me.targetPlayerId}` });
 
-                // Materialized and derived reads agree with the oracle at that heading
-                const legacy = legacyForces(sp, me.computeForceAngle(), amp, labels);
-                me.deriveForcesOnDemand = false;
-                me.calculateLayerForces();
+            // Physics reads (getNodeForce at the cached heading) agree with the oracle
+            me.updateHeading();
+            checks++;
+            if (!Object.is(me.heading, me.computeForceAngle())) fail({ n, kind: 'heading' });
+            const legacy = legacyForces(sp, me.heading, amp, labels);
+            for (let i = 0; i < n; i++) {
                 checks++;
-                if (me.getForceCount() !== n || me.nodeForces.length !== n) fail({ n, kind: 'count' });
-                for (let i = 0; i < n; i++) {
-                    me.deriveForcesOnDemand = false;
-                    const materialized = me.getNodeForce(i);
-                    me.deriveForcesOnDemand = true;
-                    const derived = me.getNodeForce(i);
-                    checks += 2;
-                    if (!sameForce(materialized, legacy[i])) fail({ n, i, kind: 'materialized' });
-                    if (!sameForce(derived, legacy[i])) fail({ n, i, kind: 'derived' });
-                }
+                if (!sameForce(me.getNodeForce(i), legacy[i])) fail({ n, i, kind: 'getNodeForce' });
             }
         }
     }
@@ -308,59 +299,8 @@ function partWiring() {
         if (me.targetPlayerId !== wantTarget) fail({ mode, kind: `edge targeted P${me.targetPlayerId}` });
     }
 
-    return report('[4] Wiring — seeking aims net drift at nearest enemy; both read paths agree', checks, mismatches, firstFails,
-        'drift hits the target (both timings, through wrap edges); reads match the oracle');
-}
-
-// ============ PART 5: quantify trueOnsetTiming behavior change ============
-function partTimingDelta() {
-    console.log(`\n[5] trueOnsetTiming behavior change — uniform mapping vs true-onset timing`);
-    console.log(`    (fraction of the cycle where the ACTIVE pulse index differs)`);
-    const examples = [
-        { label: 'even 4:4',     sp: [1, 1, 1, 1] },
-        { label: 'prime 5:7:11', sp: [7, 4, 3, 5, 2, 6, 8, 1, 9, 3, 5] },
-        { label: 'lopsided',     sp: [1, 1, 1, 40] },
-        { label: 'random-32',    sp: randSpaces(32) },
-    ];
-    for (const ex of examples) {
-        const player = makePlayer(ex.sp);
-        player.rebuildSchedule();
-        const n = ex.sp.length, total = player.cycleTotal;
-        const M = 20000; let diff = 0;
-        for (let s = 0; s < M; s++) {
-            const phase = (s / M) * total;
-            const uniform = Math.floor((phase / total) * n) % n;
-            if (uniform !== player.indexForPhaseTrueOnset(phase)) diff++;
-        }
-        console.log(`    ${ex.label.padEnd(12)} differs ${(100 * diff / M).toFixed(1)}% of the cycle`);
-    }
-    console.log(`    => informational: 0% means the groove was already uniform; >0% is what true-onset restores`);
-}
-
-// ============ PART 6: cost — materialize N vs derive active ============
-function partCost() {
-    console.log(`\n[6] Per-frame cost — materialize whole array vs derive active pulse only`);
-    for (const n of [149, 2120]) {
-        const player = makePlayer(randSpaces(n));
-        const FRAMES = 20000;
-        let sink = 0;
-
-        const t0 = process.hrtime.bigint();
-        for (let f = 0; f < FRAMES; f++) {
-            const arr = [];                                   // legacy: rebuild all N every frame
-            for (let i = 0; i < n; i++) arr.push(player.forceAt(i, f * 1e-4, 1));
-            sink += arr[f % n].x;
-        }
-        const t1 = process.hrtime.bigint();
-        for (let f = 0; f < FRAMES; f++) {
-            sink += player.forceAt(f % n, f * 1e-4, 1).x;     // derive: only the active pulse
-        }
-        const t2 = process.hrtime.bigint();
-
-        const matMs = Number(t1 - t0) / 1e6, derMs = Number(t2 - t1) / 1e6;
-        console.log(`    N=${String(n).padStart(4)}: materialize ${matMs.toFixed(1)}ms  |  derive-active ${derMs.toFixed(1)}ms  ` +
-                    `=> ${(matMs / derMs).toFixed(1)}× cheaper  (sink=${sink.toFixed(3)})`);
-    }
+    return report('[4] Wiring — seeking aims net drift at nearest enemy; physics reads agree', checks, mismatches, firstFails,
+        'drift hits the target (through wrap edges); reads match the oracle');
 }
 
 console.log('==================================================================');
@@ -370,8 +310,6 @@ const p1 = partBitIdentity();
 const p2 = partSchedule();
 const p3 = partMembership();
 const p4 = partWiring();
-partTimingDelta();
-partCost();
 const ok = p1 && p2 && p3 && p4;
 console.log(`\n${ok ? '✅ ALL EQUIVALENCE CHECKS PASS' : '❌ EQUIVALENCE BROKEN'}\n`);
 process.exit(ok ? 0 : 1);
