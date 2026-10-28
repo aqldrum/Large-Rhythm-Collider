@@ -432,3 +432,7 @@ and counts depend on the cycle, so read them as what to look for, not as the onl
   - The 16k row rises about 500¢ under the closed loop. Should the anchor pull harder (a cost a cent off its centre)?
   - `meanMotion` now averages the loop's changes, the wrap included.
   Phase L (the window) next.
+- 2026-10-28: phase L (the window) merged 69c3f7e; 83/0. AMENDMENT 1 COMPLETE. The browser and rig checklist above is
+  rewritten for the whole order and Amendment 1. Open for Avery (from the builder): re-rank the picker's frame claves
+  after a chord swap (today the list shows Compose's patterns; what plays is re-read)? Name Roots' runner-ups by cents
+  off the root rather than by ratio? Should the comp's caption say the clave as it plays (today Compose's, as phase E)?
