@@ -75,7 +75,10 @@ export const litTickOf = (n, sources) => (n.borrowed ? sources.get(n.from) ?? nu
  * → null when there is nothing to light (no spec, a refusal, or a spec of another rhythm), else
  *   { grid, n, cycleSeconds, phaseX, share (the loop's share of the row's cycle: loopShare), plot, missed, total,
  *     parts: { [id]: { id, color, enabled, indices (sorted, unique), notes: [{ index, time, end, ring? }] (by time),
- *       rings (sorted, unique: the borrowed tones' source onsets not lit otherwise; drawn hollow) } } }
+ *       rings (sorted, unique: the borrowed tones' source onsets not lit otherwise; drawn hollow) } },
+ *     arrangement: { voicing ('led' | 'close'), voicingStats (the voicing pass's, or null), bass: { density, lock (the one
+ *       that ran), asked (the lock asked), refused (why it fell back, or null) } } (BASS_VOICING_ORDER.md phase H: what
+ *       the trace's caption says the chords and the bass play as) }
  *   `missed` counts notes or strokes whose tick is not a plotted onset (never, for a matching spec).
  */
 export function highlightsOf({ spec, parts = null, drums = undefined } = {}, plot) {
@@ -103,7 +106,11 @@ export function highlightsOf({ spec, parts = null, drums = undefined } = {}, plo
   }
   const d = drums === undefined ? spec.drums : drums;
   if (d && d.hits) lane('drums', PART_COLORS.drums, d.enabled !== false, d.hits, () => DRUM_LIT_SECONDS);
-  return { grid: plot.grid, n: plot.n, cycleSeconds: T, phaseX: phase[0] / phase[1], share: loopShare(spec), plot, parts: out, missed, total };
+  // phase H: the chords' voicing, and the bass's density and lock (an arranged bass's own record; else Compose's: Sparse · Free)
+  const arr = byId.bass?.bass;
+  const arrangement = { voicing: spec.stats?.voicing ? 'led' : 'close', voicingStats: spec.stats?.voicing ?? null,
+    bass: arr ? { density: arr.density, lock: arr.stats?.lock ?? arr.lock, asked: arr.lock, refused: arr.refused ?? null } : { density: 'sparse', lock: 'free', asked: 'free', refused: null } };
+  return { grid: plot.grid, n: plot.n, cycleSeconds: T, phaseX: phase[0] / phase[1], share: loopShare(spec), plot, parts: out, missed, total, arrangement };
 }
 
 /**

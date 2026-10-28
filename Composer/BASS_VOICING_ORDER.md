@@ -144,17 +144,42 @@ F and G can run in parallel: F touches the chord voices, the comp's octaves and 
 - **H4.** `tests/assert-page-bass.mjs`, the README's Files and Tests, a DESIGN_NOTES section for F, G and H, and the
   browser and rig checklist below finished.
 
-## Browser and rig checklist (for Avery; to be finished in H4)
+## Browser and rig checklist (for Avery; finished in H4)
 
-- **Voicing.** On 11:9:7:5, 119:42:15:8 and 768:769, Led should stop the chords lurching by an octave at bar lines;
-  flip to Close to hear the old jump. On 7:5:3:2 and 11:9:7:5 the lowest chord should no longer be a low, close third.
-- **Comp with chords.** The comp's strum should sit in the chords' register and follow the same voicing.
-- **Bass densities.** Each density on a sparse row (8:7:6:5) and a dense one (768:784): Roots one note a chord, Walking
-  every slot (8 a bar on 16-slot rows), approaching each change.
-- **Lock.** Kick with a layered drum mode: the bass only with the kick. Clave: the bass with the comp; flip Sync | Fill
-  and it follows. Drums off: Kick disabled with its reason.
-- **Runner-ups.** Audition a bar's bass alternates, Keep and Revert; change density and undo.
-- **MIDI.** On the rig, each chords and comp channel should glide by small steps under Led.
+Open the Partitions window's **Composer** tab, generate the rhythm on the main page, press **Compose**, then **Perform**.
+Everything below is live: no button should go back to Compose, and the header's **↶** (⌘Z) undoes each change.
+
+- **Voicing.** Click a cell in the **Chords** row. Under the cell's head: "voicing", **Close | Led** (Led on), and its
+  stats beside it ("2 lifted · 240¢ a chord").
+  - On 11:9:7:5, 119:42:15:8 and 768:769, while performing, flip to **Close**: you should hear the chords drop or jump
+    about an octave at some bar lines. Back to **Led**: they move by small steps. The stats read "root position" in Close.
+  - On 7:5:3:2 and 11:9:7:5, Led's lowest chord should no longer be a low, close third (Close brings it back).
+  - ⌘Z after a flip goes back; the flip is one undo step. Compose again while Close: still Close (it sticks).
+- **Comp with chords.** Under Led, select the **Comping** row: its strum should sit in the chords' register and move with
+  them; flip Close | Led and the comp should follow the chords.
+- **Bass densities.** Click a cell in the **Bass** row. A row reads "density [Sparse ▾]  lands on Free | Kick | Clave".
+  - Pick each density on a sparse row (8:7:6:5) and a dense one (768:784): **Roots** one note a chord, on the change;
+    **Sparse** as before; **Moving** busier; **Walking** a note every slot (8 a bar on 16-slot rows), stepping toward each
+    next chord's root. The cell's head tag names it ("walking"). With **details** on, a line under the row counts the
+    notes a bar, the bars rooted and the ones with a note on the one.
+  - Roots says "no runner-ups to choose from". A bar Walking couldn't fill says it plays the chord's root onset.
+- **Lock.** On the same Bass cell:
+  - **Kick** with the default backbeat (or another layered drum mode): the bass should only sound with the kick.
+  - Turn the drums **off** (click **Drums** among the inspector's parts, then its **on** toggle): Kick greys out and the line under the switch says "Kick: the
+    drums are off: there is no kick to land on". If Kick was on, an amber line says it can't land now and the bass lands
+    anywhere. Drums back on: Kick is clickable again.
+  - **Clave:** the bass lands with the comp. Select the Comping row and flip **Sync | Fill**: the bass should follow the
+    comp to the gaps.
+- **Runner-ups.** On a Bass cell at Sparse or Moving, "Bass lines · bar N" lists up to 8 lines ("fall · mid", ● on the
+  one playing, C the bar's best). While performing, click one: it comes in at the next bar line ("auditioning…"). Click
+  it again or **Keep** to keep it; **Revert** (or Esc) takes it back. Then change the density and press ⌘Z once: the
+  density and the kept line come back together.
+- **Re-compose.** With a line kept, change the seed and change it back, then Compose: the density, lock and voicing stay; a
+  kept line the new bar no longer offers is listed in the amber "Compose couldn't keep …" line (details: "a bass pick
+  (bar N) was dropped").
+- **Show the work.** With it on, Compose: the caption for the bass says its density and lock ("moving, on the comp's
+  strokes: …") and the chords' says led or close.
+- **MIDI.** On the rig, each chords and comp channel should glide by small steps under Led, and jump under Close.
 
 ## Later (recorded, not ruled)
 

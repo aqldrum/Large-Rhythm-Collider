@@ -7,7 +7,8 @@
 //                         (edits.order; the clave choice, phase E, always last)
 //   setChordEdit / removeChordEdit / setLeadEdit / removeLeadEdit (edits, …)   the records and their order kept in step
 //   hasEdits(state), snapshotOf(state), restoreSnapshot(state, snap), pushUndo(state, snap)   (a snapshot holds the
-//                       edits, the field, the pins, the drum mode and grid, and (B2) the Arp modes)
+//                       edits, the field, the pins, the drum mode and grid, (B2) the Arp modes, and (phase H) the bass
+//                       and the voicing)
 //   pinOf(entry) → { ratio, quality } | null   (a progression entry: a ratio, { ratio, quality }, or auto)
 //   asksOf(state, N) → [{ ratio, quality } | null] × N   what each bar asks now: its chord edit, else its pin
 //   rewriteToken(text, bar, word) → the field's text with bar's symbol replaced (the rest of the user's text kept)
@@ -50,10 +51,11 @@ export const sameRecord = (a, b) => !!a && !!b && Object.keys(a).length === Obje
 /** does the entry hold a chord, lead or clave edit (the drum grid is apart: it lives in drumOptions) */
 export const hasEdits = (state) => !!state?.edits && (state.edits.order.length > 0 || !!state.edits.clave);
 
-/** what an undo step restores: the edits, the field, the pins, the drum mode and grid, (B2) the Arp modes */
+/** what an undo step restores: the edits, the field, the pins, the drum mode and grid, (B2) the Arp modes, (phase H) the
+ *  bass and the voicing */
 export function snapshotOf(state) {
   return { edits: copy(state.edits ?? emptyEdits()), field: copy(state.field ?? null), progression: copy(state.progression ?? []),
-    drums: { mode: state.drumOptions.mode, grid: copy(state.drumOptions.grid ?? null) }, arps: copy(state.arps ?? null) };
+    drums: { mode: state.drumOptions.mode, grid: copy(state.drumOptions.grid ?? null) }, arps: copy(state.arps ?? null), bass: copy(state.bass ?? null), voicing: state.voicing ?? null };
 }
 export function restoreSnapshot(state, snap) {
   state.edits = copy(snap.edits);
@@ -62,6 +64,8 @@ export function restoreSnapshot(state, snap) {
   state.drumOptions.mode = snap.drums.mode;
   if (snap.drums.grid) state.drumOptions.grid = copy(snap.drums.grid); else delete state.drumOptions.grid;
   if (snap.arps) state.arps = copy(snap.arps);
+  if (snap.bass) state.bass = copy(snap.bass);
+  if (snap.voicing) state.voicing = snap.voicing;
 }
 /** a step onto the undo stack (at most UNDO_LIMIT, the oldest dropped); a new edit clears the redo stack */
 export function pushUndo(state, snap) {

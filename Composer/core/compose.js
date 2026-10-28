@@ -449,6 +449,11 @@ export function voiceLead(ctx, units, { baseHz, ratioOf }) {
   stats.wrap = first && prev && stats.chords > 1 ? motionOf(first, prev) : 0;
   return stats;
 }
+/** the voicing decision's words for a led voicing (voiceLead's stats; asked: the override given): Compose's, and a
+ *  live Close | Led switch's (rearrange.js `revoice`, Phase H), so the two say the same */
+export const voicingWhy = (voiced, asked) => `${asked ? 'asked' : 'led by default (decided 3–4, Avery)'}: the first chord close, ${voiced.lifted ? '' : 'not '}lifted clear of the mud limit (${MUD_HZ} Hz × log2(n·d), at most ${Math.round(MUD_CAP_HZ)} Hz, under a pair less than an octave apart)`
+  + `; each chord after in the octaves nearest the one before (the window: no tone under ${VOICING_FLOOR}¢, the centre within ±${VOICING_CENTRE}¢ of the first chord's), ${(voiced.meanMotion).toFixed(0)}¢ of motion a chord`
+  + `; the mud limit moved ${voiced.lifted} of ${voiced.chords} chord${voiced.chords === 1 ? '' : 's'}${voiced.muddy ? `, ${voiced.muddy} left muddy (no voicing in the window clear of it)` : ''}; the loop's wrap ${voiced.wrap.toFixed(0)}¢ (not led)`;
 /** the voicing pass's stats as the spec keeps them (`stats.voicing`; rounded to the cent) */
 export const voicingStats = (v) => ({ mode: 'led', chords: v.chords, lifted: v.lifted, muddy: v.muddy, motion: Math.round(v.motion), meanMotion: Math.round(v.meanMotion), wrap: Math.round(v.wrap), outside: v.outside });
 
@@ -916,9 +921,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   if (!VOICINGS.includes(voicing)) fail(`voicing must be one of ${VOICINGS.join(', ')}`);
   const led = voicing === 'led';
   const voiced = led ? voiceLead(ctx, units, { baseHz: baseHzValue, ratioOf }) : null;
-  if (led) decide('voicing', voicing, `${ov.voicing != null ? 'asked' : 'led by default (decided 3–4, Avery)'}: the first chord close, ${voiced.lifted ? '' : 'not '}lifted clear of the mud limit (${MUD_HZ} Hz × log2(n·d), at most ${Math.round(MUD_CAP_HZ)} Hz, under a pair less than an octave apart)`
-    + `; each chord after in the octaves nearest the one before (the window: no tone under ${VOICING_FLOOR}¢, the centre within ±${VOICING_CENTRE}¢ of the first chord's), ${(voiced.meanMotion).toFixed(0)}¢ of motion a chord`
-    + `; the mud limit moved ${voiced.lifted} of ${voiced.chords} chord${voiced.chords === 1 ? '' : 's'}${voiced.muddy ? `, ${voiced.muddy} left muddy (no voicing in the window clear of it)` : ''}; the loop's wrap ${voiced.wrap.toFixed(0)}¢ (not led)`);
+  if (led) decide('voicing', voicing, voicingWhy(voiced, ov.voicing != null));
   const voices = [];
   for (const u of units) for (const n of u.notes) (voices[n.voice] ||= []).push(n);
   // comping. Chords (the default; Amendment 1, decided 5–6): one clave for the composition, mined from the row's layers

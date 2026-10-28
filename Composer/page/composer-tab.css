@@ -267,6 +267,14 @@
 .ctab-inspector .ctab-alt.ctab-clave-alt.curated { border-style: dashed; }
 .ctab-arp-sub { margin-top: 4px; }
 .ctab-arp-missed { font-size: 10px; }
+/* phase H: the bass's Density and Lands on, the chords' Close | Led */
+.ctab-bass, .ctab-voicing { gap: 6px; flex-wrap: wrap; }
+.ctab-bass select { font-size: 10px; }
+.ctab-inspector .ctab-bass-lock .ctab-seg + .ctab-seg { border-left: none; }
+.ctab-inspector .ctab-seg.refused { opacity: .45; cursor: not-allowed; }
+.ctab-bass-refused, .ctab-bass-missed { color: #ffb347; font-size: 10px; }
+.ctab-bass-refusal, .ctab-voicing-stats { font-size: 10px; }
+.ctab-bass-sub { margin-top: 4px; }
 .ctab-clip-notes tr.fringe .ctab-clip-kind, .ctab-clip-notes tr.shift .ctab-clip-kind, .ctab-clip-notes tr.late td:last-child { color: #ffb347; }
 .ctab-clip-notes tr.hard td { color: #ff6b6b; }
 .ctab-clip-tag { color: #fff; border-color: #555; }
