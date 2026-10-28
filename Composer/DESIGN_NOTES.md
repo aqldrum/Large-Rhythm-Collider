@@ -2101,6 +2101,89 @@ Over the probe's 57 chords (seeds 1–3): motion 21,972¢ → 8,922¢, muddy 24 
 
 **For phase L.** A bar's `walkFill` ("walks 6 of 8"), `hits`, `missedHits` and `missedSlots` (amber), and Roots' `alternates` (now up to 8; `pickBass` still refuses Roots, and the window still says "no runner-ups"). Stats: `hits`, `missedHits`, `walkFill`, `walkFillNotes`. `BASS_HOW_WORDS['rest']` ("no locked onset in this bar") now means "no hit to cover in this bar" under Roots.
 
+## The frame clave (phase I; built 2026-10-28, branch `clave/frame`)
+
+`BASS_VOICING_ORDER.md` Amendment 1, phase I (I1–I4): rule 6 is Avery's ("a stroke on a tone outside the chord's frame doesn't count"; the comp, the perc and the bass's Clave lock all play it). P16–P21 are the builder's proposals, built as written except where noted below. Nothing here has been heard. The window (the picker by source, the cell head's bar pattern) is phase L.
+
+**Where it runs.** `compose.js` chooses the clave after the chords, from them (`claveFrom: 'frame'`, the default). Its ties draw from the clave's own generator (`${seed}/clave`), as before, so no other part's seed draw moves: the lead, chords, bass, inner and every sound are the pattern clave's (checked on 8 rows × 2 seeds).
+
+**The candidates (P16, `claves.js` `frameStrikes`, `readFrameLayer`, `rankFrameClaves`).**
+- **Strikes.** Each layer's strikes (`readRhythm`: a tick's first node) in each bar, by place: the strike's slot plus its share of the slot (the drums' `rAt`, inverted). A strike before the downbeat that slot 0's window holds sits at place 0.
+- **Grain.** m is the layer's strikes in the bars over N, rounded (v/N, except in a MIDI target's window). A layer with 3 ≤ m ≤ 16 is read at n = m, one with m > 16 at each n of 3–16, one with m < 3 not at all.
+- **Steps.** Where a bar holds exactly n strikes, step j is its j-th ("each strike a step"). Otherwise (a denser layer, or a bar one strike short or over when v/N isn't whole) step j is the strike nearest place k·S + j·S/n, ties to the earlier. Slots aren't equal in time, so the nearest by place can skip a strike or take one twice. A strike two steps share is one stroke, at the first step. The pattern keeps both steps.
+- **Sets.** 'chord': the strike's tone one of its chord's classes in tune (`chordClass`). 'frame': inside its chord's frame (the record's `frame.inside`). The chord is the one the strike's own slot sounds under, so a chart's split bar reads a strike under its span's chord.
+- **The strokes** are those strikes, at their own place and time, with `snap: 'strike'`. Nothing is landed, so every stroke is the clave layer's and in the set, and `silent` is 0.
+- **Ranking** is COMP_RULES over the bars' patterns: density (the bars' mean, a pulse bar or one under 2 onsets scoring 0), fit by n, and recurrence (the share of the bars whose pattern another bar repeats). It is sorted by score. Ties stay in the reading order (the fastest layer first, then n up, chord before frame), and the seed breaks a tie at the top, as `chooseClave` does.
+- **Left out:** a reading with no bar left in (every bar a pulse or under 2 onsets), as the table leaves such claves out. Also a 'frame' reading that equals the 'chord' reading of the same layer and grain: it's the same strokes, so the chord set's name is kept. Either can still be asked by id.
+- **Ids** are `frame:A/8/chord` (the layer's letter, the grain, the set). `claveOf` reads one back with its source in words as `pattern`, since a frame clave has no single pattern. The controller's "dropped" line prints it.
+
+**Fill (P17).** The partner is the best-ranked other candidate with at least one stroke and none within ¼ slot of a clave stroke. Distance is measured at the onsets' own places, round the loop. A landed step's `place` is its step's, so for a curated clave the ¼ slot is read from where its strokes actually sound. With no such candidate, the complement: each bar's free steps of its own pattern, Euclid-thinned to the clave's mean onsets a bar (its patterns' x's over N, rounded; kept as `per`), each landed in frame. A curated or asked clave's complement is `complementClave`'s, landed in frame.
+
+**Curated and asked claves (P18, `layInFrame`, `landInFrame`).** Son, rumba, bossa and an asked `steps:pattern` keep their fixed pattern. A step lands on the in-frame onset nearest its place within half-way to its neighbours, then one place wider, inside its bar or span. The landing is `landPlace`'s, measured in the cycle's share, but over in-frame onsets only, with `snap` 'slot' or 'wide'. With none, the step is silent. They're scored as fixed patterns with recurrence 0, so they're only chosen unasked when no layer reads a frame clave.
+
+**`claveFrom` (P19).** `'pattern'` is the clave before phase I byte for byte: `fixtures/clave-pattern.mjs` hashes 76 specs made by the core at c009aaa, and `assert-frame-clave.mjs` checks them. No new decision was added. The frame clave's words go in the `clave` decision's `why` ("from the frame by default (rule 6, Avery): …"; asked, it starts "asked"). Suites pinned to `'pattern'` (as `voicing: 'close'` pinned phase F): `assert-claves.mjs` and `assert-rearrange.mjs` (every chords-style Compose), and `assert-page-clave.mjs` (its `runCompose` and its direct Composes). `assert-refactor-identity.mjs` strips the longer override list from its refusal message. Every other suite (comp, drums, bass, voicing, trace, page) passes on the frame default unchanged.
+
+**A chord swap (P20, `rearrange.js`, `rereadClave`).**
+- When a spec's clave was read in frame (`spec.clave.read === 'frame'`), every rebuilt bar's (span's) clave is read again under its new chord: a frame clave at the same layer, grain and set; a curated or asked clave's steps landed in frame again. The partner is read again too: a frame complement from the clave's new bar at the same `per`, a fixed complement landed again.
+- The other bars' strokes stand, and the partner's `shared` marks are taken again. The comp re-strums the bar over the new strokes, the perc follows (the drums arranged over the new `spec.clave`), and an arranged bass re-mines it with its Clave lock read from the new clave.
+- The result carries `reclavedBars` (the rebuilt bars whose strokes moved) and, when any did, `clave` and `stats.clave`, which `applyRearrange` writes in. A swap that moves no stroke leaves `spec.clave` byte for byte.
+- `reclave` (the picker's Sync | Fill and a chosen clave) chooses over the frame candidates under the chords as they play, and stays equal to a Compose given the same `clave` / `compRelation` on rows, a chart and a MIDI target. A clave from the pattern never moves on a swap, as before.
+
+**The words (P21).** `claveSource` gives "layer A · 8 steps · chord tones" (or "tones in frame") for a frame clave, and "son clave 3-2 · in frame" for a curated one read in frame. `claveText(clave)` is each bar's pattern, a bar a group, and `claveText(clave, k)` is bar k's. `claveSetText` knows 'chord' and 'frame'. The decision, the trace's clave, partner and alternates (`claveAlternates`) carry `patterns` and `read`.
+
+**The perc.** It plays `spec.clave.strokes` as before, and its accent is each bar's first onset for a frame clave (`drums.js`, one line: `C.onsets[0]`, the step of a fixed pattern, means nothing when the pattern changes by the bar). A fixed clave's accent is unchanged.
+
+**`spec.clave`'s shape is kept.** `strokes` still hold `{ bar, step, place, node, tick, time, slot, snap }`, and `compSourceOf` and `compNodesOf` are unchanged, so the bass and the drums read it as before. New fields:
+- `read: 'frame'` on every clave read in frame;
+- `source: 'frame'`, `patterns` (a bar each) and `from: { layer, name, grain, set, frame: true }` on a frame clave;
+- `per` and `patterns` on a frame complement;
+- `snap: 'strike'` on a frame stroke.
+
+`pattern` and `onsets` are the clave's most repeated counted bar's (else bar 1's), for views that show one pattern.
+
+**The probe rows** (seed 1, Sync):
+
+| row | bars × slots | candidate | patterns | score | strokes in frame | on chord tones | Fill |
+|---|---|---|---|--:|--:|--:|---|
+| 8:7:6:5 | 2 × 3 | layer A · 4 steps · chord tones | `x.x. ...x` | 0.500 | 3/3 | 3/3 | partner `xx. ...` |
+| 11:9:7:5 | 2 × 4 | layer A · 6 steps · chord tones | `xxx... xx....` | 0.583 | 4/4 | 4/4 | complement |
+| 19:17:16:15 | 2 × 8 | layer C · 8 steps · chord tones | `x..x.x.. .xx...x.` | 0.667 | 6/6 | 6/6 | partner `.x...x.. ........` |
+| 7:5:3:2 | 1 × 3 | layer C · 3 steps · chord tones | `xx.` | 0.472 | 2/2 | 2/2 | complement |
+| 119:42:15:8 | 4 × 8 | layer C · 4 steps · chord tones | `x.x. ..xx ..x. ....` | 0.500 | 5/5 | 5/5 | complement |
+| 768:769 | 4 × 8 | layer B · 6 steps · tones in frame | `xxx... .x..x. ..xx.. xxx...` | 0.750 | 10/10 | 3/10 | complement |
+| 768:784 | 4 × 8 | layer B · 8 steps · chord tones | `x.x.x.x.` each bar | 1.000 | 16/16 | 16/16 | partner `.x.x.x.x` each bar |
+| 16:12:9 | 2 × 4 | layer A · 8 steps · chord tones | `xxxxxxx. xxxxxxxx` | 0.375 | 15/15 | 15/15 | complement |
+
+Before, the strokes in frame were 1/4, 1/4, 5/8, 2/2, 8/8, 1/8 and 8/8 on the first seven rows (the probe's table).
+
+**Cost.** On the 16k row (8 × 8; 112 readings, 105 candidates) the clave is ranked in about 3.5 ms and chosen with its partner in about 1.3 ms, and Compose is no slower (773 ms frame, 828 ms pattern on a loaded machine; the pattern table took longer). A chord swap with the re-read is about 12 ms. On the small rows the clave is under 1 ms.
+
+**Tests.** `assert-frame-clave.mjs` (new, 15 checks) runs against a brute force written from the order:
+- the candidates, their reading and ranking, and every stroke the layer's own strike at its step, in the set, at its own time (8 rows × 3 seeds × Sync and Fill, 3 charts, a MIDI target);
+- Fill's partner or the complement landed in frame;
+- the comp and the perc on the clave, each bar's first accented;
+- 80 asked claves landed in frame;
+- `'pattern'`'s 76 hashes;
+- the default being 'frame', and no other part moving;
+- 216 chord swaps moving only their bar's strokes, the re-read the brute force's (the partner's too), the comp and the perc on them, a JSON round trip;
+- 89 clave switches equal to a Compose's;
+- the words;
+- the probe table, and the 16k row's cost.
+
+**Calls beyond the order (proposed):**
+1. "Each strike a step" holds where the bar holds exactly n strikes. Otherwise the nearest place rules, and a strike two steps share is one stroke.
+2. A reading with no bar left in is no candidate. The frame set's twin of the chord set takes the chord set's name.
+3. A Fill partner needs a stroke, and the ¼ slot is measured at the onsets' own places.
+4. The complement's count is the clave's mean x's a bar, kept (`per`) so a swap moves only its bar.
+5. A split bar reads a strike under the chord of the slot it sounds in, not the one its step's place falls in. They differ only where a strike sits across a span edge from its step.
+6. The curated claves rank with recurrence 0, below any frame candidate in practice.
+7. The perc's accent is each bar's first onset for a frame clave.
+
+**Open (for Avery):**
+1. **Rows whose every tone is in tune read near-pulses.** On 16:12:9 every candidate is mostly pulse, so the best scores only 0.375 and the comp strikes 15 times in 2 bars. Should a frame clave under a floor (say 0.5) give way to the pattern clave, or to a curated one landed in frame?
+2. **A partner can leave a bar empty.** On 19:17:16:15, Fill's partner strikes nothing in bar 2, so the comp plays its root onset there. Should a partner need a stroke in every bar the clave has?
+3. **Ties on dense rows.** The 16k row ties 4 candidates at 0.656, and the seed picks. Prefer the chord set, or the straighter grain?
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

@@ -25,7 +25,7 @@ import {
   readRhythm, layerTones, barSizes, toneSets, layerClaves, claveTable, rowClaves, scoreClave, compCandidates, clavePartners, complementClave,
   claveOf, curatedClaves, rankRowClaves, chooseClave, claveAlternates, claveText, claveSource, claveSetText, COMP_RULES, SIZE_TIERS, CURATED_NAMES,
 } from '../core/claves.js';
-import { compose, compNodesOf, compSourceOf } from '../core/compose.js';
+import { compose as composeAny, compNodesOf, compSourceOf } from '../core/compose.js';
 import { arrangeDrums } from '../core/drums.js';
 import { DRUM_PATTERNS } from '../core/drum-patterns.js';
 import { euclidPattern } from '../core/cells.js';
@@ -34,6 +34,10 @@ import { answer } from '../core/compose-worker.js';
 import { decodeClip, readMidi } from '../core/midi.js';
 import { CLIPS, clipBytes } from './fixtures/midi-clips.mjs';
 import { RHYTHMS, OVERWORLD_RUNTIME } from './rhythms.mjs';
+// the clave from the pattern (BASS_VOICING_ORDER.md P19): this suite freezes the clave before phase I, so every Compose
+// here asks `claveFrom: 'pattern'` (as `voicing: 'close'` pinned phase F; not under compStyle 'notes', which has no clave).
+// The frame clave's own checks are assert-frame-clave.mjs.
+const compose = (L, T, o = {}) => composeAny(L, T, o.overrides?.compStyle === 'notes' ? o : { ...o, overrides: { claveFrom: 'pattern', ...(o.overrides ?? {}) } });
 
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };

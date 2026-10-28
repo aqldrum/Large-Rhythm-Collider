@@ -10,7 +10,8 @@
 //     → { parts, drums, chords, modulations, changedBars, retunedBars, changed, exceptions, stats, (bassDropped) }
 //   reclave(spec, row, cells, { clave, relation })   (COMP_ARP_ORDER.md Amendment 1, phase E) the clave chosen again and
 //     laid, the comp strummed again over every bar's chord, the drums arranged again: a live clave switch, equal to a
-//     Compose given the same `overrides.clave` / `compRelation` (comp and drums byte for byte); `compStyle: 'notes'` refused
+//     Compose given the same `overrides.clave` / `compRelation` (comp and drums byte for byte); `compStyle: 'notes'` refused.
+//     A clave read from the frames (phase I) is chosen again over the frame candidates under the chords as they play
 //   rearrange(spec, row, cells, { voicing })                        the chords' Close | Led (= revoice, below)
 //   revoice(spec, row, cells, { voicing: 'close' | 'led' })   (BASS_VOICING_ORDER.md phase H) every chord voiced again,
 //     close or led (compose.js `voiceLead`), the comp in chords strummed again at their octaves (P5), the drums arranged
@@ -34,8 +35,12 @@
 //               tone is never a foreign one in its own bar.
 //   chord swap  (decision 1) the lead stays. Bar k's chord voices, comping and bass are rebuilt over the new chord (the
 //               comp in its own style: in chords, the bar's clave strokes strummed again and its borrowed tones taken
-//               from the new chord's voices, COMP_ARP_ORDER.md P10; the clave itself never moves, and a bar it leaves
-//               empty is struck on the new chord's root onset),
+//               from the new chord's voices, COMP_ARP_ORDER.md P10; a bar the clave leaves empty is struck on the new
+//               chord's root onset. A clave read from the frames (BASS_VOICING_ORDER.md phase I, P20) is read again in
+//               the rebuilt bars under their new chords, the same layer, grain and set (a curated or asked clave's
+//               steps landed in frame again), its partner too: the comp re-strums there, the perc follows, the bass
+//               re-mines it under Clave, and `reclavedBars` lists the bars whose strokes moved (the result's `clave`
+//               the new spec.clave). A clave from the pattern never moves),
 //               and its inner is re-mined bar-locally (lines.js `rules: { before, after }`: the inner's notes either
 //               side of the bar as boundaries); the bar's exceptions are its lead's strong notes off the new chord (a
 //               lead note foreign under the new chord's frame and target is a passing tone; proposed). An empty bar
@@ -73,7 +78,7 @@ import { CHORD_QUALITIES, pickFor, chordRecord, spanRecord, spanMaterial, harmon
 import { FALLBACK_QUALITIES } from './progression.js';
 import { arrangeDrums } from './drums.js';
 import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, compNodesOf, compUnitsOf, layCompClave, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, voiceLead, voicingStats, voicingWhy, VOICINGS, PART_IDS } from './compose.js';
-import { readRhythm, rankRowClaves, chooseClave, claveText, claveSource, COMP_RELATIONS } from './claves.js';
+import { readRhythm, rankRowClaves, chooseClave, rankFrameClaves, chooseFrameClave, rereadClave, claveText, claveSource, COMP_RELATIONS } from './claves.js';
 import { bassBarOf, bassLockOf, bassWalkCells, bassBarRecord, bassStatsOf } from './bass.js';
 
 export const COMPOSER_REARRANGE_VERSION = 'composer-rearrange-v1';
@@ -206,7 +211,9 @@ function changedByBar(oldParts, newParts) {
  *        | { phrase, line: an id of opts.trace.lines | { notes: [{ slot, node, octave }] }, chordsFollow (false) }
  *   opts   { parts (the parts as they play now; default spec.parts), trace (for a line id), drumOptions (default the
  *            spec's own), smoothPhrase (false: the inner re-mined bar by bar; true: over the whole phrase) }
- * → { version, parts, drums, chords, modulations, changedBars, retunedBars, changed: { part: [bar] }, exceptions, stats }
+ * → { version, parts, drums, chords, modulations, changedBars, retunedBars, changed: { part: [bar] }, exceptions, stats,
+ *     (reclavedBars, clave: a clave read from the frames, phase I P20: the rebuilt bars whose strokes moved, and the new
+ *     spec.clave when any did) }
  */
 export function rearrange(spec, row, cells, edit, opts = {}) {
   if (!spec || spec.refused) fail('nothing to rearrange in a refused spec');
@@ -242,7 +249,7 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   const compOf = (c, k, range = null, voiced = null) => {
     if (!compChords) return compOfBar(ctx, c, k, compLayer, range);
     const r = range ?? { from: k * S, to: (k + 1) * S };
-    const strokes = spec.clave ? compNodesOf(spec.clave, r.from, r.to) : partById.comp.strokes.filter((x) => x.slot >= r.from && x.slot < r.to).map((x) => x.node);
+    const strokes = clave ? compNodesOf(clave, r.from, r.to) : partById.comp.strokes.filter((x) => x.slot >= r.from && x.slot < r.to).map((x) => x.node);
     const got = compChordsOfBar(ctx, c, k, strokes, range, voiced);
     compStrokes.push(...got.strokes);
     return got.notes;
@@ -320,6 +327,25 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   const targets = recs.map((c, k) => targetOfBar(c, rebuilt.has(k) ? [...new Set([...scale, ...c.gridPcs])].sort((a, b) => a - b) : scale));
   const allTargets = { scale, bars: targets };
 
+  // ── the clave read from the frames (BASS_VOICING_ORDER.md phase I, P20): each rebuilt bar's (span's) clave read again
+  // under its new chord, the same layer, grain and set (a fixed clave's steps landed in frame again), its partner too; the
+  // other bars' strokes stand. A clave from the pattern ('pattern', or one composed before phase I) never moves ──
+  let clave = spec.clave, reclavedBars = null;
+  if (clave?.read === 'frame' && target.size) {
+    const bars = new Set([...target].map(barOf)), chordAt = spans ? (j) => recs[unitOf[j]] : (j) => recs[Math.floor(j / S)];
+    const units = compUnitsOf(spans ? spec.chords : null, N, S), { partner, relation, ...own } = clave;
+    const next = rereadClave(row, ctx, chordAt, own, bars, { units });
+    const other = rereadClave(row, ctx, chordAt, partner, bars, { units, of: next });
+    const took = new Set(next.strokes.map((x) => x.node));
+    let shared = 0; for (const x of other.strokes) if (took.has(x.node)) { x.shared = true; shared++; }
+    clave = { ...next, relation, partner: { ...other, shared } };
+    const key = (c, k) => JSON.stringify(c.strokes.filter((x) => x.bar === k).map(({ time, ...x }) => x));
+    reclavedBars = [...bars].filter((k) => key(clave, k) !== key(spec.clave, k) || key(clave.partner, k) !== key(spec.clave.partner, k)).sort((a, b) => a - b);
+    // the same strokes (a swap to the chord it had, or one whose frame keeps them): the clave as it was, byte for byte
+    if (!reclavedBars.length) clave = spec.clave;
+  }
+  const reclaved = clave !== spec.clave;
+
   // ── the rebuilt bars: chord voices, comping (the layer pinned), bass ──
   const compLayer = compChords ? null : 'ABCD'.indexOf(spec.stats.compLayer?.layer);
   if (compLayer != null && compLayer < 0) fail('the spec names no comp layer');
@@ -327,7 +353,7 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   // BASS_VOICING_ORDER.md G3 (P14): a bass arranged by bass.js (the part's `bass`) is re-mined at its density and lock, a
   // pick kept only where the bar still offers it (else dropped: `bassDropped`); Walking re-mines the bar before too, its
   // approach to the new chord. A bass with no arrangement is Compose's, rebuilt as Compose builds it.
-  const bassArr = partById.bass.bass ?? null, bassLock = bassArr ? bassLockOf(spec, ctx, bassArr.lock) : null;
+  const bassArr = partById.bass.bass ?? null, bassLock = bassArr ? bassLockOf(clave === spec.clave ? spec : { ...spec, clave }, ctx, bassArr.lock) : null;
   const bassWalk = bassArr?.density === 'walking' ? bassWalkCells(spec, { row, cells }) : null;
   const bassBars = bassArr ? bassArr.bars.slice() : null, bassPicks = bassArr ? { ...bassArr.picks } : null, bassDropped = [];
   const bassAt = (c, k, opts) => {
@@ -445,7 +471,7 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   const retunedBars = [...retuned].filter((b) => !spans || !rebuiltBars.has(b)).sort((a, b) => a - b);
 
   // ── the drums: arrangeDrums over the rearranged spec, with the spec's own options ──
-  const next = { ...spec, parts: newParts, chords };
+  const next = { ...spec, parts: newParts, chords, ...(reclaved ? { clave } : {}) };
   const drums = spec.drums === undefined && opts.drumOptions === undefined ? undefined : arrangeDrums(next, opts.drumOptions ?? spec.drums?.options ?? {});
 
   // ── stats ──
@@ -458,11 +484,12 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   }
   const leadCells = new Set(notes.lead.map((n) => n.slot));
   const stats = { notes: counts, exceptions: exceptions.reduce((a, b) => a + b, 0), chordVoices: notes.chords.length / N, bassRooted: `${rooted}/${N}`, innerOnLeadSlots: notes.inner.filter((n) => leadCells.has(n.slot)).length,
-    ...(compChords ? { compStrum: notes.comp.length ? notes.comp.filter((n) => !n.borrowed).length / notes.comp.length : 0 } : {}), ...(voicing ? { voicing } : {}) };
+    ...(compChords ? { compStrum: notes.comp.length ? notes.comp.filter((n) => !n.borrowed).length / notes.comp.length : 0 } : {}), ...(voicing ? { voicing } : {}),
+    ...(reclaved ? { clave: { id: clave.id, relation: clave.relation, strokes: compStrokes.length, silent: clave.relation === 'fill' ? clave.partner.silent + clave.partner.shared : clave.silent } } : {}) };
 
   const changedBars = [...new Set([...[...rebuilt].map(barOf), ...leadChanged])].sort((a, b) => a - b);
   return { version: COMPOSER_REARRANGE_VERSION, parts: newParts, drums, chords, modulations, changedBars, retunedBars, ...(revoicedBars ? { revoicedBars } : {}), changed: changedByBar(parts, newParts), exceptions: stats.exceptions, stats,
-    ...(bassArr ? { bassDropped } : {}) };
+    ...(bassArr ? { bassDropped } : {}), ...(reclavedBars ? { reclavedBars } : {}), ...(reclaved ? { clave } : {}) };
 }
 
 /** a spec with a rearrangement written in: parts, drums, chords, modulations and the stats it moves (a new object);
@@ -503,7 +530,8 @@ function ranksOf(row) {
  * inner, every part's sound, legato and on/off, baseHz. Equal, comp and drums byte for byte, to a Compose given the
  * same `overrides.clave` / `compRelation` (assert-claves.mjs).
  *   spec   a composed spec in chords (`compStyle: 'notes'` has no clave: refused); row, cells: its materials
- *   edit   { clave ('steps:pattern' | 'son' | 'rumba' | 'bossa'; absent or null: the clave it plays), relation ('sync'
+ *   edit   { clave ('steps:pattern' | 'son' | 'rumba' | 'bossa' | a frame clave's 'frame:A/8/chord'; absent or null:
+ *            the clave it plays), relation ('sync'
  *            | 'fill'; absent: the relation it plays) }
  *   opts   { parts (the parts as they play now; default spec.parts), drumOptions (default the spec's own) }
  * → rearrange's shape ({ parts, drums, chords, modulations, changedBars, retunedBars, changed, exceptions, stats }) plus
@@ -522,18 +550,26 @@ export function reclave(spec, row, cells, edit = {}, opts = {}) {
   for (const id of PART_IDS) if (!partById[id]) fail(`no ${id} part`);
   const spans = spec.chords.some((c) => c.slots != null) ? spec.chords.map((c) => ({ bar: c.bar, from: c.from, slots: c.slots })) : null;
 
-  // the clave: the one it plays with the relation switched (its strokes stand), else chosen again (asked) and laid
-  let clave, asked = false;
+  // the chords as they play (walked as a rearrange walks them): the comp is strummed over them, and a frame clave read under them
+  const recs = walkChords(m, givenOf(m, spec.chords), { e: K.frameCentsEachSide, gridBase: frameOf(row, toneOf(m, K.root), K.frameCentsEachSide).rootCents, modulation: K.modulation, foldOffsets: spec.input.overrides?.foldOffsets ?? true }, spans);
+  const unitOf = spans ? spans.flatMap((sp, i) => Array.from({ length: sp.slots }, () => i)) : null;
+
+  // the clave: the one it plays with the relation switched (its strokes stand), else chosen again (asked) and laid. A clave
+  // read from the frames (phase I, P20) is chosen again over the frame candidates under the chords as they play, a clave
+  // from the pattern over the row's cached table
+  let clave, asked = false, choice = null;
+  const fromFrame = spec.clave.read === 'frame', units = compUnitsOf(spans ? spec.chords : null, N, S);
   if (edit.clave == null || edit.clave === spec.clave.id) clave = { ...spec.clave, relation };
   else {
-    const { rhythm, ranks } = ranksOf(row);
-    const choice = chooseClave(rhythm, { asked: edit.clave, ranks });
-    clave = layCompClave(row, ctx, choice, { relation, phase: K.phase, units: compUnitsOf(spans ? spec.chords : null, N, S), cut: K.cut ?? null });
+    if (fromFrame) {
+      const chordAt = spans ? (j) => recs[unitOf[j]] : (j) => recs[Math.floor(j / S)];
+      choice = chooseFrameClave(row, ctx, chordAt, { asked: edit.clave, ranks: rankFrameClaves(row, ctx, chordAt), units });
+    } else { const { rhythm, ranks } = ranksOf(row); choice = chooseClave(rhythm, { asked: edit.clave, ranks }); }
+    clave = layCompClave(row, ctx, choice, { relation, phase: K.phase, units, cut: K.cut ?? null });
     asked = true;
   }
 
   // the comp strummed again bar by bar (a chart's span by span) over the chords as they play, as Compose strums it
-  const recs = walkChords(m, givenOf(m, spec.chords), { e: K.frameCentsEachSide, gridBase: frameOf(row, toneOf(m, K.root), K.frameCentsEachSide).rootCents, modulation: K.modulation, foldOffsets: spec.input.overrides?.foldOffsets ?? true }, spans);
   const voices = [], strokes = [];
   let found = 0, tones = 0;
   // led chords (P5): each bar's (span's) chord voices as they play, for the strum's octaves
@@ -547,7 +583,6 @@ export function reclave(spec, row, cells, edit = {}, opts = {}) {
   };
   if (spans) recs.forEach((c, u) => strum(c, spans[u].bar, { from: spans[u].from, to: spans[u].from + spans[u].slots }));
   else recs.forEach((c, k) => strum(c, k));
-  const unitOf = spans ? spans.flatMap((sp, i) => Array.from({ length: sp.slots }, () => i)) : null;
   const ratioOf = spans ? (bar, slot) => (recs[unitOf[slot]] ?? recs[spans.findIndex((sp) => sp.bar === bar)]).fundamentalRatio : (bar) => recs[bar].fundamentalRatio;
   const was = partById.comp;
   const comp = partOf(ctx, 'comp', voices, { sound: was.sound, legato: was.legato, enabled: was.enabled, baseHz: K.baseHz, ratioOf, voice: true, strokes });
@@ -559,7 +594,9 @@ export function reclave(spec, row, cells, edit = {}, opts = {}) {
 
   // the stats and the decisions it moves
   const compStrum = tones ? found / tones : 0, silent = relation === 'fill' ? clave.partner.silent + clave.partner.shared : clave.silent;
-  const said = { clave: [clave.id, `${asked ? 'chosen in the window' : 'as composed'}: ${claveText(clave)} (${claveSource(clave) || 'the row'}), score ${clave.score.toFixed(3)}; laid a pass ${clave.span > 1 ? `each ${clave.span} bars` : 'a bar'}, ${clave.strokes.length} of its ${clave.strokes.length + clave.silent} onsets landed on the row (${clave.silent} silent)`],
+  const laid = clave.from?.frame ? `${clave.strokes.length} strokes, each the layer's own strike at its own time`
+    : `laid a pass ${clave.span > 1 ? `each ${clave.span} bars` : 'a bar'}${fromFrame ? ' on in-frame onsets only' : ''}, ${clave.strokes.length} of its ${clave.strokes.length + clave.silent} onsets landed on the row (${clave.silent} silent)`;
+  const said = { clave: [clave.id, `${asked ? 'chosen in the window' : 'as composed'}: ${claveText(clave)} (${claveSource(clave) || 'the row'}), score ${clave.score.toFixed(3)}; ${laid}`],
     compRelation: [relation, `${edit.relation != null ? 'chosen in the window' : 'as composed'}: ${relation === 'sync' ? 'the comp strikes the clave\'s own landed steps, with the perc' : `the comp strikes the clave's gaps (${clave.partner.source === 'partner' ? 'its partner' : 'the complement'} ${clave.partner.pattern})`}`],
     compStrum: [compStrum, `the clave's ${strokes.length} stroke${strokes.length === 1 ? '' : 's'} (${relation}), each the bar's chord: ${found} of ${tones} tones (${(100 * compStrum).toFixed(0)} %) from the row, the rest borrowed from the chord voices`] };
   const decisions = spec.decisions?.map((d) => (said[d.what] ? { what: d.what, value: said[d.what][0], why: said[d.what][1] } : d));

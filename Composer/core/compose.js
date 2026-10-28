@@ -51,6 +51,15 @@
 //                         the voice's `lane` too); each holds at
 //                         most to the next stroke (`holdTo`), never past the span. `spec.clave` holds the clave, its
 //                         landed strokes and its partner's; the drums play it on the perc (drums.js R4).
+//                         FROM THE FRAME (`claveFrom: 'frame'`, the default; BASS_VOICING_ORDER.md phase I, Avery's rule 6,
+//                         P16–P21): the clave is read after the chords, from them. A candidate is a layer, a grain (n steps
+//                         a bar: the layer's own strikes a bar, or 3–16 when it is denser) and a tone set (the bar's chord
+//                         tones in tune, or anything in its frame); a bar's pattern is the layer's strikes at its steps
+//                         whose tones are in the set under the chord they sound under, and the strokes are those strikes,
+//                         at their own times (nothing is landed). Ranked by the same rules over the bars' patterns, ties
+//                         by the seed; Fill's partner the best candidate sharing no stroke (none within ¼ slot), else the
+//                         complement landed in frame; the curated and asked claves keep their pattern and land only on
+//                         in-frame onsets (claves.js). `claveFrom: 'pattern'` is the clave above, byte for byte.
 //                         `compStyle: 'notes'` (the frozen core): one note a stroke (rhythm-claves.js and
 //                         chunk-comping.js, ported), a slot's step sounding only where its strike is on one of the bar's
 //                         chord tones; the layer whose bars make the best claves (25–50 % of its steps sounding, a
@@ -93,7 +102,7 @@ import { spread, evenIn, isPlain, MAX_SHARES } from './chart.js';
 import { getInstrument } from '../../Audio/voices/recipes.js';
 import { readProgression, harmonyPins, describeProgression } from './progression.js';
 import { arrangeDrums, drumGrid } from './drums.js';
-import { readRhythm, chooseClave, claveAlternates, layClave, COMP_RELATIONS } from './claves.js';
+import { readRhythm, chooseClave, chooseFrameClave, claveAlternates, claveText, claveSource, layClave, COMP_RELATIONS, CLAVE_FROM } from './claves.js';
 import { createTrace, refusedTrace, traceCapsOf } from './trace.js';
 import { placeClip, targetRoot, registerOf, DEFAULTS as TARGET_DEFAULTS } from './target.js';
 import { pcName } from './midi.js';
@@ -121,7 +130,7 @@ export const STRUM_WINDOW = 0.25;
 /** chords: a stroke's own onset (plus 0.1 a layer more striking it), the strum's other tones, a borrowed tone (P7, proposed) */
 export const COMP_VELOCITY = Object.freeze({ stroke: 0.55, strum: 0.5, borrowed: 0.45 });
 export const MAX_COMP_VOICES = 4;
-const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses', 'compStyle', 'clave', 'compRelation', 'voicing']);
+const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses', 'compStyle', 'clave', 'compRelation', 'voicing', 'claveFrom']);
 /** the chords' two voicings (BASS_VOICING_ORDER.md, decided 3–4, P1–P7): led (the default: each tone the octave nearest
  *  the chord before, inside a window, clear of the mud limit) and close (root position from an octave under the root, as before) */
 export const VOICINGS = Object.freeze(['led', 'close']);
@@ -731,6 +740,19 @@ export function innerOf(ctx, { from, bars }, { chords, targets, lead, table, rul
   return { line, notes, onLead };
 }
 
+/**
+ * The clave decision's words when it is read from the frames (BASS_VOICING_ORDER.md P21; Compose's and rearrange.js
+ * `reclave`'s): its source ("layer A · 8 steps · chord tones"), each bar's pattern, its score, and how its strokes were
+ * found. `choice` chooseFrameClave's, `clave` the laid spec.clave, `fromAsked` whether `claveFrom` was asked.
+ */
+export function frameClaveWhy(choice, clave, fromAsked = false) {
+  const C = choice.clave, R = choice.ranks, f = C.from ?? {}, n = R.ranked.candidates.length;
+  const head = `${choice.asked ? 'asked, read ' : ''}${fromAsked ? 'from the frame (asked)' : 'from the frame by default (rule 6, Avery)'}: a bar's clave is the clave layer's own strikes whose tones fit the bar's chord`;
+  const how = choice.asked ? (f.frame ? 'the frame clave asked' : `${C.label ?? C.pattern}, its steps landed only on in-frame onsets`) : f.frame ? `the best of ${n} frame clave${n === 1 ? '' : 's'} (${R.ranked.tried} readings: each layer at its strikes a bar, or at 3–16 steps when denser, under the chord tones and the frame)` : `no layer reads a frame clave, so the curated ${C.label}`;
+  const score = C.score != null ? ` scores ${C.score.toFixed(3)} (recurrence ${C.terms.held.toFixed(2)}, density ${C.terms.density.toFixed(2)}, fit ${C.terms.fit.toFixed(2)})` : '';
+  const laid = f.frame ? `${clave.strokes.length} strokes, each the layer's own strike at its own time` : `laid a pass ${C.span > 1 ? `each ${C.span} bars` : 'a bar'} on in-frame onsets only, ${clave.strokes.length} of its ${clave.strokes.length + clave.silent} steps landed (${clave.silent} silent: no in-frame onset there)`;
+  return `${head}; ${how}: ${claveSource(C)}, ${claveText(C)}${score}${choice.ties > 1 ? `, ${choice.ties} tied, by the seed` : ''}; ${laid}`;
+}
 /** the comp's strokes from a spec's clave (R3, decided 6): its own landed steps in Sync, its partner's in Fill (a partner
  *  step landed on an onset the clave took is left out, so the comp and the perc never strike together) → [stroke] */
 export const compSourceOf = (clave) => (clave.relation === 'fill' ? clave.partner.strokes.filter((x) => !x.shared) : clave.strokes);
@@ -748,15 +770,21 @@ export const compUnitsOf = (spans, N, S) => (spans ? spans.map((c) => ({ from: c
  * → spec.clave: { …the clave, relation, strokes, silent, partner: { …the partner, strokes, silent, shared } }
  */
 export function layCompClave(row, ctx, choice, { relation, phase, units, cut = null }) {
-  const g = drumGrid({ knobs: { cycleSeconds: ctx.T, rowCycleSeconds: ctx.rowT, bars: ctx.N, slotsPerBar: ctx.S, phase, ...(cut ? { cut: { bars: cut.bars } } : {}) },
-    input: { layers: row.layers }, stats: { grid: row.grid }, timeline: { slotStarts: ctx.starts.map((x) => x * ctx.rowT), barStarts: [] } });
-  const lay = (x) => {
-    const got = layClave(row, g, x, { units, slotOf: (i) => ctx.posSlot[i] });
-    return { strokes: got.strokes.map((y) => ({ bar: y.bar, step: y.step, place: y.place, node: y.node, tick: y.tick, time: ctx.timeOf(row.tick[y.node]), slot: y.slot, snap: y.snap })), silent: got.silent.length };
-  };
+  const timed = (list) => list.map((y) => ({ bar: y.bar, step: y.step, place: y.place, node: y.node, tick: y.tick, time: ctx.timeOf(row.tick[y.node]), slot: y.slot, snap: y.snap }));
+  let lay;
+  if (choice.source === 'frame') {
+    // read from the frames (BASS_VOICING_ORDER.md phase I, P16–P18): the clave and its partner come with their strokes,
+    // each the clave layer's own strike or a fixed clave's step landed in frame, so nothing is landed here
+    lay = (x) => ({ strokes: timed(x.strokes), silent: x.silent });
+  } else {
+    const g = drumGrid({ knobs: { cycleSeconds: ctx.T, rowCycleSeconds: ctx.rowT, bars: ctx.N, slotsPerBar: ctx.S, phase, ...(cut ? { cut: { bars: cut.bars } } : {}) },
+      input: { layers: row.layers }, stats: { grid: row.grid }, timeline: { slotStarts: ctx.starts.map((x) => x * ctx.rowT), barStarts: [] } });
+    lay = (x) => { const got = layClave(row, g, x, { units, slotOf: (i) => ctx.posSlot[i] }); return { strokes: timed(got.strokes), silent: got.silent.length }; };
+  }
+  const bare = ({ strokes, silent, ...rest }) => rest;
   const own = lay(choice.clave), other = lay(choice.partner), took = new Set(own.strokes.map((x) => x.node));
   let shared = 0; for (const x of other.strokes) if (took.has(x.node)) { x.shared = true; shared++; }
-  return { ...choice.clave, relation, strokes: own.strokes, silent: own.silent, partner: { ...choice.partner, strokes: other.strokes, silent: other.silent, shared } };
+  return { ...bare(choice.clave), relation, strokes: own.strokes, silent: own.silent, partner: { ...bare(choice.partner), strokes: other.strokes, silent: other.silent, shared } };
 }
 
 /**
@@ -870,7 +898,8 @@ function targetLeadNotes(row, cells, tg, base) {
  *                  modulation, foldOffsets, table, sounds: { part: id }, legato: { part: bool }, enabled: { part: bool },
  *                  baseHz, compLayer (compStyle 'notes'), presence ('cluster' | 'exact'), settlePasses (an integer 0..3),
  *                  compStyle ('chords', the default, | 'notes': the comping, above), clave ('steps:pattern' | 'son' |
- *                  'rumba' | 'bossa': the comp's clave in chords), compRelation ('sync', the default, | 'fill') }, worker (true:
+ *                  'rumba' | 'bossa' | a frame clave's 'frame:A/8/chord': the comp's clave in chords), compRelation ('sync', the
+ *                  default, | 'fill'), claveFrom ('frame', the default, | 'pattern': phase I, above) }, worker (true:
  *                  the full table unless asked), progression ([a ratio of the row | null] a bar: progression.js;
  *                  absent or all null: lead-led, exactly as without it),
  *                  drums (drums.js `arrangeDrums` options, or false: no `drums` in the spec),
@@ -1052,7 +1081,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   if (!COMP_STYLES.includes(compStyle)) fail(`compStyle must be one of ${COMP_STYLES.join(', ')}`);
   const chordsStyle = compStyle === 'chords';
   if (chordsStyle && ov.compLayer != null) fail('compLayer is compStyle \'notes\'\'s: in chords the clave leads the comp (the override is clave)');
-  if (!chordsStyle && (ov.clave != null || ov.compRelation != null)) fail('clave and compRelation are compStyle \'chords\'\'s: \'notes\' comps on a layer (compLayer)');
+  if (!chordsStyle && (ov.clave != null || ov.compRelation != null || ov.claveFrom != null)) fail('clave, compRelation and claveFrom are compStyle \'chords\'\'s: \'notes\' comps on a layer (compLayer)');
   if (chordsStyle) decide('compStyle', compStyle, ov.compStyle != null ? 'asked' : 'chords by default (decided, Avery): the clave\'s strokes (Amendment 1), each the chord strummed from the row, then borrowed');
   let comp = null, compChoices = null, clave = null, claveChoice = null;
   const compUnits = compUnitsOf(spans ? h.chords : null, N, S);
@@ -1061,21 +1090,35 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     for (let i = 0; i < row.active.length; i++) rng();
     const relation = ov.compRelation ?? 'sync';
     if (!COMP_RELATIONS.includes(relation)) fail(`compRelation must be one of ${COMP_RELATIONS.join(', ')}`);
-    // the clave's ties by the seed, from a generator of its own (no draw of Compose's moves)
-    claveChoice = chooseClave(readRhythm(row), { asked: ov.clave ?? null, rng: seededRandom(`${seed}/clave`) });
-    // laid on the bars through the drums' grid (drums.js `landPlace`: the onsets are the row's layers' pulses)
+    const claveFrom = ov.claveFrom ?? 'frame';
+    if (!CLAVE_FROM.includes(claveFrom)) fail(`claveFrom must be one of ${CLAVE_FROM.join(', ')}`);
+    // the clave's ties by the seed, from a generator of its own (no draw of Compose's moves). From the frame (the default;
+    // BASS_VOICING_ORDER.md phase I, rule 6, P16–P19): read from the chords above, so it comes after them, a bar's
+    // strokes the clave layer's strikes whose tones fit the chord the slot sounds under; from the pattern: the table's
+    // fixed pattern laid through the drums' grid (drums.js `landPlace`: the onsets are the row's layers' pulses)
+    if (claveFrom === 'frame') {
+      const chordAt = spans ? (j) => slotChord[j] : (j) => h.chords[Math.floor(j / S)];
+      claveChoice = chooseFrameClave(row, ctx, chordAt, { asked: ov.clave ?? null, rng: seededRandom(`${seed}/clave`), units: compUnits });
+    } else claveChoice = chooseClave(readRhythm(row), { asked: ov.clave ?? null, rng: seededRandom(`${seed}/clave`) });
     clave = layCompClave(row, ctx, claveChoice, { relation, phase, units: compUnits, cut: tg ? { bars: tg.N } : null });
     const shared = clave.partner.shared;
     const C = claveChoice.clave, R = claveChoice.ranks, src = C.from;
-    const tierWhy = R.tier === 'meeting' ? 'each layer read at the bar sizes where another layer meets it' : R.tier === 'whole' ? 'no layer meets another within 16 strikes, so each layer read at every size that cuts it whole'
-      : R.tier === 'every' ? 'no layer meets another or divides within 16 strikes, so each layer read at every size 3–16 (a clipped last bar left out)' : 'the row\'s layers leave no clave of 3–16 steps';
-    const steps = clave.strokes.length + clave.silent;
-    decide('clave', C.id, `${claveChoice.asked ? 'asked' : src.pattern ? `${tierWhy}: no mined clave, so the curated ${C.label}` : `${tierWhy}, under tone sets coarse to fine (rhythm-claves.js): ${R.ranked.tried} claves of 3–16 steps; the best`}`
-      + `${src.layer != null ? `, found on layer ${src.name} (${src.layer}) cut every ${src.size} strikes under ${src.set}` : ''}: ${C.pattern} scores ${C.score.toFixed(3)} (recurrence ${C.terms.held.toFixed(2)}, density ${C.terms.density.toFixed(2)}, fit ${C.terms.fit.toFixed(2)})`
-      + `${claveChoice.ties > 1 ? `, ${claveChoice.ties} tied, by the seed` : ''}; laid a pass ${C.span > 1 ? `each ${C.span} bars` : 'a bar'}, ${clave.strokes.length} of its ${steps} onsets landed on the row (${clave.silent} silent)`);
-    decide('compRelation', relation, `${ov.compRelation != null ? 'asked' : 'sync by default (decided 6)'}: ${relation === 'sync' ? 'the comp strikes the clave\'s own landed steps, with the perc' : 'the comp strikes the clave\'s gaps'}; for Fill, ${claveChoice.partner.source === 'partner'
-      ? `its partner ${claveChoice.partner.pattern} (the best of ${claveChoice.partners}: the same bars under a tone set disjoint from the clave's, found together ${claveChoice.partner.together} time${claveChoice.partner.together === 1 ? '' : 's'})` : `the complement of its steps Euclid-thinned to its own ${C.onsets.length} onsets, ${claveChoice.partner.pattern} (no partner in the row)`}`
-      + `${shared ? `, ${shared} of whose landed steps share the clave's onset and are left out` : ''}`);
+    if (claveFrom === 'frame') {
+      decide('clave', C.id, frameClaveWhy(claveChoice, clave, ov.claveFrom != null));
+      decide('compRelation', relation, `${ov.compRelation != null ? 'asked' : 'sync by default (decided 6)'}: ${relation === 'sync' ? 'the comp strikes the clave\'s own strokes, with the perc' : 'the comp strikes the clave\'s gaps'}; for Fill, ${claveChoice.partner.source === 'partner'
+        ? `its partner ${claveSource(claveChoice.partner)}, ${claveText(claveChoice.partner)} (the best-ranked of ${claveChoice.partners} frame claves with no stroke within ¼ slot of the clave's)` : `the complement of its steps Euclid-thinned to its mean onsets a bar, ${claveText(claveChoice.partner)}, landed in frame (no frame clave clear of its strokes)`}`
+        + `${shared ? `, ${shared} of whose strokes share the clave's onset and are left out` : ''}`);
+    } else {
+      const tierWhy = R.tier === 'meeting' ? 'each layer read at the bar sizes where another layer meets it' : R.tier === 'whole' ? 'no layer meets another within 16 strikes, so each layer read at every size that cuts it whole'
+        : R.tier === 'every' ? 'no layer meets another or divides within 16 strikes, so each layer read at every size 3–16 (a clipped last bar left out)' : 'the row\'s layers leave no clave of 3–16 steps';
+      const steps = clave.strokes.length + clave.silent;
+      decide('clave', C.id, `${claveChoice.asked ? 'asked' : src.pattern ? `${tierWhy}: no mined clave, so the curated ${C.label}` : `${tierWhy}, under tone sets coarse to fine (rhythm-claves.js): ${R.ranked.tried} claves of 3–16 steps; the best`}`
+        + `${src.layer != null ? `, found on layer ${src.name} (${src.layer}) cut every ${src.size} strikes under ${src.set}` : ''}: ${C.pattern} scores ${C.score.toFixed(3)} (recurrence ${C.terms.held.toFixed(2)}, density ${C.terms.density.toFixed(2)}, fit ${C.terms.fit.toFixed(2)})`
+        + `${claveChoice.ties > 1 ? `, ${claveChoice.ties} tied, by the seed` : ''}; laid a pass ${C.span > 1 ? `each ${C.span} bars` : 'a bar'}, ${clave.strokes.length} of its ${steps} onsets landed on the row (${clave.silent} silent)`);
+      decide('compRelation', relation, `${ov.compRelation != null ? 'asked' : 'sync by default (decided 6)'}: ${relation === 'sync' ? 'the comp strikes the clave\'s own landed steps, with the perc' : 'the comp strikes the clave\'s gaps'}; for Fill, ${claveChoice.partner.source === 'partner'
+        ? `its partner ${claveChoice.partner.pattern} (the best of ${claveChoice.partners}: the same bars under a tone set disjoint from the clave's, found together ${claveChoice.partner.together} time${claveChoice.partner.together === 1 ? '' : 's'})` : `the complement of its steps Euclid-thinned to its own ${C.onsets.length} onsets, ${claveChoice.partner.pattern} (no partner in the row)`}`
+        + `${shared ? `, ${shared} of whose landed steps share the clave's onset and are left out` : ''}`);
+    }
   } else {
     compChoices = compChoicesOf(ctx, h.chords, { ...(spans ? { chordAt: (j) => slotChord[j] } : {}), style: compStyle });
     const tieOrder = compChoices.map(() => rng());

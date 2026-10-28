@@ -28,7 +28,7 @@ const run = (f, L, T, o) => { try { return JSON.stringify(f(L, T, o)); } catch (
  *  P7), the overrides themselves taken back out */
 const live = (L, T, o = {}) => {
   try { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close' } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; return spec; }
-  catch (err) { throw new Error(err.message.replace(', compStyle, clave, compRelation, voicing)', ')')); }
+  catch (err) { throw new Error(err.message.replace(', compStyle, clave, compRelation, voicing, claveFrom)', ')')); }
 };
 const pad = (L) => [...L, 0, 0, 0, 0].slice(0, 4);
 

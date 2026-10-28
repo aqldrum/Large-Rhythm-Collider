@@ -13,7 +13,7 @@
 //   • lines.js `rules: { before, after }`: the picker and the scorer agree on every boundary cost; absent, nothing moves
 //   • the cost on the 16,359-onset row: a chord swap (lean and full table), a lead swap, `materialsOf`
 //   node Composer/tests/assert-rearrange.mjs
-import { compose, PART_IDS } from '../core/compose.js';
+import { compose as composeAny, PART_IDS } from '../core/compose.js';
 import { rearrange, applyRearrange, materialsOf } from '../core/rearrange.js';
 import { phrasesOf } from '../core/harmony.js';
 import { classOfCents, frameAt } from '../core/frame.js';
@@ -21,6 +21,10 @@ import { lowerBoundTick } from '../core/row.js';
 import { buildLattice, pickLines, scoreLine, LINE_TYPES, MOTIONS, bandNotes, rootTargets } from '../core/lines.js';
 import { rootCandidates } from '../core/progression.js';
 import { RHYTHMS } from './rhythms.mjs';
+// the clave from the pattern (BASS_VOICING_ORDER.md P19): this suite freezes the clave before phase I, so every Compose
+// here asks `claveFrom: 'pattern'` (as `voicing: 'close'` pinned phase F; not under compStyle 'notes', which has no clave).
+// The frame clave's own checks are assert-frame-clave.mjs.
+const compose = (L, T, o = {}) => composeAny(L, T, o.overrides?.compStyle === 'notes' ? o : { ...o, overrides: { claveFrom: 'pattern', ...(o.overrides ?? {}) } });
 
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };
