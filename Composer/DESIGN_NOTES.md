@@ -2019,7 +2019,7 @@ Over the probe's 57 chords (seeds 1–3): motion 21,972¢ → 8,922¢, muddy 24 
 **The bass in the entry** (`state.bass: { density, lock, picks }`, `composedBass()` the default). Kept and carried as the arps are.
 - **Compose's own bass arranges nothing.** At Sparse · Free with no picks `arrangeBass` is Compose's bass byte for byte (phase G), so `state.spec`'s bass is Compose's (or rearrange's, after a swap) and no arrangement runs. `bassOf()` reads that bass's offer (its bars' runner-ups) from `arrangeBass` at the default, memoized per spec (~18–24 ms on the 16k row, once).
 - **Anything else is arranged after the arps and the drums,** over the spec as it plays: `settleState` arranges the drums before the bass (drums.js reads no bass), and the Kick lock lands on those drums (`state.drums`: the window's mode, on or off), the Clave lock on the comp's clave as edited. A chord swap, a clave switch, an undo or a re-compose re-arranges it from the fresh spec; a drum change under Kick does too (`rebass`: the fold again, its steps kept).
-- **One route for stale picks.** The fold's base is always Compose's spec, so rearrange's arranged-bass path (`bassDropped`) is never taken by the window. A pick a bar no longer offers after a chord swap plays the bar's best, marked `missed` (amber in the list), until an undo or a re-compose, as an arp pick does. **A re-compose** keeps the picks its bars still offer (a line's id is a hash of its notes) and drops the rest into `dropped.bass: [{ bar, id }]`, listed under "Compose dropped"; the bass is then arranged again without them.
+- **One route for stale picks.** The fold's base is always Compose's spec, so rearrange's arranged-bass path (`bassDropped`) is never taken by the window for an arranged bass (it is arranged again whole after the fold). *Phase N: no longer quite so. Compose's own bass now carries its record (Moving · Kick), so a chord swap under it takes that path, re-mining the bar at Moving · Kick; Compose's own has no picks, so `bassDropped` is always empty there.* A pick a bar no longer offers after a chord swap plays the bar's best, marked `missed` (amber in the list), until an undo or a re-compose, as an arp pick does. **A re-compose** keeps the picks its bars still offer (a line's id is a hash of its notes) and drops the rest into `dropped.bass: [{ bar, id }]`, listed under "Compose dropped"; the bass is then arranged again without them.
 - `setBass({ density, lock, picks })` is one undo step. A change of density or lock without picks drops the picks (the arp's Time rule), and one undo restores both. A lock refused now (`bassLockRefusal` over the spec and the drums as they play) is refused with its words; one refused later (the drums turned off under Kick) plays Free and `bassOf().refused` says why. `pickBass(bar, id)` goes through `setBass`; the bar's best again removes the pick; Roots refuses (one line a chord).
 - **Big rows:** past `MAIN_THREAD_ONSETS` the bass (and the default offer) is arranged in the module worker (`runCompose.bass`, `compose-worker.js` `answerBass`, the same kept materials as the edits and arps). Below it, this thread: on the 16k row (16,359 onsets) a density or lock change through the controller is 2–14 ms (full table; roots 3, moving 14, walking 13, kick 10, clave 4).
 
@@ -2329,6 +2329,76 @@ Phase I's open question 1 is answered by the tiers: 16:12:9 no longer strikes 15
 1. Every row's default lands in medium, often at its top: 8:7:6:5 and 768:784 play 50 % (768:784 `x.x.x.x.` every bar, scoring 1.0). Should sparse–medium prefer the sparser of two equal scores, or should 50 % be dense?
 2. On 8:7:6:5 and 11:9:7:5 one kick of 4 has no onset in frame, so it rests; Moving there plays 1.5–2 notes a bar. Is Moving · Kick too thin on the small rows (fall back to Free when a quarter of the kicks miss)?
 3. The window's drums vs Compose's: should the bass cover the kick that plays (the window's drum options sent to Compose), or Compose's?
+
+## The window over Amendment 2 (phase N; built 2026-10-28, branch `amend2/ui`)
+
+`BASS_VOICING_ORDER.md` Amendment 2, phase N (N1–N3), with phase M's list of what the window had to change. Rulings 10–14 are Avery's; the bass covering the kick that plays is the planner's; the rest is the builder's, proposed. One core file changed, additively (`bass.js`, below). Nothing here has been seen in a browser or heard.
+
+**Compose's own bass is Moving · Kick** (rule 11, P28; `store/composition-store.js`).
+- `composedBass()` and `isComposedBass()` read `COMPOSE_BASS`, so `bassOf()` opens at Moving · Kick and `bassOn` is false for it. A stored Sparse · Free is now an arrangement like any other: `setBass({ density: 'sparse', lock: 'free' })` arranges it, the bass before Amendment 2 note for note (checked against a Compose given `bass: { density: 'sparse', lock: 'free' }`).
+- **The offer.** Compose's bass part carries its `bass` record, so `bassOf()` reads its runner-ups from it. `offerOf` (arrangeBass at Compose's own) is only for a spec composed with the bass pinned to the one before, so a big row no longer sends a worker job for its default offer.
+- `bassOf()` adds `own` (the entry's is Compose's own) and `refollowed` (Compose's own arranged again over the drums as they play), and `playing` now means the window arranged the bass, so it is false for Compose's own as composed.
+
+**The kick that plays** (the planner's ruling). Compose covers its own default drums' kick, and the window plays `st.drumOptions`.
+- `kickOf(drums)`: the kick hits' ticks and slots, or 'off'. When the drums as they play strike another kick than Compose's drums (another mode, the drums off, a grid edit), and Compose's own bass covers the kick (its record's lock), `settleState` arranges it again over them at its own options (`bassArranges`). With the drums off or no kick in the mode, that's arrangeBass's Moving · Free, its `refused` the reason. The window says it as it says an asked Kick refused later: "Kick can't land now (the drums are off: …), so the bass lands anywhere".
+- `rebass` runs on every drum change under Compose's own bass, as it did for an asked Kick. Where the kick matches Compose's again (the backbeat back), nothing is arranged and the spec is Compose's object again.
+- A re-compose with the drums off: Compose covers its own drums' kick, so the fold runs after it lands (`kickMoved`) and the bass is arranged again. A big row's goes to the worker as an asked bass does (`bassStep`).
+- On 41:42:43 (4 × 8) the default window drums (backbeat, fills) strike Compose's kick exactly, so nothing is arranged by default. Of the drum modes, halftime, four, funk, soca and bossa move the kick; the layered modes, rock, shuffle, son, rumba and prime don't (seed 1). The lab's "a mode change while playing" now re-arranges the bass (on the lab's 41:42:43, partition without fills moves the kick), and nothing else.
+- In the window the bass cell says "Compose's own, arranged again over the kick as the drums play now" when it follows a moved kick (no amber; the refusal keeps its amber line).
+
+**The fold's base keeps Compose's drums** (item 5). The base was `{ ...composed, drums: undefined }`, so rearrange's bass path read no drums: under Compose's Moving · Kick a chord swap would have re-mined its bar at Moving · Free (the lock refused for want of drums). The base is now Compose's spec as it is. rearrange arranges the drums again at each step (about 0.1 ms; `settleState` still plays the window's own), and a swap re-mines Compose's bar at Moving · Kick over the kick it covers: equal to Compose's own swap (`assert-page-bass.mjs`). `assert-store-edits.mjs` compared against rearrange over a drum-less spec, so it now runs rearrange over the composed spec and compares the specs without their drums.
+
+**The comp's density** (N1; rule 10, P27; `state.compDensity`, 'sparse-med' by default).
+- In the entry like the voicing: in the snapshots, kept through a re-compose, carried to a new cycle, in `entrySnap`, and in JSON export when it isn't the default.
+- **Live:** the fold's step after the voicing's is `{ kind: 'density' }`, rearrange's `reclave` with `{ density }`, when the entry's tier differs from the composed spec's (`tierOf`: its clave's `compDensity.asked`, frame claves only). It runs before the chord and lead edits, so they re-read and re-rank the clave in the new tier (rearrange reads `spec.clave.compDensity.asked`), and before the clave edit, which is chosen in it. With no other edit it is byte for byte a Compose given that `compDensity` (comp, clave and drums; both ways on 768:769). It costs 23 ms on the 16k row; the way back to Compose's tier drops the step (no rearrange).
+- `setCompDensity(d)` is one undo step. **A clave picked from the list goes with it**, since it was the old tier's candidate: the new tier's best plays, Sync | Fill is kept, and one undo restores both (builder's call: a kept pick would make the switch silent).
+- **A re-compose** sends `compDensity` when it isn't the default (not to a composition whose clave has no tier), so the composed spec needs no switch.
+- **The select:** under the clave line, "density [Sparse–Med ▾]", each option titled with its band. Beside it, the tier as it plays: "42 % of its steps (medium)". A clave outside the asked tier adds ", outside the tier" (a pick, or a re-read that moved its share). A tier with no clave reads in amber: "no clave in the sparse tier, so the nearest: medium (25–50 %) · 25 % of its steps (medium)" (16:12:9). The select only shows for a frame clave; a pattern clave has no tier, and `setCompDensity` throws there.
+
+**The picker re-ranked** (rule 14, P30). Each fold step keeps the `claveAlternates` its rearrange returned (`alts`), and `claveOf().alternates` lists the last step's that has them, else the trace's (`reranked` says which).
+- They come back after a chord swap, a typed chord, a Chords Follow, a density, or a clave chosen again. A relation switch or a voicing switch returns none, so the list stays the one before it.
+- Because the alternates live on the fold's steps, an undo truncates them with the edit: an undo of the swap shows the trace's list again, with nothing extra to keep in step. A re-compose drops the fold, so the new trace's list shows.
+- What plays is never switched: after a swap, the clave stays Compose's, re-read (P20). The legend adds "ranked again over the chords as they play".
+- A re-compose's check for a chosen clave still reads the new trace's alternates (phase E).
+
+**The caption** (P31; `trace-frames.js` `compDetail(event, playing)`, `plot-highlights.js` `arrangement.clave`). The comp's caption reads the clave as it plays, not Compose's:
+- a clave picked in the window says ", picked in the window" (`highlightsOf`'s new `picked`, from the tab's `edits.clave.id`);
+- the same clave re-read under a chord edit says ", re-read in bar 2 (a new chord)" (`highlightsOf`'s new `composed`, compared stroke by stroke a bar);
+- every frame clave ends with its tier: "; the sparse–medium (10–50 %) tier", or "; no clave in the sparse tier, so the nearest, medium (25–50 %)" (`tierDetail`).
+- A density switch's clave is said by its source with no "picked".
+
+**Roots' names** (N2, rule 12, P29).
+- A runner-up's note reads "root +3.2¢ · slot 3", or "root · slot 3" for an exact root, its notes joined by "; ". A locked bar's chord tone (a kick with no root-class onset in frame) reads "+498.0¢ off the root · slot 5".
+- The title gives the tone: "287/172 at slot 3, exactly its chord's root; 0.04 slots off the change".
+- **Worker-safe, a core addition:** `bass.js` `rootsOffer` now gives each Roots alternate's note its `ratio`, its `cents` off its own chord's root (a new pure helper, `centsOffRoot`: the offset reduced to the nearest octave of the root, (−600, 600], to a thousandth) and `root` (on the root's class, the frame's test). A big row's bass is arranged in the worker, so the window could not read its row. Ids, choices and every other field are unchanged; `assert-bass.mjs` passes unchanged. `ratioOfOnset` stays, unused by the page.
+- On 41:42:43 (4 × 8) every Roots runner-up is an exact root. On 768:769 under Kick they read up to about +13¢ ("root +12.8¢ · slot 1"), and the 16k row's are within 14¢.
+
+**Measured on the 16k row** (Node, this thread, the lean table):
+- a density switch: 23 ms;
+- a chord swap under Compose's own bass, with the re-read and the re-rank: 18 ms;
+- the drums off, Compose's own arranged again: 10 ms;
+- Roots: 5 ms.
+
+**Tests (N3).** `assert-page-bass.mjs` 73 → 89, unpinned. `assert-page-clave.mjs` 53 → 77. `assert-store-edits.mjs` and `assert-lab.mjs` are adjusted as above. The README's Files and Tests are updated. No suite was added (83). `index.html`'s composer-tab.css and composer-bridge.js are `?v=20261028.3`.
+
+**Calls beyond the order (proposed):**
+1. A density change drops a clave picked from the list (one undo restores both).
+2. The density is the entry's (`state.compDensity`, a fold step, sent to Compose), like the voicing, not a field of `edits.clave`.
+3. The kick compared is the hits' ticks and slots. A drum change that keeps the kick (a kit sound, a mode with the same kick) re-arranges nothing.
+4. Compose's own bass following a moved kick has no amber of its own; only the drums off (a refusal) is amber.
+5. `bassOf().playing` is false for Compose's own as composed, though its part has a record.
+6. Roots' multi-note names are joined by "; ", since a name holds " · ".
+7. A Roots note off the root's class is named "… off the root" rather than "root …".
+
+**Looked at in the core, not changed (for the planner):**
+- Phase M's `rearrange` re-mines Compose's own bass at Moving · Kick against `spec.drums`, so any caller holding a spec without drums gets Moving · Free in the swapped bar silently (the window did until this phase). `bassLockRefusal`'s "the drums are off" is what a drum-less spec reads as. Worth a word in rearrange's header?
+- `reclave` with an asked frame id keeps the spec's tier, so a pick then a density switch would play the pick in the new tier. The window drops the pick instead, but the core allows both.
+
+**Not verifiable in Node (for Avery's pass):** whether the tier line fits beside the select at narrow widths (it wraps); whether Moving · Kick re-arranged under four on the floor sounds right (16 kicks on 41:42:43, 5 missed); whether Dense on 768:784 or 16:12:9 sounds like a comp or a pulse.
+
+**Open (for Avery):**
+- Should a drum mode whose kick moved show Compose's own bass as re-arranged (it says so in the bass cell), or should the window send its drum options to Compose so a re-compose covers them itself?
+- A density change drops a picked clave. Keep the pick instead (it plays, the list re-ranks)?
 
 ## Layout (agreed earlier, 2026-10-21)
 
