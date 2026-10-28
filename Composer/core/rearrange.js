@@ -396,3 +396,17 @@ export function applyRearrange(spec, r) {
   if (r.drums !== undefined) out.drums = r.drums;
   return out;
 }
+
+/**
+ * The spec's chords rebuilt as harmony.js' records, exactly as a rearrange rebuilds them (`walkChords` over the spec's
+ * own chords: each root's pick at the incoming modulation offset, an empty bar taking its neighbour's, a chart's split
+ * bars a span each) — for an arrangement over a finished spec that mines a line over the chords (arp.js, COMP_ARP_ORDER.md
+ * M1). row, cells: the spec's materials (materialsOf). → [record], a bar's each (a span's each in a chart's split bars)
+ */
+export function chordRecordsOf(spec, row, cells) {
+  if (!spec || spec.refused) fail('no chords in a refused spec');
+  const K = spec.knobs, m = materialCache(row, cells, spec), e = K.frameCentsEachSide;
+  const spans = spec.chords.some((c) => c.slots != null) ? spec.chords.map((c) => ({ bar: c.bar, from: c.from, slots: c.slots })) : null;
+  const gridBase = frameOf(row, toneOf(m, K.root), e).rootCents;
+  return walkChords(m, givenOf(m, spec.chords), { e, gridBase, modulation: K.modulation, foldOffsets: spec.input.overrides?.foldOffsets ?? true }, spans);
+}

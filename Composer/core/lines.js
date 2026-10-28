@@ -151,12 +151,15 @@ export function downbeats(row, P, count = 6, tone = null, { anchors = 'even', cl
 
 /**
  * The lattice: the cells' slots of bars [from, from + bars), each slot's candidates the frame's reading of its tones in
- * every register inside [low, low + width).
+ * every register inside [low, low + width). A slot is WEAK (a fringe tone may sound there) when its strikes are under
+ * the span's median; with `weakTies` (opt-in: the arps, arp.js — a row struck evenly ties every slot at the median, and
+ * then none is weak) a slot AT the median and off the bar's strong beats (its downbeat and, S even, its middle) is weak
+ * too. Absent, nothing changes (Compose's own lines never ask for it).
  * → { P, S, bars, from, mode, phase, swing, moments, low, width, frame: { root, frameCentsEachSide }, slots }
  *   slot { index (in the line), cell (in the cells), bar (of the cycle), beat, anchor, strikes, accent, weak, cands }
  *   cand { tone, fraction, cents, octave, pitch, pc, outside, share, close, count, node, offset }
  */
-export function buildLattice(row, cells, frame, { from = 0, bars = cells.bars - from, low = 0, width = RANGE_WIDTH } = {}) {
+export function buildLattice(row, cells, frame, { from = 0, bars = cells.bars - from, low = 0, width = RANGE_WIDTH, weakTies = false } = {}) {
   const S = cells.slotsPerBar, P = bars * S;
   if (!(Number.isInteger(from) && from >= 0 && Number.isInteger(bars) && bars >= 1 && from + bars <= cells.bars)) fail(`bars ${from}..${from + bars} are not in the cells' ${cells.bars}`);
   if (P > MAX_SLOTS) fail(`a line is at most ${MAX_SLOTS} slots, not ${bars} × ${S}`);
@@ -176,7 +179,8 @@ export function buildLattice(row, cells, frame, { from = 0, bars = cells.bars - 
       }
     }
     cands.sort((a, b) => a.pitch - b.pitch || a.tone - b.tone);
-    return { index: k, cell: s.index, bar: s.bar, beat: s.beat, anchor: s.anchor, strikes: s.strikes, accent: heaviest ? s.strikes / heaviest : 0, weak: s.strikes < median, cands };
+    const weak = s.strikes < median || (weakTies && s.strikes === median && !(s.beat === 0 || (S % 2 === 0 && s.beat === S / 2)));
+    return { index: k, cell: s.index, bar: s.bar, beat: s.beat, anchor: s.anchor, strikes: s.strikes, accent: heaviest ? s.strikes / heaviest : 0, weak, cands };
   });
   return { P, S, bars, from, mode: cells.mode, phase: cells.phase, swing: cells.swing, moments: cells.moments, low, width, frame: frameSummary(frames), slots };
 }
@@ -377,11 +381,12 @@ export function describeLine(row, lattice, pick, rules, tag = {}) {
  *            index] — an avoided node is never a candidate, an avoided slot costs weights.avoid a note; startTones [tone
  *            index] — the tones a line may open on; before, after — STEP 4a's boundaries for a bar-local re-mine: { pitch }
  *            (cents above 1/1, as a lattice candidate's) of the note just before the span and just after it, each move
- *            to them priced as a move inside the line, strict × interval × I; absent, nothing changes) }
+ *            to them priced as a move inside the line, strict × interval × I; absent, nothing changes), weakTies
+ *            (buildLattice's: a slot tied at the median, off the strong beats, weak too; default false) }
  * → { version, table, from, bars, slotsPerBar, root, over, frame, runs, lines } | { tooFewTones, tones, min }
  */
 export function mineLines(row, cells, frame, opts = {}) {
-  const { from = 0, table = 'full', weights = {}, minTones = MIN_TONES, register = 0, rules: extra = {} } = opts;
+  const { from = 0, table = 'full', weights = {}, minTones = MIN_TONES, register = 0, rules: extra = {}, weakTies = false } = opts;
   const refused = toneGate(row, minTones);
   if (refused) return refused;
   if (!TABLES.includes(table)) fail(`table must be one of ${TABLES.join(', ')}, not ${JSON.stringify(table)}`);
@@ -391,7 +396,7 @@ export function mineLines(row, cells, frame, opts = {}) {
   const harmonyWeights = targets.scale ? HARMONY_WEIGHTS : {};
   const lattices = new Map(), P = bars * cells.slotsPerBar;
   const low = first.anchor + register;
-  const latticeFor = (width) => { if (!lattices.has(width)) lattices.set(width, buildLattice(row, cells, frame, { from, bars, low, width })); return lattices.get(width); };
+  const latticeFor = (width) => { if (!lattices.has(width)) lattices.set(width, buildLattice(row, cells, frame, { from, bars, low, width, weakTies })); return lattices.get(width); };
   const lines = [], bySerial = new Map();
   let runs = 0;
   const passes = table === 'lean' ? 1 : Math.max(...types.map((t) => (t.motions || [null]).length));
