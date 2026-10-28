@@ -54,14 +54,16 @@ export function chainsOf(part) {
   return out;
 }
 function chainsOfUncached(part) {
-  // the chords' and the comp's voices each their own lane (COMP_ARP_ORDER.md A3: a comp in chords holds a voice a class)
-  const lanes = zonedPart(part.id) ? [...new Set(part.notes.map((n) => n.voice))].map((v) => part.notes.filter((n) => n.voice === v)) : [part.notes];
+  // the chords' and the comp's voices each their own lane (COMP_ARP_ORDER.md A3: a comp in chords holds a voice a class;
+  // led chords, BASS_VOICING_ORDER.md P6: a lane is the note's register order in the chord, `lane`, not its class)
+  const laneOf = (n) => n.lane ?? n.voice;
+  const lanes = zonedPart(part.id) ? [...new Set(part.notes.map(laneOf))].map((v) => part.notes.filter((n) => laneOf(n) === v)) : [part.notes];
   const out = [];
   for (const lane of lanes) {
     const sorted = [...lane].sort((a, b) => a.time - b.time || a.node - b.node);
     let chain = null;
     for (const n of sorted) {
-      if (n.retrigger || !chain) { chain = { voice: n.voice ?? null, notes: [n] }; out.push(chain); } else chain.notes.push(n);
+      if (n.retrigger || !chain) { chain = { voice: laneOf(n) ?? null, notes: [n] }; out.push(chain); } else chain.notes.push(n);
     }
   }
   return out.sort((a, b) => a.notes[0].time - b.notes[0].time);

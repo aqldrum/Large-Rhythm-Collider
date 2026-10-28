@@ -21,6 +21,9 @@
 //             one-note comp (`compStyle: 'notes'`, no `voice`) sounds on channel 2 of that zone. An ordinary track on
 //             All Channels still hears channel 2, at its device's own range. Drums: channel 10, General MIDI
 //             notes. Every voice owns its channel for the whole composition: no allocator, no stealing (M3).
+//             Led chords (BASS_VOICING_ORDER.md P6): a chords or comp note's `lane` (its register order in the chord as
+//             led, 0 the lowest) picks the member instead of its class, so each channel moves by the voice leading's
+//             small steps; a note with no `lane` (close, or a spec from before) is laned by `voice` as above.
 //   pitch     a note's own `hz`, always: a comp tone BORROWED from the chord voices (`borrowed`, `from`) sits on the
 //             stroke's onset with the source voice's tone, and its hz is that tone's (compose.js), not the onset's.
 //   notes     decision 3: a new note for each note, the synth doing any glide. A note on a channel that still holds
@@ -57,7 +60,7 @@ export const COMP_MASTER = ZONE_MASTER;
 export const COMP_MEMBERS = Object.freeze([1, 2, 3, 4]);    // channels 2–5, one a comp voice (A3, P11)
 /** the buses that are a zone of several members, a voice a member channel: the chords and the comping */
 export const ZONE_MEMBERS = Object.freeze({ chords: CHORD_MEMBERS, comp: COMP_MEMBERS });
-/** is this part's bus a zone of voices (its notes laned by `voice`)? */
+/** is this part's bus a zone of voices (its notes laned by `lane`, else `voice`)? */
 export const zonedPart = (partId) => partId in ZONE_MEMBERS;
 export const DRUM_CHANNEL = 9;              // channel 10
 export const GM_DRUMS = Object.freeze({ kick: 36, snare: 38, hat: 42, perc: 37, cym: 49 });
@@ -90,7 +93,8 @@ export function channelOf(partId, voice = 0) {
 const lengthsCache = new WeakMap();
 /**
  * A part's notes as MIDI sends them (M12): [{ time, end, hz, velocity, voice }] in time order, end in the cycle's
- * spec seconds (a zoned part's — the chords', the comp's — laned by voice). The lengths are the page's legato-on rule (compose.js `articulate`) whatever the part's own legato,
+ * spec seconds (a zoned part's — the chords', the comp's — laned by `lane` when led, else by voice; `voice` here is the
+ * member the note goes on). The lengths are the page's legato-on rule (compose.js `articulate`) whatever the part's own legato,
  * so the toggle never reaches the MIDI; a clip note's own note-off is kept where it is sooner than its voice's next
  * note. Memoized on the part object (the player reads it every tick).
  */
@@ -98,12 +102,13 @@ export function midiNotesOf(part, T) {
   const had = lengthsCache.get(part);
   if (had && had.T === T) return had.notes;
   const held = rearticulate(part, { legato: true, cycleSeconds: T });
-  const lanes = zonedPart(part.id) ? [...new Set(held.notes.map((n) => n.voice ?? 0))].map((v) => held.notes.filter((n) => (n.voice ?? 0) === v)) : [held.notes];
+  const laneOf = (n) => n.lane ?? n.voice ?? 0;
+  const lanes = zonedPart(part.id) ? [...new Set(held.notes.map(laneOf))].map((v) => held.notes.filter((n) => laneOf(n) === v)) : [held.notes];
   const out = [];
   for (const lane of lanes) {
     lane.forEach((n, i) => {
       const next = i + 1 < lane.length ? lane[i + 1].time : T;
-      out.push({ time: n.time, end: Math.min(n.time + n.duration, next), hz: n.hz, velocity: n.velocity, voice: n.voice ?? 0 });
+      out.push({ time: n.time, end: Math.min(n.time + n.duration, next), hz: n.hz, velocity: n.velocity, voice: laneOf(n) });
     });
   }
   out.sort((a, b) => a.time - b.time || a.voice - b.voice);
