@@ -1946,6 +1946,46 @@ Over the probe's 57 chords (seeds 1–3): motion 21,972¢ → 8,922¢, muddy 24 
 2. **The wrap** (P4) is as large as a bar line's motion on some rows (11:9:7:5 680¢, 119:42:15:8 610¢). A second pass could close it.
 3. **11:9:7:5 moves 782¢, not the nearest-octave 284¢:** the least-motion voicing of its second chord has a muddy 14/11 at 159 Hz (limit 196 Hz), so the chord goes up an octave. That is P1 working as written.
 
+## The window: bass and voicing (phase H; built 2026-10-28, branch `ui/bass-voicing`)
+
+`BASS_VOICING_ORDER.md` phase H: the window over phases F and G. Decided 1–4 are Avery's; the rest is the builder's, proposed. Compose's own output is unchanged (every identity fixture holds). Nothing here has been heard or seen in a browser.
+
+**The live voicing step** (`rearrange.js` `revoice(spec, row, cells, { voicing: 'close' | 'led' })`). Close | Led never re-composes.
+- Every bar's (a chart's span's) chord voices are built again with `chordVoicesOfBar` (the same onsets: only octaves can move), then, led, `voiceLead` runs over them. In chords the comp is strummed again bar by bar over its clave's strokes, at the chords' octaves (P5) or stacked from the root (close). The drums are arranged again.
+- The input's override, `stats.voicing` (in Compose's place, after `chordVoices`: `applyRearrange` reorders it) and the voicing decision follow. The decision's words are `compose.js` `voicingWhy`, factored out of Compose, so the two can't drift. Led is Compose's default, so a switch to Led drops the override and says "led by default".
+- **Byte for byte a Compose given `overrides.voicing`:** input, parts, stats, decisions and drums, on 6 rows × 2 seeds, a chart, a comp in notes and a 4 × 8 meter, both ways and Led → Led (checked while building; `assert-page-bass.mjs` checks it through the window on 41:42:43, and a swap under Close against the close Compose's own swap). So it is live, not a re-compose.
+- `rearrange()` dispatches `{ voicing }` to it, so the worker's rearrange message carries it. ~9 ms on the 16k row.
+
+**Voicing in the entry** (`state.voicing`, `store/composition-store.js`; 'led' by default). In the undo snapshots, kept through a re-compose and the recall, carried to a new cycle of the same row (proposed, as the arps).
+- `setVoicing(v)` is one undo step through `edit()`. **The fold's first step** is the revoice, when the entry's voicing differs from the composed spec's, so the chord swaps after it voice as Compose would (rearrange's led path reads `stats.voicing`) and the clave's re-strum reads the chords' octaves as they play.
+- **Compose is sent `voicing: 'close'`** while the entry is close, so the composed spec needs no switch and the trace says the right voicing. `voicingOf()` gives `{ voicing, playing, stats, voicings }`. `editsExport` carries `voicing` when close.
+
+**The bass in the entry** (`state.bass: { density, lock, picks }`, `composedBass()` the default). Kept and carried as the arps are.
+- **Compose's own bass arranges nothing.** At Sparse · Free with no picks `arrangeBass` is Compose's bass byte for byte (phase G), so `state.spec`'s bass is Compose's (or rearrange's, after a swap) and no arrangement runs. `bassOf()` reads that bass's offer (its bars' runner-ups) from `arrangeBass` at the default, memoized per spec (~18–24 ms on the 16k row, once).
+- **Anything else is arranged after the arps and the drums,** over the spec as it plays: `settleState` arranges the drums before the bass (drums.js reads no bass), and the Kick lock lands on those drums (`state.drums`: the window's mode, on or off), the Clave lock on the comp's clave as edited. A chord swap, a clave switch, an undo or a re-compose re-arranges it from the fresh spec; a drum change under Kick does too (`rebass`: the fold again, its steps kept).
+- **One route for stale picks.** The fold's base is always Compose's spec, so rearrange's arranged-bass path (`bassDropped`) is never taken by the window. A pick a bar no longer offers after a chord swap plays the bar's best, marked `missed` (amber in the list), until an undo or a re-compose, as an arp pick does. **A re-compose** keeps the picks its bars still offer (a line's id is a hash of its notes) and drops the rest into `dropped.bass: [{ bar, id }]`, listed under "Compose dropped"; the bass is then arranged again without them.
+- `setBass({ density, lock, picks })` is one undo step. A change of density or lock without picks drops the picks (the arp's Time rule), and one undo restores both. A lock refused now (`bassLockRefusal` over the spec and the drums as they play) is refused with its words; one refused later (the drums turned off under Kick) plays Free and `bassOf().refused` says why. `pickBass(bar, id)` goes through `setBass`; the bar's best again removes the pick; Roots refuses (one line a chord).
+- **Big rows:** past `MAIN_THREAD_ONSETS` the bass (and the default offer) is arranged in the module worker (`runCompose.bass`, `compose-worker.js` `answerBass`, the same kept materials as the edits and arps). Below it, this thread: on the 16k row (16,359 onsets) a density or lock change through the controller is 2–14 ms (full table; roots 3, moving 14, walking 13, kick 10, clave 4).
+
+**The bass inspector** (`page/composer-tab.js` `bassBlock`, under the cell's "follows bar k's chord" row):
+- **Density** (a select: Roots | Sparse | Moving | Walking, each option titled) and **Lands on** (Free | Kick | Clave, the Arp switch's segmented style). A lock refused is disabled, its reason its title, and said in one quiet line under the switch ("Kick: the drums are off: there is no kick to land on"). The lock playing refused says so in amber.
+- **The bar's runner-ups:** "Bass lines · bar k", up to 8 by contour and band ("fall · mid"), ● on the one playing and C on the bar's best. Audition, Keep and Revert as the lead's (`audition(() => pickBass(…))`). Roots says plainly that it has none; a bar that fell back (Walking with only foreign tones, a locked bar with nothing mined) says why; a big row's offer in flight says so.
+- **Details:** the stats ("11 notes · 2.8 a bar · 3 of 4 rooted · 2 on the one · 3 fell back"), each line's cost a note, its notes and motion, and the "re-mined with its chord" line, now saying at this density and lock (the comp keeps its own). The head's tag names an arranged bass's density and lock ("walking · on the kick").
+
+**The chords inspector:** under the first head, "voicing", **Close | Led**, and while led its stats in the clave line's quiet style ("0 lifted · 268¢ a chord"; the title has the chords, the muddy ones and the loop's wrap). Close says "root position".
+
+**The caption** (H3; `trace-frames.js` `bassDetail`, `chordsDetail`): the parts' step says the bass as it plays ("moving, on the comp's strokes: bar by bar against its chord"; a refused lock: "kick refused (…), so landing anywhere") and the chords' voicing ("a voice a chord tone, led: 2 lifted clear of the mud limit, 240¢ of motion a chord" / "…, close: root position from an octave under the root"). They read `highlightsOf`'s new `arrangement` (the spec's voicing, the bass part's record), not the trace, so a live switch shows in a recall's caption too.
+
+**Tests.**
+- `assert-page-bass.mjs` (new, 59): the controls and their defaults, Compose's own bass untouched at the default, live density and lock (exactly `arrangeBass`), the stats, audition / Revert / Keep, the drop rule and its undo, Kick and the drums off, Kick disabled with its reason, Clave following Sync | Fill, Roots, a chord swap, Close | Led byte for byte against Compose, a swap under Close, the override on a re-compose, a re-compose keeping and dropping picks, the caption, the store, and the worker.
+
+**Not verifiable in Node (for Avery's pass):** how the Density select and the three-way switch fit beside each other at narrow widths (they wrap); whether a density change auditioned at the bar line sounds seamless (the whole bass changes, not a bar); and whether Walking's 8-a-bar on 16-slot rows reads as walking.
+
+**Open (for Avery):**
+- A density or lock change applies at once, as the Arp's Time does; only a bar's runner-ups audition from the next bar line. Should a density change audition too?
+- The lane name and the part strip don't name the bass's density (the Arp's "· arp" does). Add "Bass · walking"?
+- A chord swap keeps a now-stale bass pick (marked, the bar's best plays) until a re-compose, as arp picks are kept. Drop it at the swap instead?
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
