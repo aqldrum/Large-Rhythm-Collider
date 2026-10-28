@@ -134,9 +134,10 @@ console.log('\n— no progression is today\'s Compose');
   }
   check('null, [], all null and all auto: byte-identical specs, input included', !bad, bad);
   bad = '';
-  // the baseline's comp is one note a stroke: compStyle 'notes' (COMP_ARP_ORDER.md P9), the override itself left out of the input
-  const unasked = (spec) => { delete spec.input.overrides.compStyle; return spec; };
-  for (const [name, run] of composeCases((L, T, o) => unasked(compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes' }, progression: Array(8).fill(null) })))) if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) bad = name;
+  // the baseline's comp is one note a stroke: compStyle 'notes' (COMP_ARP_ORDER.md P9), and its chords close (BASS_VOICING_ORDER.md
+  // P7), the overrides themselves left out of the input
+  const unasked = (spec) => { delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; return spec; };
+  for (const [name, run] of composeCases((L, T, o) => unasked(compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close' }, progression: Array(8).fill(null) })))) if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) bad = name;
   check(`the e3909e1 baseline (settle-baseline.mjs, ${Object.keys(COMPOSE_HASHES).length} cases) with an all-null progression`, !bad, bad);
 }
 

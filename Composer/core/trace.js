@@ -191,7 +191,7 @@ export function createTrace(row, { cycleSeconds, meter: M = null, caps = {} } = 
     bassBar(bar, line, opened) { bassBars.push({ bar, line: lineRef(line), rootOnly: !line, opensOnRoot: !!opened }); },
     innerPhrase(from, bars, line) { innerPhrases.push({ from, bars, line: lineRef(line) }); },
     /** the arranged parts, in the order Compose builds them, each with what chose it */
-    parts(partList, { comp, compChoices, compAsked, clave, alternates, asked, tier }) {
+    parts(partList, { comp, compChoices, compAsked, clave, alternates, asked, tier, voicing = null }) {
       // the comp in chords (Amendment 1, R2): the clave, its partner, and the ranked alternates (the top mined, then the
       // curated); `layer`, `value` and `candidates` (= alternates) stay for a reader of the layer-led comp (the page's
       // trace frames, until the window's Phase E)
@@ -203,7 +203,7 @@ export function createTrace(row, { cycleSeconds, meter: M = null, caps = {} } = 
           alternates: alts, layer: clave.from.name ?? null, value: clave.from.layer ?? null, candidates: alts };
       })() : { layer: LAYER_NAMES[comp.layer], value: comp.value, score: r4(comp.score), asked: !!compAsked, candidates: compChoices.map((x) => ({ layer: LAYER_NAMES[x.layer], value: x.value, score: r4(x.score) })) };
       const extra = {
-        lead: { phrases: null }, chords: {},
+        lead: { phrases: null }, chords: voicing ? { voicing: { ...voicing } } : {},
         comp: comp4,
         bass: { bars: bassBars.map((x) => ({ ...x })) }, inner: { phrases: innerPhrases.map((x) => ({ ...x })) },
       };
@@ -211,7 +211,7 @@ export function createTrace(row, { cycleSeconds, meter: M = null, caps = {} } = 
       extra.lead.phrases = lead ? [...lead.lead.phrases] : [];
       for (const p of partList) {
         emit('part', { part: p.id, sound: p.sound, count: p.notes.length, truncated: Math.max(0, p.notes.length - cap.partNotes),
-          notes: p.notes.slice(0, cap.partNotes).map((n) => ({ node: ref(n.node), bar: n.bar, slot: n.slot, octave: n.octave, ...(n.voice != null ? { voice: n.voice } : {}) })), ...extra[p.id] });
+          notes: p.notes.slice(0, cap.partNotes).map((n) => ({ node: ref(n.node), bar: n.bar, slot: n.slot, octave: n.octave, ...(n.voice != null ? { voice: n.voice } : {}), ...(n.lane != null ? { lane: n.lane } : {}) })), ...extra[p.id] });
       }
     },
     drums(spec) {

@@ -114,7 +114,20 @@ export const STRUM_WINDOW = 0.25;
 /** chords: a stroke's own onset (plus 0.1 a layer more striking it), the strum's other tones, a borrowed tone (P7, proposed) */
 export const COMP_VELOCITY = Object.freeze({ stroke: 0.55, strum: 0.5, borrowed: 0.45 });
 export const MAX_COMP_VOICES = 4;
-const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses', 'compStyle', 'clave', 'compRelation']);
+const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses', 'compStyle', 'clave', 'compRelation', 'voicing']);
+/** the chords' two voicings (BASS_VOICING_ORDER.md, decided 3–4, P1–P7): led (the default: each tone the octave nearest
+ *  the chord before, inside a window, clear of the mud limit) and close (root position from an octave under the root, as before) */
+export const VOICINGS = Object.freeze(['led', 'close']);
+/** led: two neighbouring voices under an octave apart, n/d in lowest terms, are muddy when the lower sounds under
+ *  MUD_HZ × log2(n·d) Hz (P1, proposed) */
+export const MUD_HZ = 27;
+/** led: the window (P3, proposed). No tone under VOICING_FLOOR cents of 1/1 (close's floor: an octave under 1/1, less
+ *  50¢), each tone within ±VOICING_REACH of the first chord's centre (3 octaves a tone), the centre within ±VOICING_CENTRE */
+export const VOICING_FLOOR = REGISTER.chords - 50;
+export const VOICING_REACH = 1800;
+export const VOICING_CENTRE = 600;
+/** led: a muddy pair costs this, so a voicing clear of the limit always wins over one that is not (P2) */
+export const MUD_COST = 1e6;
 /** MIDI targets: the overrides a target sets itself (the meter, the phase and the cells from the placement, the root from the tonic, the lead pinned) */
 export const TARGET_SETS = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'root', 'presence', 'settlePasses']);
 
@@ -225,7 +238,8 @@ export function rearticulate(part, { sound = part.sound, legato = part.legato, e
   if (!(cycleSeconds > 0)) fail('rearticulate needs the cycle\'s seconds');
   const struck = isStruck(sound), notes = part.notes.map((n) => ({ ...n }));
   const voiced = part.id === 'chords' || (part.id === 'comp' && part.strokes != null);
-  const groups = voiced ? [...new Set(notes.map((n) => n.voice))].map((v) => notes.filter((n) => n.voice === v)) : [notes];
+  const laneOf = (n) => n.lane ?? n.voice;   // led chords lane by register (P6), close by class
+  const groups = voiced ? [...new Set(notes.map(laneOf))].map((v) => notes.filter((n) => laneOf(n) === v)) : [notes];
   for (const g of groups) articulate(g, { legato, struck, cycleSeconds });
   notes.sort((a, b) => a.time - b.time || a.node - b.node);
   return { ...part, sound, struck, legato, enabled, notes };
@@ -311,6 +325,125 @@ export function chordVoicesOfBar(ctx, c, k, range = null) {
   return out;
 }
 
+// ── the voicing pass (BASS_VOICING_ORDER.md phase F: decided 3–4, P1–P6) ──
+
+const fractionCache = new WeakMap();
+/** the row's tones as exact fractions → [{ n, d (BigInt), value }] */
+function fractionsOf(row) {
+  let f = fractionCache.get(row);
+  if (!f) { f = row.tones.map((t) => { const [n, d] = t.split('/').map((x) => BigInt(x)); return { n, d, value: Number(n) / Number(d) }; }); fractionCache.set(row, f); }
+  return f;
+}
+const gcdBig = (a, b) => { while (b) [a, b] = [b, a % b]; return a; };
+/** log2(n·d) of the interval from tone lo (octave ol) up to tone hi (octave oh), n/d in lowest terms */
+function intervalWeight(F, lo, ol, hi, oh) {
+  let num = F[hi].n * F[lo].d, den = F[hi].d * F[lo].n;
+  const up = oh - ol;
+  if (up > 0) num <<= BigInt(up); else if (up < 0) den <<= BigInt(-up);
+  const g = gcdBig(num, den);
+  return Math.log2(Number(num / g)) + Math.log2(Number(den / g));
+}
+/**
+ * The mud limit (P1): a chord's notes ({ tone, bar, slot }) at the given octaves, how many neighbouring pairs (in pitch
+ * order) are muddy — less than an octave apart, and the lower sounding (baseHz × its tone × 2^octave × its bar's retune)
+ * under MUD_HZ × log2(n·d), n/d the pair's interval in lowest terms. `memo` keeps the weights of one pass.
+ */
+export function muddyPairs(row, notes, octaves, { baseHz, ratioOf, memo = new Map() }) {
+  const F = fractionsOf(row), idx = notes.map((_, i) => i), pitch = (i) => row.toneCents[notes[i].tone] + 1200 * octaves[i];
+  idx.sort((a, b) => pitch(a) - pitch(b) || notes[a].voice - notes[b].voice);
+  let muddy = 0;
+  for (let x = 0; x + 1 < idx.length; x++) {
+    const a = idx[x], b = idx[x + 1];
+    if (pitch(b) - pitch(a) >= 1200 - EPS) continue;
+    const ta = notes[a].tone, tb = notes[b].tone, key = `${ta}:${tb}:${octaves[b] - octaves[a]}`;
+    let w = memo.get(key);
+    if (w === undefined) { w = intervalWeight(F, ta, octaves[a], tb, octaves[b]); memo.set(key, w); }
+    const hz = baseHz * F[ta].value * 2 ** octaves[a] * ratioOf(notes[a].bar, notes[a].slot);
+    if (hz < MUD_HZ * w - EPS) muddy++;
+  }
+  return muddy;
+}
+
+/**
+ * The voicing pass (P2–P4, P6): the chord voices of every bar (a chart's span each), in order, their tones as chosen
+ * (which onset each class sounds) and only their octaves set, in place:
+ *   the first chord   its close voicing (root first, each voice the lowest above the one under it, from an octave
+ *                     under the root, as `chordVoicesOfBar` stacks it), lifted by octaves until no pair is muddy
+ *   each chord after  every assignment of octaves in the window — each tone not under VOICING_FLOOR and within
+ *                     ±VOICING_REACH of the first chord's centre (3 octaves), the voicing's centre within ±VOICING_CENTRE
+ *                     of it — scored by its motion (each tone to its nearest tone of the chord before, in cents as they
+ *                     sound: the bar's retune in) plus MUD_COST a muddy pair; the cheapest wins, ties to the lower centre
+ *                     (then the first in order, voice 0's octave lowest first). No assignment in the window: those whose
+ *                     centre is nearest it.
+ * Each note gains `lane`, its order in its chord from the lowest (0). A unit with no voices is skipped (the next is led
+ * from the last that had some). Running it again on its own output changes nothing.
+ *   units  [{ chord (harmony.js' record: rootCents), notes: [builder note with voice, tone, octave, pitch, bar, slot] }]
+ *   opts   { baseHz, ratioOf ((bar, slot) → the bar's fundamentalRatio) }
+ * → { chords (voiced), lifted (chords the mud limit moved: the first lifted, a later one whose least motion alone was
+ *     muddy), muddy (chords left with a muddy pair: none in the window is clear), motion (cents, every chord from the
+ *     one before), moves (chords led from one before), meanMotion, wrap (the last chord to the first, P4: reported, not
+ *     optimized), centre (the first chord's, cents as it sounds), outside (chords with no assignment in the window) }
+ */
+export function voiceLead(ctx, units, { baseHz, ratioOf }) {
+  const { row } = ctx, memo = new Map(), mud = { baseHz, ratioOf, memo };
+  const shiftOf = (n) => 1200 * Math.log2(ratioOf(n.bar, n.slot));
+  const motionOf = (cur, prev) => { let m = 0; for (const s of cur) { let best = Infinity; for (const p of prev) best = Math.min(best, Math.abs(s - p)); m += best; } return m; };
+  const stats = { chords: 0, lifted: 0, muddy: 0, motion: 0, moves: 0, meanMotion: 0, wrap: 0, centre: null, outside: 0 };
+  let prev = null, first = null, centre = null;
+  for (const unit of units) {
+    const notes = [...unit.notes].sort((a, b) => a.voice - b.voice);
+    if (!notes.length) continue;
+    stats.chords++;
+    const cents = notes.map((n) => row.toneCents[n.tone]), shift = notes.map(shiftOf);
+    const sounding = (oct) => oct.map((o, i) => cents[i] + 1200 * o + shift[i]);
+    let chosen;
+    if (prev == null) {
+      // close, as chordVoicesOfBar stacks it, then lifted an octave at a time while a pair is muddy
+      let floor = unit.chord.rootCents + REGISTER.chords - 50;
+      const close = notes.map((n, i) => { const o = Math.ceil((floor - cents[i]) / 1200 - EPS); floor = cents[i] + 1200 * o + 1; return o; });
+      let lift = 0;
+      while (lift < 12 && muddyPairs(row, notes, close.map((o) => o + lift), mud) > 0) lift++;
+      if (lift > 0) stats.lifted++;
+      chosen = close.map((o) => o + lift);
+      if (muddyPairs(row, notes, chosen, mud) > 0) stats.muddy++;
+      const s = sounding(chosen);
+      centre = s.reduce((a, b) => a + b, 0) / s.length; stats.centre = centre;
+    } else {
+      // each tone's octaves in the window: not under the floor, within ±VOICING_REACH of the centre
+      const options = notes.map((n, i) => {
+        const lo = Math.max(Math.ceil((VOICING_FLOOR - cents[i]) / 1200 - EPS), Math.ceil((centre - VOICING_REACH - cents[i] - shift[i]) / 1200 - EPS));
+        const hi = Math.ceil((centre + VOICING_REACH - cents[i] - shift[i]) / 1200 - EPS) - 1;
+        const out = []; for (let o = lo; o <= hi; o++) out.push(o);
+        return out.length ? out : [lo];
+      });
+      const all = [];
+      const walk = (i, acc) => { if (i === notes.length) { all.push([...acc]); return; } for (const o of options[i]) { acc.push(o); walk(i + 1, acc); acc.pop(); } };
+      walk(0, []);
+      const scored = all.map((oct) => { const s = sounding(oct), mean = s.reduce((a, b) => a + b, 0) / s.length; return { oct, mean, motion: motionOf(s, prev), off: Math.max(0, Math.abs(mean - centre) - VOICING_CENTRE) }; });
+      const least = Math.min(...scored.map((x) => x.off));
+      if (least > EPS) stats.outside++;
+      const inside = scored.filter((x) => x.off <= least + EPS);
+      for (const x of inside) { x.mud = muddyPairs(row, notes, x.oct, mud); x.cost = x.motion + MUD_COST * x.mud; }
+      const pick = (key) => inside.reduce((a, b) => (b[key] < a[key] - EPS || (Math.abs(b[key] - a[key]) <= EPS && b.mean < a.mean - EPS) ? b : a));
+      const best = pick('cost'), plain = pick('motion');
+      if (best !== plain) stats.lifted++;
+      if (best.mud > 0) stats.muddy++;
+      chosen = best.oct;
+      stats.motion += best.motion; stats.moves++;
+    }
+    notes.forEach((n, i) => { n.octave = chosen[i]; n.pitch = cents[i] + 1200 * chosen[i]; });
+    const s = sounding(chosen);
+    [...notes.keys()].sort((a, b) => s[a] - s[b] || notes[a].voice - notes[b].voice).forEach((i, lane) => { notes[i].lane = lane; });
+    if (first == null) first = s;
+    prev = s;
+  }
+  stats.meanMotion = stats.moves ? stats.motion / stats.moves : 0;
+  stats.wrap = first && prev && stats.chords > 1 ? motionOf(first, prev) : 0;
+  return stats;
+}
+/** the voicing pass's stats as the spec keeps them (`stats.voicing`; rounded to the cent) */
+export const voicingStats = (v) => ({ mode: 'led', chords: v.chords, lifted: v.lifted, muddy: v.muddy, motion: Math.round(v.motion), meanMotion: Math.round(v.meanMotion), wrap: Math.round(v.wrap), outside: v.outside });
+
 /** a layer (its bit index b) cut into bar k's slots (or a span's [from, to)): { steps (slots it strikes), on (each struck
  *  slot's first strike, where it is a chord tone) }. `c` a chord, or a slot's chord (j → chord) across a split bar. */
 function compStepsOfBar(ctx, c, k, b, range = null) {
@@ -392,12 +525,12 @@ export function compOfBar(ctx, c, k, layer, range = null) {
  * most to the next stroke, or the span's end (`holdTo`). `range` ({ from, to }: a chart's span) cuts it to the span.
  * → { notes: [note with voice, velocity, holdTo (, borrowed, from)], strokes: [{ node, tick, time, bar, slot }], found, tones }
  */
-export function compChordsOfBar(ctx, c, k, given, range = null) {
+export function compChordsOfBar(ctx, c, k, given, range = null, voiced = null) {
   const { row, S, P, T, rowT, starts, posSlot, pitchAtLeast, timeOf } = ctx;
   const from = range ? range.from : k * S, to = range ? range.to : (k + 1) * S;
   let strokes = [...new Set(given)].filter((s) => posSlot[s] >= from && posSlot[s] < to);
   if (!strokes.length && c.rootNode != null && posSlot[c.rootNode] >= from && posSlot[c.rootNode] < to) strokes = [c.rootNode];
-  const voiceOf = new Map(chordVoicesOfBar(ctx, c, k, range).map((n) => [n.voice, n]));
+  const voiceOf = new Map((voiced ?? chordVoicesOfBar(ctx, c, k, range)).map((n) => [n.voice, n]));
   const at = strokes.map((s) => ({ s, t: timeOf(row.tick[s]) })).sort((a, b) => a.t - b.t || a.s - b.s);
   const end = to < P ? starts[to] * rowT : T, notes = [];
   let found = 0, tones = 0;
@@ -409,10 +542,16 @@ export function compChordsOfBar(ctx, c, k, given, range = null) {
     c.intervals.slice(0, MAX_COMP_VOICES).forEach((pc, v) => {
       const i = got.get(pc), src = i === undefined ? voiceOf.get(v) : null;
       if (i === undefined && !src) return;
-      const tone = i !== undefined ? row.tone[i] : src.tone, { octave, pitch } = pitchAtLeast(tone, floor);
+      const tone = i !== undefined ? row.tone[i] : src.tone;
+      // led (P5): a strum tone the octave nearest its class's chord voice, a borrowed tone the voice itself; close: stacked
+      const led = voiced ? voiceOf.get(v) : null;
+      let octave, pitch;
+      if (led) { octave = i === undefined ? led.octave : Math.round((led.pitch - row.toneCents[tone]) / 1200); pitch = row.toneCents[tone] + 1200 * octave; }
+      else ({ octave, pitch } = pitchAtLeast(tone, floor));
       floor = pitch + 1; tones++;
-      if (i !== undefined) { found++; notes.push(noteAt(ctx, i, octave, pitch, k, { voice: v, velocity: i === s ? Math.min(1, COMP_VELOCITY.stroke + 0.1 * Math.max(0, row.strikes[s] - 1)) : COMP_VELOCITY.strum, holdTo })); }
-      else notes.push(noteAt(ctx, s, octave, pitch, k, { tone, voice: v, velocity: COMP_VELOCITY.borrowed, holdTo, borrowed: true, from: src.node }));
+      const lane = led ? { lane: led.lane } : {};
+      if (i !== undefined) { found++; notes.push(noteAt(ctx, i, octave, pitch, k, { voice: v, ...lane, velocity: i === s ? Math.min(1, COMP_VELOCITY.stroke + 0.1 * Math.max(0, row.strikes[s] - 1)) : COMP_VELOCITY.strum, holdTo })); }
+      else notes.push(noteAt(ctx, s, octave, pitch, k, { tone, voice: v, ...lane, velocity: COMP_VELOCITY.borrowed, holdTo, borrowed: true, from: src.node }));
     });
   });
   return { notes, strokes: at.map(({ s, t }) => ({ node: s, tick: row.tick[s], time: t, bar: k, slot: posSlot[s] })), found, tones };
@@ -497,7 +636,10 @@ export function layCompClave(row, ctx, choice, { relation, phase, units, cut = n
  */
 export function partOf(ctx, id, notes, { sound, legato, enabled, baseHz, ratioOf, voice = false, strokes = null }) {
   const { row, T } = ctx;
-  const struck = isStruck(sound), groups = voice ? notes : [notes];
+  const struck = isStruck(sound);
+  let groups = voice ? notes : [notes];
+  // led chords (BASS_VOICING_ORDER.md P6): a lane (its register order in the chord) holds and moves, not a class
+  if (voice) { const all = notes.flat().filter(Boolean); if (all.some((n) => n.lane != null)) { groups = []; for (const n of all) (groups[n.lane] ||= []).push(n); } }
   for (const g of groups) if (g) articulate(g, { legato, struck, cycleSeconds: T });
   const flat = (voice ? groups.flat().filter(Boolean) : notes).sort((a, b) => a.time - b.time || a.node - b.node);
   return {
@@ -507,7 +649,7 @@ export function partOf(ctx, id, notes, { sound, legato, enabled, baseHz, ratioOf
       const accent = id === 'comp' ? 0.1 * Math.max(0, (n.strikes ?? 1) - 1) : id === 'lead' && n.strong ? 0.1 : 0;
       return {
         node: n.node, tick: row.tick[n.node], time: n.time, ratio: row.tones[n.tone], octave: n.octave, hz: baseHz * (num / den) * 2 ** n.octave * ratioOf(n.bar, n.slot),
-        duration: n.duration, velocity: n.velocity ?? Math.min(1, VELOCITY[id] + accent), bar: n.bar, slot: n.slot, slotSeconds: n.slotSeconds, retrigger: n.retrigger, ...(voice ? { voice: n.voice } : {}),
+        duration: n.duration, velocity: n.velocity ?? Math.min(1, VELOCITY[id] + accent), bar: n.bar, slot: n.slot, slotSeconds: n.slotSeconds, retrigger: n.retrigger, ...(voice ? { voice: n.voice } : {}), ...(voice && n.lane != null ? { lane: n.lane } : {}),
         ...(n.endTime != null ? { endTime: n.endTime } : {}), ...(n.clipNote != null ? { clipNote: n.clipNote } : {}),
         ...(n.holdTo != null ? { holdTo: n.holdTo } : {}), ...(n.borrowed ? { borrowed: true, from: n.from } : {}),
       };
@@ -754,10 +896,23 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   parts.lead = leadNotesOf(ctx, h.lead.notes);
   // a MIDI target's lead: each note ends on its note-off onset (P4), and knows its clip note
   if (tg) parts.lead.forEach((b, i) => { const n = h.lead.notes[i]; b.clipNote = n.clipNote; b.endTime = b.time + (n.offPos - n.onPos) * T; });
-  // chords: a voice a chord class
+  // baseHz (decided below, in its place among the decisions): the led voicing reads it for the mud limit
+  const leadPitch = median(parts.lead.map((n) => n.pitch));
+  const baseHzValue = ov.baseHz ?? (leadPitch == null ? 261.6255653005986 : LEAD_TARGET_HZ / 2 ** (leadPitch / 1200));
+  // chords: a voice a chord class, a unit a bar (a chart's span)
+  const units = [];
+  if (spans) { for (let k = 0; k < N; k++) for (const c of ownChords[k]) units.push({ chord: c, bar: k, range: rangeOf(c), notes: chordVoicesOfBar(ctx, c, k, rangeOf(c)) }); }
+  else for (let k = 0; k < N; k++) units.push({ chord: h.chords[k], bar: k, range: null, notes: chordVoicesOfBar(ctx, h.chords[k], k) });
+  // the voicing (BASS_VOICING_ORDER.md phase F): led by default, each chord's octaves from the one before; close as before
+  const voicing = ov.voicing ?? 'led';
+  if (!VOICINGS.includes(voicing)) fail(`voicing must be one of ${VOICINGS.join(', ')}`);
+  const led = voicing === 'led';
+  const voiced = led ? voiceLead(ctx, units, { baseHz: baseHzValue, ratioOf }) : null;
+  if (led) decide('voicing', voicing, `${ov.voicing != null ? 'asked' : 'led by default (decided 3–4, Avery)'}: the first chord close, ${voiced.lifted ? '' : 'not '}lifted clear of the mud limit (${MUD_HZ} Hz × log2(n·d) under a pair less than an octave apart)`
+    + `; each chord after in the octaves nearest the one before (the window: no tone under ${VOICING_FLOOR}¢, the centre within ±${VOICING_CENTRE}¢ of the first chord's), ${(voiced.meanMotion).toFixed(0)}¢ of motion a chord`
+    + `; the mud limit moved ${voiced.lifted} of ${voiced.chords} chord${voiced.chords === 1 ? '' : 's'}${voiced.muddy ? `, ${voiced.muddy} left muddy (no voicing in the window clear of it)` : ''}; the loop's wrap ${voiced.wrap.toFixed(0)}¢ (not led)`);
   const voices = [];
-  if (spans) { for (let k = 0; k < N; k++) for (const c of ownChords[k]) for (const n of chordVoicesOfBar(ctx, c, k, rangeOf(c))) (voices[n.voice] ||= []).push(n); }
-  else for (let k = 0; k < N; k++) for (const n of chordVoicesOfBar(ctx, h.chords[k], k)) (voices[n.voice] ||= []).push(n);
+  for (const u of units) for (const n of u.notes) (voices[n.voice] ||= []).push(n);
   // comping. Chords (the default; Amendment 1, decided 5–6): one clave for the composition, mined from the row's layers
   // (claves.js), laid a pass a bar; its landed steps (Sync) or its partner's (Fill) are the strokes, each the bar's chord
   // strummed from the onsets around it and the rest borrowed from the chord voices. Notes: a layer cut into the bars and
@@ -805,15 +960,14 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   parts.comp = [];
   const compStrokes = [];
   let compFound = 0, compTones = 0;
-  const compBar = (c, k, range = null) => {
+  const compBar = (c, k, range = null, voicedNotes = null) => {
     if (!chordsStyle) { parts.comp.push(...compOfBar(ctx, c, k, comp.layer, range)); return; }
     const r = range ?? { from: k * S, to: (k + 1) * S };
-    const got = compChordsOfBar(ctx, c, k, compNodesOf(clave, r.from, r.to), range);
+    const got = compChordsOfBar(ctx, c, k, compNodesOf(clave, r.from, r.to), range, voicedNotes);
     for (const n of got.notes) (parts.comp[n.voice] ||= []).push(n);
     compStrokes.push(...got.strokes); compFound += got.found; compTones += got.tones;
   };
-  if (spans) { for (let k = 0; k < N; k++) for (const c of ownChords[k]) compBar(c, k, rangeOf(c)); }
-  else for (let k = 0; k < N; k++) compBar(h.chords[k], k);
+  for (const u of units) compBar(u.chord, u.bar, u.range, led ? u.notes : null);
   const compStrum = compTones ? compFound / compTones : 0;
   if (chordsStyle) decide('compStrum', compStrum, `the clave's ${compStrokes.length} stroke${compStrokes.length === 1 ? '' : 's'} (${clave.relation}${compStrokes.length > compSourceOf(clave).length ? '; a bar or span with none struck once on its root onset' : ''}), each the bar's chord: ${compFound} of ${compTones} tones (${(100 * compStrum).toFixed(0)} %) from the row within ±${STRUM_WINDOW} slot, the rest borrowed from the chord voices`);
   // bass: bar by bar, rooted on the bar's root tone
@@ -855,13 +1009,12 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     sound[id] = decide(`sound.${id}`, pick, why);
     enabled[id] = decide(`enabled.${id}`, ov.enabled?.[id] ?? true, ov.enabled?.[id] != null ? 'asked' : 'every part plays');
   }
-  const leadPitch = median(parts.lead.map((n) => n.pitch));
-  const baseHz = decide('baseHz', ov.baseHz ?? (leadPitch == null ? 261.6255653005986 : LEAD_TARGET_HZ / 2 ** (leadPitch / 1200)),
+  const baseHz = decide('baseHz', baseHzValue,
     ov.baseHz ? 'asked' : leadPitch == null ? 'no lead notes: 1/1 at middle C' : `the lead's median pitch (${leadPitch.toFixed(1)}¢ above 1/1) at √(440·660) ≈ 539 Hz`);
 
   const out = (id, notes, { voice = false, strokes = null } = {}) => partOf(ctx, id, notes, { sound: sound[id], legato: legato[id], enabled: enabled[id], baseHz, ratioOf, voice, strokes });
   const partList = [out('lead', parts.lead), out('chords', voices, { voice: true }), out('comp', parts.comp, chordsStyle ? { voice: true, strokes: compStrokes } : {}), out('bass', parts.bass), out('inner', parts.inner)];
-  rec?.parts(partList, chordsStyle ? { clave, alternates: claveAlternates(claveChoice.ranks), asked: ov.clave != null, tier: claveChoice.ranks.tier } : { comp, compChoices, compAsked: ov.compLayer != null });
+  rec?.parts(partList, { ...(chordsStyle ? { clave, alternates: claveAlternates(claveChoice.ranks), asked: ov.clave != null, tier: claveChoice.ranks.tier } : { comp, compChoices, compAsked: ov.compLayer != null }), voicing: led ? voicingStats(voiced) : null });
 
   const counts = Object.fromEntries(partList.map((p) => [p.id, p.notes.length]));
   const spec = {
@@ -882,7 +1035,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     stats: {
       onsets: row.n, tones: row.tones.length, grid: row.grid, onsetsPerSlot: (tg ? tg.windowOnsets : row.n) / P, notes: counts,
       leadPhrases: h.passes.phrases.length, secondPassWins: h.passes.secondWins, exceptions: h.exceptions,
-      chordVoices: voices.reduce((n, v) => n + (v ? v.length : 0), 0) / N, bassRooted: `${bassRooted}/${N}`, innerOnLeadSlots: innerOnLead,
+      chordVoices: voices.reduce((n, v) => n + (v ? v.length : 0), 0) / N, ...(led ? { voicing: voicingStats(voiced) } : {}), bassRooted: `${bassRooted}/${N}`, innerOnLeadSlots: innerOnLead,
       ...(chordsStyle ? { clave: { id: clave.id, relation: clave.relation, strokes: compStrokes.length, silent: clave.relation === 'fill' ? clave.partner.silent + clave.partner.shared : clave.silent }, compStrum } : { compLayer: { layer: 'ABCD'[comp.layer], value: comp.value, score: comp.score } }),
       settle: { rounds: h.settle.rounds, converged: h.settle.converged, oscillated: h.settle.oscillated, changedBarsPerRound: [...h.settle.changedBarsPerRound],
         exceptionsPerRound: [...h.settle.exceptionsPerRound], chosenRound: h.settle.chosenRound, ...(h.settle.pinned ? { pinned: true } : {}) },

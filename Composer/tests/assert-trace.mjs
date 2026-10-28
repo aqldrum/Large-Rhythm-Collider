@@ -31,8 +31,9 @@ console.log('Composer trace');
 console.log('\n— off: the spec as it was');
 {
   let bad = '';
-  // the baseline's comp is one note a stroke: compStyle 'notes' (COMP_ARP_ORDER.md P9), the override itself left out of the input
-  const notes = (o) => ({ ...o, overrides: { ...o.overrides, compStyle: 'notes' } }), unasked = (spec) => { delete spec.input.overrides.compStyle; return spec; };
+  // the baseline's comp is one note a stroke: compStyle 'notes' (COMP_ARP_ORDER.md P9), and its chords close (BASS_VOICING_ORDER.md
+  // P7), the overrides themselves left out of the input
+  const notes = (o) => ({ ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close' } }), unasked = (spec) => { delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; return spec; };
   for (const [name, run] of composeCases((L, T, o) => unasked(compose(L, T, { ...notes(o), trace: false })))) if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) { bad = name; break; }
   check(`the e3909e1 baseline (${Object.keys(COMPOSE_HASHES).length} cases) with trace: false`, !bad, bad);
   bad = '';
