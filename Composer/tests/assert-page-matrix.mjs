@@ -218,6 +218,29 @@ const leadIdx = new Set(tab.highlights({ compositeRhythm: win.lrcVisuals.composi
 const composedLead = highlightsOf({ spec: tab.state.composed }, plotOf({ compositeRhythm: win.lrcVisuals.compositeRhythm, grid: win.lrcVisuals.grid })).parts.lead.indices;
 check('the plot\'s lead is the swapped one', composedLead.join() !== [...leadIdx].sort((a, b) => a - b).join());
 
+// a line held for the bar boundary takes a "chords follow" pressed while it waited (Avery, 2026-10-28: the follow was
+// read at the click, so the line landed without it)
+{
+  const p0 = spans[0];
+  tab.selectCell('lead', p0.from); await settle();
+  const lines0 = core.alternatesOf(p0.from, 'lead')?.lines ?? [];
+  if (lines0.length >= 2 && !tab.state.edits.lead[0]) {
+    q(left, '.ctab-go').click(); await settle(2);   // Perform
+    const bs = tab.state.spec.timeline.barStarts, nextBar = bs.findIndex((t) => t > 0.2);
+    audio.currentTime = 0.05 + 0.2; dom.raf.flush(1); await settle();
+    altEls()[1].click(); await settle();
+    const held = /next bar/.test(q(inspector, '.ctab-audition')?.textContent ?? '');
+    qa(inspector, '.ctab-toggle').find((b) => b.textContent === 'chords follow').click(); await settle();
+    audio.currentTime = 0.05 + bs[nextBar] - 0.25; dom.raf.flush(1); await settle();
+    check('a line held for the boundary, chords follow pressed while it waited: it lands with the follow', held && tab.state.edits.lead[0]?.lineId === lines0[1].id && tab.state.edits.lead[0].chordsFollow === true);
+    q(inspector, '.ctab-revert').click(); await settle();
+    qa(inspector, '.ctab-toggle').find((b) => b.textContent === 'chords follow').click(); await settle();   // the preference back off
+    q(left, '.ctab-go').click(); await settle(2);   // Stop
+    audio.currentTime = 0;
+    check('…Revert takes it back, the preference off again', !tab.state.edits.lead[0] && !qa(inspector, '.ctab-toggle').find((b) => b.textContent === 'chords follow').classList.contains('on'));
+  } else check('(phrase 1 has a runner-up and no edit, for the held-follow check)', false, `lines ${lines0.length}, edit ${JSON.stringify(tab.state.edits.lead[0])}`);
+}
+
 console.log('\n— bass, comping, inner');
 tab.selectCell('bass', 2);
 check('bass: "follows bar 3\'s chord", a way to its chord, its notes', /follows bar 3's chord/.test(q(inspector, '.ctab-ctx').textContent) && qa(inspector, '.ctab-notes tr').length === tab.state.parts.bass.notes.filter((n) => n.bar === 2).length + 1);

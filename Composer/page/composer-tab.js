@@ -1224,7 +1224,10 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
         el('b', { className: `ctab-alt-name ${DETAIL}`, textContent: r.cost }), el('span', { className: `ctab-muted ${DETAIL}`, textContent: '/note' }),
         el('span', { className: `ctab-alt-ratio ${DETAIL}`, textContent: `${r.notes} notes` }), el('span', { className: 'ctab-alt-q', textContent: r.shape }));
       b.dataset.key = k;
-      b.addEventListener('click', () => audition.tryAlt(k, () => core.swapLead(phrase, l.id, { chordsFollow: follow }), `line ${r.cost}`));
+      // "chords follow" read when the line lands, not when it was clicked: a line held for the bar boundary takes a
+      // follow pressed while it waited (the phrase's edit's, else the preference)
+      const followNow = () => { const ed = tab.state.edits.lead[phrase]; return ed ? !!ed.chordsFollow : followPref; };
+      b.addEventListener('click', () => audition.tryAlt(k, () => core.swapLead(phrase, l.id, { chordsFollow: followNow() }), `line ${r.cost}`));
       return b;
     }));
     return [head, arpControls('lead'), el('div', { className: 'ctab-row' }, followBtn, smooth), el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: '● plays now · C Compose\'s line · cost a note: lower is closer to the rules' }), list, auditionBar(), editNote()];
