@@ -19,6 +19,11 @@
 //   • a chord swap (rearrange.js, P14) re-mines the bar at the part's density and lock, keeping a pick only where it is
 //     still offered (else `bassDropped`); Walking re-mines the bar before; an edit to what is there is byte for byte
 //   • deterministic; the spec untouched; the options checked; the 16k row's timings; the report's rows
+//   • (Amendment 2, rule 11, P28) Compose's own bass is Moving · Kick: arrangeBass's at those options byte for byte, every
+//     kick covered or missed; with the drums off, disabled or no kick in the mode, Moving · Free and the reason said; the
+//     pin `bass: { density: 'sparse', lock: 'free' }` the bass Compose mined before (the sections above compose with it);
+//     an asked bass; the override checked; the trace; a chord swap of the default
+//   (Sparse · Free in the first bullet is now the pin: Compose is asked for it)
 //   node Composer/tests/assert-bass.mjs
 import { compose, partContext } from '../core/compose.js';
 import { materialsOf, chordRecordsOf, rearrange, applyRearrange } from '../core/rearrange.js';
@@ -45,10 +50,13 @@ const CAP = 12;
 
 console.log('═══ COMPOSER — the bass\'s densities, locks, fills and runner-ups: arrangeBass (BASS_VOICING_ORDER.md phases G, J) ═══');
 
-/** a compose with its materials and the test's own reading of it */
+/** Compose's own bass before Amendment 2 (P28): the sections that read arrangeBass against the bass Compose mined pin
+ *  it, `bass: { density: 'sparse', lock: 'free' }`; section 11 reads Compose's default, Moving · Kick */
+const OWN = Object.freeze({ density: 'sparse', lock: 'free' });
+/** a compose with its materials and the test's own reading of it (`own: false`: Compose's default bass, not pinned) */
 function composed(L, T, opts = {}) {
-  const { label, ...rest } = opts;
-  const spec = compose(L, T, { seed: 1, ...rest });
+  const { label, own = true, ...rest } = opts;
+  const spec = compose(L, T, { seed: 1, ...rest, overrides: { ...(own ? { bass: OWN } : {}), ...(rest.overrides ?? {}) } });
   if (spec.refused) return null;
   const M = materialsOf(spec), { row, cells } = M, k = spec.knobs;
   const rowT = k.rowCycleSeconds ?? k.cycleSeconds, S = k.slotsPerBar, N = k.bars, P = N * S;
@@ -535,7 +543,7 @@ console.log('\n— deterministic, the spec untouched, the options');
   const C = caseOf('19:17:16:15');
   const a = arrangeBass(C.spec, C.M, { density: 'walking', lock: 'kick' }), b = arrangeBass(C.spec, materialsOf(C.spec), { density: 'walking', lock: 'kick' });
   check('the same spec and options, byte-identical output (materials rebuilt too)', J(a) === J(b));
-  check('the spec is not touched', J(C.spec) === J(compose([19, 17, 16, 15], 6, { seed: 1 })));
+  check('the spec is not touched', J(C.spec) === J(compose([19, 17, 16, 15], 6, { seed: 1, overrides: { bass: OWN } })));
   check('re-arranging an arranged bass starts from the spec (its sound, legato and on/off kept)', J(arrangeBass(withBass(C.spec, a), C.M, { density: 'roots' })) === J(arrangeBass(C.spec, C.M, { density: 'roots' })));
   check('the defaults: Sparse, Free, no picks', J(readBassOptions()) === J({ density: 'sparse', lock: 'free', picks: {} }));
   check('the options checked', [{ density: 'dense' }, { lock: 'snare' }, { picks: [] }, { picks: { a: 'x' } }, { picks: { 0: 3 } }, { time: 2 }].every((o) => throws(() => arrangeBass(C.spec, C.M, o), /composer\/bass/)));
@@ -562,6 +570,69 @@ console.log('\n— the 16,359-onset row');
   check(`every density × lock holds every rule; each under 150 ms (the worst, median of 5: ${worst.toFixed(1)} ms; the first offer on fresh materials ${first.toFixed(1)} ms)`, !bad && worst < 150, bad);
   console.log(`  · measured: ${rows.join('\n  · measured: ')}`);
 }
+
+// ── 11. Compose's own bass: Moving · Kick (Amendment 2, rule 11, P28) ──
+console.log('\n— Compose\'s own bass: Moving · Kick (Amendment 2, P28)');
+const DEFAULTS = [];
+{
+  const opt = readBassOptions({ density: 'moving', lock: 'kick' });
+  const all = [...ROWS.map(([L, T]) => composed(L, T, { own: false })), composed([119, 42, 15, 8], 8, { changes: [[1], [1, 1], [1], [1, 1, 1, 1]], own: false, label: 'chart' }),
+    composed([8, 7, 6, 5], 4, { target: { clip: clip('twinkle') }, own: false, label: 'twinkle' }), composed([11, 9, 7, 5], 5, { overrides: { compStyle: 'notes' }, own: false, label: 'notes' }), composed([4099, 4093, 4091, 4079], 16, { own: false, label: '16k' })];
+  let bad = '';
+  for (const C of all) {
+    const part = bassOf(C.spec), d = C.spec.decisions.find((x) => x.what === 'bass');
+    // what Compose returns plays, and arrangeBass at Moving · Kick gives it again byte for byte
+    if (J(arrangeBass(C.spec, C.M, { density: 'moving', lock: 'kick' })) !== J(part)) bad ||= `${C.label}: not arrangeBass at Moving · Kick`;
+    else if (part.bass.density !== 'moving' || part.bass.lock !== 'kick' || part.bass.stats.lock !== 'kick' || part.bass.refused) bad ||= `${C.label}: ${part.bass.density} · ${part.bass.stats.lock}`;
+    else if (verify(C, part, opt)) bad ||= `${C.label}: ${verify(C, part, opt)}`;
+    else if (d?.value !== 'moving · kick' || !/^Moving · Kick by default \(rule 11, Avery\)/.test(d.why) || C.spec.stats.notes.bass !== part.notes.length || C.spec.stats.bassRooted !== `${part.bass.stats.rooted}/${C.N}`) bad ||= `${C.label}: the decision or the stats`;
+    // the decision sits where the bass was decided: after the comp's, before the legato
+    else if (C.spec.decisions.findIndex((x) => x.what === 'bass') !== C.spec.decisions.findIndex((x) => x.what === 'legato.lead') - 1) bad ||= `${C.label}: the decision's place`;
+    const s = part.bass.stats;
+    DEFAULTS.push(`${C.label} (${C.N} × ${C.S}): ${s.perBar.toFixed(2)} notes a bar, ${s.hits - s.missedHits}/${s.hits} kicks covered${s.missedHits ? ` (${s.missedHits} missed)` : ''}, ${s.notes - (s.hits - s.missedHits)} extra, ${s.rooted}/${s.bars} rooted`);
+  }
+  check(`${all.length} Composes (6 rows, a chart, a MIDI target, a comp in notes, the 16k row): the bass is Moving · Kick, arrangeBass's at those options byte for byte, every kick covered or missed and resting; the decision says so`, !bad, bad);
+  console.log(`    · ${DEFAULTS.join('\n    · ')}`);
+  // the drums off, disabled, or no kick in the mode: Moving · Free, and the decision says why
+  const off = composed([119, 42, 15, 8], 8, { drums: false, own: false, label: 'drums off' }), dis = composed([119, 42, 15, 8], 8, { drums: { enabled: false }, own: false, label: 'drums disabled' });
+  const hatOnly = composed([119, 42, 15, 8], 8, { drums: { mode: 'grid', fills: false, grid: { hat: Array.from({ length: 4 }, () => 'x'.repeat(8)) } }, own: false, label: 'hats only' });
+  let fell = '';
+  for (const X of [off, dis, hatOnly]) {
+    const part = bassOf(X.spec), d = X.spec.decisions.find((x) => x.what === 'bass'), free = arrangeBass(X.spec, X.M, { density: 'moving' });
+    if (J(arrangeBass(X.spec, X.M, { density: 'moving', lock: 'kick' })) !== J(part)) fell ||= `${X.label}: not arrangeBass's`;
+    else if (part.bass.stats.lock !== 'free' || part.bass.refused !== bassLockRefusal(X.spec, 'kick') || J(part.notes) !== J(free.notes) || J(part.bass.bars) !== J(free.bass.bars)) fell ||= `${X.label}: not Moving · Free`;
+    else if (d.value !== 'moving · free' || !d.why.includes(`but ${part.bass.refused}, so Moving · Free`)) fell ||= `${X.label}: the decision "${d.why.slice(0, 120)}"`;
+  }
+  check(`the drums off, disabled, or no kick in the mode: Moving · Free, the reason kept and said ("${bassWords(off.spec)}")`, !fell, fell);
+  // the pin: Sparse · Free is the bass Compose mined before, byte for byte (no record, no decision: assert-refactor-identity.mjs
+  // holds it to the frozen core), and the rest of the spec is the default's
+  let pinned = '';
+  for (const [L, T, o] of [...ROWS.map(([L2, T2]) => [L2, T2, {}]), [[119, 42, 15, 8], 8, { changes: [[1], [1, 1], [1], [1, 1, 1, 1]] }], [[8, 7, 6, 5], 4, { target: { clip: clip('twinkle') } }]]) {
+    const dflt = compose(L, T, { seed: 1, trace: true, ...o }), pin = compose(L, T, { seed: 1, trace: true, ...o, overrides: { bass: OWN } }), M = materialsOf(pin);
+    const old = strip(arrangeBass(pin, M, BASS_DEFAULTS));
+    if (J(bassOf(pin)) !== J(old) || 'bass' in bassOf(pin) || pin.decisions.some((x) => x.what === 'bass')) { pinned ||= `${L.join(':')}: the pinned bass`; continue; }
+    // everything but the bass: its part, decision, stats and trace bars
+    const rest = (x) => { const { input, trace, ...r } = x; return J({ ...r, parts: r.parts.filter((p) => p.id !== 'bass'), decisions: r.decisions.filter((y) => y.what !== 'bass'), stats: { ...r.stats, notes: { ...r.stats.notes, bass: 0 }, bassRooted: '' }, target: r.target ? { ...r.target, search: null } : undefined }); };
+    if (rest(dflt) !== rest(pin)) pinned ||= `${L.join(':')}: the rest of the spec moved`;
+    const bars = (x) => x.trace.events.find((e) => e.kind === 'part' && e.part === 'bass');
+    if (!bars(dflt) || !bars(pin)) pinned ||= `${L.join(':')}: no bass part event`;
+  }
+  check('`bass: { density: \'sparse\', lock: \'free\' }` is the bass Compose mined before byte for byte (no record, no decision), the rest of the spec the default\'s', !pinned, pinned);
+  // asked: another density and lock, said "asked"; the override checked
+  const asked = composed([768, 784], 8, { own: false, overrides: { bass: { density: 'walking', lock: 'clave' } }, label: 'asked' }), ap = bassOf(asked.spec);
+  check('asked (Walking · Clave): arrangeBass\'s at those options, the decision "asked"', J(arrangeBass(asked.spec, asked.M, { density: 'walking', lock: 'clave' })) === J(ap) && !verify(asked, ap, readBassOptions({ density: 'walking', lock: 'clave' }))
+    && asked.spec.decisions.find((x) => x.what === 'bass').why.startsWith('asked') && asked.spec.decisions.find((x) => x.what === 'bass').value === 'walking · clave');
+  check('the override checked: a bad density or lock, a pick, a list', [{ density: 'dense' }, { lock: 'snare' }, { picks: {} }, []].every((b) => throws(() => compose([8, 7, 6, 5], 4, { overrides: { bass: b } }), /composer\/compose: (bass|the bass)/)));
+  // the trace observes only: the spec with the trace is the spec without it; the trace's bass bars are the lines that play
+  const t = compose([119, 42, 15, 8], 8, { seed: 1, trace: true }), { trace, ...plain } = t, ev = trace.events.find((e) => e.kind === 'part' && e.part === 'bass');
+  const playing = bassOf(plain).bass.bars.map((b) => (b.how === 'mined' ? b.picked : null));
+  check('the trace observes only (the spec without it byte for byte), its bass bars the lines that play', J(plain) === J(compose([119, 42, 15, 8], 8, { seed: 1 })) && J(ev.bars.map((b) => b.line)) === J(playing));
+  // a chord swap re-mines the default at Moving · Kick (rearrange.js' arranged-bass path), its bass record kept
+  const C0 = composed([119, 42, 15, 8], 8, { own: false }), r = rearrange(C0.spec, C0.row, C0.cells, { bar: 1, chord: { rootTone: C0.spec.chords[2].rootTone, quality: 'minor_triad' } }), nb = bassOf(applyRearrange(C0.spec, r));
+  check(`a chord swap of the default re-mines only its bar at Moving · Kick (bass changed in bars ${J(r.changed.bass.map((b) => b + 1))}), the record kept, the bar's rules held`, nb.bass.density === 'moving' && nb.bass.lock === 'kick' && J(r.bassDropped) === '[]'
+    && r.changed.bass.every((b) => b === 1) && !verify({ ...C0, spec: applyRearrange(C0.spec, r), recs: chordRecordsOf(applyRearrange(C0.spec, r), C0.row, C0.cells) }, nb, readBassOptions({ density: 'moving', lock: 'kick' }), [1]));
+}
+function bassWords(spec) { return spec.decisions.find((x) => x.what === 'bass').why.slice(0, 110); }
 
 // ── 10. the report's rows ──
 console.log('\n— the report\'s rows (notes a bar · bars with a note on the downbeat · locked: hits covered/hits, missed, extras · Roots: runner-ups · Walking: filled bars · ms)');

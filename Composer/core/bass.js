@@ -5,7 +5,10 @@
 // PURE: no fetch, no DOM, no clock. Usable in a page, a worker and Node. Like the arp (arp.js `arrangeArp`), the bass is
 // an arrangement over a finished spec: `arrangeBass(spec, materials, { density, lock, picks })` reads the spec and its
 // materials (rearrange.js `materialsOf`: the row and the cells) and rebuilds the bass part, with no re-compose, so a
-// switch is live. The default (Sparse, Free, no picks) is Compose's own bass byte for byte (P10), so no fixture moves.
+// switch is live. The default (Sparse, Free, no picks) is the bass Compose mined before Amendment 2 byte for byte (P10).
+// Compose's own is now Moving · Kick (Amendment 2, rule 11, P28: COMPOSE_BASS), arranged by `arrangeBass` itself inside
+// compose.js once the drums are, so arrangeBass at Moving · Kick over a default spec gives its bass again byte for byte;
+// `bass: { density: 'sparse', lock: 'free' }` asks Compose for the bass before (no record), which pins the fixtures.
 // What is decided (Avery, 2026-10-27: the order's Decided 1–2) and what is proposed (P10–P15, the builder's calls):
 //
 //   chords     the spec's chords rebuilt as harmony.js' records by rearrange.js' own path (`chordRecordsOf`), the targets
@@ -89,6 +92,10 @@ export const COMPOSER_BASS_VERSION = 'composer-bass-v1';
 export const BASS_DENSITIES = Object.freeze(['roots', 'sparse', 'moving', 'walking']);
 export const BASS_LOCKS = Object.freeze(['free', 'kick', 'clave']);
 export const BASS_DEFAULTS = Object.freeze({ density: 'sparse', lock: 'free', picks: Object.freeze({}) });
+/** Compose's own bass (BASS_VOICING_ORDER.md Amendment 2, rule 11, P28): Moving, covering the kick. arrangeBass's options
+ *  still default to BASS_DEFAULTS (Sparse · Free: the bass Compose mined before, which `bass: { density: 'sparse', lock:
+ *  'free' }` asks Compose for) */
+export const COMPOSE_BASS = Object.freeze({ density: 'moving', lock: 'kick' });
 /** a bar offers this many ranked lines (P13) */
 export const BASS_ALTERNATES = 8;
 /** two octaves under the lead's range (compose.js REGISTER.bass) */
@@ -133,6 +140,23 @@ export function bassLockRefusal(spec, lock) {
     if (!compSourceOf(spec.clave).length) return 'the comp\'s clave lands no strokes';
   }
   return null;
+}
+
+/** the words a lock's hit is counted in */
+const HIT_WORDS = Object.freeze({ kick: 'kick', clave: 'comp stroke' });
+/** each density in a few words (the decision's) */
+const DENSITY_WORDS = Object.freeze({ roots: 'a root a chord', sparse: 'lines.js\' sparse band (20–35 % of the slots)', moving: 'the mid band (40–60 % of the slots)', walking: 'every slot of its clock, stepwise' });
+const cap = (x) => x[0].toUpperCase() + x.slice(1);
+/**
+ * The bass decision's words (compose.js, Amendment 2 P28): Compose's default (Moving · Kick) or asked, a lock refused and
+ * why, the density, the hits covered, and what played. `B` an arranged part's `bass`; `asked` whether `bass` was asked.
+ */
+export function bassWhy(B, asked = false) {
+  const S = B.stats;
+  const head = asked ? 'asked' : `${cap(COMPOSE_BASS.density)} · ${cap(COMPOSE_BASS.lock)} by default (rule 11, Avery)`;
+  const refused = B.refused ? `, but ${B.refused}, so ${cap(B.density)} · Free` : '';
+  const lock = S.lock === 'free' ? 'landing anywhere' : `every ${HIT_WORDS[S.lock]} covered on one of its in-frame onsets (${S.hits - S.missedHits} of ${S.hits}${S.missedHits ? `; ${S.missedHits} missed: no onset in frame there, so it rests` : ''}), the density adding the rest`;
+  return `${head}${refused}: ${DENSITY_WORDS[S.density]}, ${lock}; ${S.notes} notes (${S.perBar.toFixed(2)} a bar), ${S.rooted} of ${S.bars} bars opening on the root's class, ${S.mined} mined${S.fallback ? `, ${S.fallback} fell back` : ''}${S.walkFill ? `, ${S.walkFill} walking what they can` : ''}`;
 }
 
 /** Walking's clock: S slots a bar, halved while above WALK_MAX and even */

@@ -18,7 +18,15 @@
 //     there, the perc follows, `reclavedBars` names it; a clave switch equal to a Compose given that clave (rows, a chart's
 //     split bars, a MIDI target)
 //   • P21: the words: the source ("layer A · 8 steps · chord tones"), each bar's pattern, in the decision and the trace
-//   • the probe's table (each row's chosen candidate, its patterns, strokes in frame) and the 16,359-onset row's cost
+//   • Amendment 2 (P26–P27, P30–P31): the narrower sets (root and fifth, guide tones, roots; a twin of a wider set's
+//     reading dropped) and the density tiers (sparse 10–25 %, medium 25–50 %, dense 50–85 %; 'sparse-med' the default)
+//     against the brute force on 8 rows × the 4 densities × 2 seeds, every stroke in frame; the nearest-tier fall-back
+//     and its words; the trace's density; the alternates re-ranked over the chords as they play after a chord swap, a
+//     typed chord and a lead follow (the brute force's, equal to a Compose pinning the same chords); a density switch
+//     equal to a Compose given that compDensity. (P19's hashes were made with the bass before Amendment 2, so its
+//     Composes ask for it: `bass: { density: 'sparse', lock: 'free' }`)
+//   • the probe's table (each row's chosen candidate, its patterns, strokes in frame), the default tier's table, and the
+//     16,359-onset row's cost
 //   node Composer/tests/assert-frame-clave.mjs
 import crypto from 'node:crypto';
 import { buildRow } from '../core/row.js';
@@ -59,16 +67,35 @@ function geometry(spec) {
   const inFrame = (i) => Math.abs(classOf(chordAt(ctx.posSlot[i]), i).dev) <= e + EPS;
   const onChord = (i) => { const c = chordAt(ctx.posSlot[i]), k = classOf(c, i); return Math.abs(k.dev) <= e + EPS && c.intervals.includes(k.pc); };
   const units = recs[0].slots != null ? recs.map((c) => ({ from: c.from, to: c.from + c.slots })) : Array.from({ length: N }, (_, k) => ({ from: k * S, to: (k + 1) * S }));
-  return { spec, row, cells, ctx, K, S, N, P, e, W, recs, chordAt, rel, place, rAt, inFrame, onChord, units };
+  return { spec, row, cells, ctx, K, S, N, P, e, W, recs, chordAt, rel, place, rAt, inFrame, onChord, units, classOf };
 }
 
 /** the first node at a tick (a superrow's tick holds several), by a scan of the sorted ticks */
 const firstAt = (row, tick) => { let lo = 0, hi = row.n; while (lo < hi) { const m = (lo + hi) >> 1; if (row.tick[m] < tick) lo = m + 1; else hi = m; } return row.tick[lo] === tick ? lo : -1; };
 
-/** P16 by brute force: every candidate, read and scored, in the order's ranking (`all`: every reading, the ones the
- *  ranking leaves out too: a frame set reading what the chord set reads, a reading with no bar left in) */
-function bruteCandidates(G, { all = false } = {}) {
-  const { row, ctx, S, N } = G, out = [];
+/** the tiers (Amendment 2, P27), written out: a share's tier, each density's band, the nearest tiers in turn */
+const BANDS = { 'sparse-med': [0.1, 0.5], sparse: [0.1, 0.25], medium: [0.25, 0.5], dense: [0.5, 0.85] };
+const NEAREST = { 'sparse-med': ['dense'], sparse: ['medium', 'dense'], medium: ['sparse', 'dense'], dense: ['medium', 'sparse'] };
+const tierOfShare = (x) => (x < 0.1 - EPS || x > 0.85 + EPS ? null : x < 0.25 - EPS ? 'sparse' : x <= 0.5 + EPS ? 'medium' : 'dense');
+const inDensity = (tier, d) => tier != null && (d === 'sparse-med' ? tier === 'sparse' || tier === 'medium' : tier === d);
+/** the sets (P16, P26), from the cents: a class within ±e of its centre from the chord's root; the fifth its 6–8 interval */
+const SETS = ['chord', 'frame', 'root+5th', 'guide', 'root'];
+function setTest(G, set) {
+  const k = (i) => { const c = G.chordAt(G.ctx.posSlot[i]); return { c, q: G.classOf(c, i) }; };
+  const inTune = (q) => Math.abs(q.dev) <= G.e + EPS, fifth = (c) => c.intervals.find((x) => x >= 6 && x <= 8) ?? -1;
+  if (set === 'frame') return (i) => inTune(k(i).q);
+  return (i) => {
+    const { c, q } = k(i);
+    if (!inTune(q) || !c.intervals.includes(q.pc)) return false;
+    return set === 'chord' ? true : set === 'root' ? q.pc === 0 : set === 'root+5th' ? q.pc === 0 || q.pc === fifth(c) : q.pc !== 0 && q.pc !== fifth(c);
+  };
+}
+
+/** P16, P26–P27 by brute force: every reading, and the asked density's ranking (`density`, default 'sparse-med')
+ *  → { list (the tier that plays, ranked), all (every reading, scored against that tier's band; the ranking's leftovers
+ *  too: a wider set's twin, a reading with no bar left in), played, fellBack } */
+function bruteRank(G, density = 'sparse-med') {
+  const { row, ctx, S, N } = G, read = [];
   // the layers fastest first (equal values: the later letter first)
   const layers = [...row.active].sort((a, b) => row.layers[b] - row.layers[a] || b - a);
   for (const b of layers) {
@@ -78,9 +105,9 @@ function bruteCandidates(G, { all = false } = {}) {
     for (const list of bars) list.sort((x, y) => x.place - y.place || x.node - y.node);
     const m = Math.round(total / N), grains = m < 3 ? [] : m <= 16 ? [m] : Array.from({ length: 14 }, (_, x) => x + 3);
     for (const n of grains) {
-      let chordRead = null;
-      for (const set of ['chord', 'frame']) {
-        const test = set === 'chord' ? G.onChord : G.inFrame, patterns = [], strokes = [];
+      const earlier = [];
+      for (const set of SETS) {
+        const test = setTest(G, set), patterns = [], strokes = [];
         for (let k = 0; k < N; k++) {
           const st = bars[k], took = new Set();
           let p = '';
@@ -94,21 +121,31 @@ function bruteCandidates(G, { all = false } = {}) {
           }
           patterns.push(p);
         }
-        const twin = set === 'frame' && chordRead && J(patterns) === J(chordRead);
-        if (set === 'chord') chordRead = patterns;
-        // the score: density the bars' mean, fit by n, recurrence the bars whose pattern another repeats
+        // a reading equal to an earlier (wider) set's at this layer and grain is that set's
+        const twin = earlier.some((q) => J(q) === J(patterns));
+        earlier.push(patterns);
         const ons = patterns.map((p) => [...p].filter((ch) => ch === 'x').length), counted = ons.map((o) => o >= RULES.minOnsets && o < n);
-        if (!all && (twin || !counted.some(Boolean))) continue;
-        let density = 0, held = 0;
-        ons.forEach((o, k) => { if (!counted[k]) return; const x = o / n; density += x < RULES.lo ? x / RULES.lo : x > RULES.hi ? (1 - x) / (1 - RULES.hi) : 1; });
-        patterns.forEach((p, k) => { if (counted[k] && patterns.some((q, k2) => k2 !== k && counted[k2] && q === p)) held++; });
-        const fit = RULES.straight.includes(n) ? 1 : RULES.triplet.includes(n) ? 0.75 : 0.4;
-        out.push({ id: `frame:${'ABCD'[b]}/${n}/${set}`, n, set, patterns, strokes, score: (held / N + density / N + fit) / 3 });
+        const share = ons.reduce((a, o) => a + o, 0) / (n * N);
+        read.push({ id: `frame:${'ABCD'[b]}/${n}/${set}`, n, set, patterns, strokes, ons, counted, share, tier: tierOfShare(share), kept: !twin && counted.some(Boolean) });
       }
     }
   }
-  return out.map((c, x) => ({ ...c, x })).sort((a, b) => b.score - a.score || a.x - b.x);
+  // the score: density the bars' mean against [lo, hi], fit by n, recurrence the bars whose pattern another repeats
+  const score = (c, [lo, hi]) => {
+    let density = 0, held = 0;
+    c.ons.forEach((o, k) => { if (!c.counted[k]) return; const x = o / c.n; density += x < lo ? x / lo : x > hi ? (1 - x) / (1 - hi) : 1; });
+    c.patterns.forEach((p, k) => { if (c.counted[k] && c.patterns.some((q, k2) => k2 !== k && c.counted[k2] && q === p)) held++; });
+    const fit = RULES.straight.includes(c.n) ? 1 : RULES.triplet.includes(c.n) ? 0.75 : 0.4;
+    return (held / N + density / N + fit) / 3;
+  };
+  const kept = read.filter((c) => c.kept), played = [density, ...NEAREST[density]].find((d) => kept.some((c) => inDensity(c.tier, d))) ?? null;
+  const band = played ? BANDS[played] : [RULES.lo, RULES.hi];
+  const all = read.map((c, x) => ({ ...c, x, score: score(c, band) }));
+  const list = all.filter((c) => c.kept && (!played || inDensity(c.tier, played))).sort((a, b) => b.score - a.score || a.x - b.x);
+  return { list, all, played, fellBack: played !== density };
 }
+/** the ranking's candidates (P16 by brute force: `all` every reading) */
+const bruteCandidates = (G, { all = false, density = 'sparse-med' } = {}) => (all ? bruteRank(G, density).all : bruteRank(G, density).list);
 
 /** the least distance between a stroke of a and one of b, in slots round the loop */
 const nearest = (G, a, b) => { let d = Infinity; for (const x of a) for (const y of b) { const q = Math.abs(G.place(x.node) - G.place(y.node)); d = Math.min(d, q, G.P - q); } return d; };
@@ -138,9 +175,12 @@ const keyOf = (strokes) => J(strokes.map((x) => [x.bar, x.step, x.node]).sort((a
 
 /** audit one spec's frame clave against the brute force → [problem] */
 function audit(spec) {
-  const bad = [], G = geometry(spec), C = spec.clave, list = bruteCandidates(G);
-  if (!C.from?.frame) return C.read === 'frame' ? auditFixed(G, C, 'clave') : ['not a frame clave'];
-  const top = list.filter((c) => c.score >= list[0].score - EPS), mine = list.find((c) => c.id === C.id);
+  const density = spec.input.overrides?.compDensity ?? 'sparse-med', G = geometry(spec), B = bruteRank(G, density);
+  const bad = [], C = spec.clave, list = B.list;
+  // the density it was chosen in (P27): asked, the tier the brute force plays, a fall-back
+  if (J(C.compDensity) !== J({ asked: density, played: B.played, fellBack: B.fellBack })) bad.push(`compDensity ${J(C.compDensity)}, the brute force's ${density} → ${B.played}`);
+  if (!C.from?.frame) return C.read === 'frame' ? [...bad, ...auditFixed(G, C, 'clave')] : ['not a frame clave'];
+  const top = list.filter((c) => c.score >= list[0].score - EPS), mine = spec.input.overrides?.clave ? B.all.find((c) => c.id === C.id) : list.find((c) => c.id === C.id);
   if (!mine) return [`${C.id} is no candidate of the brute force's`];
   if (!spec.input.overrides?.clave && !top.includes(mine)) bad.push(`${C.id} (${mine.score.toFixed(4)}) is not among the best (${top.map((c) => c.id).join(', ')}, ${list[0].score.toFixed(4)})`);
   if (Math.abs(mine.score - C.score) > 1e-9) bad.push(`${C.id}'s score ${C.score} is not ${mine.score}`);
@@ -149,7 +189,8 @@ function audit(spec) {
   const v = spec.input.layers['ABCD'.indexOf(C.from.name)], period = G.row.grid / v;
   for (const x of C.strokes) {
     if (x.tick % period !== 0 || firstAt(G.row, x.tick) !== x.node) bad.push(`bar ${x.bar} step ${x.step}: not the layer's own strike`);
-    if (!(C.from.set === 'chord' ? G.onChord(x.node) : G.inFrame(x.node))) bad.push(`bar ${x.bar} step ${x.step}: its tone is out of the set`);
+    if (!setTest(G, C.from.set)(x.node)) bad.push(`bar ${x.bar} step ${x.step}: its tone is out of the set`);
+    if (!G.inFrame(x.node)) bad.push(`bar ${x.bar} step ${x.step}: out of frame`);
     if (Math.abs(x.time - G.ctx.timeOf(x.tick)) > 1e-12) bad.push(`bar ${x.bar} step ${x.step}: not at its own time`);
   }
   // P17: the partner
@@ -254,8 +295,9 @@ console.log('\n— P19: claveFrom \'pattern\', byte for byte the clave before ph
 {
   const hash = (x) => crypto.createHash('sha256').update(J(x)).digest('hex').slice(0, 24), bad = [];
   CASES.forEach((c, x) => {
-    const s = compose(c.L, c.T, { seed: c.seed, overrides: { ...c.overrides, claveFrom: 'pattern' }, ...(c.changes ? { changes: c.changes } : {}), ...(c.trace ? { trace: true } : {}), ...(c.target ? { target: ODE() } : {}) });
-    delete s.input.overrides.claveFrom;
+    // the bass pinned to the one Compose mined at c009aaa (Amendment 2, P28: Compose's own is now Moving · Kick)
+    const s = compose(c.L, c.T, { seed: c.seed, overrides: { ...c.overrides, claveFrom: 'pattern', bass: { density: 'sparse', lock: 'free' } }, ...(c.changes ? { changes: c.changes } : {}), ...(c.trace ? { trace: true } : {}), ...(c.target ? { target: ODE() } : {}) });
+    delete s.input.overrides.claveFrom; delete s.input.overrides.bass;
     if (s.target) delete s.target.search.ms;   // the placement search's own timing
     const h = c.whole ? hash(s) : hash([s.clave, s.drums, s.parts.find((p) => p.id === 'comp').strokes]);
     if (h !== HASHES[x]) bad.push(`${c.L.join(':')} ${J(c.overrides)}${c.changes ? ' (chart)' : ''}${c.target ? ' (target)' : ''}`);
@@ -350,11 +392,132 @@ console.log('\n— P21: the words');
   check(`a curated clave read in frame says so: "${claveSource(son.clave)}"; a frame id read back (claveOf): "${claveOf(C.id).pattern}"`, claveSource(son.clave) === 'son clave 3-2 · in frame' && claveOf(C.id).id === C.id && claveOf(C.id).pattern === src);
 }
 
+// ── Amendment 2 (P26–P27, P30–P31): the narrower sets, the density tiers, the picker re-ranked ──
+console.log('\n— Amendment 2: the narrower sets and the density tiers (P26–P27)');
+const tiers = [];
+{
+  const bad = []; let n = 0, fell = 0, narrow = 0;
+  for (const [L, T] of ROWS) for (const compDensity of ['sparse-med', 'sparse', 'medium', 'dense']) for (const seed of [1, 2]) {
+    const spec = compose(L, T, { seed, overrides: compDensity === 'sparse-med' ? {} : { compDensity } }); n++;
+    for (const b of audit(spec)) bad.push(`${L.join(':')} ${compDensity} seed ${seed}: ${b}`);
+    const C = spec.clave, d = spec.decisions.find((x) => x.what === 'clave').why;
+    if (C.compDensity.fellBack) fell++;
+    if (['root+5th', 'guide', 'root'].includes(C.from?.set)) narrow++;
+    // the share and tier the clave carries are its patterns'; in the tier played (none: no tier at all)
+    if (C.from?.frame) {
+      const share = C.patterns.reduce((a, p) => a + [...p].filter((ch) => ch === 'x').length, 0) / (C.steps * spec.knobs.bars);
+      if (Math.abs(share - C.share) > 1e-12 || C.tier !== tierOfShare(share) || (C.compDensity.played && !inDensity(C.tier, C.compDensity.played))) bad.push(`${L.join(':')} ${compDensity}: share ${C.share} / tier ${C.tier}`);
+    }
+    // the words (P31): the density asked or the default, and a fall-back said
+    const want = compDensity === 'sparse-med' ? /the comp's density sparse–medium \(10–50 %\) by default \(rule 10, Avery\)/ : new RegExp(`the comp's density asked, ${compDensity}`);
+    if (!want.test(d) || (C.compDensity.fellBack && !(C.compDensity.played ? /no frame clave in it .*so the nearest tier's/ : /no frame clave in any tier/).test(d))) bad.push(`${L.join(':')} ${compDensity}: the words "${d.slice(0, 160)}"`);
+    if (seed === 1 && compDensity === 'sparse-med') tiers.push({ row: L.join(':'), id: C.id, set: C.from?.set ?? '—', grain: C.steps, share: C.share, tier: C.tier, fellBack: C.compDensity.fellBack, played: C.compDensity.played, text: claveText(C) });
+  }
+  check(`${n} composes (8 rows × the 4 densities × 2 seeds): the clave the brute force's in the tier asked (or the nearest: ${fell} fell back), every stroke in frame and in its set (${narrow} from a narrower set), its share and tier its patterns', the words naming the tier`, !bad.length && fell > 0 && narrow > 0, bad.slice(0, 4).join('; '));
+  // the fall-back, by hand: a row whose ranking has no sparse candidate plays medium's best, and says so
+  const G = geometry(compose([7, 5, 3, 2], 4, { seed: 1 })), B = bruteRank(G, 'sparse'), sp = compose([7, 5, 3, 2], 4, { seed: 1, overrides: { compDensity: 'sparse' } });
+  check(`7:5:3:2 asked sparse: no sparse candidate (${B.all.filter((c) => c.kept && c.tier === 'sparse').length}), so medium's best (${sp.clave.id}, ${Math.round(100 * sp.clave.share)} %), said in the decision`, B.played === 'medium' && sp.clave.compDensity.played === 'medium' && sp.clave.compDensity.fellBack && sp.clave.id === B.list[0].id
+    && /no frame clave in it .*so the nearest tier's, medium/.test(sp.decisions.find((x) => x.what === 'clave').why));
+  // the trace says the tier: asked, played, the counts; every alternate in it, with its share
+  const t = compose([768, 784], 8, { seed: 1, trace: true }), ev = t.trace.events.find((e) => e.kind === 'part' && e.part === 'comp' && e.clave);
+  const frameAlts = ev.alternates.filter((a) => a.from.frame);
+  check(`the trace: the density (${J({ asked: ev.density.asked, played: ev.density.played, fellBack: ev.density.fellBack })}), its counts, and ${frameAlts.length} alternates every one in the tier with its share`,
+    ev.density.asked === 'sparse-med' && ev.density.played === 'sparse-med' && !ev.density.fellBack && J(ev.density.band) === '[0.1,0.5]' && frameAlts.length > 0 && frameAlts.every((a) => inDensity(a.tier, 'sparse-med') && a.share >= 0.1 - EPS && a.share <= 0.5 + EPS)
+    && J(ev.clave.compDensity) === J(t.clave.compDensity));
+  const throws = (f, re) => { try { f(); return false; } catch (err) { return re.test(err.message); } };
+  check('a bad compDensity, compDensity under notes, under the pattern clave: each throws', throws(() => compose([8, 7, 6, 5], 4, { overrides: { compDensity: 'thick' } }), /compDensity must be one of sparse-med, sparse, medium, dense/)
+    && throws(() => compose([8, 7, 6, 5], 4, { overrides: { compStyle: 'notes', compDensity: 'dense' } }), /compStyle 'chords''s/) && throws(() => compose([8, 7, 6, 5], 4, { overrides: { claveFrom: 'pattern', compDensity: 'dense' } }), /a pattern clave has none/));
+  // a narrower set's twin of a wider one's reading is dropped, the wider name kept: no two candidates read alike
+  let twins = 0, cands = 0;
+  for (const [L, T] of ROWS) {
+    const s = compose(L, T, { seed: 1 }), g = geometry(s), R = rankFrameClaves(g.row, g.ctx, g.chordAt, { density: 'dense' });
+    const key = (c) => `${c.from.name}/${c.steps}/${J(c.patterns)}`, seen = new Set();
+    for (const c of R.ranked.candidates) { cands++; if (seen.has(key(c))) twins++; seen.add(key(c)); }
+  }
+  check(`no twin readings among ${cands} candidates (dense; a twin keeps the wider set's name)`, twins === 0 && cands > 0);
+}
+
+console.log('\n— Amendment 2: the picker re-ranked when a chord changes (P30), a density switch live');
+{
+  const bad = []; let n = 0, same = 0, pinned = 0, own = 0;
+  const alts = (C, list) => J(list.filter((a) => a.from.frame).map((a) => [a.id, +a.score.toFixed(12)]));
+  for (const [L, T, extra] of [...ROWS.slice(0, 7).map(([L, T]) => [L, T, {}]), [CHARTS[0][0], CHARTS[0][1], { changes: CHARTS[0][2] }]]) {
+    const full = compose(L, T, { seed: 1, trace: true, ...extra }), { trace, ...spec } = full, { row, cells } = materialsOf(spec);
+    const spans = spec.chords[0].slots != null, h = trace.events.find((e) => e.kind === 'harmony');
+    for (let u = 0; u < Math.min(spec.chords.length, 3); u++) {
+      const ev = trace.events.find((e) => e.kind === 'chord' && e.round === h.chosenRound && (spans ? e.span === u : e.bar === u));
+      const c = (ev?.candidates ?? []).find((_, i) => i !== ev.pickIndex);
+      if (!c) continue;
+      for (const edit of [spans ? { span: u, chord: c } : { bar: u, chord: c }, spans ? { span: u, chord: { rootTone: c.root.ratio, quality: 'minor_triad' } } : { bar: u, chord: { rootTone: c.root.ratio, quality: 'minor_triad' } }]) {
+        const r = rearrange(spec, row, cells, edit), next = applyRearrange(spec, r); n++;
+        const tag = `${L.join(':')}${spans ? ' chart' : ''} ${J(edit).slice(0, 60)}`;
+        if (J(next.chords) === J(spec.chords)) { if (r.claveAlternates) bad.push(`${tag}: alternates with no chord changed`); continue; }
+        if (!r.claveAlternates) { bad.push(`${tag}: no re-ranked alternates`); continue; }
+        // the brute force's ranking over the chords as they play, in the spec's tier
+        const B = bruteRank(geometry(next), 'sparse-med');
+        if (J(r.claveAlternates.filter((a) => a.from.frame).map((a) => a.id)) !== J(B.list.slice(0, 12).map((x) => x.id))) bad.push(`${tag}: not the brute force's ranking`);
+        // what plays keeps its layer, grain and set
+        if (next.clave.id !== spec.clave.id) bad.push(`${tag}: the playing clave switched`);
+        // a Compose over the edited chords (a progression pinning their roots, where it voices the same chords): the same alternates
+        if (!spans) {
+          const pin = compose(L, T, { seed: 1, trace: true, progression: next.chords.map((x) => x.rootTone) });
+          if (J(pin.chords.map((x) => [x.rootTone, x.quality, x.offsetCents])) === J(next.chords.map((x) => [x.rootTone, x.quality, x.offsetCents]))) {
+            pinned++;
+            const pe = pin.trace.events.find((e) => e.kind === 'part' && e.part === 'comp' && e.clave);
+            if (J(pe.alternates.filter((a) => a.from.frame).map((a) => [a.id, a.score])) !== J(r.claveAlternates.filter((a) => a.from.frame).map((a) => [a.id, Math.round(a.score * 1e4) / 1e4]))) bad.push(`${tag}: not a Compose's over the same chords`);
+            else same++;
+          }
+        }
+      }
+    }
+    // a swap to the chord a bar has: nothing re-ranked
+    const r0 = rearrange(spec, row, cells, spans ? { span: 0, chord: { rootTone: spec.chords[0].rootTone, quality: spec.chords[0].quality } } : { bar: 0, chord: { rootTone: spec.chords[0].rootTone, quality: spec.chords[0].quality } });
+    if (!r0.claveAlternates) own++;
+  }
+  // a lead follow that changes a chord re-ranks too
+  let follows = 0;
+  for (const [L, T] of ROWS.slice(0, 6)) {
+    const full = compose(L, T, { seed: 1, trace: true }), { trace, ...spec } = full, { row, cells } = materialsOf(spec), h = trace.events.find((e) => e.kind === 'harmony');
+    h.lead.phrases.forEach((id, p) => {
+      const evs = trace.events.filter((e) => e.kind === 'lead' && e.phrase === p && e.mined && e.mined.id === id), up = evs.length ? evs[evs.length - 1].runnersUp[0]?.id : null;
+      if (!up) return;
+      const r = rearrange(spec, row, cells, { phrase: p, line: up, chordsFollow: true }, { trace }), next = applyRearrange(spec, r);
+      if (J(next.chords) === J(spec.chords)) return;
+      follows++;
+      const B = bruteRank(geometry(next), 'sparse-med');
+      if (J((r.claveAlternates ?? []).filter((a) => a.from.frame).map((a) => a.id)) !== J(B.list.slice(0, 12).map((x) => x.id))) bad.push(`${L.join(':')} phrase ${p} follow: not the brute force's ranking`);
+    });
+  }
+  check(`${n} chord swaps and typed chords over 7 rows and a chart, ${follows} lead follows changing a chord: the alternates re-ranked over the chords as they play (the brute force's, ${same}/${pinned} equal to a Compose pinning the same chords), the playing clave kept; a swap to its own chord re-ranks nothing (${own}/8)`,
+    !bad.length && pinned > 0 && same === pinned && own === 8 && follows > 0, bad.slice(0, 4).join('; '));
+  void alts;
+}
+{
+  // a density switch is live: reclave({ density }) equal to a Compose given that compDensity, its alternates that Compose's
+  const bad = []; let n = 0;
+  for (const [L, T, extra] of [...ROWS.map(([L, T]) => [L, T, {}]), [CHARTS[0][0], CHARTS[0][1], { changes: CHARTS[0][2] }], [[41, 42, 43], 8, { target: ODE() }]]) {
+    const spec = compose(L, T, { seed: 1, ...extra }), { row, cells } = materialsOf(spec);
+    for (const [density, relation] of [['dense', 'sync'], ['sparse', 'fill'], ['medium', 'sync'], ['sparse-med', 'sync']]) {
+      n++;
+      const r = reclave(spec, row, cells, { density, relation }), got = applyRearrange(spec, r);
+      const want = compose(L, T, { seed: 1, trace: true, ...extra, overrides: { ...(density !== 'sparse-med' ? { compDensity: density } : {}), compRelation: relation } });
+      const ev = want.trace.events.find((e) => e.kind === 'part' && e.part === 'comp' && e.clave);
+      const sameAlts = density === 'sparse-med' ? !r.claveAlternates : J(r.claveAlternates.map((a) => a.id)) === J(ev.alternates.map((a) => a.id));
+      if (!(J(got.parts) === J(want.parts) && J(got.drums) === J(want.drums) && J(got.clave) === J(want.clave) && J(got.stats.clave) === J(want.stats.clave) && sameAlts)) bad.push(`${L.join(':')}${extra.changes ? ' chart' : extra.target ? ' target' : ''} ${density} ${relation}`);
+      if (density !== 'sparse-med' && !got.decisions.find((d) => d.what === 'clave').why.includes(`the comp's density asked, ${density}`)) bad.push(`${L.join(':')} ${density}: the words`);
+    }
+  }
+  check(`${n} density switches (reclave { density }) over 8 rows, a chart and a MIDI target: every part, the drums, spec.clave and its stats byte for byte a Compose given that compDensity, the alternates its trace's, the decision naming the tier`, !bad.length, bad.slice(0, 4).join('; '));
+}
+
 // ── the probe's table ──
 console.log('\n— the probe rows (seed 1, Sync): the frame clave');
 console.log('    | row | bars × slots | candidate | source | patterns | score | strokes in frame | on chord tones | Fill |');
 for (const t of table) console.log(`    | ${t.row} | ${t.meter} | ${t.id} | ${t.source} | \`${t.text}\` | ${t.score.toFixed(3)} | ${t.inF}/${t.n} | ${t.onC}/${t.n} | ${t.partner} |`);
 check('every probe row\'s strokes in frame', table.every((t) => t.inF === t.n));
+console.log('\n— the default tier (sparse–medium), seed 1: the chosen comp clave');
+console.log('    | row | clave | set | grain | share | tier | fell back | patterns |');
+for (const t of tiers) console.log(`    | ${t.row} | ${t.id} | ${t.set} | ${t.grain} | ${(100 * t.share).toFixed(0)} % | ${t.tier} | ${t.fellBack ? `yes (${t.played})` : 'no'} | \`${t.text}\` |`);
 
 // ── the 16,359-onset row ──
 console.log('\n— the 16k row');

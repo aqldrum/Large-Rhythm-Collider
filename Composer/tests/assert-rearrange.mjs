@@ -23,8 +23,11 @@ import { rootCandidates } from '../core/progression.js';
 import { RHYTHMS } from './rhythms.mjs';
 // the clave from the pattern (BASS_VOICING_ORDER.md P19): this suite freezes the clave before phase I, so every Compose
 // here asks `claveFrom: 'pattern'` (as `voicing: 'close'` pinned phase F; not under compStyle 'notes', which has no clave).
-// The frame clave's own checks are assert-frame-clave.mjs.
-const compose = (L, T, o = {}) => composeAny(L, T, o.overrides?.compStyle === 'notes' ? o : { ...o, overrides: { claveFrom: 'pattern', ...(o.overrides ?? {}) } });
+// The frame clave's own checks are assert-frame-clave.mjs. It freezes Compose's bass before Amendment 2 too (P28: Compose's
+// own is now Moving · Kick, a bass.js arrangement whose kick notes may sit on an onset across the slot's edge), so every
+// Compose here asks `bass: { density: 'sparse', lock: 'free' }`; assert-bass.mjs checks a swap of the arranged default.
+const OWN_BASS = { bass: { density: 'sparse', lock: 'free' } };
+const compose = (L, T, o = {}) => composeAny(L, T, o.overrides?.compStyle === 'notes' ? { ...o, overrides: { ...OWN_BASS, ...(o.overrides ?? {}) } } : { ...o, overrides: { claveFrom: 'pattern', ...OWN_BASS, ...(o.overrides ?? {}) } });
 
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };

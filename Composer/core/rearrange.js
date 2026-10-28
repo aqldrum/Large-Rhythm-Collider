@@ -11,7 +11,9 @@
 //   reclave(spec, row, cells, { clave, relation })   (COMP_ARP_ORDER.md Amendment 1, phase E) the clave chosen again and
 //     laid, the comp strummed again over every bar's chord, the drums arranged again: a live clave switch, equal to a
 //     Compose given the same `overrides.clave` / `compRelation` (comp and drums byte for byte); `compStyle: 'notes'` refused.
-//     A clave read from the frames (phase I) is chosen again over the frame candidates under the chords as they play
+//     A clave read from the frames (phase I) is chosen again over the frame candidates under the chords as they play;
+//     `density` (BASS_VOICING_ORDER.md Amendment 2, P27: 'sparse-med' | 'sparse' | 'medium' | 'dense') switches its tier
+//     live, equal to a Compose given that `compDensity`; the frame candidates re-ranked come back as `claveAlternates`
 //   rearrange(spec, row, cells, { voicing })                        the chords' Close | Led (= revoice, below)
 //   revoice(spec, row, cells, { voicing: 'close' | 'led' })   (BASS_VOICING_ORDER.md phase H) every chord voiced again,
 //     close or led (compose.js `voiceLead`), the comp in chords strummed again at their octaves (P5), the drums arranged
@@ -67,6 +69,11 @@
 // dropped (the result's `bassDropped: [{ bar, id }]`); under Walking the bar before is re-mined too (its approach to the
 // new chord). The part keeps its `bass` record, its bars and stats updated. A bass with no record: `bassOfBar`, as before.
 //
+// The picker re-ranked (Amendment 2, rule 14, P30): when a chord swap, a lead follow or a typed chord changes a chord of a
+// spec whose clave was read in frame, the result carries `claveAlternates`: the frame candidates ranked again over the
+// chords as they play, in the spec's density tier (its clave's `compDensity`), as Compose's trace carries them. What
+// plays is the clave re-read (P20), never switched. (~5 ms on the 16k row.)
+//
 // `changedBars`: the bars whose material was rebuilt. `changed`: per part, the bars whose notes differ other than in
 // their durations (a legato note before an edit may hold to a new next note). `retunedBars`: the bars after the edit
 // whose fundamentalRatio moved.
@@ -77,8 +84,8 @@ import { frameOf, classOfCents } from './frame.js';
 import { CHORD_QUALITIES, pickFor, chordRecord, spanRecord, spanMaterial, harmonyOver, targetOfBar, barMaterial, chooseChord, exceptionsOfBar, phrasesOf, isStrongBeat } from './harmony.js';
 import { FALLBACK_QUALITIES } from './progression.js';
 import { arrangeDrums } from './drums.js';
-import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, compNodesOf, compUnitsOf, layCompClave, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, voiceLead, voicingStats, voicingWhy, VOICINGS, PART_IDS } from './compose.js';
-import { readRhythm, rankRowClaves, chooseClave, rankFrameClaves, chooseFrameClave, rereadClave, claveText, claveSource, COMP_RELATIONS } from './claves.js';
+import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, compNodesOf, compUnitsOf, layCompClave, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, voiceLead, voicingStats, voicingWhy, densityWhy, seededRandom, VOICINGS, PART_IDS } from './compose.js';
+import { readRhythm, rankRowClaves, chooseClave, rankFrameClaves, chooseFrameClave, rereadClave, claveText, claveSource, claveAlternates, densityWords, COMP_RELATIONS, COMP_DENSITIES, DEFAULT_COMP_DENSITY } from './claves.js';
 import { bassBarOf, bassLockOf, bassWalkCells, bassBarRecord, bassStatsOf } from './bass.js';
 
 export const COMPOSER_REARRANGE_VERSION = 'composer-rearrange-v1';
@@ -218,7 +225,7 @@ function changedByBar(oldParts, newParts) {
 export function rearrange(spec, row, cells, edit, opts = {}) {
   if (!spec || spec.refused) fail('nothing to rearrange in a refused spec');
   // phase E: a clave switch ({ clave, relation }) is `reclave`, so the worker's rearrange message carries it too
-  if (edit && edit.bar == null && edit.span == null && edit.phrase == null && ('clave' in edit || 'relation' in edit)) return reclave(spec, row, cells, edit, opts);
+  if (edit && edit.bar == null && edit.span == null && edit.phrase == null && ('clave' in edit || 'relation' in edit || 'density' in edit)) return reclave(spec, row, cells, edit, opts);
   // phase H: the chords' voicing ({ voicing }) is `revoice`, the same way
   if (edit && edit.bar == null && edit.span == null && edit.phrase == null && 'voicing' in edit) return revoice(spec, row, cells, edit, opts);
   const K = spec.knobs, N = K.bars, S = K.slotsPerBar;
@@ -345,6 +352,14 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
     if (!reclavedBars.length) clave = spec.clave;
   }
   const reclaved = clave !== spec.clave;
+  // ── the picker re-ranked (BASS_VOICING_ORDER.md Amendment 2, rule 14, P30): when a chord changed, the frame candidates
+  // ranked again over the chords as they play, in the spec's density tier (`claveAlternates`, as Compose's trace has
+  // them). What plays is the clave above, re-read (P20): a re-rank never switches it ──
+  let alternates = null;
+  if (spec.clave?.read === 'frame' && rebuilt.size) {
+    const chordAt = spans ? (j) => recs[unitOf[j]] : (j) => recs[Math.floor(j / S)];
+    alternates = claveAlternates(rankFrameClaves(row, ctx, chordAt, { density: densityOfSpec(spec) }));
+  }
 
   // ── the rebuilt bars: chord voices, comping (the layer pinned), bass ──
   const compLayer = compChords ? null : 'ABCD'.indexOf(spec.stats.compLayer?.layer);
@@ -489,8 +504,13 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
 
   const changedBars = [...new Set([...[...rebuilt].map(barOf), ...leadChanged])].sort((a, b) => a - b);
   return { version: COMPOSER_REARRANGE_VERSION, parts: newParts, drums, chords, modulations, changedBars, retunedBars, ...(revoicedBars ? { revoicedBars } : {}), changed: changedByBar(parts, newParts), exceptions: stats.exceptions, stats,
-    ...(bassArr ? { bassDropped } : {}), ...(reclavedBars ? { reclavedBars } : {}), ...(reclaved ? { clave } : {}) };
+    ...(bassArr ? { bassDropped } : {}), ...(reclavedBars ? { reclavedBars } : {}), ...(reclaved ? { clave } : {}), ...(alternates ? { claveAlternates: alternates } : {}) };
 }
+
+/** the density tier a spec's frame clave is chosen in (Amendment 2, P27): its clave's, else its input's, else the default */
+const densityOfSpec = (spec) => spec.clave?.compDensity?.asked ?? spec.input?.overrides?.compDensity ?? DEFAULT_COMP_DENSITY;
+/** a spec clave's density tier in words (P31): 'the sparse–medium tier (10–50 %)', a fall-back said */
+const compDensityText = (cd) => (!cd ? '' : !cd.fellBack ? `the ${densityWords(cd.asked)} tier` : cd.played ? `no frame clave in the ${densityWords(cd.asked)} tier, so the nearest, ${densityWords(cd.played)}` : `no frame clave in any tier, so every one ranked by COMP_RULES`);
 
 /** a spec with a rearrangement written in: parts, drums, chords, modulations and the stats it moves (a new object);
  *  a reclave's clave, its stats line and its decisions too */
@@ -532,11 +552,12 @@ function ranksOf(row) {
  *   spec   a composed spec in chords (`compStyle: 'notes'` has no clave: refused); row, cells: its materials
  *   edit   { clave ('steps:pattern' | 'son' | 'rumba' | 'bossa' | a frame clave's 'frame:A/8/chord'; absent or null:
  *            the clave it plays), relation ('sync'
- *            | 'fill'; absent: the relation it plays) }
+ *            | 'fill'; absent: the relation it plays), density (a frame clave's tier, Amendment 2 P27: 'sparse-med' |
+ *            'sparse' | 'medium' | 'dense'; absent: the one it was chosen in) }
  *   opts   { parts (the parts as they play now; default spec.parts), drumOptions (default the spec's own) }
  * → rearrange's shape ({ parts, drums, chords, modulations, changedBars, retunedBars, changed, exceptions, stats }) plus
  *   `clave` (the new spec.clave) and `decisions` (the clave's, the relation's and the strum's lines said again):
- *   applyRearrange writes it in
+ *   applyRearrange writes it in; a frame clave chosen again (a clave or a density asked) also `claveAlternates`, its tier's candidates re-ranked
  */
 export function reclave(spec, row, cells, edit = {}, opts = {}) {
   if (!spec || spec.refused) fail('nothing to reclave in a refused spec');
@@ -557,16 +578,24 @@ export function reclave(spec, row, cells, edit = {}, opts = {}) {
   // the clave: the one it plays with the relation switched (its strokes stand), else chosen again (asked) and laid. A clave
   // read from the frames (phase I, P20) is chosen again over the frame candidates under the chords as they play, a clave
   // from the pattern over the row's cached table
-  let clave, asked = false, choice = null;
+  // Amendment 2 (P27, P30): a frame clave's density tier (`density`: the comp's density, live) — asked again, the tier's
+  // best plays (as a Compose given that `compDensity`, its ties by the seed's own generator), or the clave asked, ranked
+  // in it; either way the frame candidates ranked again come back as `claveAlternates`
+  let clave, asked = false, choice = null, alternates = null;
   const fromFrame = spec.clave.read === 'frame', units = compUnitsOf(spans ? spec.chords : null, N, S);
-  if (edit.clave == null || edit.clave === spec.clave.id) clave = { ...spec.clave, relation };
+  const wasDensity = fromFrame ? densityOfSpec(spec) : null, density = edit.density ?? wasDensity;
+  if (edit.density != null && !fromFrame) fail('a clave from the pattern (claveFrom \'pattern\') has no density tier');
+  if (fromFrame && !COMP_DENSITIES.includes(density)) fail(`a comp density is one of ${COMP_DENSITIES.join(', ')}, not ${JSON.stringify(edit.density)}`);
+  const newDensity = fromFrame && density !== wasDensity;
+  if ((edit.clave == null || edit.clave === spec.clave.id) && !newDensity) clave = { ...spec.clave, relation };
   else {
     if (fromFrame) {
-      const chordAt = spans ? (j) => recs[unitOf[j]] : (j) => recs[Math.floor(j / S)];
-      choice = chooseFrameClave(row, ctx, chordAt, { asked: edit.clave, ranks: rankFrameClaves(row, ctx, chordAt), units });
+      const chordAt = spans ? (j) => recs[unitOf[j]] : (j) => recs[Math.floor(j / S)], ranks = rankFrameClaves(row, ctx, chordAt, { density });
+      choice = chooseFrameClave(row, ctx, chordAt, { asked: edit.clave ?? null, ranks, units, rng: seededRandom(`${spec.input.seed ?? 1}/clave`) });
+      alternates = claveAlternates(ranks);
     } else { const { rhythm, ranks } = ranksOf(row); choice = chooseClave(rhythm, { asked: edit.clave, ranks }); }
     clave = layCompClave(row, ctx, choice, { relation, phase: K.phase, units, cut: K.cut ?? null });
-    asked = true;
+    asked = edit.clave != null;
   }
 
   // the comp strummed again bar by bar (a chart's span by span) over the chords as they play, as Compose strums it
@@ -596,7 +625,8 @@ export function reclave(spec, row, cells, edit = {}, opts = {}) {
   const compStrum = tones ? found / tones : 0, silent = relation === 'fill' ? clave.partner.silent + clave.partner.shared : clave.silent;
   const laid = clave.from?.frame ? `${clave.strokes.length} strokes, each the layer's own strike at its own time`
     : `laid a pass ${clave.span > 1 ? `each ${clave.span} bars` : 'a bar'}${fromFrame ? ' on in-frame onsets only' : ''}, ${clave.strokes.length} of its ${clave.strokes.length + clave.silent} onsets landed on the row (${clave.silent} silent)`;
-  const said = { clave: [clave.id, `${asked ? 'chosen in the window' : 'as composed'}: ${claveText(clave)} (${claveSource(clave) || 'the row'}), score ${clave.score.toFixed(3)}; ${laid}`],
+  const tier = clave.compDensity ? `; ${choice ? densityWhy(choice.ranks.density, true) : compDensityText(clave.compDensity)}` : '';
+  const said = { clave: [clave.id, `${asked ? 'chosen in the window' : newDensity ? 'the best of the density chosen in the window' : 'as composed'}: ${claveText(clave)} (${claveSource(clave) || 'the row'}), score ${clave.score.toFixed(3)}${tier}; ${laid}`],
     compRelation: [relation, `${edit.relation != null ? 'chosen in the window' : 'as composed'}: ${relation === 'sync' ? 'the comp strikes the clave\'s own landed steps, with the perc' : `the comp strikes the clave's gaps (${clave.partner.source === 'partner' ? 'its partner' : 'the complement'} ${clave.partner.pattern})`}`],
     compStrum: [compStrum, `the clave's ${strokes.length} stroke${strokes.length === 1 ? '' : 's'} (${relation}), each the bar's chord: ${found} of ${tones} tones (${(100 * compStrum).toFixed(0)} %) from the row, the rest borrowed from the chord voices`] };
   const decisions = spec.decisions?.map((d) => (said[d.what] ? { what: d.what, value: said[d.what][0], why: said[d.what][1] } : d));
@@ -605,7 +635,7 @@ export function reclave(spec, row, cells, edit = {}, opts = {}) {
   return { version: COMPOSER_REARRANGE_VERSION, parts: newParts, drums, chords: spec.chords, modulations: spec.modulations, changedBars: changed.comp, retunedBars: [], changed, exceptions: spec.stats.exceptions,
     stats: { notes, exceptions: spec.stats.exceptions, chordVoices: spec.stats.chordVoices, bassRooted: spec.stats.bassRooted, innerOnLeadSlots: spec.stats.innerOnLeadSlots, compStrum,
       clave: { id: clave.id, relation, strokes: strokes.length, silent } },
-    clave, ...(decisions ? { decisions } : {}) };
+    clave, ...(decisions ? { decisions } : {}), ...(alternates ? { claveAlternates: alternates } : {}) };
 }
 
 /**

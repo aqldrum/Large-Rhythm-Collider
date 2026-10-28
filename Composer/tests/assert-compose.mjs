@@ -187,7 +187,7 @@ console.log('\n— the root\'s cluster, and settling');
   let bad = '', n = 0;
   // the baseline's comp is one note a stroke: compStyle 'notes' (COMP_ARP_ORDER.md P9), the override itself left out of the input
   // the frozen core: the comp in notes and the chords close (BASS_VOICING_ORDER.md P7), the overrides themselves left out
-  const notesCompose = (L, T, o) => { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close' } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; return spec; };
+  const notesCompose = (L, T, o) => { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close', bass: { density: 'sparse', lock: 'free' } } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; delete spec.input.overrides.bass; return spec; };
   for (const [name, run] of composeCases(notesCompose)) { n++; if (sha(normSpec(run())) !== COMPOSE_HASHES[name]) { bad = name; break; } }
   check(`settlePasses 0 with presence 'exact' reproduces e3909e1's specs byte for byte (${n} specs: 10 rows × 2 seeds, 2 on the full table, 1 with modulation off)`, !bad && n === Object.keys(COMPOSE_HASHES).length, bad);
   const L = [4099, 4093, 4091, 4079], T = 16;

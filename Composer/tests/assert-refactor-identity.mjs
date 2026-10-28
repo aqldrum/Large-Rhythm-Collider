@@ -27,8 +27,8 @@ const run = (f, L, T, o) => { try { return JSON.stringify(f(L, T, o)); } catch (
 /** the live core with the frozen core's comping (compStyle 'notes') and voicing (voicing 'close', BASS_VOICING_ORDER.md
  *  P7), the overrides themselves taken back out */
 const live = (L, T, o = {}) => {
-  try { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close' } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; return spec; }
-  catch (err) { throw new Error(err.message.replace(', compStyle, clave, compRelation, voicing, claveFrom)', ')')); }
+  try { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close', bass: { density: 'sparse', lock: 'free' } } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; delete spec.input.overrides.bass; return spec; }
+  catch (err) { throw new Error(err.message.replace(', compStyle, clave, compRelation, voicing, claveFrom, compDensity, bass)', ')')); }
 };
 const pad = (L) => [...L, 0, 0, 0, 0].slice(0, 4);
 

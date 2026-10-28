@@ -191,16 +191,18 @@ export function createTrace(row, { cycleSeconds, meter: M = null, caps = {} } = 
     bassBar(bar, line, opened) { bassBars.push({ bar, line: lineRef(line), rootOnly: !line, opensOnRoot: !!opened }); },
     innerPhrase(from, bars, line) { innerPhrases.push({ from, bars, line: lineRef(line) }); },
     /** the arranged parts, in the order Compose builds them, each with what chose it */
-    parts(partList, { comp, compChoices, compAsked, clave, alternates, asked, tier, voicing = null }) {
+    parts(partList, { comp, compChoices, compAsked, clave, alternates, asked, tier, density = null, voicing = null }) {
       // the comp in chords (Amendment 1, R2): the clave, its partner, and the ranked alternates (the top mined, then the
       // curated); `layer`, `value` and `candidates` (= alternates) stay for a reader of the layer-led comp (the page's
       // trace frames, until the window's Phase E)
       // a clave read from the frames (BASS_VOICING_ORDER.md phase I, P21) carries each bar's pattern, and says it was read in frame
       const claveRef = (x) => ({ id: x.id, ...(x.name ? { name: x.name } : {}), steps: x.steps, span: x.span, pattern: x.pattern, onsets: Array.isArray(x.onsets) ? x.onsets.length : x.onsets, score: r4(x.score), terms: { held: r4(x.terms.held), density: r4(x.terms.density), fit: r4(x.terms.fit) }, bars: x.bars, from: { ...x.from },
-        ...(x.patterns ? { patterns: [...x.patterns] } : {}), ...(x.read ? { read: x.read } : {}) });
+        ...(x.patterns ? { patterns: [...x.patterns] } : {}), ...(x.read ? { read: x.read } : {}), ...(x.share != null ? { share: r4(x.share), tier: x.tier } : {}) });
       const comp4 = clave ? (() => {
         const alts = alternates.map(claveRef);
-        return { style: 'chords', clave: { ...claveRef(clave), relation: clave.relation, strokes: clave.strokes.length, silent: clave.silent }, tier, asked: !!asked,
+        // a frame clave's density tier (BASS_VOICING_ORDER.md Amendment 2, P27): asked, the one that played, a fall-back, the counts
+        return { style: 'chords', clave: { ...claveRef(clave), relation: clave.relation, strokes: clave.strokes.length, silent: clave.silent, ...(clave.compDensity ? { compDensity: { ...clave.compDensity } } : {}) }, tier,
+          ...(density ? { density: { asked: density.asked, played: density.played, band: [...density.band], fellBack: density.fellBack, counts: { ...density.counts } } } : {}), asked: !!asked,
           partner: { id: clave.partner.id, pattern: clave.partner.pattern, source: clave.partner.source, strokes: clave.partner.strokes.length, shared: clave.partner.shared, ...(clave.partner.patterns ? { patterns: [...clave.partner.patterns] } : {}), ...(clave.partner.from?.frame ? { from: { ...clave.partner.from } } : {}) },
           alternates: alts, layer: clave.from.name ?? null, value: clave.from.layer ?? null, candidates: alts };
       })() : { layer: LAYER_NAMES[comp.layer], value: comp.value, score: r4(comp.score), asked: !!compAsked, candidates: compChoices.map((x) => ({ layer: LAYER_NAMES[x.layer], value: x.value, score: r4(x.score) })) };
