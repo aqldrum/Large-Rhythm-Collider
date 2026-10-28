@@ -51,6 +51,13 @@
 //              count (`complementClave`).
 //   words      (phase E, the window) `claveText` (the pattern a bar a group), `claveSource` ('from layer A · 4 steps',
 //              'son clave 3-2'), `claveSetText` (a tone set's id in words). A live switch is rearrange.js `reclave`.
+//
+// The frame clave (BASS_VOICING_ORDER.md Amendment 1, phase I: Avery's rule 6, P16–P18; DESIGN_NOTES "The frame clave
+// (phase I)"): everything above is `claveFrom: 'pattern'`, a fixed pattern from a generic tone set landed on any layer's
+// onset. By default the clave is read from the composition's chords instead (`rankFrameClaves`, `chooseFrameClave`): a
+// bar's clave is the clave layer's own strikes whose tones fit that bar's frame, so the pattern changes with the chord,
+// and every stroke is that layer's strike, at its own time, in frame. The curated and asked claves keep their pattern and
+// land only on in-frame onsets (`layInFrame`). The section's head says the rules.
 
 import { lowerBoundTick } from './row.js';
 import { euclidPattern } from './cells.js';
@@ -67,6 +74,13 @@ export const CURATED_NAMES = Object.freeze(['son', 'rumba', 'bossa']);
 /** the ranked list's length in the trace (R2) */
 export const ALTERNATES_TOP = 12;
 export const COMP_RELATIONS = Object.freeze(['sync', 'fill']);
+/** where the comp's clave comes from (P19): 'frame' (the default: the clave layer's strikes in each bar's frame) or
+ *  'pattern' (the fixed pattern of the table above, landed on any onset: the clave before phase I, byte for byte) */
+export const CLAVE_FROM = Object.freeze(['frame', 'pattern']);
+/** a frame clave's tone sets (P16): the bar's chord classes in tune, or anything inside the bar's frame */
+export const FRAME_SETS = Object.freeze(['chord', 'frame']);
+/** a Fill partner shares a clave's stroke when one of its strokes is within this many slots of it (P17) */
+export const SHARE_SLOTS = 0.25;
 
 const EPS = 1e-9;
 const LETTERS = 'ABCD';
@@ -328,6 +342,10 @@ export function claveTable(rhythm, { layers = null, sizes = 'whole', maxSize = 6
 /** a clave from its id ('steps:pattern') or a curated name ('son', 'rumba', 'bossa') → { id, steps, span (bars a pass covers), pattern, onsets (steps) (, name, label) } */
 export function claveOf(id) {
   if (CURATED_NAMES.includes(id)) return curatedClave(id);
+  // a frame clave's id ('frame:A/8/chord', P16) names a layer, a grain and a tone set, not a pattern: its patterns are the
+  // bars' (`readFrameClave`), so `pattern` is its source in words and `onsets` is empty
+  const f = parseFrameId(id);
+  if (f) return { id: f.id, source: 'frame', steps: f.grain, span: 1, pattern: frameWords(f), onsets: [], from: { name: f.name, grain: f.grain, set: f.set, frame: true } };
   const [steps, pattern] = String(id ?? '').split(':');
   if (!/^\d+$/.test(steps) || !/^[x.]+$/.test(pattern || '') || pattern.length !== Number(steps)) fail(`"${id}" is not a clave ('steps:pattern', or one of ${CURATED_NAMES.join(', ')})`);
   return { id: `${steps}:${pattern}`, steps: Number(steps), span: 1, pattern, onsets: onsetsOf(pattern) };
@@ -520,7 +538,9 @@ export function chooseClave(rhythm, { asked = null, rng = Math.random, rules = C
 }
 
 /** a clave's pattern as a window shows it (phase E): one group a bar, so a 2-bar pass reads 'x..x..x. ..x.x...' */
-export function claveText(clave) {
+export function claveText(clave, bar = null) {
+  // a frame clave (P21): each bar's own pattern, or bar `bar`'s
+  if (Array.isArray(clave?.patterns)) return bar == null ? clave.patterns.join(' ') : clave.patterns[bar] ?? '';
   const p = clave?.pattern ?? '', B = clave?.span ?? 1;
   if (B <= 1 || p.length % B) return p;
   const w = p.length / B;
@@ -528,11 +548,15 @@ export function claveText(clave) {
 }
 /** a clave's tone set in words (rhythm-claves' set ids: 'rest' every tone but 1/1, 'step:k' a 12-step grid step,
  *  'tone:f' one tone) */
-export const claveSetText = (set) => (set == null ? '' : set === 'rest' ? 'every tone but 1/1' : set.startsWith('step:') ? `grid step ${set.slice(5)}` : set.startsWith('tone:') ? `the tone ${set.slice(5)}` : String(set));
+export const claveSetText = (set) => (set == null ? '' : set === 'rest' ? 'every tone but 1/1' : set === 'chord' ? 'the chord tones' : set === 'frame' ? 'the tones in frame'
+  : set.startsWith('step:') ? `grid step ${set.slice(5)}` : set.startsWith('tone:') ? `the tone ${set.slice(5)}` : String(set));
 /** where a clave came from, in a few words (phase E): 'from layer A · 4 steps' (mined), the curated pattern's name
- *  ('son clave 3-2', "bossa's rim"), 'asked' (a pattern the row's table doesn't hold) */
+ *  ('son clave 3-2', "bossa's rim"), 'asked' (a pattern the row's table doesn't hold); a frame clave (P21) 'layer A ·
+ *  8 steps · chord tones'. A curated or asked clave read in frame says so: 'son clave 3-2 · in frame' */
 export function claveSource(clave) {
   const f = clave?.from ?? {};
+  if (f.frame) return frameWords(f);
+  if (clave?.read === 'frame') { const own = claveSource({ ...clave, read: null }); return `${own || 'asked'} · in frame`; }
   if (f.layer != null) return `from layer ${f.name ?? f.layer} · ${clave.steps} steps`;
   if (f.pattern) return f.pattern === 'bossa' ? 'bossa\'s rim' : curatedClave(f.pattern).label;
   return f.asked ? 'asked' : '';
@@ -576,4 +600,356 @@ export function layClave(row, g, clave, { units, slotOf }) {
 function nodeAtTick(row, tick) {
   const i = lowerBoundTick(row, tick);
   return i < row.n && row.tick[i] === tick ? i : -1;
+}
+
+// ── the frame clave (BASS_VOICING_ORDER.md Amendment 1, phase I: rule 6, P16–P18) ──
+//
+// Avery's rule 6: a stroke on a tone outside the chord's frame doesn't count. A bar's clave is the clave layer's own
+// strikes whose tones fit that bar's frame, so the pattern changes with the chord. Read over the composition: `ctx` its
+// part context (compose.js `partContext`: the slots, each onset's slot, the chord-class test) and `chordAt(slot)` the
+// chord record a slot sounds under (its bar's, or a chart's span's):
+//   strikes    a layer's strikes (`readRhythm`: a tick's first node) in each bar, by place. A place is in slot units over
+//              the bars, a strike's its slot plus its share of the slot (the drums' `rAt`, inverted).
+//   grain      n steps a bar. A layer striking m times a bar (m: its strikes in the bars over N, rounded) is read at n = m
+//              when 3 ≤ m ≤ 16, at each n of 3–16 when denser, and not at all under 3. Step j of bar k is the bar's j-th
+//              strike where the bar holds n of them (each strike a step), else its strike nearest place k·S + j·S/n
+//              (ties: the earlier). A bar the layer doesn't strike leaves its steps silent.
+//   tone set   'chord': the strike's tone one of its chord's classes in tune (compose.js `chordClass`); 'frame': inside
+//              its chord's frame (±frameCentsEachSide of its class from the root, the record's `frame.inside`). A
+//              strike is read under the chord of the slot it sounds in, so a chart's split bar reads it under its span's.
+//   pattern    a bar's n steps, 'x' where its strike's tone is in the set. The strokes are those strikes, at their own
+//              places and times: nothing is landed, so every stroke is the clave layer's and in the set. A strike that
+//              two steps share is one stroke, at the first.
+//   ranking    COMP_RULES over the bars' patterns: density the bars' mean (a pulse bar or one under minOnsets scores 0,
+//              as the table leaves it out), fit by n (straight, triplet, other), recurrence the share of the bars whose
+//              pattern another bar repeats. A candidate with no bar left in is none. The frame set reading what the
+//              chord set reads is the chord set's candidate. Sorted by score, ties in the reading order (the fastest
+//              layer first, then n up, chord before frame); the seed breaks a tie at the top (`chooseFrameClave`).
+//   partner    (Fill, P17) the best-ranked other candidate with a stroke and none within ¼ slot of the clave's; with none,
+//              each bar's free steps Euclid-thinned to the clave's mean onsets a bar (rounded), landed in frame.
+//   in frame   (P18) the curated and asked claves keep their fixed pattern; a step lands only on an onset inside the
+//              frame of the chord its slot sounds under, the nearest within half-way to its neighbouring places (then
+//              one place wider), inside its bar or span (`layInFrame`; none: silent).
+//   ids        'frame:A/8/chord': the layer's letter, the grain and the set (`frameClaveId`, `parseFrameId`).
+
+const FRAME_ID = /^frame:([A-D])\/(\d+)\/(chord|frame)$/;
+/** a frame clave's id: 'frame:<layer letter>/<grain>/<set>' */
+export const frameClaveId = (name, grain, set) => `frame:${name}/${grain}/${set}`;
+/** a frame clave's id read → { id, name, grain, set } | null */
+export function parseFrameId(id) {
+  const m = FRAME_ID.exec(String(id ?? ''));
+  return m ? { id: m[0], name: m[1], grain: Number(m[2]), set: m[3] } : null;
+}
+/** a frame clave's source in words (P21): 'layer A · 8 steps · chord tones' */
+const frameWords = (f) => `layer ${f.name} · ${f.grain} steps · ${f.set === 'chord' ? 'chord tones' : 'tones in frame'}`;
+
+/** a place (slot units, clamped to the loop) → its share of the row's cycle from the downbeat (the drums' `rAt`) */
+function rAtOf(ctx, W, q) {
+  const { P, starts } = ctx;
+  if (q <= 0) return starts[0];
+  if (q >= P) return W;
+  const k = Math.min(P - 1, Math.floor(q)), a = starts[k], b = k + 1 < P ? starts[k + 1] : W;
+  return a + (q - k) * (b - a);
+}
+/** an onset's share of the cycle from the downbeat (as partContext reads it) */
+const relOfNode = (ctx, i) => mod(ctx.row.x[i] - ctx.phaseX, 1);
+/** an onset's place: its slot plus its share of the slot (an onset a cropped window wraps to its last slot clamps there) */
+function placeOfNode(ctx, W, i) {
+  const { P, starts, posSlot } = ctx, j = posSlot[i], a = starts[j], b = j + 1 < P ? starts[j + 1] : W;
+  const f = b > a ? (relOfNode(ctx, i) - a) / (b - a) : 0;
+  return j + Math.min(Math.max(f, 0), 1 - 1e-9);
+}
+const loopEnd = (ctx) => (ctx.cells?.crop ? ctx.cells.crop.end : 1);
+
+// per part context: each layer's strikes a bar, read once for every candidate and every chord swap
+const strikesKept = new WeakMap();
+/**
+ * Each layer's strikes in each bar, by place (P16), fastest layer first.
+ * → [{ at (its index in rhythm.layer), value, name, m (strikes a bar, rounded), grains ([n]), bars: [[{ node, place }]] }]
+ */
+export function frameStrikes(row, ctx, rhythm = null) {
+  let kept = strikesKept.get(ctx);
+  if (kept) return kept;
+  const R = rhythm ?? readRhythm(row), { S, N, posSlot } = ctx, W = loopEnd(ctx), rules = COMP_RULES;
+  kept = R.layer.map((L, at) => {
+    const bars = Array.from({ length: N }, () => []);
+    let total = 0;
+    for (let k = 0; k < L.value; k++) {
+      const i = L.node[k], s = posSlot[i];
+      if (s < 0) continue;
+      bars[Math.floor(s / S)].push({ node: i, place: placeOfNode(ctx, W, i) });
+      total++;
+    }
+    for (const b of bars) b.sort((x, y) => x.place - y.place || x.node - y.node);
+    const m = Math.round(total / N), grains = [];
+    if (m >= rules.minSize && m <= rules.maxSize) grains.push(m);
+    else if (m > rules.maxSize) for (let n = rules.minSize; n <= rules.maxSize; n++) grains.push(n);
+    return { at, value: L.value, name: L.name, m, grains, bars };
+  }).reverse();
+  strikesKept.set(ctx, kept);
+  return kept;
+}
+
+/** bar k's step j of n: the bar's j-th strike when it holds n, else the strike nearest place q (ties: the earlier) */
+function stepStrike(st, n, j, q) {
+  if (!st.length) return null;
+  if (st.length === n) return st[j];
+  let lo = 0, hi = st.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (st[mid].place < q) lo = mid + 1; else hi = mid; }
+  // lo: the first at or past q; the one before it wins a tie
+  if (lo > 0 && q - st[lo - 1].place <= st[lo].place - q + EPS) return st[lo - 1];
+  return st[lo];
+}
+
+/** the tone-set test (P16): is a strike's tone in the set, under the chord its slot sounds under */
+const inSetTest = (ctx, set) => (set === 'chord' ? (c, t) => ctx.chordClass(c, t) >= 0 : (c, t) => c.frame.inside[t] === 1);
+
+/**
+ * A layer read at grain n under a tone set (P16), over every bar or the bars of `only` (a Set).
+ * → { patterns: [bar → 'x..x' | null (a bar not read)], strokes: [{ bar, step, place, node, tick, slot, snap: 'strike' }] }
+ */
+export function readFrameLayer(ctx, chordAt, L, n, set, { only = null } = {}) {
+  const { row, S, N, posSlot } = ctx, inSet = inSetTest(ctx, set), patterns = [], strokes = [];
+  for (let k = 0; k < N; k++) {
+    if (only && !only.has(k)) { patterns.push(null); continue; }
+    const st = L.bars[k], own = new Set();
+    let p = '';
+    for (let j = 0; j < n; j++) {
+      const s = stepStrike(st, n, j, k * S + (j * S) / n);
+      if (!s || !inSet(chordAt(posSlot[s.node]), row.tone[s.node])) { p += '.'; continue; }
+      p += 'x';
+      if (own.has(s.node)) continue;
+      own.add(s.node);
+      strokes.push({ bar: k, step: j, place: s.place, node: s.node, tick: row.tick[s.node], slot: posSlot[s.node], snap: 'strike' });
+    }
+    patterns.push(p);
+  }
+  return { patterns, strokes };
+}
+
+/** a frame candidate's score over its bars' patterns (P16): { score, terms: { held, density, fit }, bars (recurring), counted } */
+export function scoreFrameClave(patterns, n, rules = COMP_RULES) {
+  const [lo, hi] = rules.share, N = patterns.length, ons = patterns.map((p) => onsetsOf(p).length);
+  const counted = ons.map((x) => x >= rules.minOnsets && x < n);
+  let density = 0;
+  const seen = new Map();
+  ons.forEach((o, k) => { if (!counted[k]) return; const x = o / n; density += x < lo ? x / lo : x > hi ? (1 - x) / (1 - hi) : 1; seen.set(patterns[k], (seen.get(patterns[k]) || 0) + 1); });
+  let bars = 0; patterns.forEach((p, k) => { if (counted[k] && seen.get(p) > 1) bars++; });
+  const terms = { held: bars / N, density: density / N, fit: rules.straight.includes(n) ? rules.fit.straight : rules.triplet.includes(n) ? rules.fit.triplet : rules.fit.other };
+  return { score: (terms.held + terms.density + terms.fit) / 3, terms, bars, counted: counted.filter(Boolean).length };
+}
+
+/** a frame candidate's pattern for the one-pattern views: its most repeated counted bar's (ties: the earliest), else bar 1's */
+function framePattern(patterns, rules = COMP_RULES) {
+  const count = new Map(); let best = null;
+  patterns.forEach((p) => { const o = onsetsOf(p).length; if (o >= rules.minOnsets && o < p.length) count.set(p, (count.get(p) || 0) + 1); });
+  for (const p of patterns) if (count.has(p) && (best == null || count.get(p) > count.get(best))) best = p;
+  return best ?? patterns[0] ?? '';
+}
+
+/** a frame candidate from its reading (the record chooseClave's claves have, plus `patterns` and its `strokes`) */
+function frameCandidate(L, n, set, got, rules) {
+  const s = scoreFrameClave(got.patterns, n, rules), pattern = framePattern(got.patterns, rules);
+  return { id: frameClaveId(L.name, n, set), source: 'frame', steps: n, span: 1, pattern, onsets: onsetsOf(pattern), patterns: got.patterns,
+    score: s.score, terms: s.terms, bars: s.bars, counted: s.counted, from: { layer: L.value, name: L.name, grain: n, set, frame: true }, strokes: got.strokes };
+}
+
+/**
+ * The composition's frame claves, ranked (P16), with the curated claves (scored as fixed patterns, recurrence 0).
+ * → { source: 'frame', tier: 'frame', ranked: { tried, candidates }, curated, byId, rules, strikes }
+ *   (rankRowClaves' shape, so `claveAlternates` and the trace read either)
+ */
+export function rankFrameClaves(row, ctx, chordAt, { rules = COMP_RULES, rhythm = null } = {}) {
+  const strikes = frameStrikes(row, ctx, rhythm), list = [];
+  let tried = 0;
+  for (const L of strikes) for (const n of L.grains) {
+    let chord = null;
+    for (const set of FRAME_SETS) {
+      const got = readFrameLayer(ctx, chordAt, L, n, set);
+      tried++;
+      // the frame set reading what the chord set reads (its strikes all chord tones) is the chord set's candidate
+      if (set === 'frame' && chord && got.patterns.every((p, k) => p === chord.patterns[k])) continue;
+      if (set === 'chord') chord = got;
+      const c = frameCandidate(L, n, set, got, rules);
+      if (c.counted) list.push(c);
+    }
+  }
+  const candidates = list.sort((a, b) => b.score - a.score);   // stable: ties stay in the reading order
+  const curated = curatedClaves().map((c) => ({ ...c, bars: 0, ...scoreClave({ ...c, bars: 0 }, 0, rules, { held: 'bars' }), from: { pattern: c.name }, read: 'frame' }));
+  return { source: 'frame', tier: 'frame', ranked: { tried, candidates }, curated, byId: new Map(candidates.map((c) => [c.id, c])), rules, strikes };
+}
+
+/**
+ * The in-frame onsets each unit holds (P18): [unit → [{ node, r }]] by place, an onset kept when its tone is inside
+ * the frame of the chord its slot sounds under.
+ */
+function inFrameOnsets(ctx, chordAt, units) {
+  const { row, posSlot, P } = ctx, unitAt = new Int32Array(P).fill(-1), out = units.map(() => []);
+  units.forEach((u, i) => { for (let j = u.from; j < u.to; j++) unitAt[j] = i; });
+  for (let i = 0; i < row.n; i++) {
+    const s = posSlot[i];
+    if (s < 0 || unitAt[s] < 0 || !chordAt(s).frame.inside[row.tone[i]]) continue;
+    out[unitAt[s]].push({ node: i, r: relOfNode(ctx, i) });
+  }
+  for (const list of out) list.sort((a, b) => a.r - b.r || a.node - b.node);
+  return { unitAt, out };
+}
+/** the in-frame onset nearest r with lo ≤ its place ≤ hi (ties: the earlier) → { node, d } | null */
+function nearestIn(list, r, lo, hi) {
+  let best = null;
+  for (const x of list) {
+    if (x.r < lo - 1e-12) continue;
+    if (x.r > hi + 1e-12) break;
+    const d = x.r - r;
+    if (!best || Math.abs(d) < Math.abs(best.d) - 1e-15) best = { node: x.node, d };
+  }
+  return best;
+}
+
+/**
+ * Places landed on in-frame onsets only (P18; P17's complement): each { bar, step, place } on the in-frame onset nearest
+ * it within ±h slot units (then ±2h: 'wide'), inside its unit (a bar, or a chart's span), else silent.
+ *   units   [{ from, to }] (compose.js `compUnitsOf`)
+ * → { strokes: [{ bar, step, place, node, tick, slot, snap }], silent: [{ bar, step, place }] }
+ */
+export function landInFrame(ctx, chordAt, places, h, { units, onsets = null }) {
+  const { row, posSlot, P } = ctx, W = loopEnd(ctx), own = onsets ?? inFrameOnsets(ctx, chordAt, units), strokes = [], silent = [];
+  for (const p of places) {
+    const slot = Math.min(P - 1, Math.floor(p.place + EPS)), ui = own.unitAt[slot], u = units[ui];
+    if (!u) { silent.push(p); continue; }
+    const r = rAtOf(ctx, W, p.place), a = rAtOf(ctx, W, u.from), b = rAtOf(ctx, W, u.to) - 2e-12;
+    let on = nearestIn(own.out[ui], r, Math.max(a, rAtOf(ctx, W, p.place - h)), Math.min(b, rAtOf(ctx, W, p.place + h))), snap = 'slot';
+    if (!on) { on = nearestIn(own.out[ui], r, Math.max(a, rAtOf(ctx, W, p.place - 2 * h)), Math.min(b, rAtOf(ctx, W, p.place + 2 * h))); snap = 'wide'; }
+    if (!on) { silent.push(p); continue; }
+    strokes.push({ bar: p.bar, step: p.step, place: p.place, node: on.node, tick: row.tick[on.node], slot: posSlot[on.node], snap });
+  }
+  return { strokes, silent };
+}
+
+/** a fixed clave (curated or asked, P18) laid a pass each `span` bars, each step landed in frame (`landInFrame`) */
+export function layInFrame(ctx, chordAt, clave, { units, onsets = null, only = null }) {
+  const { N, S } = ctx, B = clave.span ?? 1, n = clave.steps, wide = (S * B) / n, places = [];
+  for (let pass = 0; pass * B < N; pass++) for (const j of clave.onsets) {
+    const place = pass * B * S + j * wide, bar = Math.floor(place / S + EPS);
+    if (bar < N && (!only || only.has(bar))) places.push({ bar, step: j, place });
+  }
+  return landInFrame(ctx, chordAt, places, wide / 2, { units, onsets });
+}
+
+/** the least distance in slots between a stroke of `a` and one of `b`, round the loop (Infinity if either has none) */
+function nearestStroke(a, b, P) {
+  if (!a.length || !b.length) return Infinity;
+  const xs = b.map((x) => x.place).sort((x, y) => x - y);
+  let best = Infinity;
+  for (const s of a) {
+    let lo = 0, hi = xs.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (xs[mid] < s.place) lo = mid + 1; else hi = mid; }
+    for (const q of [xs[lo % xs.length], xs[(lo - 1 + xs.length) % xs.length]]) { const d = Math.abs(q - s.place); best = Math.min(best, d, P - d); }
+  }
+  return best;
+}
+/** does a candidate share a stroke with the clave (P17: one of its strokes within ¼ slot of one of the clave's) */
+export const sharesStroke = (a, b, P) => nearestStroke(a.strokes, b.strokes, P) <= SHARE_SLOTS + EPS;
+
+/**
+ * The complement of a frame clave (P17's fallback): each bar's free steps of its own pattern, Euclid-thinned to the
+ * clave's mean onsets a bar (rounded), each landed in frame at its place. → the partner record with its strokes
+ */
+function frameComplement(ctx, chordAt, clave, { units, onsets, per = null, only = null }) {
+  const { N, S } = ctx, n = clave.steps, total = clave.patterns.reduce((a, p) => a + onsetsOf(p).length, 0), want = per ?? Math.round(total / N);
+  const patterns = [], places = [];
+  clave.patterns.forEach((p, k) => {
+    if (only && !only.has(k)) { patterns.push(null); return; }
+    const free = []; for (let j = 0; j < n; j++) if (p[j] !== 'x') free.push(j);
+    const keep = euclidPattern(free.length, Math.min(want, free.length)), on = free.filter((_, i) => keep[i]);
+    patterns.push(patternFrom(n, on));
+    for (const j of on) places.push({ bar: k, step: j, place: k * S + (j * S) / n });
+  });
+  const got = landInFrame(ctx, chordAt, places, S / n / 2, { units, onsets }), pattern = only ? null : framePattern(patterns);
+  return { id: `${clave.id}~fill`, steps: n, span: 1, pattern, onsets: pattern == null ? null : onsetsOf(pattern), patterns, per: want, source: 'complement', strokes: got.strokes, silent: got.silent.length };
+}
+
+/**
+ * One clave for a composition, read from its frames (P16–P18): asked (a frame id, a curated name or 'steps:pattern'),
+ * else the best frame candidate, ties (within 1e-9) by the generator `rng`; with no candidate, the best curated clave
+ * the same way, laid in frame. Its partner (Fill, P17): the best-ranked other candidate sharing no stroke with it, else
+ * the complement landed in frame (a frame clave's, bar by bar; a fixed clave's, `complementClave`).
+ * → chooseClave's { clave, partner, asked, ties, partners, ranks }, the clave and the partner carrying their `strokes`
+ *   (and `silent`: a count) and `read: 'frame'`; a frame clave and a frame partner also `patterns` and `from.frame`
+ */
+export function chooseFrameClave(row, ctx, chordAt, { asked = null, rng = Math.random, rules = COMP_RULES, ranks = null, units } = {}) {
+  const R = ranks ?? rankFrameClaves(row, ctx, chordAt, { rules });
+  const onsets = inFrameOnsets(ctx, chordAt, units);
+  const pick = (list) => {
+    if (!list.length) return null;
+    const top = list.filter((c) => c.score >= list[0].score - EPS);
+    return top.length === 1 ? top[0] : top[Math.min(top.length - 1, Math.floor(rng() * top.length))];
+  };
+  const fixed = (c) => { const got = layInFrame(ctx, chordAt, c, { units, onsets }); return { ...c, read: 'frame', strokes: got.strokes, silent: got.silent.length }; };
+  let chosen, ties = 0;
+  if (asked != null) {
+    const f = parseFrameId(asked);
+    if (f) {
+      // a frame id the ranking left out (no bar left in, or the chord set's twin) is read as asked
+      let c = R.byId.get(f.id);
+      if (!c) {
+        const L = R.strikes.find((x) => x.name === f.name) ?? fail(`"${asked}": no layer ${f.name} in ${R.strikes.map((x) => x.name).join(', ')}`);
+        if (!L.grains.includes(f.grain)) fail(`"${asked}": layer ${f.name} strikes ${L.m} times a bar, so it is read at ${L.grains.length ? L.grains.join(', ') : 'no grain'}, not ${f.grain}`);
+        c = frameCandidate(L, f.grain, f.set, readFrameLayer(ctx, chordAt, L, f.grain, f.set), rules);
+      }
+      chosen = { ...c, read: 'frame', silent: 0 };
+    } else {
+      const want = claveOf(asked), cur = R.curated.find((c) => c.id === want.id);
+      chosen = fixed(cur ?? { ...want, bars: 0, ...scoreClave({ ...want, bars: 0 }, 0, rules, { held: 'bars' }), from: { asked: true } });
+    }
+  } else if (R.ranked.candidates.length) {
+    ties = R.ranked.candidates.filter((c) => c.score >= R.ranked.candidates[0].score - EPS).length;
+    chosen = { ...pick(R.ranked.candidates), read: 'frame', silent: 0 };
+  } else {
+    const list = [...R.curated].sort((a, b) => b.score - a.score || cmp(a.id, b.id));
+    ties = list.filter((c) => c.score >= list[0].score - EPS).length;
+    chosen = fixed(pick(list));
+  }
+  // the partner: the best-ranked other frame candidate with a stroke and none within ¼ slot of the clave's
+  const others = R.ranked.candidates.filter((c) => c.id !== chosen.id && c.strokes.length);
+  const free = others.filter((c) => !sharesStroke(c, chosen, ctx.P));
+  let partner;
+  if (free.length) partner = { ...free[0], source: 'partner', silent: 0 };
+  else if (chosen.patterns) partner = frameComplement(ctx, chordAt, chosen, { units, onsets });
+  else { const c = complementClave(chosen), got = layInFrame(ctx, chordAt, c, { units, onsets }); partner = { ...c, source: 'complement', strokes: got.strokes, silent: got.silent.length }; }
+  const keep = (x) => {
+    const { strokes, silent, patterns, from, score, terms, bars, counted, ...rest } = x;
+    return { ...rest, ...(score != null ? { score, terms: { ...terms }, bars: bars ?? 0 } : {}), ...(from ? { from: { ...from } } : {}), ...(patterns ? { patterns: [...patterns] } : {}),
+      onsets: [...x.onsets], read: 'frame', strokes: strokes.map((s) => ({ ...s })), silent };
+  };
+  return { clave: keep(chosen), partner: keep(partner), asked: asked != null, ties, partners: free.length, ranks: R, source: 'frame' };
+}
+
+/** a stroke as spec.clave keeps it (compose.js `layCompClave`'s order), timed by the part context */
+const timedStroke = (ctx, y) => ({ bar: y.bar, step: y.step, place: y.place, node: y.node, tick: y.tick, time: ctx.timeOf(ctx.row.tick[y.node]), slot: y.slot, snap: y.snap });
+const xsOf = (patterns) => patterns.reduce((a, p) => a + onsetsOf(p).length, 0);
+
+/**
+ * A clave read in frame (spec.clave, or its partner; `read: 'frame'`) read again over some bars under the chords as they
+ * are now (P20: a chord swap): a frame clave at the same layer, grain and set; a frame complement from the clave's new
+ * patterns (`of`) at the same onsets a bar (`per`); a fixed clave (curated, asked, or a fixed clave's complement) its
+ * steps landed in frame again. The other bars' strokes are kept as they are. `bars` a Set; `units` compose.js
+ * `compUnitsOf`. → the record with its `patterns`, `strokes` (timed, in bar order) and `silent` (a count) new, and no
+ * `shared` (layCompClave's, marked again by the caller)
+ */
+export function rereadClave(row, ctx, chordAt, rec, bars, { units, of = null }) {
+  const keep = rec.strokes.filter((x) => !bars.has(x.bar)).map(({ shared, ...x }) => x), was = rec.strokes.length - keep.length;
+  let got;
+  if (rec.from?.frame) {
+    const L = frameStrikes(row, ctx).find((x) => x.name === rec.from.name) ?? fail(`no layer ${rec.from.name}`);
+    got = readFrameLayer(ctx, chordAt, L, rec.from.grain, rec.from.set, { only: bars });
+  } else if (rec.source === 'complement' && rec.patterns) {
+    got = frameComplement(ctx, chordAt, of ?? fail('a frame complement is read again from its clave (`of`)'), { units, per: rec.per, only: bars });
+  } else got = layInFrame(ctx, chordAt, rec, { units, only: bars });
+  const patterns = rec.patterns ? rec.patterns.map((p, k) => (bars.has(k) ? got.patterns[k] : p)) : null;
+  const strokes = [...keep, ...got.strokes.map((y) => timedStroke(ctx, y))].sort((a, b) => a.bar - b.bar || a.step - b.step || a.node - b.node);
+  // silent: a frame clave lands nothing (none); a frame complement, its steps less its strokes; a fixed clave, its silent
+  // steps in the other bars (the same places laid again) and the bars' new ones
+  const silent = rec.from?.frame ? 0 : patterns ? xsOf(patterns) - strokes.length : rec.silent - (got.strokes.length + got.silent.length - was) + got.silent.length;
+  return { ...rec, ...(patterns ? { patterns } : {}), strokes, silent };
 }

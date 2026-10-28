@@ -580,7 +580,9 @@ export function arrangeDrums(spec, options = {}) {
   // `perc: 'pattern'`; a spec without a clave (compStyle 'notes') plays as before ──
   if (opt.perc !== 'pattern' && spec.clave?.strokes) {
     const C = spec.clave, first = C.onsets[0], laid = C.strokes.filter((x) => CLAVE_PERC_MODES.includes(modeOf(x.bar)));
-    for (const x of laid) push({ voice: 'perc', bar: x.bar, pos: x.place - x.bar * S, slot: x.slot, tick: x.tick, velocity: DRUM_VELOCITY.perc + (x.step === first ? ACCENT : 0), snap: 'clave', step: x.step });
+    // a frame clave (BASS_VOICING_ORDER.md phase I) has a pattern a bar: each bar's first onset is the accent
+    const accent = C.patterns ? (x) => x.step === C.patterns[x.bar].indexOf('x') : (x) => x.step === first;
+    for (const x of laid) push({ voice: 'perc', bar: x.bar, pos: x.place - x.bar * S, slot: x.slot, tick: x.tick, velocity: DRUM_VELOCITY.perc + (accent(x) ? ACCENT : 0), snap: 'clave', step: x.step });
     if (laid.length) decide('drums.perc', C.id, `the clave on the perc (R4: ${C.name ? C.label : C.pattern}), its ${laid.length} landed stroke${laid.length === 1 ? '' : 's'} in the ${CLAVE_PERC_MODES.filter((m) => bars.some((b) => b.mode === m)).join(' / ')} bars, the pass's first onset accented; ${C.relation === 'fill' ? 'the comp fills its gaps' : 'the comp strikes with it'}${opt.perc === 'clave' ? ' (asked)' : ''}`);
   }
   if (bars.some((b) => b.mode === 'partition')) {

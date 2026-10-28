@@ -66,7 +66,10 @@ const layerBox = doc.createElement('div'); layerBox.id = 'layer-controls-content
 
 const audio = makeCtx();
 let composes = 0, rearranges = 0;
-const runCompose = async (l, T, o) => { composes++; return compose(l, T, o); };
+// the clave from the pattern (BASS_VOICING_ORDER.md P19): this suite freezes the window over the clave before phase I, as
+// `voicing: 'close'` pinned phase F's; the frame clave's own checks are assert-frame-clave.mjs (the window's, phase L)
+const PIN = Object.freeze({ claveFrom: 'pattern' });
+const runCompose = async (l, T, o) => { composes++; return compose(l, T, { ...o, overrides: { ...(o?.overrides ?? {}), ...PIN } }); };
 runCompose.rearrange = (job) => { rearranges++; return new Promise((resolve) => setTimeout(() => resolve(answer({ id: 1, kind: 'rearrange', ...job }).result), 1)); };
 runCompose.arp = (job) => Promise.resolve(answer({ id: 1, kind: 'arp', ...job }).result);
 const { createComposerBridge } = await import('../page/composer-bridge.js');
@@ -144,7 +147,7 @@ rowOf(alt.id).click(); await settle();
 check(`a click on ${alt.id} (${claveSource(alt)}) auditions it at once (stopped): the comp and drums on it, no Compose`, core.auditioning() && S().spec.clave.id === alt.id && J(S().edits.clave) === J({ id: alt.id }) && plays() && composes === c0
   && rowOf(alt.id).classList.contains('auditioning') && /auditioning/.test(q(inspector, '.ctab-audition').textContent));
 {
-  const want = compose(L, T, { seed: S().input.seed, overrides: { clave: alt.id }, worker: S().table === 'full' });
+  const want = compose(L, T, { seed: S().input.seed, overrides: { clave: alt.id, ...PIN }, worker: S().table === 'full' });
   check('… equal, comp and drums byte for byte, to a Compose given that clave', J(partOf('comp')) === J(partOf('comp', want)) && J(S().drums.hits) === J(arrangeDrums(want, S().drumOptions).hits) && J(S().spec.clave) === J(want.clave));
 }
 check(`… the perc follows it (${percTicks().length} clave strokes)`, J(percTicks()) === J(S().spec.clave.strokes.map((x) => x.tick)) && J(percTicks()) !== J(clave0.strokes.map((x) => x.tick)));
@@ -217,7 +220,7 @@ console.log('\n— a clave the composition no longer offers is dropped');
 
 console.log('\n— the Compose animation names the clave');
 {
-  const full = compose(L, T, { seed: 1, trace: true, overrides: { compRelation: 'fill' } }), { trace, ...plain } = full, plot = plotOf(R);
+  const full = compose(L, T, { seed: 1, trace: true, overrides: { compRelation: 'fill', ...PIN } }), { trace, ...plain } = full, plot = plotOf(R);
   const scene = buildScene({ trace, plot, final: highlightsOf({ spec: plain }, plot) }), said = new Set();
   for (let t = 0; t <= scene.end + 0.2; t += 1 / 60) { const d = frameAt(scene, t).detail; if (d) said.add(d); }
   const line = [...said].find((d) => d.startsWith('Comping') && d.includes('the clave '));
