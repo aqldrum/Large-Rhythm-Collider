@@ -171,60 +171,67 @@ The script is in the planner's scratchpad, not the repo. It re-derives each chor
 A and B touch different core files. Both touch the cell inspector in `composer-tab.js`, so A3–A4 and B3 go one after
 the other. A1–A2 and B1 can run side by side.
 
-## Browser and rig checklist (for Avery; final, for A3–A4 and B2–B4 as built)
+## Browser and rig checklist (for Avery; final, for A–E as built)
+
+This replaces the A3–A4 / B2–B4 checklist: the comp now follows the clave (phase C), the arps are mined (phase D), and
+the window has the clave and arp pickers (phase E). The numbers below are seed 1.
 
 **Set up.**
-1. Serve the branch that has it from its own folder: `.claude/worktrees/comp-arp-ui` (branch `ui/comp-arp`), or `.claude/worktrees/composer-sprint-2` once it's merged.
-2. Hard-reload, so the tab's stylesheet `?v=20261027.3` and the bridge's `?v=20261027` load.
-3. Generate 8:7:6:5 (cycle 4 s): a small row, so expect borrowed tones.
-4. Open the Composer window: double-click the Playback header, then the Composer tab.
-5. Details stays off unless a step says otherwise.
+1. Serve the branch from its own folder: `.claude/worktrees/clave-arp-ui` (branch `ui/clave-arp`), or `.claude/worktrees/composer-sprint-2` once it's merged.
+2. Hard-reload, so the tab's stylesheet `?v=20261027.4` and the bridge's `?v=20261027.2` load.
+3. Generate 8:7:6:5 with a 4 s cycle. Open the Composer window (double-click the Playback header, then the Composer tab) and Compose.
+4. Leave Details off unless a step says otherwise.
 
-**Comping in chords (A3–A4)**
-1. **Compose, then Perform.** Comping plays a chord on every strike of its layer. On this small row most of each chord is borrowed, so it sounds near-block.
-2. **The plot.** The comp's colour is pink. Besides its filled dots, you should see **hollow pink rings** on some of the chords' onsets: the sources of the borrowed tones.
-   - Click a Comping cell. In the matrix cell, the borrowed tones are hollow pink dots.
-   - The inspector says "N strokes".
-   - Details on: it adds " · P% from the row", and hovering the line gives the counts.
-   - On the plot, the cell's own onsets are ringed and its borrowed sources are ringed hollow.
-3. **A dense row.** Try 768:784 (cycle 8 s) or 4099:4093:4091:4079 (16 s). You should see few or no rings, and the comp is a quick strum that rolls with the polyrhythm.
-4. **Swap a chord** (a Chords cell → an alternate → Keep). The comp follows from that bar, and its rings move to the new chord's voices.
-5. **Legato.** Select Comping and turn legato on: each chord tone rings to the next stroke. No voice should slide into another voice's pitch; that was a chain bug, now fixed. Off: short.
-6. **Rig.** The Comp bus on an MPE track:
-   - chords arrive one tone a channel, on channels 2–5, beatless against the Chords track
-   - Details → MIDI file: the .mid's Comp track holds those channels, with its MPE set-up at the start
+**The comp follows the clave (C, E)**
+1. **Perform, and click a Comping cell.** You should see:
+   - the line "clave `.xx.` from layer A · 4 steps", Sync lit
+   - "N strokes" above it
+   - a list of claves: the row's ranked ones, then son, rumba and bossa (dashed), with Compose's marked ● C
+   You should hear a chord on 2 strokes a bar, near-block, because this small row borrows most of each chord. The hollow pink rings on the plot are the borrowed tones' sources.
+2. **The perc is on the clave.** With Drums on backbeat, the perc ticks with the comp's strokes in Sync.
+3. **Fill.** Click Fill: no "Composing…". The comp moves into the clave's gaps (here `x..x`, the complement), and the perc stays where it was, so the two hocket. Click Sync to bring it back. Each click is one undo step (↶ / ⌘Z).
+4. **Choose a clave.** Click another clave in the list while performing:
+   - it's held to the next bar, and the footer says "auditioning from the next bar…"
+   - the comp and the perc switch together at the barline
+   - Revert (or Esc) goes back, and leaves no redo step
+   - click it again, or Keep, and it stays: one undo step, marked ●, with a "chosen" tag on the clave line
+5. **A curated clave.** Click **son**, then Keep. The line reads `x..x..x. ..x.x...` · son clave 3-2: a pass every two bars. The perc plays the son, and the comp strikes it (or its gaps, in Fill).
+6. **Details on.** The clave line adds its score (recurrence, density, fit), its tone set ("under the tone 7/4") and the pattern Fill strikes. Each list row shows its score.
+7. **A chord swap with son chosen** (Chords cell → an alternate → Keep). The comp re-strums that bar over the new chord, and son stays.
+8. **Compose again (same seed).** Son and Fill are kept, and nothing is listed as dropped. Then press the header glyph: it recalls the composition with no Compose, still on son.
+9. **The rows.** On each row, compare Sync and Fill, then try two or three claves from the list:
+   - **19:17:16:15** (3 s cycle): a 16-step clave `.......x....x.xx` (layer C); Fill strikes 2 a bar
+   - **768:769** (8 s): `..xx`, comps 8 strokes; few tones come from the row
+   - **768:784** (8 s): `..xx` (layer B), mostly from the row, so few rings
+   - **4099:4093:4091:4079** (16 s): `..xx`; 16 strokes, 93 % from the row. The first switch to another clave takes about 60 ms (the row is ranked once); later ones are instant.
+10. **Show the work.** On a fresh Compose, the Comping caption reads "the clave `.xx.` (from layer A · 4 steps): N strokes".
 
-**Arp (B2–B3)**
-7. **Inner → Arp.** Click an Inner cell. The inspector opens on **Line | Arp**. Click Arp:
-   - it starts at once, with no "Composing…": Up, 2 a slot, 2 octaves
-   - the inner turns to the harp, unless you'd picked a sound for it
-   - its lane reads "Inner · arp"
-   - Details adds "N rests of M · P% of steps on a chord tone"
-8. **Each knob, live.**
-   - Pattern: Up climbs and wraps, Down falls, Up-down turns, As played wanders.
-   - Rate 1–4 thickens it.
-   - Range 1–3 octaves widens it.
-9. **Lead → Arp.** Click a Lead cell, then Arp.
-   - The lead becomes an arpeggio over the same chords, and the runner-up lines disappear.
-   - The inner moves off the lead's onsets.
-   - With Drums set to "clave: with lead + comping", the drums follow the arp.
-   - **Line:** the melody comes back exactly as before, with its runner-ups.
-10. **Undo (↶ or ⌘Z)** steps back through each switch and each knob. Redo (↷ or ⇧⌘Z) steps forward.
-11. **Swap a chord with the lead and inner in Arp.** Both arps follow the new chord from that bar.
-12. **Compose again (same seed).** The modes stay. Then press the header glyph: it recalls the composition with no compose, playing the arps, and the Playback div's part strips read "Lead · arp" and "Inner · arp".
-13. **A chosen sound.** Pick a sound for the inner, then Arp: it keeps that sound; Line keeps it too.
-14. **A MIDI clip.** Choose a .mid.
-    - The lead's Line | Arp is greyed. Hovering it reads "the lead is the MIDI clip: a target's lead has no Arp mode".
-    - A lead that was in Arp is back in Line.
-    - The inner's Arp still works.
-    - Clear, then Compose: the lead stays in Line.
-15. **Rig.** The arps arrive on the Lead and Inner buses, one note at a time, in tune.
+**Mined arps (D, E)**
+11. **Inner → Arp.** Click an Inner cell, then Arp:
+    - it starts at once, ×1, on the harp
+    - the lane reads "Inner · arp"
+    - under the switch, "Arps · phrase N" lists that phrase's arps by contour and band ("arch · no rests"); the playing one is marked ●, the best-ranked C
+    - Details adds "N rests of M · P% chord tones · K of L phrases mined", and each row its cost a note and its chord-tone share
+12. **Pick an arp** while performing: it's held to the next bar. Revert goes back with no redo step. Keep (or a second click) is one undo step. Clicking the C row again removes the pick.
+13. **Time.**
+    - ×2 / ×3 re-mine over double or triple the anchors, and each note still sounds at its own onset's time
+    - **changing Time drops your picks** (Avery's ruling): the list starts again at the best-ranked
+    - one ↶ restores both the old Time and the picks
+14. **A walked phrase.** On 8:7:6:5 at ×2 the inner's phrase reads "walked: nothing could be mined here … no arp to pick", and the list is empty. 768:769 mines ×1 (lead), ×2 (both) and half of ×3.
+15. **Lead → Arp.** The runner-up lines are replaced by the arp picker. The inner moves off the lead's onsets. Line brings the melody back exactly, with its runner-ups.
+16. **Compose again (same seed).** The modes and your picks stay. A pick whose phrase no longer offers it would be listed under "Compose couldn't keep … of the edits" (the clean view's line; Details lists it).
+17. **A MIDI clip.** The lead's Line | Arp is greyed (hover: "the lead is the MIDI clip…"), a lead that was in Arp goes back to Line, and the inner's Arp and the clave picker still work.
+
+**MIDI (the rig)**
+18. The Comp bus is an MPE zone of four: each chord tone on its own channel, 2–5. In Fill, the strokes land in the clave's gaps, against the Drums bus (channel 10). Details → MIDI file: the .mid's Comp track has those channels and its MPE set-up.
+19. The arps arrive on the Lead and Inner buses one note at a time, in tune, and follow a pick or a Time change from the next bar.
 
 **Watch for (not checkable in Node).**
-- Do the hollow rings read as "borrowed" next to a selected part's outer rings?
-- Does the switch-and-selects row fit at narrow window widths?
-- How the inner arp sounds at rate 2 on small rows. It rests a lot: 41:42:43 at 4 × 8 rests 50 of 64 steps.
-- The inner sits a fixed octave under the lead (the core's open question 2).
+- Does the 15-row clave list, with its monospace patterns, fit the inspector at narrow widths?
+- Is a clave auditioned at the barline seamless, given that the perc and the comp change together?
+- Does Fill on the dense rows' bunched claves (`..xx` → `xx..`) read as a hocket, or just as a shift?
+- Does the arp list read better by contour, or should the best-ranked row also say "default"?
+- The inner sits a fixed octave under the lead, and still rests a lot on small rows.
 
 ## Amendment 1 (Avery, 2026-10-27, after the first build): the clave leads the comp; arps are mined
 
