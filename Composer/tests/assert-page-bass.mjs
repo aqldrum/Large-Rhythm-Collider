@@ -8,8 +8,9 @@
 //     plays (the drums as they play for Kick); one undo step each; Details' stats
 //   • the runner-ups: a click auditions one (Revert with no redo step), a second click keeps it as one undo step, the
 //     first again removes the pick; a change of density or lock drops the picks and one undo restores both
-//   • Kick on the kick's onsets; the drums turned off under Kick: the bass re-arranged Free and said; Kick disabled with
-//     its reason while the drums are off (and setBass refuses it); Clave on the comp's strokes, following Sync | Fill
+//   • Kick covering the kick's hits (phase J, P23: each covered or missed); the drums turned off under Kick: the bass
+//     re-arranged Free and said; Kick disabled with its reason while the drums are off (and setBass refuses it); Clave
+//     covering the comp's strokes, following Sync | Fill
 //   • Roots: no runner-ups, said plainly; pickBass refuses
 //   • a chord swap carries the arrangement (arrangeBass over the edited spec)
 //   • the chords cell: Close | Led with the voicing's stats; Close live, the spec byte for byte a Compose given
@@ -162,12 +163,14 @@ console.log('\n— the runner-ups');
   await click('.ctab-bass-clave');
   const strokes = new Set(compSourceOf(S().spec.clave).map((x) => x.node));
   check('Lands on → Clave: the picks dropped (keyed by the bar at a density and lock); one undo step', S().bass.lock === 'clave' && J(S().bass.picks) === '{}' && S().undo.length === undoB + 1 && bassMatches());
-  check(`… every bass note on one of the comp's ${strokes.size} strokes`, partOfSpec('bass').notes.length > 0 && partOfSpec('bass').notes.every((n) => strokes.has(n.node)) && seg('clave').classList.contains('on'));
+  // BASS_VOICING_ORDER.md P23 (phase J): a lock covers its hits (a hit in frame gets a note on it), the density adds the rest
+  const covers = (nodes) => { const b = partOfSpec('bass'), s = b.bass.stats, on = [...nodes].filter((i) => b.notes.some((n) => n.node === i)).length; return s.hits > 0 && on >= s.hits - s.missedHits; };
+  check(`… every one of the comp's ${strokes.size} strokes covered by a bass note, or counted missed (${partOfSpec('bass').bass.stats.missedHits} missed)`, partOfSpec('bass').notes.length > 0 && covers(strokes) && seg('clave').classList.contains('on'));
   await core.setClave({ relation: 'fill' });
   const fill = new Set(compSourceOf(S().spec.clave).map((x) => x.node));
-  check('Fill: the bass follows the comp to the partner\'s strokes', S().spec.clave.relation === 'fill' && partOfSpec('bass').notes.every((n) => fill.has(n.node)) && bassMatches());
+  check('Fill: the bass follows the comp to the partner\'s strokes (each covered or missed)', S().spec.clave.relation === 'fill' && covers(fill) && bassMatches());
   await core.undo();
-  check('undo the Fill: Sync again, the bass on the clave\'s strokes', S().spec.clave.relation === 'sync' && partOfSpec('bass').notes.every((n) => strokes.has(n.node)) && bassMatches());
+  check('undo the Fill: Sync again, the bass covering the clave\'s strokes', S().spec.clave.relation === 'sync' && covers(strokes) && bassMatches());
   await click('.ctab-undo', left);
   check('undo: Free, and the pick back (one undo step restores both)', S().bass.lock === 'free' && J(S().bass.picks) === J({ [k]: alt[2].id }) && partOfSpec('bass').bass.bars[k].picked === alt[2].id && bassMatches());
   await pick('.ctab-bass-density', 'walking');
@@ -181,7 +184,8 @@ console.log('\n— Kick, and the drums off');
   await click('.ctab-bass-kick');
   const { row, cells } = materialsOf(S().composed), ctx = partContext(row, cells, { cycleSeconds: T, phase: S().spec.knobs.phase, frameCentsEachSide: S().spec.knobs.frameCentsEachSide });
   const kicks = bassLockOf({ ...S().spec, drums: S().drums }, ctx, 'kick').nodes;
-  check(`Lands on → Kick: every bass note on an onset the kick strikes (${kicks.size} such onsets)`, S().bass.lock === 'kick' && partOfSpec('bass').bass.stats.lock === 'kick' && partOfSpec('bass').notes.every((n) => kicks.has(n.node)) && bassMatches());
+  const kickHits = bassLockOf({ ...S().spec, drums: S().drums }, ctx, 'kick').hits, kb = partOfSpec('bass'), kOn = kickHits.filter((h) => kb.notes.some((n) => h.nodes.includes(n.node))).length;
+  check(`Lands on → Kick: every kick hit covered by a bass note on one of its onsets, or counted missed (${kOn} of ${kickHits.length} kicks covered, ${kb.bass.stats.missedHits} missed; P23)`, S().bass.lock === 'kick' && kb.bass.stats.lock === 'kick' && kicks.size > 0 && kOn >= kb.bass.stats.hits - kb.bass.stats.missedHits && bassMatches());
   core.setDrums({ enabled: false }); await settle();
   const why = bassLockRefusal({ ...S().spec, drums: S().drums }, 'kick');
   check(`the drums off under Kick: the bass re-arranged Free, and said ("${q(inspector, '.ctab-bass-refused')?.textContent}")`, !!why && partOfSpec('bass').bass.stats.lock === 'free' && partOfSpec('bass').bass.refused === why && core.bassOf().refused === why

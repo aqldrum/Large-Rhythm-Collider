@@ -332,7 +332,7 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   const bassBars = bassArr ? bassArr.bars.slice() : null, bassPicks = bassArr ? { ...bassArr.picks } : null, bassDropped = [];
   const bassAt = (c, k, opts) => {
     if (!bassArr) return bassOfBar(ctx, c, k, opts);
-    const b = bassBarOf(ctx, k, { recs, targets: allTargets, density: bassArr.density, nodes: bassLock.nodes, pick: bassPicks[k] ?? null, table, walkCells: bassWalk });
+    const b = bassBarOf(ctx, k, { recs, targets: allTargets, density: bassArr.density, hits: bassLock.hits, pick: bassPicks[k] ?? null, table, walkCells: bassWalk });
     if (b.missed != null) { bassDropped.push({ bar: k, id: b.missed }); delete bassPicks[k]; delete b.missed; }
     bassBars[k] = bassBarRecord(k, b);
     return b;
