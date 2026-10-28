@@ -3,6 +3,9 @@ class ColliderPlayer {
     // straight line is eliminated.
     static MIN_VERTICES = 3;
 
+    // Opening: each body unfolds from its start point into its expanded loop
+    static OPENING_MS = 2000;
+
     // Experimental self-collision (BattleController.selfCollision)
     static SELF_COLLISION_MARGIN = 0.5;      // px a node is kept off its own segments
     static SELF_COLLISION_RESTITUTION = 0.5; // share of closing speed a node rebounds with
@@ -28,7 +31,7 @@ class ColliderPlayer {
         this.layerDirections = {}; 
         
         // Animation state
-        this.animationPhase = 'inactive'; // 'inactive', 'hanging', 'connecting', 'settling', 'reconnecting'
+        this.animationPhase = 'inactive'; // 'inactive', 'opening', 'settling', 'reconnecting'
         this.phaseStartTime = 0;
         this.currentRhythmPosition = 0;
         this.activeForceNodes = new Set();
@@ -448,37 +451,29 @@ class ColliderPlayer {
         const targetTotalLength = this.grid; // Total chain length equals Grid/HP value
         const scaleFactor = targetTotalLength / totalSpaces;
         
-        // Create first node at assigned starting position
-        this.nodes.push({
-            x: this.startX,
-            y: this.startY,
-            oldX: this.startX,
-            oldY: this.startY,
-            pinned: true,
-            velocity: { x: 0, y: 0 }
-        });
-        
-        // Create subsequent nodes in hanging chain
-        let currentX = this.startX;
-        let currentY = this.startY;
-        
-        for (let i = 0; i < this.spacesPlot.length; i++) {
-            const segmentLength = this.spacesPlot[i] * scaleFactor;
-            currentY += segmentLength;
-            
+        // Lay the chain out expanded: every node on one circle centred on the
+        // start point, so the loop is closed and inside its own footprint from
+        // the first frame. Nodes begin collapsed on the centre; the opening
+        // unfolds them to these offsets.
+        const lengths = this.spacesPlot.map(space => space * scaleFactor);
+        this.openingOffsets = ColliderPlayer.cyclicPolygon(lengths);
+
+        for (let i = 0; i <= this.spacesPlot.length; i++) {
             this.nodes.push({
-                x: currentX,
-                y: currentY,
-                oldX: currentX,
-                oldY: currentY,
-                pinned: false,
+                x: this.startX,
+                y: this.startY,
+                oldX: this.startX,
+                oldY: this.startY,
+                pinned: i === 0, // the anchor
                 velocity: { x: 0, y: 0 }
             });
-            
+        }
+
+        for (let i = 0; i < this.spacesPlot.length; i++) {
             this.segments.push({
                 nodeA: i,
                 nodeB: i + 1,
-                restLength: segmentLength,
+                restLength: lengths[i],
                 originalSpaceValue: this.spacesPlot[i],
                 spaceIndex: i // Track which space this represents
             });
@@ -486,6 +481,64 @@ class ColliderPlayer {
         
         this.nodeCount = this.getVertexCount();
         console.log(`🎮 Player ${this.playerId} chain initialized: ${this.nodes.length} nodes, ${this.segments.length} segments, total length: ${targetTotalLength}`);
+    }
+
+    // The roundest closed shape a chain with these segment lengths can make:
+    // every vertex on one circle (the maximum-area polygon, the shape Hinges'
+    // expand pushes toward). Returns lengths.length + 1 offsets from the circle's
+    // centre, starting at the top and going clockwise; the last closes on the first.
+    static cyclicPolygon(lengths) {
+        const n = lengths.length;
+        const total = lengths.reduce((sum, length) => sum + length, 0);
+        let longest = 0, longestIndex = 0;
+        lengths.forEach((length, i) => {
+            if (length > longest) { longest = length; longestIndex = i; }
+        });
+
+        // Each segment subtends 2·asin(l / 2R) at the centre
+        const halfAngle = (length, radius) => Math.asin(Math.min(1, length / (2 * radius)));
+        const bisect = (f, lo, hi) => {
+            for (let k = 0; k < 100; k++) {
+                const mid = (lo + hi) / 2;
+                if (f(mid) < 0) hi = mid; else lo = mid;
+            }
+            return (lo + hi) / 2;
+        };
+
+        const steps = new Array(n);
+        let radius;
+        if (n < 3 || longest * 2 >= total) {
+            // No polygon with area: space nodes around a circle by length instead
+            radius = total / (2 * Math.PI);
+            for (let i = 0; i < n; i++) steps[i] = 2 * Math.PI * lengths[i] / total;
+        } else {
+            const minRadius = longest / 2;
+            const insideGap = radius => lengths.reduce((sum, l) => sum + halfAngle(l, radius), 0) - Math.PI;
+            if (insideGap(minRadius) >= 0) {
+                // Centre inside the polygon: the angles go once round the circle
+                radius = bisect(insideGap, minRadius, total);
+            } else {
+                // Centre outside: the longest segment spans what the others do
+                const outsideGap = radius => lengths.reduce((sum, l, i) =>
+                    sum + (i === longestIndex ? -1 : 1) * halfAngle(l, radius), 0);
+                let hi = minRadius * 2;
+                while (outsideGap(hi) <= 0 && hi < total * 1e6) hi *= 2;
+                radius = bisect(r => -outsideGap(r), minRadius, hi);
+                steps[longestIndex] = -2 * halfAngle(longest, radius);
+            }
+            for (let i = 0; i < n; i++) {
+                if (steps[i] === undefined) steps[i] = 2 * halfAngle(lengths[i], radius);
+            }
+        }
+
+        const offsets = [];
+        let angle = -Math.PI / 2;
+        for (let i = 0; i < n; i++) {
+            offsets.push({ x: radius * Math.cos(angle), y: radius * Math.sin(angle) });
+            angle += steps[i];
+        }
+        offsets.push({ ...offsets[0] });
+        return offsets;
     }
 
     // ====================================
@@ -501,7 +554,7 @@ class ColliderPlayer {
         console.log(`🎮 Player ${this.playerId} animation starting - initializing fresh state...`);
         
         // CRITICAL: Ensure clean state before starting animation
-        this.animationPhase = 'hanging';
+        this.animationPhase = 'opening';
         this.phaseStartTime = Date.now();
         this.isAlive = true;
         
@@ -538,20 +591,14 @@ class ColliderPlayer {
         let allowForces = false;
 
         switch (this.animationPhase) {
-            case 'hanging':
-                if (elapsed > 2000) {
-                    this.startConnectionPhase();
-                }
-                break;
-                
-            case 'connecting':
-                const progress = Math.min(elapsed / 3000, 1);
-                this.animateConnection(progress);
+            case 'opening': {
+                const progress = Math.min(elapsed / ColliderPlayer.OPENING_MS, 1);
+                this.animateOpening(progress);
                 if (progress >= 1) {
                     this.completeConnection();
                 }
-                shouldApplyPhysics = true;
                 break;
+            }
                 
             case 'settling':
                 // Check if anchor node should be unpinned
@@ -584,22 +631,10 @@ class ColliderPlayer {
             this.applyReboundVelocity();
         }
         
-        // Apply constraints
-        if (this.animationPhase !== 'inactive') {
-            const isConnecting = this.animationPhase === 'connecting';
-            const iterations = isConnecting ? 25 : 15;
-            const originalStrength = this.tensionStrength;
-
-            if (isConnecting) {
-                this.tensionStrength = Math.min(1.0, this.tensionStrength * 2.5);
-            }
-
-            for (let i = 0; i < iterations; i++) {
+        // Apply constraints (the opening places every node itself)
+        if (this.animationPhase !== 'inactive' && this.animationPhase !== 'opening') {
+            for (let i = 0; i < 15; i++) {
                 this.constrainSegments();
-            }
-
-            if (isConnecting) {
-                this.tensionStrength = originalStrength;
             }
         }
 
@@ -778,58 +813,23 @@ class ColliderPlayer {
         kick(b, -impulse * wb * t);
     }
 
-    startConnectionPhase() {
-        this.animationPhase = 'connecting';
-        this.phaseStartTime = Date.now();
-        this.activeForceNodes.clear();
-        
-        const lastNode = this.nodes[this.nodes.length - 1];
-        const firstNode = this.nodes[0];
-        
-        this.connectionStart = { x: lastNode.x, y: lastNode.y };
-        this.connectionTarget = { x: firstNode.x, y: firstNode.y };
-        
-        this.arcMidpoint = {
-            x: this.connectionStart.x - 100,
-            y: Math.min(this.connectionStart.y - 150, firstNode.y - 50)
-        };
-        
-        console.log(`🎮 Player ${this.playerId} starting connection phase`);
-    }
-
-    animateConnection(progress) {
-        const eased = 1 - Math.pow(1 - progress, 2);
-        const lastNode = this.nodes[this.nodes.length - 1];
-        
-        const t = eased;
-        const invT = 1 - t;
-        
-        lastNode.x = Math.pow(invT, 2) * this.connectionStart.x + 
-                    2 * invT * t * this.arcMidpoint.x + 
-                    Math.pow(t, 2) * this.connectionTarget.x;
-                    
-        lastNode.y = Math.pow(invT, 2) * this.connectionStart.y + 
-                    2 * invT * t * this.arcMidpoint.y + 
-                    Math.pow(t, 2) * this.connectionTarget.y;
-        
-        lastNode.oldX = lastNode.x - (lastNode.x - this.connectionStart.x) * 0.1;
-        lastNode.oldY = lastNode.y - (lastNode.y - this.connectionStart.y) * 0.1;
-        lastNode.pinned = true;
+    // Unfold from the start point to the expanded loop, easing out
+    animateOpening(progress) {
+        const scale = 1 - Math.pow(1 - progress, 3);
+        for (let i = 0; i < this.nodes.length; i++) {
+            const node = this.nodes[i];
+            const offset = this.openingOffsets[i];
+            node.x = node.oldX = this.startX + offset.x * scale;
+            node.y = node.oldY = this.startY + offset.y * scale;
+        }
     }
 
     completeConnection() {
         this.animationPhase = 'settling';
         
-        const lastNode = this.nodes[this.nodes.length - 1];
-        const anchorNode = this.nodes[0];
-        
-        // Unpin the last node immediately
-        lastNode.pinned = false;
-        
-        // CRITICAL: Keep anchor node pinned initially to prevent jump
-        // It will be unpinned after a brief settling period
-        anchorNode.pinned = true;
-        this.anchorUnpinTime = Date.now() + 100; // Unpin after 0.5 seconds
+        // The anchor stays pinned for a brief settle, then unpins
+        this.nodes[0].pinned = true;
+        this.anchorUnpinTime = Date.now() + 100;
         
         // Create closing segment with safety checks
         const endNode = this.nodes[this.nodes.length - 1];
@@ -1343,7 +1343,7 @@ class ColliderPlayer {
         const duration = 300; // Fixed 2-second duration
         const progress = Math.min(elapsed / duration, 1);
         
-        // Smooth easing (same as your animateConnection)
+        // Smooth easing
         const eased = 1 - Math.pow(1 - progress, 2);
         
         const { movingNodeIndex, originalStartPos, originalTargetPos, originalControlPoint, totalReboundOffset } = this.reconnectionData;
@@ -1787,6 +1787,7 @@ class ColliderPlayer {
         
         // Reset anchor pin state
         this.anchorUnpinTime = null;
+        this.openingOffsets = null;
 
         // Reset layer labels and seeking state
         this.pulseLayers = null;

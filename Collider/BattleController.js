@@ -146,9 +146,9 @@ class BattleController {
     // ====================================
 
     calculateArena(xLeft, xRight, yTop, yBottom, maxSize) {
-        // A closed loop hangs about half its Grid length (= size) below its anchor,
-        // so pad every side by that. The longer open chain of the opening phase may
-        // poke past the walls; the arena only governs formed loops.
+        // Each body opens as a round loop centred on its layout point (radius about
+        // Grid / 2π); pad every side by half its Grid length (= size) so it has
+        // room to swing once forces start.
         const pad = maxSize;
         let minX = xLeft - pad, maxX = xRight + pad;
         let minY = yTop - pad, maxY = yBottom + pad;

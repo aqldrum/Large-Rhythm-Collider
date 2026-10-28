@@ -202,19 +202,11 @@ class LRCCollider {
     // ====================================
 
     calculateBoundingBox() {
-        // Finite map: once the arena exists, frame the whole arena, plus any chains
-        // still hanging open past the walls in the opening phase
+        // Finite map: once the arena exists, frame the whole arena
         const arena = this.battleController.arena;
         if (arena) {
             const padding = 20;
             let minX = arena.minX, maxX = arena.maxX, minY = arena.minY, maxY = arena.maxY;
-            for (const player of this.battleController.players) {
-                if (!player.isAlive || (player.animationPhase !== 'hanging' && player.animationPhase !== 'connecting')) continue;
-                for (const node of player.nodes) {
-                    minX = Math.min(minX, node.x); maxX = Math.max(maxX, node.x);
-                    minY = Math.min(minY, node.y); maxY = Math.max(maxY, node.y);
-                }
-            }
             minX -= padding; maxX += padding;
             minY -= padding; maxY += padding;
             return {
