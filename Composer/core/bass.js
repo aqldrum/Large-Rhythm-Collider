@@ -1,6 +1,6 @@
-// bass.js — the bass's densities and its lock (Composer/BASS_VOICING_ORDER.md, phase G: P10–P15): the bass mined bar by
-// bar against its chord as Compose mines it, at one of four densities, landing anywhere or only with the kick or the
-// comp, each bar offering its runner-ups.
+// bass.js — the bass's densities and its lock (Composer/BASS_VOICING_ORDER.md, phase G: P10–P15; Amendment 1's phase J:
+// P22–P24): the bass mined bar by bar against its chord as Compose mines it, at one of four densities, landing anywhere
+// or covering the kick's hits or the comp's strokes, each bar offering its runner-ups.
 //
 // PURE: no fetch, no DOM, no clock. Usable in a page, a worker and Node. Like the arp (arp.js `arrangeArp`), the bass is
 // an arrangement over a finished spec: `arrangeBass(spec, materials, { density, lock, picks })` reads the spec and its
@@ -28,38 +28,54 @@
 //                         12 → 6): buildCells at that many anchors a bar, the spec's anchors mode and phase (a MIDI
 //                         target's cut cropped to its bars), as arp.js builds its S × time cells (proposed).
 //              Moving and Walking, mining nothing, mine again with `weakTies` (lines.js; arp.js M6). Sparse is Compose's
-//              and never does. A mined density with no line falls back as Compose does: Free, the chord's root onset;
-//              locked, Roots at the lock.
-//   lock       (decided 2, P12) lines.js' opt-in `allowNodes`: a lattice slot keeps only candidates on the locked onsets.
-//                free     every onset (the miner's own choice).
-//                kick     the onsets within ¼ of a slot (the hit's slot, `spec.drums`' own) of a kick hit, in time
-//                         (around the cycle). The drums off (`drums: false`, or not enabled), or no kick in the mode: the
-//                         lock falls back to Free and says why (`bassLockRefusal`; `stats.lock` says what ran).
-//                clave    the onsets of compose.js `compSourceOf(spec.clave)`: the comp's strokes (the clave's in Sync, its
-//                         partner's in Fill). A spec that comps in notes has no clave: Free, with the reason.
-//              Locked, a band's share counts only the slots holding a locked onset (lines.js `lockedNotes`: to the nearest
-//              note, at least 1, so Moving on 3 kicks a bar plays 1–2 and Walking all 3; bandNotes' "at least 2" would
-//              leave most locked bars empty — proposed). Walking locked plays every locked slot (`maxGap` lifted: the
-//              locked slots need not be neighbours). Roots locked: of the bar's locked onsets in the chord's windows,
-//              the root-class one nearest the first; else the chord-tone one nearest it; else the first itself. A chord
-//              with no locked onset rests.
-//   offers     (P13) each bar offers its best BASS_ALTERNATES (8) lines at the density and lock: the lines opening on the
-//              root's class first, then the rest, each in mineLines' order (cost per note, the whole cost, the id), one
-//              of an id; the first is Compose's choice. Roots offers its one line. `picks: { [bar]: id }` chooses one; a
-//              pick the bar no longer offers plays the first and is recorded as `missed`. The window drops picks on a
-//              change of density or lock (the arp's Time rule: Phase H).
+//              and never does. A mined density with no line falls back as Compose does: Free (or a locked bar with no hit
+//              to cover), the chord's root onset; locked, Roots at the lock (a root on every hit).
+//              Walking's fill (rule 5, P22): a bar whose full walk mines nothing (plain, then weak ties) walks the most
+//              notes it can, max(2, the hits) up to one short of full, stepwise, `maxGap` lifted, the approach kept, under
+//              weak ties: one mine of lines.js' Walking band at those counts with `most` (the largest count with a line,
+//              the cheapest there; the same as the order's ladder W − 1, W − 2, … 2, first count wins). Only with no
+//              such line does the bar fall back. `walkFill` (the count) on the bar; the stats count the bars and notes.
+//   lock       (decided 2, rule 7, P23) a lock covers its HITS, and the density adds the rest:
+//                free     no hits (the miner's own choice).
+//                kick     a hit a kick hit (`spec.drums`), its onsets those within ¼ of the hit's slot of it in time
+//                         (around the cycle), its own onset the one it landed on. The drums off (`drums: false`, or not
+//                         enabled), or no kick in the mode: the lock falls back to Free and says why (`bassLockRefusal`;
+//                         `stats.lock` says what ran).
+//                clave    a hit a stroke of compose.js `compSourceOf(spec.clave)` (the clave's in Sync, its partner's in
+//                         Fill), its onset the stroke's. A spec that comps in notes has no clave: Free, with the reason.
+//              On a clock (the spec's slots, or Walking's) a hit is in the slot of its own onset (its window's, else the
+//              nearest anchor's), and hits in one slot are one hit. A hit keeps its onsets inside that slot's frame;
+//              with none it is MISSED: it rests (its slot's window onsets avoided) and is counted (`missedHits`).
+//              Mined densities: lines.js' opt-in `requireNodes`, each hit's slot sounding on one of its in-frame onsets
+//              (at most HIT_MOMENTS, the nearest it: a window's width, proposed), the other slots free. Sparse and
+//              Moving count the whole bar, hits included (lines.js `coveredNotes`: the band's share of the bar to the
+//              nearest note, at least the hits: a backbeat's 8 slots give Sparse 2–3, Moving 3–5). Walking every slot
+//              but a missed hit's, the hits' on the hits (`maxGap` the longest run of missed slots plus one), then the
+//              fill. Roots: a root on every hit, its root-class onset nearest the hit, else its chord-tone one, else its
+//              own (its in-frame onset nearest it); a chord with no hit rests.
+//   offers     (P13, P24) each bar offers its best BASS_ALTERNATES (8) lines at the density and lock: the lines opening on
+//              the root's class first, then the rest, each in mineLines' order (cost per note, the whole cost, the id),
+//              one of an id; the first is Compose's choice (a fill offers only lines at its count). Roots (rule 9, P24):
+//              a chord's candidates are every root-class onset in frame in its windows, one a tone a slot, nearest the
+//              chord's first anchor first (then the one before it, then the lower node); locked, a hit's are its
+//              root-class onsets, nearest the hit (none: its one note). A bar offers up to 8 combinations of its chords'
+//              (hits') candidates by summed distance (then by their ranks, in order), the first Roots' own note.
+//              `picks: { [bar]: id }` chooses one; a pick the bar no longer offers plays the first and is recorded as
+//              `missed`. The window drops picks on a change of density or lock (the arp's Time rule: Phase H).
 //   rooted     (P15) a bar's first note on its (first) chord's root class, Compose's `bassRooted`; `onDown` a bar with a
 //              note on its first slot.
 //
 // The result is the part as the spec has it (compose.js partOf's shape: it replaces the bass in spec.parts) with:
 //   bass   { density, lock, picks (as asked), stats, bars, (refused: the lock's reason, when it fell back to Free) }
 //            stats  { density, lock (the one that ran), bars, notes, perBar, rooted, onDown, mined, fallback, rests,
-//                     (locked: lockedSlots, the slots holding a locked onset on the density's clock), (weakTies: bars
+//                     (locked: lockedSlots and hits, the hits (a slot each) on the clock each bar played, missedHits),
+//                     (walkFill, walkFillNotes: the bars that walked less than full, and their notes), (weakTies: bars
 //                     mined only with ties) }
 //            bars   [{ bar, how ('mined' | 'roots' | 'root onset' | 'locked roots' | 'rest'), picked (an alternate's id, or
-//                     null), alternates, notes (how many), rooted, onDown, (lockedSlots), (weakTies), (missed) }]
+//                     null), alternates, notes (how many), rooted, onDown, (locked: lockedSlots = hits, missedHits,
+//                     missedSlots (the spec's slots)), (walkFill: its count), (weakTies), (missed) }]
 //              alternate  { id, band, contour, motion, n, cost, perNote, rooted, notes: [{ slot (the spec's), node, octave }] }
-//                         (Roots: { id, band: 'roots', n, rooted, notes })
+//                         (Roots: { id, band: 'roots', n, rooted, distance (summed, in slots), notes })
 // Deterministic: no draws. The same spec, materials and options give byte-identical output.
 
 import { partContext, partOf, compSourceOf } from './compose.js';
