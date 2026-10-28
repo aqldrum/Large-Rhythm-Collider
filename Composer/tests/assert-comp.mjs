@@ -185,8 +185,9 @@ console.log('\n— compStyle');
   const cases = [[[8, 7, 6, 5], 4, {}], [[11, 9, 7, 5], 6, {}], [[119, 42, 15, 8], 8, { compLayer: 'B' }], [[768, 769], 8, { legato: { comp: true } }], [[41, 42, 43], 8, { bars: 2 }], [[97, 103, 37], 5, { enabled: { comp: false } }]];
   let same = 0;
   for (const [L, T, ov] of cases) for (const seed of [1, 4]) {
-    const live = compose(L, T, { seed, overrides: { ...ov, compStyle: 'notes' } });
-    delete live.input.overrides.compStyle; delete live.input.overrides.voicing;   // the fields the frozen core can't have: the overrides themselves
+    // the frozen core's bass is Sparse · Free (BASS_VOICING_ORDER.md Amendment 2, P28: Compose's own is now Moving · Kick)
+    const live = compose(L, T, { seed, overrides: { ...ov, compStyle: 'notes', bass: { density: 'sparse', lock: 'free' } } });
+    delete live.input.overrides.compStyle; delete live.input.overrides.voicing; delete live.input.overrides.bass;   // the fields the frozen core can't have: the overrides themselves
     if (J(live) === J(composeBefore(L, T, { seed, overrides: ov }))) same++;
   }
   check(`compStyle 'notes': ${same}/${cases.length * 2} byte for byte the frozen pre-refactor Compose (fixtures/compose-before.js)`, same === cases.length * 2);

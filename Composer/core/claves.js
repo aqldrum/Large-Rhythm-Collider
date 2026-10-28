@@ -57,7 +57,9 @@
 // onset. By default the clave is read from the composition's chords instead (`rankFrameClaves`, `chooseFrameClave`): a
 // bar's clave is the clave layer's own strikes whose tones fit that bar's frame, so the pattern changes with the chord,
 // and every stroke is that layer's strike, at its own time, in frame. The curated and asked claves keep their pattern and
-// land only on in-frame onsets (`layInFrame`). The section's head says the rules.
+// land only on in-frame onsets (`layInFrame`). The section's head says the rules. Amendment 2 (rule 10, P26–P27) adds the
+// narrower tone sets (root and fifth, guide tones, roots) and the density tiers the clave is chosen in (`density`:
+// sparse–medium by default), and the picker's ranking comes back from rearrange.js whenever a chord changes (P30).
 
 import { lowerBoundTick } from './row.js';
 import { euclidPattern } from './cells.js';
@@ -77,8 +79,22 @@ export const COMP_RELATIONS = Object.freeze(['sync', 'fill']);
 /** where the comp's clave comes from (P19): 'frame' (the default: the clave layer's strikes in each bar's frame) or
  *  'pattern' (the fixed pattern of the table above, landed on any onset: the clave before phase I, byte for byte) */
 export const CLAVE_FROM = Object.freeze(['frame', 'pattern']);
-/** a frame clave's tone sets (P16): the bar's chord classes in tune, or anything inside the bar's frame */
-export const FRAME_SETS = Object.freeze(['chord', 'frame']);
+/** a frame clave's tone sets, in the reading order (P16: the bar's chord classes in tune, or anything inside the bar's
+ *  frame; Amendment 2, P26: the narrower ones, still inside the frame: the chord's root and fifth, its guide tones (its
+ *  classes but those two), its root alone) */
+export const FRAME_SETS = Object.freeze(['chord', 'frame', 'root+5th', 'guide', 'root']);
+/** the comp's density (BASS_VOICING_ORDER.md Amendment 2, rule 10, P27): the tier the frame clave is chosen in, by its
+ *  share of steps sounding over the bars. 'sparse-med' (the default) is sparse and medium together */
+export const COMP_DENSITIES = Object.freeze(['sparse-med', 'sparse', 'medium', 'dense']);
+/** each tier's band of the share (P27): sparse 10–25 %, medium 25–50 %, dense 50–85 % (under 10 %, or over 85 % and a
+ *  pulse, is no tier); 'sparse-med' 10–50 %. A tier's band is also its density term's (COMP_RULES' `share`, read
+ *  against the band) */
+export const DENSITY_BANDS = Object.freeze({ 'sparse-med': Object.freeze([0.1, 0.5]), sparse: Object.freeze([0.1, 0.25]), medium: Object.freeze([0.25, 0.5]), dense: Object.freeze([0.5, 0.85]) });
+/** with no candidate in the asked tier, the tiers tried in turn (P27: the nearest; medium's two neighbours, the sparser
+ *  first: proposed) */
+export const DENSITY_FALLBACK = Object.freeze({ 'sparse-med': Object.freeze(['dense']), sparse: Object.freeze(['medium', 'dense']), medium: Object.freeze(['sparse', 'dense']), dense: Object.freeze(['medium', 'sparse']) });
+/** the comp's density by default (rule 10, Avery) */
+export const DEFAULT_COMP_DENSITY = 'sparse-med';
 /** a Fill partner shares a clave's stroke when one of its strokes is within this many slots of it (P17) */
 export const SHARE_SLOTS = 0.25;
 
@@ -549,6 +565,7 @@ export function claveText(clave, bar = null) {
 /** a clave's tone set in words (rhythm-claves' set ids: 'rest' every tone but 1/1, 'step:k' a 12-step grid step,
  *  'tone:f' one tone) */
 export const claveSetText = (set) => (set == null ? '' : set === 'rest' ? 'every tone but 1/1' : set === 'chord' ? 'the chord tones' : set === 'frame' ? 'the tones in frame'
+  : set === 'root+5th' ? 'the root and fifth' : set === 'guide' ? 'the guide tones' : set === 'root' ? 'the roots'
   : set.startsWith('step:') ? `grid step ${set.slice(5)}` : set.startsWith('tone:') ? `the tone ${set.slice(5)}` : String(set));
 /** where a clave came from, in a few words (phase E): 'from layer A · 4 steps' (mined), the curated pattern's name
  *  ('son clave 3-2', "bossa's rim"), 'asked' (a pattern the row's table doesn't hold); a frame clave (P21) 'layer A ·
@@ -562,11 +579,13 @@ export function claveSource(clave) {
   return f.asked ? 'asked' : '';
 }
 
-/** the ranked alternates the trace carries (R2): the top `top` mined, then the curated, each { id, name?, steps, span, pattern, onsets, score, terms, bars, from } */
+/** the ranked alternates the trace carries (R2): the top `top` mined, then the curated, each { id, name?, steps, span,
+ *  pattern, onsets, score, terms, bars, from }; a frame clave's ranks (Amendment 2, P27) are its tier's, each with its
+ *  `share` and `tier`. rearrange.js returns them again over the chords as they play when a chord changes (P30) */
 export function claveAlternates(R, top = ALTERNATES_TOP) {
   // a frame clave (phase I) also each bar's pattern, and a clave read in frame says so (`read`)
   const one = (c) => ({ id: c.id, ...(c.name ? { name: c.name } : {}), steps: c.steps, span: c.span ?? 1, pattern: c.pattern, onsets: c.onsets.length, score: c.score, terms: { ...c.terms }, bars: c.bars ?? 0, from: { ...c.from },
-    ...(c.patterns ? { patterns: [...c.patterns] } : {}), ...(c.read ? { read: c.read } : {}) });
+    ...(c.patterns ? { patterns: [...c.patterns] } : {}), ...(c.read ? { read: c.read } : {}), ...(c.share != null ? { share: c.share, tier: c.tier } : {}) });
   return [...R.ranked.candidates.slice(0, top).map(one), ...R.curated.map(one)];
 }
 
@@ -633,8 +652,22 @@ function nodeAtTick(row, tick) {
 //              frame of the chord its slot sounds under, the nearest within half-way to its neighbouring places (then
 //              one place wider), inside its bar or span (`layInFrame`; none: silent).
 //   ids        'frame:A/8/chord': the layer's letter, the grain and the set (`frameClaveId`, `parseFrameId`).
+//
+// Amendment 2 (BASS_VOICING_ORDER.md, Avery's rule 10, P26–P27; DESIGN_NOTES "Comp density tiers (phase M)"):
+//   sets       three narrower sets, still inside the frame (so rule 6 holds): 'root+5th' (the chord's class 0 or its
+//              fifth, the class of its 6–8 interval: 7, a dim chord's 6, an aug chord's 8), 'guide' (its other classes)
+//              and 'root' (class 0), each in tune as 'chord' reads them. The reading order is chord, frame, root+5th,
+//              guide, root: a reading equal to an earlier set's at the same layer and grain is dropped, the earlier
+//              (wider) name kept, as the frame set's twin of the chord set's is.
+//   share      a candidate's strokes over its steps, over the bars: the x's of its patterns over n·N.
+//   tiers      sparse 10–25 %, medium 25–50 %, dense 50–85 % of the share; under 10 % or over 85 % is no tier.
+//              `density` ('sparse-med', the default: 10–50 %; 'sparse', 'medium', 'dense') asks one. The ranking is the
+//              tier's candidates only, each scored by COMP_RULES with the density term read against the tier's band.
+//              With none in the tier, the nearest tier's (DENSITY_FALLBACK) plays, and `density.fellBack` says so; with
+//              none in any, every candidate under COMP_RULES as phase I ranked them. Fill's partner is the best of the
+//              same ranking sharing no stroke (else the complement, which keeps the clave's own onsets a bar).
 
-const FRAME_ID = /^frame:([A-D])\/(\d+)\/(chord|frame)$/;
+const FRAME_ID = /^frame:([A-D])\/(\d+)\/(chord|frame|root\+5th|guide|root)$/;
 /** a frame clave's id: 'frame:<layer letter>/<grain>/<set>' */
 export const frameClaveId = (name, grain, set) => `frame:${name}/${grain}/${set}`;
 /** a frame clave's id read → { id, name, grain, set } | null */
@@ -642,8 +675,20 @@ export function parseFrameId(id) {
   const m = FRAME_ID.exec(String(id ?? ''));
   return m ? { id: m[0], name: m[1], grain: Number(m[2]), set: m[3] } : null;
 }
+/** a frame tone set in words (P21, P26) */
+export const FRAME_SET_WORDS = Object.freeze({ chord: 'chord tones', frame: 'tones in frame', 'root+5th': 'root and fifth', guide: 'guide tones', root: 'roots' });
 /** a frame clave's source in words (P21): 'layer A · 8 steps · chord tones' */
-const frameWords = (f) => `layer ${f.name} · ${f.grain} steps · ${f.set === 'chord' ? 'chord tones' : 'tones in frame'}`;
+const frameWords = (f) => `layer ${f.name} · ${f.grain} steps · ${FRAME_SET_WORDS[f.set] ?? f.set}`;
+/** a share's tier (P27): 'sparse' | 'medium' | 'dense' | null (under 10 %, or over 85 %) */
+export function densityTierOf(share) {
+  if (share < DENSITY_BANDS.sparse[0] - EPS || share > DENSITY_BANDS.dense[1] + EPS) return null;
+  return share < DENSITY_BANDS.sparse[1] - EPS ? 'sparse' : share <= DENSITY_BANDS.medium[1] + EPS ? 'medium' : 'dense';
+}
+/** is a tier inside the asked density ('sparse-med' holds sparse and medium) */
+const tierIn = (tier, asked) => tier != null && (asked === 'sparse-med' ? tier === 'sparse' || tier === 'medium' : tier === asked);
+/** a density in words: 'sparse–medium (10–50 %)' */
+export const densityWords = (d, { band = true } = {}) => `${d === 'sparse-med' ? 'sparse–medium' : d}${band && DENSITY_BANDS[d] ? ` (${DENSITY_BANDS[d].map((x) => Math.round(100 * x)).join('–')} %)` : ''}`;
+const checkDensity = (d) => { if (!COMP_DENSITIES.includes(d)) fail(`a comp density is one of ${COMP_DENSITIES.join(', ')}, not ${JSON.stringify(d)}`); return d; };
 
 /** a place (slot units, clamped to the loop) → its share of the row's cycle from the downbeat (the drums' `rAt`) */
 function rAtOf(ctx, W, q) {
@@ -703,30 +748,56 @@ function stepStrike(st, n, j, q) {
   return st[lo];
 }
 
-/** the tone-set test (P16): is a strike's tone in the set, under the chord its slot sounds under */
-const inSetTest = (ctx, set) => (set === 'chord' ? (c, t) => ctx.chordClass(c, t) >= 0 : (c, t) => c.frame.inside[t] === 1);
+/** a chord's fifth (P26): the class of its interval of 6–8 semitones (7; a dim chord's 6, an aug chord's 8), or −1 */
+const fifthOf = (c) => { const f = c.intervals.find((x) => x >= 6 && x <= 8); return f ?? -1; };
+/** the tone-set test (P16, P26) on a strike's reading under its chord: `pc` its chord class in tune (−1: none), `inside`
+ *  its frame's test, `fifth` the chord's fifth */
+const SET_TEST = Object.freeze({
+  chord: (pc) => pc >= 0,
+  frame: (pc, inside) => inside,
+  'root+5th': (pc, inside, fifth) => pc === 0 || (pc >= 0 && pc === fifth),
+  guide: (pc, inside, fifth) => pc > 0 && pc !== fifth,
+  root: (pc) => pc === 0,
+});
+const checkSet = (set) => SET_TEST[set] ?? fail(`no frame tone set "${set}" (${FRAME_SETS.join(', ')})`);
 
 /**
- * A layer read at grain n under a tone set (P16), over every bar or the bars of `only` (a Set).
+ * A layer read at grain n under several tone sets at once (P16, P26): each step's strike found once and read once under
+ * the chord its slot sounds under, over every bar or the bars of `only` (a Set).
+ * → [a reading a set, in `sets`' order: { patterns: [bar → 'x..x' | null (a bar not read)], strokes: [{ bar, step, place,
+ *   node, tick, slot, snap: 'strike' }] }]
+ */
+function readFrameGrain(ctx, chordAt, L, n, sets, { only = null } = {}) {
+  const { row, S, N, posSlot } = ctx, tests = sets.map(checkSet), Q = sets.length;
+  const out = sets.map(() => ({ patterns: [], strokes: [] }));
+  const chars = sets.map(() => new Array(n)), own = sets.map(() => new Set());
+  for (let k = 0; k < N; k++) {
+    if (only && !only.has(k)) { for (const o of out) o.patterns.push(null); continue; }
+    const st = L.bars[k];
+    for (const o of own) o.clear();
+    for (let j = 0; j < n; j++) {
+      const s = stepStrike(st, n, j, k * S + (j * S) / n);
+      let pc = -1, inside = false, fifth = -1;
+      if (s) { const c = chordAt(posSlot[s.node]), t = row.tone[s.node]; pc = ctx.chordClass(c, t); inside = c.frame.inside[t] === 1; fifth = fifthOf(c); }
+      for (let q = 0; q < Q; q++) {
+        if (!s || !tests[q](pc, inside, fifth)) { chars[q][j] = '.'; continue; }
+        chars[q][j] = 'x';
+        if (own[q].has(s.node)) continue;
+        own[q].add(s.node);
+        out[q].strokes.push({ bar: k, step: j, place: s.place, node: s.node, tick: row.tick[s.node], slot: posSlot[s.node], snap: 'strike' });
+      }
+    }
+    for (let q = 0; q < Q; q++) out[q].patterns.push(chars[q].join(''));
+  }
+  return out;
+}
+
+/**
+ * A layer read at grain n under a tone set (P16, P26), over every bar or the bars of `only` (a Set).
  * → { patterns: [bar → 'x..x' | null (a bar not read)], strokes: [{ bar, step, place, node, tick, slot, snap: 'strike' }] }
  */
 export function readFrameLayer(ctx, chordAt, L, n, set, { only = null } = {}) {
-  const { row, S, N, posSlot } = ctx, inSet = inSetTest(ctx, set), patterns = [], strokes = [];
-  for (let k = 0; k < N; k++) {
-    if (only && !only.has(k)) { patterns.push(null); continue; }
-    const st = L.bars[k], own = new Set();
-    let p = '';
-    for (let j = 0; j < n; j++) {
-      const s = stepStrike(st, n, j, k * S + (j * S) / n);
-      if (!s || !inSet(chordAt(posSlot[s.node]), row.tone[s.node])) { p += '.'; continue; }
-      p += 'x';
-      if (own.has(s.node)) continue;
-      own.add(s.node);
-      strokes.push({ bar: k, step: j, place: s.place, node: s.node, tick: row.tick[s.node], slot: posSlot[s.node], snap: 'strike' });
-    }
-    patterns.push(p);
-  }
-  return { patterns, strokes };
+  return readFrameGrain(ctx, chordAt, L, n, [set], { only })[0];
 }
 
 /** a frame candidate's score over its bars' patterns (P16): { score, terms: { held, density, fit }, bars (recurring), counted } */
@@ -749,36 +820,50 @@ function framePattern(patterns, rules = COMP_RULES) {
   return best ?? patterns[0] ?? '';
 }
 
-/** a frame candidate from its reading (the record chooseClave's claves have, plus `patterns` and its `strokes`) */
+/** a candidate's share (P27): its patterns' x's over its steps */
+const shareOf = (patterns, n) => patterns.reduce((a, p) => a + onsetsOf(p).length, 0) / (n * patterns.length);
+
+/** a frame candidate from its reading (the record chooseClave's claves have, plus `patterns`, its `strokes`, its `share`
+ *  and `tier` (P27)), scored by `rules` (a tier's: its band as the density term's share) */
 function frameCandidate(L, n, set, got, rules) {
-  const s = scoreFrameClave(got.patterns, n, rules), pattern = framePattern(got.patterns, rules);
+  const s = scoreFrameClave(got.patterns, n, rules), pattern = framePattern(got.patterns, rules), share = shareOf(got.patterns, n);
   return { id: frameClaveId(L.name, n, set), source: 'frame', steps: n, span: 1, pattern, onsets: onsetsOf(pattern), patterns: got.patterns,
-    score: s.score, terms: s.terms, bars: s.bars, counted: s.counted, from: { layer: L.value, name: L.name, grain: n, set, frame: true }, strokes: got.strokes };
+    score: s.score, terms: s.terms, bars: s.bars, counted: s.counted, share, tier: densityTierOf(share), from: { layer: L.value, name: L.name, grain: n, set, frame: true }, strokes: got.strokes };
 }
+/** COMP_RULES with a tier's band as its density term's share (P27) */
+const rulesOf = (rules, band) => (band ? { ...rules, share: band } : rules);
 
 /**
- * The composition's frame claves, ranked (P16), with the curated claves (scored as fixed patterns, recurrence 0).
- * → { source: 'frame', tier: 'frame', ranked: { tried, candidates }, curated, byId, rules, strikes }
- *   (rankRowClaves' shape, so `claveAlternates` and the trace read either)
+ * The composition's frame claves, ranked (P16), in a density tier (P27), with the curated claves (scored as fixed
+ * patterns, recurrence 0).
+ *   density   'sparse-med' (the default), 'sparse', 'medium' or 'dense'
+ * → { source: 'frame', tier: 'frame', density: { asked, played (a tier, or null: none in any), band, fellBack, counts:
+ *     { sparse, medium, dense, none } }, ranked: { tried, read (every counted candidate), candidates (the tier's) }, curated,
+ *     byId, rules (the tier's), strikes } (rankRowClaves' shape, so `claveAlternates` and the trace read either)
  */
-export function rankFrameClaves(row, ctx, chordAt, { rules = COMP_RULES, rhythm = null } = {}) {
-  const strikes = frameStrikes(row, ctx, rhythm), list = [];
+export function rankFrameClaves(row, ctx, chordAt, { rules = COMP_RULES, rhythm = null, density = DEFAULT_COMP_DENSITY } = {}) {
+  checkDensity(density);
+  const strikes = frameStrikes(row, ctx, rhythm), readings = [];
   let tried = 0;
   for (const L of strikes) for (const n of L.grains) {
-    let chord = null;
-    for (const set of FRAME_SETS) {
-      const got = readFrameLayer(ctx, chordAt, L, n, set);
-      tried++;
-      // the frame set reading what the chord set reads (its strikes all chord tones) is the chord set's candidate
-      if (set === 'frame' && chord && got.patterns.every((p, k) => p === chord.patterns[k])) continue;
-      if (set === 'chord') chord = got;
-      const c = frameCandidate(L, n, set, got, rules);
-      if (c.counted) list.push(c);
-    }
+    const got = readFrameGrain(ctx, chordAt, L, n, FRAME_SETS);
+    tried += FRAME_SETS.length;
+    // a reading equal to an earlier (wider) set's at this layer and grain is that set's candidate (P16, P26)
+    got.forEach((g, q) => { if (!got.slice(0, q).some((h) => h.patterns.every((p, k) => p === g.patterns[k]))) readings.push({ L, n, set: FRAME_SETS[q], got: g }); });
   }
+  // every counted reading, scored as phase I scores (COMP_RULES), then its tier by its share
+  const read = readings.map((x) => frameCandidate(x.L, x.n, x.set, x.got, rules)).filter((c) => c.counted);
+  const counts = { sparse: 0, medium: 0, dense: 0, none: 0 };
+  for (const c of read) counts[c.tier ?? 'none']++;
+  // the asked tier, else the nearest with a candidate, else every candidate as phase I ranked them
+  const played = [density, ...DENSITY_FALLBACK[density]].find((d) => read.some((c) => tierIn(c.tier, d))) ?? null;
+  const band = played ? DENSITY_BANDS[played] : null, R = rulesOf(rules, band);
+  // the tier's candidates scored again, their density term read against its band
+  const list = played ? read.filter((c) => tierIn(c.tier, played)).map((c) => frameCandidate(strikes.find((L) => L.name === c.from.name), c.steps, c.from.set, c, R)) : read;
   const candidates = list.sort((a, b) => b.score - a.score);   // stable: ties stay in the reading order
   const curated = curatedClaves().map((c) => ({ ...c, bars: 0, ...scoreClave({ ...c, bars: 0 }, 0, rules, { held: 'bars' }), from: { pattern: c.name }, read: 'frame' }));
-  return { source: 'frame', tier: 'frame', ranked: { tried, candidates }, curated, byId: new Map(candidates.map((c) => [c.id, c])), rules, strikes };
+  return { source: 'frame', tier: 'frame', density: { asked: density, played, band: band ? [...band] : [...rules.share], fellBack: played !== density, counts },
+    ranked: { tried, read: read.length, candidates }, curated, byId: new Map(candidates.map((c) => [c.id, c])), rules: R, strikes };
 }
 
 /**
@@ -881,8 +966,8 @@ function frameComplement(ctx, chordAt, clave, { units, onsets, per = null, only 
  * → chooseClave's { clave, partner, asked, ties, partners, ranks }, the clave and the partner carrying their `strokes`
  *   (and `silent`: a count) and `read: 'frame'`; a frame clave and a frame partner also `patterns` and `from.frame`
  */
-export function chooseFrameClave(row, ctx, chordAt, { asked = null, rng = Math.random, rules = COMP_RULES, ranks = null, units } = {}) {
-  const R = ranks ?? rankFrameClaves(row, ctx, chordAt, { rules });
+export function chooseFrameClave(row, ctx, chordAt, { asked = null, rng = Math.random, rules = COMP_RULES, ranks = null, units, density = DEFAULT_COMP_DENSITY } = {}) {
+  const R = ranks ?? rankFrameClaves(row, ctx, chordAt, { rules, density });
   const onsets = inFrameOnsets(ctx, chordAt, units);
   const pick = (list) => {
     if (!list.length) return null;
@@ -894,12 +979,13 @@ export function chooseFrameClave(row, ctx, chordAt, { asked = null, rng = Math.r
   if (asked != null) {
     const f = parseFrameId(asked);
     if (f) {
-      // a frame id the ranking left out (no bar left in, or the chord set's twin) is read as asked
+      // a frame id the ranking left out (no bar left in, a wider set's twin, or outside the tier) is read as asked,
+      // scored as the tier's are
       let c = R.byId.get(f.id);
       if (!c) {
         const L = R.strikes.find((x) => x.name === f.name) ?? fail(`"${asked}": no layer ${f.name} in ${R.strikes.map((x) => x.name).join(', ')}`);
         if (!L.grains.includes(f.grain)) fail(`"${asked}": layer ${f.name} strikes ${L.m} times a bar, so it is read at ${L.grains.length ? L.grains.join(', ') : 'no grain'}, not ${f.grain}`);
-        c = frameCandidate(L, f.grain, f.set, readFrameLayer(ctx, chordAt, L, f.grain, f.set), rules);
+        c = frameCandidate(L, f.grain, f.set, readFrameLayer(ctx, chordAt, L, f.grain, f.set), R.rules ?? rules);
       }
       chosen = { ...c, read: 'frame', silent: 0 };
     } else {
@@ -926,7 +1012,9 @@ export function chooseFrameClave(row, ctx, chordAt, { asked = null, rng = Math.r
     return { ...rest, ...(score != null ? { score, terms: { ...terms }, bars: bars ?? 0 } : {}), ...(from ? { from: { ...from } } : {}), ...(patterns ? { patterns: [...patterns] } : {}),
       onsets: [...x.onsets], read: 'frame', strokes: strokes.map((s) => ({ ...s })), silent };
   };
-  return { clave: keep(chosen), partner: keep(partner), asked: asked != null, ties, partners: free.length, ranks: R, source: 'frame' };
+  // the density it was chosen in (P27): asked, the tier that played (none: no candidate in any), and whether it fell back
+  const compDensity = R.density ? { asked: R.density.asked, played: R.density.played, fellBack: R.density.fellBack } : null;
+  return { clave: { ...keep(chosen), ...(compDensity ? { compDensity } : {}) }, partner: keep(partner), asked: asked != null, ties, partners: free.length, ranks: R, source: 'frame' };
 }
 
 /** a stroke as spec.clave keeps it (compose.js `layCompClave`'s order), timed by the part context */
@@ -955,5 +1043,7 @@ export function rereadClave(row, ctx, chordAt, rec, bars, { units, of = null }) 
   // silent: a frame clave lands nothing (none); a frame complement, its steps less its strokes; a fixed clave, its silent
   // steps in the other bars (the same places laid again) and the bars' new ones
   const silent = rec.from?.frame ? 0 : patterns ? xsOf(patterns) - strokes.length : rec.silent - (got.strokes.length + got.silent.length - was) + got.silent.length;
-  return { ...rec, ...(patterns ? { patterns } : {}), strokes, silent };
+  // a frame clave's share and tier (Amendment 2, P27) read again from its new patterns; its score stays the one it was chosen by
+  const share = rec.from?.frame && rec.share != null ? shareOf(patterns, rec.steps) : null;
+  return { ...rec, ...(patterns ? { patterns } : {}), strokes, silent, ...(share != null ? { share, tier: densityTierOf(share) } : {}) };
 }

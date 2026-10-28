@@ -262,15 +262,25 @@ console.log('\n— fills, with and against');
 console.log('\n— the drums move nothing else');
 {
   let bad = '', n = 0;
+  // pinned to Sparse · Free (BASS_VOICING_ORDER.md Amendment 2, P28): Compose's own bass now covers the kick, so the drums
+  // move it by design; the check below is that they move nothing else
+  const own = { bass: { density: 'sparse', lock: 'free' } };
+  let bassOnly = 0, kicked = 0;
   for (const [L, T] of [[[8, 7, 6, 5], 4], [[41, 42, 43], 8], [[119, 42, 15, 8], 8], [[768, 769], 8], [[97, 103, 37], 5]]) {
-    const plain = JSON.stringify(compose(L, T, { seed: 2, drums: false }));
+    const plain = JSON.stringify(compose(L, T, { seed: 2, drums: false, overrides: own }));
+    // the default: the drums move the bass (Moving · Kick; off, Moving · Free) and its decision and stats, nothing else
+    const strip = (x) => { const { drums: _d, ...r } = x; return JSON.stringify({ ...r, parts: r.parts.filter((p) => p.id !== 'bass'), decisions: r.decisions.filter((d) => d.what !== 'bass'), stats: { ...r.stats, notes: { ...r.stats.notes, bass: 0 }, bassRooted: '' } }); };
+    const off = compose(L, T, { seed: 2, drums: false }), on = compose(L, T, { seed: 2 });
+    if (strip(off) === strip(on)) bassOnly++;
+    if (on.parts.find((p) => p.id === 'bass').bass.stats.lock === 'kick' && off.parts.find((p) => p.id === 'bass').bass.stats.lock === 'free') kicked++;
     for (const mode of [...LAYERED_MODES, 'son', 'funk']) {
-      const s = compose(L, T, { seed: 2, drums: { mode, kit: { hat: '' } } }), { drums, ...rest } = s;
+      const s = compose(L, T, { seed: 2, drums: { mode, kit: { hat: '' } }, overrides: own }), { drums, ...rest } = s;
       n++;
       if (!drums || drums.mode !== mode || JSON.stringify(rest) !== plain) bad ||= `${L.join(':')} ${mode}`;
     }
   }
-  check(`compose with drums of every kind: every other field byte-identical to compose without them (${n})`, !bad, bad);
+  check(`compose with drums of every kind (the bass pinned Sparse · Free): every other field byte-identical to compose without them (${n})`, !bad, bad);
+  check(`Compose's own bass (Moving · Kick): the drums move only the bass, its decision and its stats; on, it covers the kick, off it lands anywhere (${bassOnly}/5, ${kicked}/5)`, bassOnly === 5 && kicked === 5);
   check('drums: false leaves them out; a refusal has none', !('drums' in compose([8, 7, 6, 5], 4, { drums: false })) && !('drums' in compose([3, 2], 4)) && arrangeDrums({ refused: true }) === null);
   check('the default kit is the made kit of Audio/drums; a voice set to \'\' is off', JSON.stringify(specs[0].spec.drums.kit) === JSON.stringify(DEFAULT_KIT) && arrangeDrums(specs[0].spec, { kit: { hat: '' } }).kit.hat === '');
   check('options are checked: an unknown option or mode is refused', throws(() => arrangeDrums(specs[0].spec, { style: 'x' }), /no drum option/) && throws(() => arrangeDrums(specs[0].spec, { mode: 'polka' }), /mode must be/));

@@ -84,7 +84,10 @@ const layerBox = doc.createElement('div'); layerBox.id = 'layer-controls-content
 
 const audio = makeCtx();
 let composes = 0, bassJobs = 0;
-const runCompose = async (l, T, o) => { composes++; return compose(l, T, o); };
+// the window still treats Sparse · Free as Compose's own bass (phase N moves it to Moving · Kick, BASS_VOICING_ORDER.md
+// Amendment 2, P28), so every Compose here is pinned to the bass Compose mined before
+const OWN_BASS = Object.freeze({ density: 'sparse', lock: 'free' });
+const runCompose = async (l, T, o) => { composes++; return compose(l, T, { ...o, overrides: { ...(o?.overrides ?? {}), bass: OWN_BASS } }); };
 runCompose.rearrange = (job) => new Promise((resolve) => setTimeout(() => resolve(answer({ id: 1, kind: 'rearrange', ...job }).result), 1));
 runCompose.arp = (job) => Promise.resolve(answer({ id: 1, kind: 'arp', ...job }).result);
 runCompose.bass = (job) => { bassJobs++; return new Promise((resolve) => setTimeout(() => resolve(answer({ id: 1, kind: 'bass', ...job }).result), 1)); };
@@ -106,7 +109,7 @@ const expectedBass = (st = S()) => arrangeBass({ ...st.spec, drums: st.drums }, 
 const bassMatches = () => { const e = expectedBass(), p = partOfSpec('bass'); return sig(p) === sig(e) && J(p.bass) === J(e.bass); };
 const L = [41, 42, 43, 0], T = 8, OV = { bars: 4, slotsPerBar: 8 };
 /** a Compose as the window's (the full table: the worker's, here compose itself) with these overrides; no trace */
-const composeAs = (over = {}) => { const { trace, ...plain } = compose(L, T, { seed: 1, worker: true, overrides: { ...OV, ...over } }); return plain; };
+const composeAs = (over = {}) => { const { trace, ...plain } = compose(L, T, { seed: 1, worker: true, overrides: { ...OV, bass: OWN_BASS, ...over } }); return plain; };
 
 console.log('Phase H — the bass in the window');
 setRhythm(L, T);

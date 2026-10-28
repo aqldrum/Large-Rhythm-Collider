@@ -60,14 +60,24 @@
 //                         by the seed; Fill's partner the best candidate sharing no stroke (none within ¼ slot), else the
 //                         complement landed in frame; the curated and asked claves keep their pattern and land only on
 //                         in-frame onsets (claves.js). `claveFrom: 'pattern'` is the clave above, byte for byte.
+//                         DENSITY TIERS (`compDensity`; Amendment 2, rule 10, P26–P27): three narrower sets too (the
+//                         chord's root and fifth, its guide tones, its roots), and the clave is chosen in a tier of its
+//                         share of steps sounding: 'sparse-med' (10–50 %, the default), 'sparse' (10–25 %), 'medium'
+//                         (25–50 %), 'dense' (50–85 %), the density term read against the tier's band; with none in the
+//                         tier, the nearest tier's best, said in the clave decision (and the trace's `density`).
 //                         `compStyle: 'notes'` (the frozen core): one note a stroke (rhythm-claves.js and
 //                         chunk-comping.js, ported), a slot's step sounding only where its strike is on one of the bar's
 //                         chord tones; the layer whose bars make the best claves (25–50 % of its steps sounding, a
 //                         straight or triplet count of steps to the bar, a stroke in every bar). Either way a bar with
 //                         no stroke is struck once on its root onset.
-//                bass     lines.js' bass mined bar by bar, each bar rooted on its chord's root tone, two octaves under the
+//                bass     (Amendment 2, rule 11, P28) Moving · Kick by default: bass.js `arrangeBass` over the finished
+//                         spec once its drums are (lines.js' mid band, every kick covered on an in-frame onset, the
+//                         density adding the rest; the drums off or no kick in the mode: Moving · Free, said why), so the
+//                         part carries its `bass` record and a later arrangeBass at those options gives it again. The
+//                         `bass` override ({ density, lock }) asks another; Sparse · Free is the bass before, mined here:
+//                         lines.js' bass bar by bar, each bar rooted on its chord's root tone, two octaves under the
 //                         lead's range, opening on a tone of the root's class (inside the frame) where it can, else
-//                         the cheapest line; a bar with no line plays its root onset.
+//                         the cheapest line; a bar with no line plays its root onset (no record, no `bass` decision).
 //                inner    a lead line (sparse or mid) over the chords an octave under the lead, never on the lead's
 //                         onsets and paying weights.avoid = 0.6 a note on a slot where the lead sounds (proposed).
 //   sounds     one Audio/voices instrument a part: lead flute (legato) or vibes; chords warm or glassbed; comping
@@ -102,7 +112,8 @@ import { spread, evenIn, isPlain, MAX_SHARES } from './chart.js';
 import { getInstrument } from '../../Audio/voices/recipes.js';
 import { readProgression, harmonyPins, describeProgression } from './progression.js';
 import { arrangeDrums, drumGrid } from './drums.js';
-import { readRhythm, chooseClave, chooseFrameClave, claveAlternates, claveText, claveSource, layClave, COMP_RELATIONS, CLAVE_FROM } from './claves.js';
+import { readRhythm, chooseClave, chooseFrameClave, claveAlternates, claveText, claveSource, layClave, densityWords, COMP_RELATIONS, CLAVE_FROM, COMP_DENSITIES, DEFAULT_COMP_DENSITY } from './claves.js';
+import { arrangeBass, bassWhy, BASS_DENSITIES, BASS_LOCKS, COMPOSE_BASS } from './bass.js';
 import { createTrace, refusedTrace, traceCapsOf } from './trace.js';
 import { placeClip, targetRoot, registerOf, DEFAULTS as TARGET_DEFAULTS } from './target.js';
 import { pcName } from './midi.js';
@@ -130,7 +141,7 @@ export const STRUM_WINDOW = 0.25;
 /** chords: a stroke's own onset (plus 0.1 a layer more striking it), the strum's other tones, a borrowed tone (P7, proposed) */
 export const COMP_VELOCITY = Object.freeze({ stroke: 0.55, strum: 0.5, borrowed: 0.45 });
 export const MAX_COMP_VOICES = 4;
-const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses', 'compStyle', 'clave', 'compRelation', 'voicing', 'claveFrom']);
+const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses', 'compStyle', 'clave', 'compRelation', 'voicing', 'claveFrom', 'compDensity', 'bass']);
 /** the chords' two voicings (BASS_VOICING_ORDER.md, decided 3–4, P1–P7): led (the default: each tone the octave nearest
  *  the chord before, inside a window, clear of the mud limit) and close (root position from an octave under the root, as before) */
 export const VOICINGS = Object.freeze(['led', 'close']);
@@ -742,16 +753,29 @@ export function innerOf(ctx, { from, bars }, { chords, targets, lead, table, rul
 
 /**
  * The clave decision's words when it is read from the frames (BASS_VOICING_ORDER.md P21; Compose's and rearrange.js
- * `reclave`'s): its source ("layer A · 8 steps · chord tones"), each bar's pattern, its score, and how its strokes were
- * found. `choice` chooseFrameClave's, `clave` the laid spec.clave, `fromAsked` whether `claveFrom` was asked.
+ * `reclave`'s): its source ("layer A · 8 steps · chord tones"), the density tier it was chosen in (Amendment 2, P27, P31),
+ * each bar's pattern, its score, and how its strokes were found. `choice` chooseFrameClave's, `clave` the laid spec.clave,
+ * `fromAsked` whether `claveFrom` was asked, `densityAsked` whether `compDensity` was.
  */
-export function frameClaveWhy(choice, clave, fromAsked = false) {
+export function frameClaveWhy(choice, clave, fromAsked = false, densityAsked = false) {
   const C = choice.clave, R = choice.ranks, f = C.from ?? {}, n = R.ranked.candidates.length;
   const head = `${choice.asked ? 'asked, read ' : ''}${fromAsked ? 'from the frame (asked)' : 'from the frame by default (rule 6, Avery)'}: a bar's clave is the clave layer's own strikes whose tones fit the bar's chord`;
-  const how = choice.asked ? (f.frame ? 'the frame clave asked' : `${C.label ?? C.pattern}, its steps landed only on in-frame onsets`) : f.frame ? `the best of ${n} frame clave${n === 1 ? '' : 's'} (${R.ranked.tried} readings: each layer at its strikes a bar, or at 3–16 steps when denser, under the chord tones and the frame)` : `no layer reads a frame clave, so the curated ${C.label}`;
+  const tier = R.density ? `; ${densityWhy(R.density, densityAsked)}` : '';
+  const how = choice.asked ? (f.frame ? 'the frame clave asked' : `${C.label ?? C.pattern}, its steps landed only on in-frame onsets`)
+    : f.frame ? `the best of ${n} ${R.density?.played ? `${densityWords(R.density.played, { band: false })} ` : ''}frame clave${n === 1 ? '' : 's'} (${R.ranked.tried} readings: each layer at its strikes a bar, or at 3–16 steps when denser, under the chord tones, the frame, the root and fifth, the guide tones and the roots)` : `no layer reads a frame clave, so the curated ${C.label}`;
   const score = C.score != null ? ` scores ${C.score.toFixed(3)} (recurrence ${C.terms.held.toFixed(2)}, density ${C.terms.density.toFixed(2)}, fit ${C.terms.fit.toFixed(2)})` : '';
+  const share = C.share != null ? `, ${Math.round(100 * C.share)} % of its steps sounding` : '';
   const laid = f.frame ? `${clave.strokes.length} strokes, each the layer's own strike at its own time` : `laid a pass ${C.span > 1 ? `each ${C.span} bars` : 'a bar'} on in-frame onsets only, ${clave.strokes.length} of its ${clave.strokes.length + clave.silent} steps landed (${clave.silent} silent: no in-frame onset there)`;
-  return `${head}; ${how}: ${claveSource(C)}, ${claveText(C)}${score}${choice.ties > 1 ? `, ${choice.ties} tied, by the seed` : ''}; ${laid}`;
+  return `${head}${tier}; ${how}: ${claveSource(C)}, ${claveText(C)}${share}${score}${choice.ties > 1 ? `, ${choice.ties} tied, by the seed` : ''}; ${laid}`;
+}
+/** the comp's density tier in words (P27, P31): asked or the default, the tier that played, and a fall-back said.
+ *  `D` rankFrameClaves' `density` */
+export function densityWhy(D, asked = false) {
+  const own = `${asked ? `the comp's density asked, ${densityWords(D.asked)}` : `the comp's density ${densityWords(D.asked)} by default (rule 10, Avery)`}`;
+  const c = D.counts, all = `${c.sparse} sparse, ${c.medium} medium, ${c.dense} dense${c.none ? `, ${c.none} in no tier` : ''}`;
+  if (!D.fellBack) return `${own}: the frame claves ranked inside it, their density term read against its band (${all})`;
+  return D.played ? `${own}: no frame clave in it (${all}), so the nearest tier's, ${densityWords(D.played)}, its density term read against that band`
+    : `${own}: no frame clave in any tier (${all}: each under 10 % or over 85 % of its steps), so every one ranked by COMP_RULES (25–50 %)`;
 }
 /** the comp's strokes from a spec's clave (R3, decided 6): its own landed steps in Sync, its partner's in Fill (a partner
  *  step landed on an onset the clave took is left out, so the comp and the perc never strike together) → [stroke] */
@@ -890,6 +914,19 @@ function targetLeadNotes(row, cells, tg, base) {
   return out;
 }
 
+/** the `bass` override checked (Amendment 2, P28): { density?, lock? }, bass.js' densities and locks (no picks) */
+function checkBassOverride(b) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) fail(`bass must be { density, lock }, not ${JSON.stringify(b)}`);
+  for (const k of Object.keys(b)) if (k !== 'density' && k !== 'lock') fail(`the bass override takes density and lock, not "${k}"`);
+  if (b.density != null && !BASS_DENSITIES.includes(b.density)) fail(`bass.density must be one of ${BASS_DENSITIES.join(', ')}`);
+  if (b.lock != null && !BASS_LOCKS.includes(b.lock)) fail(`bass.lock must be one of ${BASS_LOCKS.join(', ')}`);
+}
+/** an arranged bass bar's played line as the trace's bass bar holds it (trace.js `bassBar`; null: a root onset or a rest) */
+function bassLineOf(b) {
+  const a = b.how === 'mined' || b.how === 'roots' ? b.alternates.find((x) => x.id === b.picked) : null;
+  return a ? { id: a.id, type: 'bass', band: a.band, motion: a.motion ?? null, contour: a.contour ? { shape: a.contour } : null, from: b.bar, bars: 1, notes: a.notes.map((n) => ({ cell: n.slot, node: n.node, octave: n.octave })) } : null;
+}
+
 /**
  * Compose.
  *   layers         the rhythm, [a, b, c, d] as the LRC names them
@@ -899,7 +936,9 @@ function targetLeadNotes(row, cells, tg, base) {
  *                  baseHz, compLayer (compStyle 'notes'), presence ('cluster' | 'exact'), settlePasses (an integer 0..3),
  *                  compStyle ('chords', the default, | 'notes': the comping, above), clave ('steps:pattern' | 'son' |
  *                  'rumba' | 'bossa' | a frame clave's 'frame:A/8/chord': the comp's clave in chords), compRelation ('sync', the
- *                  default, | 'fill'), claveFrom ('frame', the default, | 'pattern': phase I, above) }, worker (true:
+ *                  default, | 'fill'), claveFrom ('frame', the default, | 'pattern': phase I, above), compDensity
+ *                  ('sparse-med', the default, | 'sparse' | 'medium' | 'dense': the frame clave's tier, Amendment 2),
+ *                  bass ({ density, lock }: bass.js', Moving · Kick by default; Sparse · Free the bass before) }, worker (true:
  *                  the full table unless asked), progression ([a ratio of the row | null] a bar: progression.js;
  *                  absent or all null: lead-led, exactly as without it),
  *                  drums (drums.js `arrangeDrums` options, or false: no `drums` in the spec),
@@ -924,6 +963,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   if (progression && progression.some((x) => x != null && x !== '' && x !== 'auto')) input.progression = JSON.parse(JSON.stringify(progression));
   if (!(Number.isFinite(cycleSeconds) && cycleSeconds > 0)) fail(`cycleSeconds must be a positive number, not ${cycleSeconds}`);
   for (const k of Object.keys(overrides || {})) if (!OVERRIDES.includes(k)) fail(`no override "${k}" (overrides are ${OVERRIDES.join(', ')})`);
+  if (overrides?.bass != null) checkBassOverride(overrides.bass);
   // ── a MIDI target (phase A3): recorded in the input only when given ──
   if (target != null) {
     if (typeof target !== 'object' || !target.clip?.notes?.length) fail('a target is { clip (midi.js decodeClip), placement?, tonic?, maxDriftCents? }');
@@ -1081,7 +1121,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   if (!COMP_STYLES.includes(compStyle)) fail(`compStyle must be one of ${COMP_STYLES.join(', ')}`);
   const chordsStyle = compStyle === 'chords';
   if (chordsStyle && ov.compLayer != null) fail('compLayer is compStyle \'notes\'\'s: in chords the clave leads the comp (the override is clave)');
-  if (!chordsStyle && (ov.clave != null || ov.compRelation != null || ov.claveFrom != null)) fail('clave, compRelation and claveFrom are compStyle \'chords\'\'s: \'notes\' comps on a layer (compLayer)');
+  if (!chordsStyle && (ov.clave != null || ov.compRelation != null || ov.claveFrom != null || ov.compDensity != null)) fail('clave, compRelation, claveFrom and compDensity are compStyle \'chords\'\'s: \'notes\' comps on a layer (compLayer)');
   if (chordsStyle) decide('compStyle', compStyle, ov.compStyle != null ? 'asked' : 'chords by default (decided, Avery): the clave\'s strokes (Amendment 1), each the chord strummed from the row, then borrowed');
   let comp = null, compChoices = null, clave = null, claveChoice = null;
   const compUnits = compUnitsOf(spans ? h.chords : null, N, S);
@@ -1092,19 +1132,23 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     if (!COMP_RELATIONS.includes(relation)) fail(`compRelation must be one of ${COMP_RELATIONS.join(', ')}`);
     const claveFrom = ov.claveFrom ?? 'frame';
     if (!CLAVE_FROM.includes(claveFrom)) fail(`claveFrom must be one of ${CLAVE_FROM.join(', ')}`);
+    // the comp's density (Amendment 2, rule 10, P27): the tier the frame clave is chosen in; a pattern clave has none
+    const compDensity = ov.compDensity ?? DEFAULT_COMP_DENSITY;
+    if (!COMP_DENSITIES.includes(compDensity)) fail(`compDensity must be one of ${COMP_DENSITIES.join(', ')}`);
+    if (claveFrom === 'pattern' && ov.compDensity != null) fail('compDensity is the frame clave\'s tier (claveFrom \'frame\'): a pattern clave has none');
     // the clave's ties by the seed, from a generator of its own (no draw of Compose's moves). From the frame (the default;
     // BASS_VOICING_ORDER.md phase I, rule 6, P16–P19): read from the chords above, so it comes after them, a bar's
     // strokes the clave layer's strikes whose tones fit the chord the slot sounds under; from the pattern: the table's
     // fixed pattern laid through the drums' grid (drums.js `landPlace`: the onsets are the row's layers' pulses)
     if (claveFrom === 'frame') {
       const chordAt = spans ? (j) => slotChord[j] : (j) => h.chords[Math.floor(j / S)];
-      claveChoice = chooseFrameClave(row, ctx, chordAt, { asked: ov.clave ?? null, rng: seededRandom(`${seed}/clave`), units: compUnits });
+      claveChoice = chooseFrameClave(row, ctx, chordAt, { asked: ov.clave ?? null, rng: seededRandom(`${seed}/clave`), units: compUnits, density: compDensity });
     } else claveChoice = chooseClave(readRhythm(row), { asked: ov.clave ?? null, rng: seededRandom(`${seed}/clave`) });
     clave = layCompClave(row, ctx, claveChoice, { relation, phase, units: compUnits, cut: tg ? { bars: tg.N } : null });
     const shared = clave.partner.shared;
     const C = claveChoice.clave, R = claveChoice.ranks, src = C.from;
     if (claveFrom === 'frame') {
-      decide('clave', C.id, frameClaveWhy(claveChoice, clave, ov.claveFrom != null));
+      decide('clave', C.id, frameClaveWhy(claveChoice, clave, ov.claveFrom != null, ov.compDensity != null));
       decide('compRelation', relation, `${ov.compRelation != null ? 'asked' : 'sync by default (decided 6)'}: ${relation === 'sync' ? 'the comp strikes the clave\'s own strokes, with the perc' : 'the comp strikes the clave\'s gaps'}; for Fill, ${claveChoice.partner.source === 'partner'
         ? `its partner ${claveSource(claveChoice.partner)}, ${claveText(claveChoice.partner)} (the best-ranked of ${claveChoice.partners} frame claves with no stroke within ¼ slot of the clave's)` : `the complement of its steps Euclid-thinned to its mean onsets a bar, ${claveText(claveChoice.partner)}, landed in frame (no frame clave clear of its strokes)`}`
         + `${shared ? `, ${shared} of whose strokes share the clave's onset and are left out` : ''}`);
@@ -1143,10 +1187,14 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   for (const u of units) compBar(u.chord, u.bar, u.range, led ? u.notes : null);
   const compStrum = compTones ? compFound / compTones : 0;
   if (chordsStyle) decide('compStrum', compStrum, `the clave's ${compStrokes.length} stroke${compStrokes.length === 1 ? '' : 's'} (${clave.relation}${compStrokes.length > compSourceOf(clave).length ? '; a bar or span with none struck once on its root onset' : ''}), each the bar's chord: ${compFound} of ${compTones} tones (${(100 * compStrum).toFixed(0)} %) from the row within ±${STRUM_WINDOW} slot, the rest borrowed from the chord voices`);
-  // bass: bar by bar, rooted on the bar's root tone
+  // bass (BASS_VOICING_ORDER.md Amendment 2, rule 11, P28): Moving · Kick by default, arranged by bass.js `arrangeBass`
+  // over the finished spec once its drums are (below: it covers their kick, and falls back to Free, saying why, with the
+  // drums off or no kick in the mode). Asked Sparse · Free (`bass` override), Compose's own bass, mined here bar by bar,
+  // rooted on the bar's root tone, as before
+  const bassAsk = { ...COMPOSE_BASS, ...(ov.bass ?? {}) }, bassOwn = bassAsk.density === 'sparse' && bassAsk.lock === 'free', bassDecisionAt = decisions.length;
   parts.bass = [];
   let bassRooted = 0;
-  for (let k = 0; k < N; k++) {
+  if (bassOwn) for (let k = 0; k < N; k++) {
     const over = spans ? harmonyOver(h.chords, h.targets, k, 1, S) : null;
     const b = spans ? bassOfBar(ctx, ownChords[k][0], k, { table, scale: h.targets.scale, over: { frames: over.frames, targets: over.targets.bars } })
       : bassOfBar(ctx, h.chords[k], k, { table, scale: h.targets.scale, target: h.targets.bars[k] });
@@ -1187,7 +1235,6 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
 
   const out = (id, notes, { voice = false, strokes = null } = {}) => partOf(ctx, id, notes, { sound: sound[id], legato: legato[id], enabled: enabled[id], baseHz, ratioOf, voice, strokes });
   const partList = [out('lead', parts.lead), out('chords', voices, { voice: true }), out('comp', parts.comp, chordsStyle ? { voice: true, strokes: compStrokes } : {}), out('bass', parts.bass), out('inner', parts.inner)];
-  rec?.parts(partList, { ...(chordsStyle ? { clave, alternates: claveAlternates(claveChoice.ranks), asked: ov.clave != null, tier: claveChoice.ranks.tier } : { comp, compChoices, compAsked: ov.compLayer != null }), voicing: led ? voicingStats(voiced) : null });
 
   const counts = Object.fromEntries(partList.map((p) => [p.id, p.notes.length]));
   const spec = {
@@ -1221,6 +1268,18 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   }
   // ── drums (drums.js): from the spec alone, so the lab re-arranges them without composing again; `drums: false` leaves them out ──
   if (drums !== false) spec.drums = arrangeDrums(spec, drums === true ? {} : drums);
+  // ── the bass arranged (Amendment 2, P28): bass.js `arrangeBass` over the spec as it plays (the drums above read no bass,
+  // so its kick is theirs), at the density and lock asked or Moving · Kick; what it returns is the bass part, so a later
+  // `arrangeBass` at those options gives it again byte for byte, and rearrange.js re-mines it at them ──
+  if (!bassOwn) {
+    const part = arrangeBass(spec, { row, cells }, bassAsk), B = part.bass;
+    partList[partList.findIndex((p) => p.id === 'bass')] = part;
+    counts.bass = part.notes.length;
+    spec.stats.bassRooted = `${B.stats.rooted}/${N}`;
+    decisions.splice(bassDecisionAt, 0, { what: 'bass', value: `${B.density} · ${B.stats.lock}`, why: bassWhy(B, ov.bass != null) });
+    if (rec) for (const b of B.bars) rec.bassBar(b.bar, bassLineOf(b), b.rooted);
+  }
+  rec?.parts(partList, { ...(chordsStyle ? { clave, alternates: claveAlternates(claveChoice.ranks), asked: ov.clave != null, tier: claveChoice.ranks.tier, density: claveChoice.ranks.density ?? null } : { comp, compChoices, compAsked: ov.compLayer != null }), voicing: led ? voicingStats(voiced) : null });
   if (rec) { rec.drums(spec); rec.done(spec); spec.trace = rec.finish(); }
   return spec;
 }

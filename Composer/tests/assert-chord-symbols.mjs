@@ -161,7 +161,7 @@ console.log('\n— the ratio form\'s identity');
   let bad = '';
   // the pins' comp is one note a stroke: compStyle 'notes' (COMP_ARP_ORDER.md P9), the override itself left out of the input
   // the frozen specs' comp in notes and chords close (BASS_VOICING_ORDER.md P7), the overrides themselves left out
-  const notes = (L, T, o) => { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close' } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; return spec; };
+  const notes = (L, T, o) => { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close', bass: { density: 'sparse', lock: 'free' } } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; delete spec.input.overrides.bass; return spec; };
   for (const [name, L, T, o] of RATIO_CASES) { const h = sha(notes(L, T, o)); if (h !== RATIO_HASHES[name]) { bad = `${name}: ${h}`; break; } }
   check(`${RATIO_CASES.length} targeted specs byte-identical to b69a39e's (traced, worker, mod off, too long, not of the row)`, !bad, bad);
   const L = [119, 42, 15, 8], plain = compose(L, 8, { seed: 1, progression: ['1/1', '3/2', null, '5/3'] });

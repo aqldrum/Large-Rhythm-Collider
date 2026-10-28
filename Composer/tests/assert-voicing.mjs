@@ -24,6 +24,9 @@
 //   • a chord swap: tones unchanged outside its bar, `revoicedBars` exactly the other bars whose octaves moved (before
 //     the swap too, now), the result the brute force's again, a JSON round trip the same; a clave switch equal to a
 //     Compose with the same override
+//   • (Amendment 2, rule 13, P32) a lead follow, a chord swap and a typed chord voice their new chords as the setting
+//     says: Led the voicing pass's output (the brute force's loop), Close root position; a Close | Led flip before or
+//     after each edit gives the other setting's edit (chords and comp byte for byte)
 //   • running the pass again on its own output changes nothing
 //   • the budget: ≤ 5 ms a pass (the median of 7) on every test row and on a 32-bar chart over the 16,359-onset row
 //     (every 4th bar split in two: 40 chords of 3–4 tones, about 60 states a chord)
@@ -32,7 +35,7 @@
 //   node Composer/tests/assert-voicing.mjs
 import { compose, voiceLead, partContext } from '../core/compose.js';
 import { compose as composeBefore } from './fixtures/compose-before.js';
-import { rearrange, reclave, applyRearrange, materialsOf } from '../core/rearrange.js';
+import { rearrange, reclave, revoice, applyRearrange, materialsOf } from '../core/rearrange.js';
 import { midiNotesOf, channelOf } from '../perform/composer-midi.js';
 import { chainsOf } from '../perform/composer-player.js';
 import { readMidi, decodeClip } from '../core/midi.js';
@@ -282,8 +285,8 @@ console.log('\n— voicing: \'close\'');
   const cases = [[[8, 7, 6, 5], 4, {}], [[11, 9, 7, 5], 6, {}], [[119, 42, 15, 8], 8, { compLayer: 'B' }], [[768, 769], 8, { legato: { comp: true } }], [[41, 42, 43], 8, { bars: 2 }]];
   let same = 0;
   for (const [L, T, ov] of cases) for (const seed of [1, 4]) {
-    const live = compose(L, T, { seed, overrides: { ...ov, compStyle: 'notes', voicing: 'close' } });
-    delete live.input.overrides.compStyle; delete live.input.overrides.voicing;
+    const live = compose(L, T, { seed, overrides: { ...ov, compStyle: 'notes', voicing: 'close', bass: { density: 'sparse', lock: 'free' } } });
+    delete live.input.overrides.compStyle; delete live.input.overrides.voicing; delete live.input.overrides.bass;
     if (J(live) === J(composeBefore(L, T, { seed, overrides: ov }))) same++;
   }
   check(`'close' with the comp in notes: ${same}/${cases.length * 2} byte for byte the frozen Compose (fixtures/compose-before.js)`, same === cases.length * 2);
@@ -417,6 +420,45 @@ console.log('\n— a chord swap, a clave switch');
     }
   }
   check(`${eq}/${m} clave switches equal a Compose with the same override (the comp's octaves from the led chords)`, eq === m);
+}
+
+// ── new chords voiced as the setting says (BASS_VOICING_ORDER.md Amendment 2, rule 13, P32) ──
+console.log('\n— new chords voiced with the current setting: a lead follow, a chord swap, a typed chord (Amendment 2, P32)');
+{
+  /** each phrase's kept line and runner-ups, from the trace */
+  const leadAlternates = (trace) => { const h = trace.events.find((e) => e.kind === 'harmony'); return h.lead.phrases.map((id, p) => { const evs = trace.events.filter((e) => e.kind === 'lead' && e.phrase === p && e.mined && e.mined.id === id); return { kept: id, runnersUp: evs.length ? evs[evs.length - 1].runnersUp.map((r) => r.id) : [] }; }); };
+  const voiced = (spec) => J(spec.parts.filter((p) => p.id === 'chords' || p.id === 'comp'));
+  const flip = (spec, voicing) => { const m = materialsOf(spec); return applyRearrange(spec, revoice(spec, m.row, m.cells, { voicing })); };
+  const apply = (spec, edit, trace) => { const m = materialsOf(spec); return applyRearrange(spec, rearrange(spec, m.row, m.cells, edit, { trace })); };
+  const tally = { 'lead follow': [0, 0], 'chord swap': [0, 0], 'typed chord': [0, 0] }, bad = [];
+  for (const [L, T] of [[[119, 42, 15, 8], 8], [[768, 784], 8], [[11, 9, 7, 5], 4], [[19, 17, 16, 15], 4], [[8, 7, 6, 5], 4], [[768, 769], 8]]) {
+    const full = compose(L, T, { seed: 1, trace: true }), { trace, ...led } = full, close = compose(L, T, { seed: 1, overrides: { voicing: 'close' } });
+    const edits = [];
+    leadAlternates(trace).forEach((a, p) => { if (a.runnersUp[0]) edits.push(['lead follow', { phrase: p, line: trace.lines[a.runnersUp[0]], chordsFollow: true }]); });
+    const h = trace.events.find((e) => e.kind === 'harmony'), k = Math.min(1, led.knobs.bars - 1);
+    const ev = trace.events.find((e) => e.kind === 'chord' && e.round === h.chosenRound && e.bar === k), cand = (ev?.candidates ?? []).find((_, i) => i !== ev.pickIndex);
+    if (cand) edits.push(['chord swap', { bar: k, chord: cand }]);
+    edits.push(['typed chord', { bar: 0, chord: { rootTone: led.chords[led.knobs.bars - 1].rootTone, quality: led.chords[0].quality === 'minor_triad' ? 'major_triad' : 'minor_triad' } }]);
+    for (const [kind, edit] of edits) {
+      const Le = apply(led, edit, trace), Ce = apply(close, edit, trace), tag = `${L.join(':')} ${kind}`;
+      if (J(Le.chords) === J(led.chords)) continue;   // nothing new to voice
+      tally[kind][1]++;
+      const b = [];
+      if (J(Le.chords) !== J(Ce.chords)) b.push('led and close edits give other chords');
+      // Led: the voicing pass's output over the new chords (the brute force's loop, and a revoice to Led changes nothing)
+      const a = audit(Le); if (a.length) b.push(`led: ${a[0]}`);
+      if (!Le.stats.voicing || voiced(flip(Le, 'led')) !== voiced(Le)) b.push('led: not the pass\'s output');
+      // Close: root position (a revoice to Close changes nothing; no voicing pass)
+      if (Ce.stats.voicing || voiced(flip(Ce, 'close')) !== voiced(Ce)) b.push('close: not root position');
+      // a Close | Led flip after the edit, and before it: the same as the other setting's edit
+      if (voiced(flip(Le, 'close')) !== voiced(Ce) || voiced(flip(Ce, 'led')) !== voiced(Le)) b.push('a flip after the edit differs from the other setting\'s');
+      if (voiced(apply(flip(led, 'close'), edit, trace)) !== voiced(Ce) || voiced(apply(flip(close, 'led'), edit, trace)) !== voiced(Le)) b.push('a flip before the edit differs from the other setting\'s');
+      if (b.length) bad.push(`${tag}: ${b[0]}`); else tally[kind][0]++;
+    }
+  }
+  const said = Object.entries(tally).map(([k, [g, n]]) => `${k} ${g}/${n}`).join(', ');
+  check(`new chords voiced as the setting says (${said}): Led the voicing pass's output (the brute force's closed loop), Close root position; a flip before or after each edit gives the other setting's edit, chords and comp byte for byte`,
+    !bad.length && Object.values(tally).every(([, n]) => n > 0), bad.slice(0, 3).join('; '));
 }
 
 // ── the 16k row, and the budget ──
