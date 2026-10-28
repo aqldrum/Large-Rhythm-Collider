@@ -387,3 +387,21 @@ C and D touch different core files and can run side by side. E goes after both.
   arp lead (the window hides it); the player lanes the comp by voice (a legato comp chained voices into each other).
   CLEAN_MIDI_ORDER.md's routing table (Comp a zone of one) is left as history. Avery's browser and rig pass owed: the
   checklist above.
+- **2026-10-27, amendment 1 phase D merged (71b15d7, `arp/mined`).** `arrangeArp` mines the `arp` type (+ a "few rests"
+  band) over S × time partitioned anchors, ranked no-rests first, top 10 a phrase, picks by id, B1's walk the
+  fallback (`walked`). Options `{ time, picks, legato }`; the window's one Time select (picker is E). M6: 768:769 wasn't a
+  porting bug: an evenly struck row has no weak slot, so no foreign tone may sound; `lines.js` `weakTies` (opt-in, a
+  slot tied at the median off the strong beats is weak) is retried only on a phrase that mines nothing. Builder's calls:
+  arps aren't chord-tones-only (scale and resolved foreign tones, as the miner allows); accent on strong beats; default
+  ×1; a time past 32 anchors runs at the largest that fits. 16k row: lead + inner at ×3 ≈ 110 ms on the main thread
+  (under `MAIN_THREAD_ONSETS`). Open: chord-tones-only option?; ×1 default?; a lower worker threshold for arps?;
+  weakTies only on failure?; picks reset on a Time change?
+- **2026-10-27, amendment 1 phase C merged (`clave/core`; with D, 78/0).** `core/claves.js` (rhythm-claves +
+  chunk-comping ported, parity tests), one clave a composition in `spec.clave` with its partner, laid a pass a bar via
+  drums.js `landPlace`, the comp synced (or `compRelation: 'fill'`), the perc on the clave in the layered modes.
+  Builder's calls: `held` read as recurrence (one rhythm); size tiers meeting → whole → every (dense rows find no
+  meeting size ≤ 16); a Fill step on a clave onset is silent; `compLayer` under chords throws. Seed 1: 8:7:6:5
+  `4:.xx.`; 19:17:16:15 `16:.......x....x.xx`; 768:769, 768:784 and the 16k row all `4:..xx` (ties at the top with 8-
+  and 16-step claves, broken by the seed). The comp now strikes 2–4 times a bar on every row. A live clave switch needs
+  a rearrange-style step (pieces exported, step not built: E). Open: longer claves win ties?; accept the size tiers?;
+  Fill silent on shared onsets?; tone sets read from 1/1 (chunk-tunes) rather than the root?
