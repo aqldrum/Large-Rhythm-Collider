@@ -49,6 +49,8 @@
 //              inside its own bar, or in a chart's split bar inside the span its place falls in (that span's chord).
 //   fill       (decided 6) the partner, or with none the complement of the clave's steps Euclid-thinned to its own onset
 //              count (`complementClave`).
+//   words      (phase E, the window) `claveText` (the pattern a bar a group), `claveSource` ('from layer A · 4 steps',
+//              'son clave 3-2'), `claveSetText` (a tone set's id in words). A live switch is rearrange.js `reclave`.
 
 import { lowerBoundTick } from './row.js';
 import { euclidPattern } from './cells.js';
@@ -515,6 +517,25 @@ export function chooseClave(rhythm, { asked = null, rng = Math.random, rules = C
     score: chosen.score, terms: { ...chosen.terms }, bars: chosen.bars ?? 0, from: { ...chosen.from } };
   return { clave, partner: { id: partner.id, steps: partner.steps, span: partner.span, pattern: partner.pattern, onsets: [...partner.onsets], source: partner.source, ...(partner.together != null ? { together: partner.together } : {}) },
     asked: asked != null, ties, partners: partners.length, ranks: R };
+}
+
+/** a clave's pattern as a window shows it (phase E): one group a bar, so a 2-bar pass reads 'x..x..x. ..x.x...' */
+export function claveText(clave) {
+  const p = clave?.pattern ?? '', B = clave?.span ?? 1;
+  if (B <= 1 || p.length % B) return p;
+  const w = p.length / B;
+  return Array.from({ length: B }, (_, b) => p.slice(b * w, (b + 1) * w)).join(' ');
+}
+/** a clave's tone set in words (rhythm-claves' set ids: 'rest' every tone but 1/1, 'step:k' a 12-step grid step,
+ *  'tone:f' one tone) */
+export const claveSetText = (set) => (set == null ? '' : set === 'rest' ? 'every tone but 1/1' : set.startsWith('step:') ? `grid step ${set.slice(5)}` : set.startsWith('tone:') ? `the tone ${set.slice(5)}` : String(set));
+/** where a clave came from, in a few words (phase E): 'from layer A · 4 steps' (mined), the curated pattern's name
+ *  ('son clave 3-2', "bossa's rim"), 'asked' (a pattern the row's table doesn't hold) */
+export function claveSource(clave) {
+  const f = clave?.from ?? {};
+  if (f.layer != null) return `from layer ${f.name ?? f.layer} · ${clave.steps} steps`;
+  if (f.pattern) return f.pattern === 'bossa' ? 'bossa\'s rim' : curatedClave(f.pattern).label;
+  return f.asked ? 'asked' : '';
 }
 
 /** the ranked alternates the trace carries (R2): the top `top` mined, then the curated, each { id, name?, steps, span, pattern, onsets, score, terms, bars, from } */

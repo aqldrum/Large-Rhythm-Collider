@@ -1787,6 +1787,51 @@ Every step landed on these rows. Phase A's every-strike comp struck 6, 8, 32 and
 - A Fill partner step that lands on one of the clave's onsets is silent (`shared`), so the comp never strikes with the perc. None did on the probe rows.
 - The tone sets are read from 1/1 (the Collider's 12-step grid, chunk-tunes' `centre` 0), not from the composition's root.
 
+## The clave and arp pickers (Amendment 1, phase E)
+
+`COMP_ARP_ORDER.md` Amendment 1, phase E (built 2026-10-27, branch `ui/clave-arp`): the window over phases C and D. Decided 6 (Sync by default, Fill a switch) and 8 (ranked arps chosen like the lead's runner-ups) are Avery's, and so is the Time ruling below. The rest is the builder's, proposed. Compose's own output is unchanged (every identity fixture holds). Nothing here has been heard or seen in a browser.
+
+**The live clave step** (`rearrange.js` `reclave(spec, row, cells, { clave, relation })`). Switching the clave or Sync | Fill never re-composes.
+- A relation switch keeps the clave and its landed strokes; only the comp and the drums are rebuilt.
+- Another clave is chosen with `claves.js` `chooseClave(rhythm, { asked })` over the row's ranking, kept per row in a WeakMap (`rankRowClaves` is the cost: ~60 ms on the 16k row, once). It's laid by `compose.js` `layCompClave`, factored out of Compose byte for byte (with `compUnitsOf`), so the two can't drift.
+- Every bar's comp is strummed again over its chord *as it plays* (`walkChords` over `spec.chords`, a chart's spans each), with `compChordsOfBar` on `compNodesOf`. The drums are arranged again, so the perc follows the clave.
+- Nothing else moves: the chords, lead, bass and inner, every part's sound, legato and on/off, and baseHz. The `clave`, `compRelation` and `compStrum` decisions are said again ("chosen in the window: …"). `stats.clave` and `stats.compStrum` follow.
+- `rearrange()` dispatches `{ clave, relation }` to it, so the worker's rearrange message carries it with no worker change. `applyRearrange` writes in the clave, its stats line and the decisions. `compStyle: 'notes'` (no clave) is refused.
+- **Equal to Compose:** 99 switches over 6 rows, 2 charts and a MIDI target give the comp, the drums, every other part, `spec.clave`, `stats.clave` and the strum's share byte for byte as a Compose given the same `overrides.clave` / `compRelation` (`assert-claves.mjs`).
+- **Timing, the 16k row:** Sync → Fill ~5 ms. Another clave ~63 ms the first time (the row ranked once), then ~4 ms. The small rows are under 3 ms. It runs on the main thread below `MAIN_THREAD_ONSETS`, in the worker above it, as the other edits do.
+
+**Stored as an edit** (`state.edits.clave`, `store/composition-store.js`). `{ id?, relation? }`: only what differs from Compose's own, or null.
+- `setClave({ id, relation })` is one undo step through the same `edit()` door as a swap. Compose's own clave or Sync again removes that field. The snapshots copy `edits`, so undo, redo and the audition carry it with nothing new.
+- **Applied last in the fold** (`orderedEdits` puts it after the chord and lead edits). So a chord swap under a chosen clave re-strums over the new chord with that clave, and a change of clave never re-runs the chord edits' steps.
+- **A re-compose** (`landEdits`) keeps the choice where the new composition's trace still offers the clave among its alternates. Otherwise the id is dropped and listed under "Compose dropped" ("the chosen clave x.x.x was dropped: …"). Sync | Fill is always kept.
+- The ranking reads only the row (its layers), so within one rhythm every listed clave stays offered: only a pattern set through `setClave` that is in no table (it plays, said "asked") is dropped. A new cycle of the same row carries the choice (proposed, as the drum options are), and so does a new MIDI clip; the landing check applies to both.
+- `hasEdits` counts it. `editsExport` carries it.
+- `claveOf()` gives the window `{ id, text, source, relation, partner, strokes, silent, composedId, edit, asked, alternates }`. Its alternates are the trace's comp event's (the mined top 12, then son, rumba, bossa), each marked `current` and `composed`.
+
+**The comp inspector** (`page/composer-tab.js` `claveBlock`), under the cell's strokes line:
+- **The clave line:** "clave", its pattern in a `<code>` (`claveText`: one group a bar, so son reads `x..x..x. ..x.x...`), its source (`claveSource`: "from layer A · 4 steps", "son clave 3-2", "bossa's rim", "asked"), a "chosen" tag when it's an edit, and **Sync | Fill** (the Arp switch's segmented style). Fill's title names the partner, or the complement, it strikes.
+- **Details:** the score and its terms, the tone set in words (`claveSetText`), and the pattern Fill strikes.
+- **The claves to choose from,** in the trace's order: the mark (● plays now, C Compose's), the pattern, the source, and (Details) the score. The curated rows are dashed. A click auditions the clave from the next bar, and a second click, Keep or Revert work exactly as the chords' alternates do (`audition.js`, the controller's `audition` / `keepAudition` / `revertAudition`: Revert leaves no redo step). The audition bar and the edit note follow.
+- `matrix.js` `compLine`'s title now says "strokes of the clave".
+
+**The arp picker** (`arpPicker`, in the lead's arp context and the inner's cell context while the part plays as an arp):
+- The phrase holding the cell (`from ≤ bar < from + bars`, on `arpOf(part).phrases`) heads it: "Arps · phrase 2". Its ranked arps follow, by contour and band ("arch · no rests"), ● on the one playing and C on the best-ranked (the default). Details: each one's cost a note, its share of chord tones and its notes.
+- A walked phrase says so ("walked: nothing could be mined here … no arp to pick") and lists nothing. A pick the phrase no longer offers (after a chord swap, say) is marked in amber, and the best-ranked plays.
+- **Audition:** a click runs `audition(() => pickArp(part, phrase, id))`. That is the missing no-undo path: `pickArp` sets the part's picks through `setArp`, so it's one undo step when kept, and the controller's audition restores the snapshot and both stacks when reverted. Picking the best-ranked again removes the pick (the lead's "its own line again removes the edit"). `pickArp` refuses a part not playing as an arp, a walked phrase and an id the phrase doesn't offer.
+- **Time drops the picks (ruled).** Picks are keyed by phrase at a time, so `setArp(part, { time })` with a new time and no picks clears the part's picks. That is one undo step, and one undo restores both.
+- **A re-compose** keeps the picks its phrases still offer (an arp's id is a hash of its notes, so the same seed's Compose keeps them all). After the fold, a pick the arranged phrase reports `missed` is removed from `state.arps` and listed under "Compose dropped" (`dropped.arps: [{ part, phrase, id }]`), and the arps are arranged again without it. Only parts playing as arps are checked. A part in Line keeps its picks until it plays.
+
+**The animation's caption** (`trace-frames.js` `compDetail`): in chords, "the clave .xx. (from layer A · 4 steps): 8 strokes", and in Fill ", in its gaps (x..x)". The notes style keeps "on layer X (v), the best of N layers".
+
+**The window's size.** The comp inspector grows by the clave line and up to 15 rows, and the arp inspector by up to 10 rows a phrase. Both sit in the context section, which scrolls. Scores and costs stay behind Details (C1–C5).
+
+**Tests.**
+- `assert-claves.mjs` (+8): reclave against Compose, determinism, back to its own, the rearrange and worker doors, the refusals, the words, and the 16k timing.
+- `assert-page-clave.mjs` (new, 34): the clave line and Details, the list, Sync | Fill live with the perc and the plot, undo and redo, an alternate auditioned at once and at the bar boundary (Revert and Keep) equal to a Compose given it, a curated clave, a chord swap under a chosen clave, a re-compose keeping and dropping, the glyph's recall, the caption, notes, and the worker.
+- `assert-page-arp.mjs` (+16): the picker, audition at once and at the bar boundary, Revert and Keep, undo and redo, the best-ranked removing a pick, the refusals, Time dropping the picks with undo restoring both, a missed pick marked, a re-compose keeping and dropping picks, and a walked phrase. Its old check that Time kept the picks now checks that they drop.
+
+**Not verifiable in Node (for Avery's pass):** how the monospace pattern and the 15-row list fit at narrow widths; whether auditioning a clave at the bar boundary sounds seamless, given that the perc and the comp change together; and whether Fill on the dense rows' bunched claves (`..xx` → `xx..`) reads as a hocket.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

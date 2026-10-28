@@ -188,7 +188,7 @@ export function compLine(part, k) {
   const strokes = part.strokes.filter((x) => x.bar === k).length, notes = part.notes.filter((n) => n.bar === k), fromRow = notes.filter((n) => !n.borrowed).length;
   const share = notes.length ? fromRow / notes.length : null;
   return { strokes, tones: notes.length, fromRow, share, text: `${strokes} stroke${strokes === 1 ? '' : 's'}`, detail: share == null ? '' : `${Math.round(100 * share)}% from the row`,
-    title: `bar ${k + 1}: ${strokes} stroke${strokes === 1 ? '' : 's'} of the comp layer, each the bar's chord; ${fromRow} of ${notes.length} tones strummed from the row within ±¼ slot, ${notes.length - fromRow} borrowed from the chord voices (ringed on the plot)` };
+    title: `bar ${k + 1}: ${strokes} stroke${strokes === 1 ? '' : 's'} of the clave, each the bar's chord; ${fromRow} of ${notes.length} tones strummed from the row within ±¼ slot, ${notes.length - fromRow} borrowed from the chord voices (ringed on the plot)` };
 }
 
 /** a target lead cell's dots counted by kind (target-lines.js clipCounts' shape) */

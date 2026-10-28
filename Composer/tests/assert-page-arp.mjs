@@ -5,13 +5,19 @@
 //   • Arp on the inner: live, no re-compose; the inner exactly arrangeArp over the spec in Line; the harp (Q4); the
 //     matrix's lane and the part strip say "· arp"; Time shown (phase D, M5: it replaced Pattern, Rate, Range),
 //     Details' rests, chord-tone share and phrases mined
-//   • Time through its select, live; a phrase's pick through setArp (no picker yet: phase E); a sound chosen for the
-//     inner wins over the harp
+//   • Time through its select, live; a phrase's pick through setArp; a change of Time drops the picks (phase E, ruled:
+//     they are keyed by the phrase at a time) and one undo restores both; a sound chosen for the inner wins over the harp
+//   • the phrase picker (phase E): the phrase holding the cell lists its ranked arps by contour and band, the one playing
+//     marked; a click auditions one (stopped: at once; performing: held for the next bar boundary), Revert takes it back
+//     with no redo step, a second click (or Keep) keeps it as one undo step; the first again removes the pick; Details
+//     carries each arp's cost a note and chord-tone share; a pick its phrase no longer offers is marked; a walked phrase
+//     offers nothing
 //   • undo and redo step back through the switches and the knobs (the header's buttons)
 //   • the lead in Arp: its runner-ups hidden (Q5), the inner re-arranged off the arp's onsets, the drums' *with*
 //     re-arranged over the arp lead; Back to Line: the melody exactly as before
 //   • a chord swap re-arps: the Line part rearranged first (the inner re-mined), the arp over it
-//   • a re-compose (the same seed) keeps the modes; the glyph's recall plays them with no Compose; the part strips
+//   • a re-compose (the same seed) keeps the modes, and the picks its phrases still offer; one they don't is dropped and
+//     listed with "Compose dropped"; the glyph's recall plays them with no Compose; the part strips
 //   • a MIDI target: the lead's switch disabled, its title arpRefusal's words; the inner's still free
 //   • a big row's arps in the worker (runCompose.arp): the same parts as on this thread
 //   node Composer/tests/assert-page-arp.mjs
@@ -134,14 +140,57 @@ check(`Details: the rests, the chord tones' share and the phrases mined ("${stat
 check('the inner\'s mined-line note (smoothing) is gone while it is an arp; its tag says arp', !q(inspector, '.ctab-smooth') && /arp/.test(q(inspector, '.ctab-ctx-head .ctab-tag')?.textContent ?? ''));
 check('MIDI: the arp is one note at a time (its notes never overlap)', midiNotesOf(S().parts.inner, S().spec.knobs.cycleSeconds).every((n, i, a) => i === 0 || a[i - 1].end <= n.time + 1e-9));
 
+console.log('\n— the phrase picker (phase E)');
+{
+  const phrases = partOfSpec('inner').arp.phrases, p = phrases.findIndex((x) => x.alternates.length > 2), ph = phrases[p];
+  tab.selectCell('inner', ph.from);
+  const rows = () => qa(inspector, '.ctab-arp-alt'), names = () => rows().map((b) => q(b, '.ctab-alt-name').textContent);
+  check(`the inner's cell: the phrase holding it ("${q(inspector, '.ctab-arp-sub')?.textContent}") lists its ${ph.alternates.length} ranked arps by contour and band, the first playing and marked C`,
+    q(inspector, '.ctab-arp-sub')?.textContent === `Arps · phrase ${p + 1}` && rows().length === ph.alternates.length && J(names()) === J(ph.alternates.map((x) => `${x.contour} · ${x.band}`))
+    && rows()[0].classList.contains('current') && q(rows()[0], '.ctab-alt-mark').textContent === '●C' && !rows()[1].classList.contains('current'));
+  const x1 = ph.alternates[1], share = Math.round((100 * x1.chordTones) / x1.n);
+  check(`Details: each arp's cost a note and its chord tones ("${q(rows()[1], '.ctab-alt-ratio').textContent} · ${q(rows()[1], '.ctab-alt-cents').textContent}")`, q(rows()[1], '.ctab-alt-ratio').classList.contains('ctab-detail')
+    && q(rows()[1], '.ctab-alt-ratio').textContent === `${x1.perNote.toFixed(3)}/note` && q(rows()[1], '.ctab-alt-cents').textContent === `${share}% chord` && rows()[1].title.includes(`${share}% chord tones`));
+  const undoA = S().undo.length, redoA = S().redo.length, sigA = sig(partOfSpec('inner')), cA = composes;
+  rows()[1].click(); await settle();
+  check('a click auditions the second (stopped: applied at once): the pick plays, nothing composed', core.auditioning() && J(S().arps.inner.picks) === J({ [p]: x1.id }) && partOfSpec('inner').arp.phrases[p].picked === x1.id && arpsMatch() && composes === cA
+    && rows()[1].classList.contains('auditioning') && /auditioning/.test(q(inspector, '.ctab-audition').textContent));
+  await click('.ctab-revert');
+  check('Revert: the first again, the undo and redo stacks as they were (no redo step)', !core.auditioning() && J(S().arps.inner.picks) === '{}' && sig(partOfSpec('inner')) === sigA && S().undo.length === undoA && S().redo.length === redoA);
+  rows()[1].click(); await settle(); rows()[1].click(); await settle();
+  check('a second click keeps it: one undo step, marked as playing', !core.auditioning() && S().undo.length === undoA + 1 && J(S().arps.inner.picks) === J({ [p]: x1.id }) && rows()[1].classList.contains('current') && q(rows()[1], '.ctab-alt-mark').textContent === '●');
+  await click('.ctab-undo', left);
+  check('undo: the pick gone, the first arp playing', J(S().arps.inner.picks) === '{}' && sig(partOfSpec('inner')) === sigA);
+  await click('.ctab-redo', left);
+  const viaFirst = await core.pickArp('inner', p, ph.alternates[0].id);
+  check('redo: it plays again; picking the first again removes the pick (one undo step)', viaFirst.ok && J(S().arps.inner.picks) === '{}' && S().undo.length === undoA + 2 && sig(partOfSpec('inner')) === sigA);
+  check('pickArp refuses an id the phrase doesn\'t offer, and a part not playing as an arp', (() => { try { core.pickArp('inner', p, 'nope'); return false; } catch (e) { return /offers no arp/.test(e.message); } })()
+    && (() => { try { core.pickArp('lead', 0, x1.id); return false; } catch (e) { return /isn't playing as an arp/.test(e.message); } })());
+  // performing: held for the next bar boundary, as the chords' and the runner-ups' are
+  q(left, '.ctab-go').click(); await settle(2);
+  const bs = S().spec.timeline.barStarts, k = Math.min(ph.from + 1, bs.length - 1), x2 = ph.alternates[2];
+  audio.currentTime = 0.05 + bs[k - 1] + 0.1;
+  rows()[2].click(); await settle();
+  check(`performing (${S().status}): a click is held for the next bar boundary, nothing applied`, S().status === 'playing' && J(S().arps.inner.picks) === '{}' && /next bar/.test(q(inspector, '.ctab-audition').textContent));
+  audio.currentTime = 0.05 + bs[k] - 0.25; dom.raf.flush(1); await settle();
+  check('… applied just before the boundary', core.auditioning() && J(S().arps.inner.picks) === J({ [p]: x2.id }) && arpsMatch());
+  await click('.ctab-revert');
+  check('… Revert: back, no redo step', !core.auditioning() && J(S().arps.inner.picks) === '{}' && !core.canRedo());
+  q(left, '.ctab-go').click(); await settle(2);
+  audio.currentTime = 0;
+  await core.undo(); await core.undo();   // the picker's two kept steps, so the knobs' undo chain below starts where it did
+  check('(the picker\'s steps undone: the undo stack as before it)', S().undo.length === undoA && J(S().arps.inner.picks) === '{}');
+  tab.selectCell('inner', 0);
+}
+
 console.log('\n— the knobs');
 const undo0 = S().undo.length;
 const pickAt = partOfSpec('inner').arp.phrases.findIndex((x) => x.alternates.length > 1), second = partOfSpec('inner').arp.phrases[pickAt]?.alternates[1];
 await core.setArp('inner', { picks: second ? { [pickAt]: second.id } : {} });
 check(`a pick through setArp (phrase ${pickAt + 1}'s second arp, ${second?.contour} · ${second?.band}): it plays`, !!second && partOfSpec('inner').arp.phrases[pickAt].picked === second.id && J(S().arps.inner.picks) === J({ [pickAt]: second.id }) && arpsMatch());
 await pick('.ctab-arp-time', 2);
-check('Time → ×2: live, mined over two anchors a slot (the pick kept in the store)', partOfSpec('inner').arp.time === 2 && S().arps.inner.time === 2 && partOfSpec('inner').arp.stats.anchors === 4 * 8 * 2
-  && J(S().arps.inner.picks) === J({ [pickAt]: second?.id }) && arpsMatch() && composes === c0);
+check('Time → ×2: live, mined over two anchors a slot; the picks dropped (phase E, ruled: keyed by the phrase at a time)', partOfSpec('inner').arp.time === 2 && S().arps.inner.time === 2 && partOfSpec('inner').arp.stats.anchors === 4 * 8 * 2
+  && J(S().arps.inner.picks) === '{}' && partOfSpec('inner').arp.phrases.every((x) => x.missed == null) && arpsMatch() && composes === c0);
 await pick('.ctab-arp-time', 3);
 check('Time → ×3; each knob one undo step', partOfSpec('inner').arp.time === 3 && partOfSpec('inner').arp.stats.anchors === 4 * 8 * 3 && S().undo.length === undo0 + 3 && arpsMatch());
 core.setPart('inner', { legato: !S().parts.inner.legato });
@@ -152,7 +201,7 @@ console.log('\n— undo and redo');
 await click('.ctab-undo', left);
 check('undo: the last knob back (×3 → ×2)', partOfSpec('inner').arp.time === 2 && arpsMatch());
 await click('.ctab-undo', left);
-check('undo: ×1, the pick playing again', partOfSpec('inner').arp.time === 1 && partOfSpec('inner').arp.phrases[pickAt]?.picked === second?.id && arpsMatch());
+check('undo: ×1, the pick playing again (one undo step restores both)', partOfSpec('inner').arp.time === 1 && partOfSpec('inner').arp.phrases[pickAt]?.picked === second?.id && arpsMatch());
 await click('.ctab-undo', left);
 check('undo: the default Arp', J(S().arps.inner) === J({ mode: 'arp', time: 1, picks: {} }) && arpsMatch());
 await click('.ctab-undo', left);
@@ -167,16 +216,18 @@ check(`a sound chosen for the inner (${other}) wins over the harp, in Line and i
 console.log('\n— the lead in Arp');
 await core.setDrums({ mode: 'with' });
 tab.selectCell('lead', 0);
-const lineAlts = qa(inspector, '.ctab-alt').length;
+const runnerUps = () => qa(inspector, '.ctab-alt').filter((b) => !b.classList.contains('ctab-arp-alt')).length;
+const lineAlts = runnerUps();
 await click('.ctab-arp-on');
 const lead = partOfSpec('lead'), leadNodes = new Set(lead.notes.map((n) => n.node));
 check(`Lead → Arp: live, the arp over the same chords; its ${lineAlts} runner-ups hidden (Q5)`, composes === c0 && !!lead.arp && arpsMatch() && J(S().spec.chords) === J(composed0.chords)
-  && qa(inspector, '.ctab-alt').length === 0 && core.alternatesOf(0, 'lead') === null && laneName('lead') === 'Lead · arp' && /Line brings the melody back/.test(inspector.textContent));
+  && runnerUps() === 0 && core.alternatesOf(0, 'lead') === null && laneName('lead') === 'Lead · arp' && /Line brings the melody back/.test(inspector.textContent));
+check('… its picker in their place: the phrase\'s ranked arps', qa(inspector, '.ctab-arp-alt').length === (lead.arp.phrases[0].walked ? 0 : lead.arp.phrases[0].alternates.length) && q(inspector, '.ctab-arp-sub')?.textContent === 'Arps · phrase 1');
 check('the inner arp re-arranged off the arp lead\'s onsets (Q4)', partOfSpec('inner').notes.every((n) => !leadNodes.has(n.node)) && arpsMatch());
 check('the drums\' with re-arranged over the arp lead', S().drums.mode === 'with' && J(S().drums.hits) === J(arrangeDrums(S().spec, S().drumOptions).hits)
   && J(S().drums.hits) !== J(arrangeDrums({ ...S().spec, parts: S().spec.parts.map(lineOf) }, S().drumOptions).hits));
 await click('.ctab-arp-line');
-check('Back to Line: the melody exactly as before, its runner-ups back', !partOfSpec('lead').arp && sig(partOfSpec('lead')) === leadLine0 && qa(inspector, '.ctab-alt').length === lineAlts && laneName('lead') === 'Lead');
+check('Back to Line: the melody exactly as before, its runner-ups back (no picker)', !partOfSpec('lead').arp && sig(partOfSpec('lead')) === leadLine0 && runnerUps() === lineAlts && !q(inspector, '.ctab-arp-alt') && laneName('lead') === 'Lead');
 await click('.ctab-arp-on');
 
 console.log('\n— a chord swap re-arps');
@@ -191,11 +242,21 @@ await core.undo(); await settle();
 check('undo the swap: the arps over the composed chords again', J(S().spec.chords) === J(composed0.chords) && arpsMatch() && !!partOfSpec('lead').arp);
 
 console.log('\n— a re-compose and the glyph\'s recall');
+// a pick the phrase offers (kept through the same seed's Compose: an arp's id is a hash of its notes), and one it doesn't
+const pp = ['inner', 'lead'].find((id) => partOfSpec(id).arp.phrases.some((x) => x.alternates.length > 1)) ?? 'inner', ip = partOfSpec(pp).arp.phrases;
+const keepAt = ip.findIndex((x) => x.alternates.length > 1), goneAt = ip.findIndex((x, i) => i !== keepAt && !x.walked), keepId = ip[keepAt]?.alternates[1].id;
+await core.setArp(pp, { picks: { [keepAt]: keepId, ...(goneAt >= 0 ? { [goneAt]: 'no-such-arp' } : {}) } });
+tab.selectCell(pp, ip[Math.max(0, goneAt)].from);
+check(`a pick its phrase doesn't offer plays the best-ranked, marked in the ${pp}'s picker`, keepAt >= 0 && (goneAt < 0 || (partOfSpec(pp).arp.phrases[goneAt].missed === 'no-such-arp' && !!q(inspector, '.ctab-arp-missed'))));
 core.setSeed(S().input.seed);   // the same seed: dirty, Compose again
 const c1 = composes;
 q(left, '.ctab-go').click(); await settle();
 check('Compose again (same seed): the modes kept, the spec plays them', composes === c1 + 1 && S().composed !== composed0 && S().arps.lead.mode === 'arp' && S().arps.inner.mode === 'arp' && !!partOfSpec('lead').arp && !!partOfSpec('inner').arp && arpsMatch());
 check('… the undo stack cleared by the Compose, the knobs as they were', S().undo.length === 0 && S().arps.inner.time === 1);
+check(`… the pick its phrase still offers kept and playing; the other dropped and said (${J(S().dropped?.arps)})`, S().arps[pp].picks[keepAt] === keepId && partOfSpec(pp).arp.phrases[keepAt].picked === keepId
+  && (goneAt < 0 || (S().arps[pp].picks[goneAt] === undefined && J(S().dropped?.arps) === J([{ part: pp, phrase: goneAt, id: 'no-such-arp' }]) && partOfSpec(pp).arp.phrases.every((x) => x.missed == null)
+    && /arp pick \((Inner|Lead) phrase \d+\) was dropped/.test(q(left, '.ctab-dropped').textContent) && q(left, '.ctab-dropped').style.display !== 'none')));
+await core.setArp(pp, { picks: {} });
 const before = composes, playing = S().spec;
 const phase = await bridge.lens.press(); await settle();
 check('the glyph recalls it: no Compose, it plays the arps', phase === 'landed' && composes === before && S().spec === playing && S().status === 'playing' && !!partOfSpec('lead').arp);
@@ -215,6 +276,17 @@ check('… and setArp refuses it with those words', !refused.ok && refused.error
 tab.selectCell('inner', 0);
 check('the inner\'s switch is free on a target', !q(sw(), '.ctab-arp-on').disabled && q(sw(), '.ctab-arp-on').classList.contains('on'));
 await tab.setTarget(null); await settle();
+
+console.log('\n— a walked phrase offers nothing to pick');
+{
+  setRhythm([8, 7, 6, 5], 4);
+  q(left, '.ctab-go').click(); await settle();
+  await core.setArp('inner', { mode: 'arp', time: 2 });
+  const ph = partOfSpec('inner').arp.phrases, w = ph.findIndex((x) => x.walked);
+  if (w >= 0) tab.selectCell('inner', ph[w].from);
+  check(`8:7:6:5 at ×2: phrase ${w + 1} walked — the picker says so and lists nothing; pickArp refuses it`, w >= 0 && !!q(inspector, '.ctab-arp-walked') && !q(inspector, '.ctab-arp-alt')
+    && (() => { try { core.pickArp('inner', w, 'x'); return false; } catch (e) { return /walked/.test(e.message); } })());
+}
 
 console.log('\n— a big row\'s arps in the worker');
 {

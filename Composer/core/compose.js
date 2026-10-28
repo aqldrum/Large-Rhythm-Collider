@@ -465,6 +465,28 @@ export function innerOf(ctx, { from, bars }, { chords, targets, lead, table, rul
 export const compSourceOf = (clave) => (clave.relation === 'fill' ? clave.partner.strokes.filter((x) => !x.shared) : clave.strokes);
 /** the comp's onsets in slots [from, to) of a spec's clave → [node] in time order */
 export const compNodesOf = (clave, from, to) => compSourceOf(clave).filter((x) => x.slot >= from && x.slot < to).sort((a, b) => a.time - b.time || a.node - b.node).map((x) => x.node);
+/** the slot ranges a clave step may land in (R3): a chart's spans (chords with `from` and `slots`), else the N bars of S
+ *  slots → [{ from, to }] */
+export const compUnitsOf = (spans, N, S) => (spans ? spans.map((c) => ({ from: c.from, to: c.from + c.slots })) : Array.from({ length: N }, (_, k) => ({ from: k * S, to: (k + 1) * S })));
+/**
+ * A chosen clave laid on the composition's bars (R3; Compose's, and rearrange.js `reclave`'s, one path): the clave and
+ * its partner each laid a pass a bar through the drums' grid (drums.js `drumGrid`, `landPlace`), a partner stroke on
+ * an onset the clave took marked `shared`.
+ *   choice  claves.js chooseClave's { clave, partner }
+ *   opts    { relation ('sync' | 'fill'), phase, units (compUnitsOf), cut (a MIDI target's { bars }, or null) }
+ * → spec.clave: { …the clave, relation, strokes, silent, partner: { …the partner, strokes, silent, shared } }
+ */
+export function layCompClave(row, ctx, choice, { relation, phase, units, cut = null }) {
+  const g = drumGrid({ knobs: { cycleSeconds: ctx.T, rowCycleSeconds: ctx.rowT, bars: ctx.N, slotsPerBar: ctx.S, phase, ...(cut ? { cut: { bars: cut.bars } } : {}) },
+    input: { layers: row.layers }, stats: { grid: row.grid }, timeline: { slotStarts: ctx.starts.map((x) => x * ctx.rowT), barStarts: [] } });
+  const lay = (x) => {
+    const got = layClave(row, g, x, { units, slotOf: (i) => ctx.posSlot[i] });
+    return { strokes: got.strokes.map((y) => ({ bar: y.bar, step: y.step, place: y.place, node: y.node, tick: y.tick, time: ctx.timeOf(row.tick[y.node]), slot: y.slot, snap: y.snap })), silent: got.silent.length };
+  };
+  const own = lay(choice.clave), other = lay(choice.partner), took = new Set(own.strokes.map((x) => x.node));
+  let shared = 0; for (const x of other.strokes) if (took.has(x.node)) { x.shared = true; shared++; }
+  return { ...choice.clave, relation, strokes: own.strokes, silent: own.silent, partner: { ...choice.partner, strokes: other.strokes, silent: other.silent, shared } };
+}
 
 /**
  * A part as the spec has it, from the builders' notes: articulated (legato, retriggers) voice by voice when `voice`
@@ -748,7 +770,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   if (!chordsStyle && (ov.clave != null || ov.compRelation != null)) fail('clave and compRelation are compStyle \'chords\'\'s: \'notes\' comps on a layer (compLayer)');
   if (chordsStyle) decide('compStyle', compStyle, ov.compStyle != null ? 'asked' : 'chords by default (decided, Avery): the clave\'s strokes (Amendment 1), each the chord strummed from the row, then borrowed');
   let comp = null, compChoices = null, clave = null, claveChoice = null;
-  const compUnits = spans ? h.chords.map((c) => ({ from: c.from, to: c.from + c.slots })) : Array.from({ length: N }, (_, k) => ({ from: k * S, to: (k + 1) * S }));
+  const compUnits = compUnitsOf(spans ? h.chords : null, N, S);
   if (chordsStyle) {
     // the draws the layer's ties took before the clave: the sounds' draws below stay where they were
     for (let i = 0; i < row.active.length; i++) rng();
@@ -757,15 +779,8 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     // the clave's ties by the seed, from a generator of its own (no draw of Compose's moves)
     claveChoice = chooseClave(readRhythm(row), { asked: ov.clave ?? null, rng: seededRandom(`${seed}/clave`) });
     // laid on the bars through the drums' grid (drums.js `landPlace`: the onsets are the row's layers' pulses)
-    const g = drumGrid({ knobs: { cycleSeconds: ctx.T, rowCycleSeconds: ctx.rowT, bars: N, slotsPerBar: S, phase, ...(tg ? { cut: { bars: tg.N } } : {}) },
-      input: { layers: row.layers }, stats: { grid: row.grid }, timeline: { slotStarts: ctx.starts.map((x) => x * ctx.rowT), barStarts: [] } });
-    const lay = (x) => {
-      const got = layClave(row, g, x, { units: compUnits, slotOf: (i) => ctx.posSlot[i] });
-      return { strokes: got.strokes.map((y) => ({ bar: y.bar, step: y.step, place: y.place, node: y.node, tick: y.tick, time: ctx.timeOf(row.tick[y.node]), slot: y.slot, snap: y.snap })), silent: got.silent.length };
-    };
-    const own = lay(claveChoice.clave), other = lay(claveChoice.partner), took = new Set(own.strokes.map((x) => x.node));
-    let shared = 0; for (const x of other.strokes) if (took.has(x.node)) { x.shared = true; shared++; }
-    clave = { ...claveChoice.clave, relation, strokes: own.strokes, silent: own.silent, partner: { ...claveChoice.partner, strokes: other.strokes, silent: other.silent, shared } };
+    clave = layCompClave(row, ctx, claveChoice, { relation, phase, units: compUnits, cut: tg ? { bars: tg.N } : null });
+    const shared = clave.partner.shared;
     const C = claveChoice.clave, R = claveChoice.ranks, src = C.from;
     const tierWhy = R.tier === 'meeting' ? 'each layer read at the bar sizes where another layer meets it' : R.tier === 'whole' ? 'no layer meets another within 16 strikes, so each layer read at every size that cuts it whole'
       : R.tier === 'every' ? 'no layer meets another or divides within 16 strikes, so each layer read at every size 3–16 (a clipped last bar left out)' : 'the row\'s layers leave no clave of 3–16 steps';

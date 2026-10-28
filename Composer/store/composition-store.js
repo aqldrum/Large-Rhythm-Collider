@@ -37,13 +37,19 @@
 //              Live edits: they never make the entry dirty, and the glyph recalls spec + edits with no re-solve.
 //   field      { text } | null: the typed progression as the user typed it, kept as the field's source (proposed)
 //   undo/redo  snapshots of { edits, field, the drum mode and grid }, at most UNDO_LIMIT (proposed: 50)
+//              clave: { id?, relation? } | null (COMP_ARP_ORDER.md Amendment 1, phase E): the comp's clave ('steps:pattern'
+//              or a curated name) and Sync | Fill as chosen in the window, each only where it differs from Compose's;
+//              applied last over the other edits (rearrange.js `reclave`: every bar re-strummed over its chord as edited)
 //   dropped    what the last Compose dropped (amber in the UI): { pins: [{ bar, ratio, quality, reason }],
 //              unhonored: [{ bar, ratio, asked, got }], lead: [{ phrase, lineId }], grid: { was, now } | null,
-//              p: { was, cells } | null (STEP 4c-prime: an asked drumOptions.p the new meter's cells outgrew) } | null
+//              p: { was, cells } | null (STEP 4c-prime: an asked drumOptions.p the new meter's cells outgrew),
+//              clave: { id, pattern } | null (phase E: a chosen clave the new composition doesn't offer),
+//              arps: [{ part, phrase, id }] (phase E: an arp pick the re-composed phrase no longer offers) } | null
 //   progression the pin list Compose is sent: [ratio | { ratio, quality } | null] a bar (the lab's root picks are the
 //              ratio form; a Compose bakes the chord edits in here as { ratio, quality })
 // A new cycle of the same row carries the chord edits as pins (into `progression`), the typed field and the drum
-// grid (the controller drops it on its next Compose if the meter moved); never the lead edits (decision 5).
+// grid (the controller drops it on its next Compose if the meter moved), and the clave choice (phase E; dropped on
+// its next Compose where that composition doesn't offer the clave); never the lead edits (decision 5).
 //
 // MIDI targets (phase B; DESIGN_NOTES "MIDI targets (phase B)"; the controller acts on these, the store only holds them):
 //   input.target  { clip (midi.js decodeClip, as decoded: no bytes), tonic (a pitch class, or null: the clip's key
@@ -60,7 +66,9 @@
 //            (core/arp.js' options, phase D; the knobs are kept while the part is in Line, so Arp comes back as it was). A choice saved with the composition, like the
 //            drum grid: in the undo snapshots, kept through a re-compose and the glyph's recall, and (proposed) carried
 //            to a new cycle of the same row. `spec` plays the arps (composed + edits, then arrangeArp); `composed`
-//            never does.
+//            never does. Phase E: a pick is keyed by the phrase at its time, so a change of Time drops the part's picks
+//            (one undo step restores both); a re-compose keeps a pick its phrase still offers (an arp's id is a hash of
+//            its notes) and drops the rest into `dropped.arps`.
 
 import { PART_IDS } from '../core/compose.js';
 import { DEFAULT_KIT } from '../core/drums.js';
@@ -73,8 +81,8 @@ export const LENSES = Object.freeze(['row', 'composition']);
 export const KNOB_NAMES = Object.freeze(['bars', 'slotsPerBar', 'frameCentsEachSide', 'modulation', 'anchors', 'settlePasses', 'presence']);
 /** how many edits an entry's undo stack keeps (proposed) */
 export const UNDO_LIMIT = 50;
-/** no edits */
-export const emptyEdits = () => ({ chords: {}, lead: {}, order: [], grid: null });
+/** no edits (phase E: `clave`, the comp's clave and relation chosen in the window, or null: Compose's own) */
+export const emptyEdits = () => ({ chords: {}, lead: {}, order: [], grid: null, clave: null });
 /** B2: every Arp part in Line, its knobs at the defaults (phase D: time ×1, no picks) */
 export const lineArps = () => Object.fromEntries(ARP_PARTS.map((id) => [id, { mode: 'line', time: ARP_DEFAULTS.time, picks: {} }]));
 const copy = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
@@ -119,7 +127,7 @@ function inheritEdits(to, from) {
     to.progression[Number(bar)] = { ratio: e.rootTone, quality: 'asked' in e ? e.asked : e.quality };
   }
   to.drumOptions = { ...from.drumOptions, kit: { ...from.drumOptions.kit }, ...(from.drumOptions.grid ? { grid: copy(from.drumOptions.grid) } : {}) };
-  to.edits = { ...emptyEdits(), grid: copy(from.edits?.grid ?? null) };
+  to.edits = { ...emptyEdits(), grid: copy(from.edits?.grid ?? null), clave: copy(from.edits?.clave ?? null) };
   to.field = copy(from.field ?? null);
   to.levels = { ...from.levels };
   to.glideMs = from.glideMs;

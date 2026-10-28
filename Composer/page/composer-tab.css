@@ -260,6 +260,13 @@
 .ctab-inspector .ctab-seg.on { border-color: #00ff88; color: #00ff88; }
 .ctab-inspector .ctab-arp-switch.refused .ctab-seg { opacity: .45; cursor: not-allowed; }
 .ctab-arp select { font-size: 10px; }
+/* phase E: the clave and arp pickers — a clave by its pattern, monospace; the alternates as the chords' are */
+.ctab-clave { gap: 6px; flex-wrap: wrap; }
+.ctab-clave-pattern { font-family: ui-monospace, Menlo, monospace; letter-spacing: 1px; color: #fff; }
+.ctab-clave-source { font-size: 10px; }
+.ctab-inspector .ctab-alt.ctab-clave-alt.curated { border-style: dashed; }
+.ctab-arp-sub { margin-top: 4px; }
+.ctab-arp-missed { font-size: 10px; }
 .ctab-clip-notes tr.fringe .ctab-clip-kind, .ctab-clip-notes tr.shift .ctab-clip-kind, .ctab-clip-notes tr.late td:last-child { color: #ffb347; }
 .ctab-clip-notes tr.hard td { color: #ff6b6b; }
 .ctab-clip-tag { color: #fff; border-color: #555; }
