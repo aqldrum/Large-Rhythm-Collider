@@ -126,11 +126,12 @@
 //                           bars (each bar's runner-ups, `alternates`), pending }
 //                pickBass(bar, id)   one of a bar's runner-ups (its first again removes the pick), through setBass;
 //                                    Roots too (Amendment 1, rule 9: the root's other in-frame notes, phase L)
-//                ratioOfOnset(node)  an onset's tone in the row, to name a Roots runner-up (null: the row is the worker's)
+//                ratioOfOnset(node)  an onset's tone in the row (null: the row is the worker's); phase N: a Roots
+//                                    runner-up's notes carry their tone and cents off the root themselves (bass.js, P29)
 //              The choice is the entry's (`state.bass`, store/composition-store.js), as the arps are: in the snapshots,
-//              kept through a re-compose and the glyph's recall. Compose's own bass (Sparse, Free, no picks) arranges
-//              nothing (arrangeBass's default is it byte for byte); bassOf reads its offer from arrangeBass at the default,
-//              memoized per spec. Anything else is arranged AFTER the arps and the drums, over the spec as it plays (the
+//              kept through a re-compose and the glyph's recall. Compose's own bass (phase N: Moving, Kick, no picks)
+//              arranges nothing over the kick it covers (its part is arrangeBass's at those options byte for byte, its
+//              record the offer bassOf reads; Amendment 2 below for a kick it didn't cover). Anything else is arranged AFTER the arps and the drums, over the spec as it plays (the
 //              Kick lock hears the drums as they play now: `state.drums`; the Clave lock, the comp's clave as edited): so
 //              a chord swap, a clave switch, an undo or a re-compose re-arranges it from the fresh spec, and a drum change
 //              under the Kick lock does too. A change of density or lock drops the picks (one undo step restores both);
@@ -144,6 +145,22 @@
 //              composed spec's, so the edits after it voice as Compose would; byte for byte a Compose given
 //              `overrides.voicing` (assert-page-bass.mjs). Compose is sent `voicing: 'close'` while it is close, so the
 //              composed spec needs no switch. Kept through a re-compose and the recall, like the bass.
+//   Amendment 2 (BASS_VOICING_ORDER.md phase N; DESIGN_NOTES "The window over Amendment 2 (phase N)"):
+//              Compose's own bass is Moving · Kick (rule 11, P28: composedBass), its part carrying its `bass` record, so
+//              bassOf reads it as composed and a stored Sparse · Free is an arrangement like any other. It covers the
+//              kick Compose's drums strike; when the drums as they play strike another kick (another mode, or off), it is
+//              arranged again over them (the planner's ruling: the bass covers the kick that PLAYS; the drums off, Moving ·
+//              Free, said as an asked Kick's refusal is). The fold's base keeps Compose's drums, so a chord swap re-mines
+//              its bar at Moving · Kick (rearrange's arranged-bass path), as Compose's own swap would.
+//   density    (phase N, rule 10, P27) the comp's density tier, live: setCompDensity('sparse-med' | 'sparse' | 'medium' |
+//              'dense'), one undo step (a clave picked from the list goes with it: the new tier's best plays, Sync | Fill
+//              kept). The fold's step after the voicing's is rearrange.js `reclave` with `{ density }` when the entry's
+//              differs from the composed spec's tier, so the edits after it re-read and re-rank in it. Compose is sent
+//              `compDensity` when it isn't the default, so a re-compose keeps it. claveOf().density says the tier asked,
+//              the one that played and a fall-back.
+//   picker     (phase N, rule 14, P30) claveOf().alternates are the frame candidates re-ranked over the chords as they
+//              play: the last fold step's `claveAlternates` (a chord swap, a typed chord, a Chords Follow, a density or a
+//              clave chosen again), else the trace's (`reranked` says which).
 
 import { compose, rearticulate, chooseMeter, PART_IDS, TARGET_SETS, VOICINGS } from '../core/compose.js';
 import { arrangeBass, bassLockRefusal, BASS_DENSITIES, BASS_LOCKS } from '../core/bass.js';   // phase H: the bass's densities and lock
@@ -164,7 +181,7 @@ import { phrasesOf, isStrongBeat } from '../core/harmony.js';
 // MIDI targets (phase B)
 import { readMidi, decodeClip } from '../core/midi.js';
 import { onsetCount } from '../core/row.js';
-import { claveOf as readClave, claveText, claveSource, COMP_RELATIONS } from '../core/claves.js';   // phase E: the clave picker
+import { claveOf as readClave, claveText, claveSource, COMP_RELATIONS, COMP_DENSITIES, DEFAULT_COMP_DENSITY } from '../core/claves.js';   // phase E: the clave picker; phase N: the comp's density
 import { orderedEdits, setChordEdit, removeChordEdit, setLeadEdit, removeLeadEdit, sameRecord, hasEdits, snapshotOf, restoreSnapshot, pushUndo, pinOf, asksOf,
   rewriteToken, rewriteChart, chordAlternates, leadAlternates, leadAlternatesOf, phraseOfBar } from '../store/composition-edits.js';
 
@@ -193,6 +210,8 @@ export const INNER_ARP_SOUND = 'harp';
 export const ARP_CHOICES = Object.freeze({ parts: ARP_PARTS, times: ARP_TIMES });
 /** phase H: the bass's densities and locks, and the chords' voicings, for a view */
 export const BASS_CHOICES = Object.freeze({ densities: BASS_DENSITIES, locks: BASS_LOCKS, voicings: VOICINGS });
+/** phase N: the comp's density tiers, for a view (claves.js COMP_DENSITIES; sparse–medium the default) */
+export const COMP_DENSITY_CHOICES = COMP_DENSITIES;
 /** every sound a part can play: the note-role instruments of Audio/voices, in the catalog's order */
 export const soundChoices = () => NOTE_INSTRUMENT_IDS.map((id) => ({ id, label: getInstrument(id).label }));
 
@@ -324,8 +343,20 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   /** a big row's arps go to the worker (its kept materials), as its edits do */
   const arpOnWorker = (st) => !!runArp && st.composed.stats.onsets > mainThreadOnsets;
   // ── phase H: the bass (core/bass.js arrangeBass over the spec as it plays) and the chords' voicing ──
-  /** does this entry's bass arrange (anything but Compose's own: Sparse, Free, no picks)? */
+  /** does this entry's bass arrange (anything but Compose's own: Moving, Kick, no picks; phase N)? */
   const bassOn = (st) => !isComposedBass(st.bass);
+  // phase N (Amendment 2, P28): Compose's own bass covers the kick Compose's drums strike. The window plays its own drums
+  // (st.drumOptions: another mode, or off), and the bass covers the kick that PLAYS (the planner's ruling), so where the
+  // drums as they play strike another kick, Compose's own is arranged again over them (its options, Moving · Kick; the
+  // drums off or no kick: arrangeBass's Moving · Free, its `refused` the reason)
+  /** a drum arrangement's kick, as the Kick lock hears it (its hits' ticks and slots), or 'off' */
+  const kickOf = (drums) => (!drums || !drums.enabled ? 'off' : JSON.stringify(drums.hits.filter((h) => h.voice === 'kick').map((h) => [h.tick, h.slot])));
+  /** does Compose's own bass cover the kick (its record's lock)? */
+  const ownCoversKick = (st) => st.composed?.parts?.find((p) => p.id === 'bass')?.bass?.lock === 'kick';
+  /** do the drums as they play strike another kick than the one Compose's own bass covers? */
+  const kickMoved = (st, drums) => ownCoversKick(st) && kickOf(drums) !== kickOf(st.composed.drums);
+  /** is the bass arranged over this spec: the entry's own choice, or Compose's own over a kick it didn't cover */
+  const bassArranges = (st, drums) => bassOn(st) || (!!st.composed && kickMoved(st, drums));
   /** the entry's bass as arrangeBass takes it */
   const bassOptions = (st) => ({ density: st.bass.density, lock: st.bass.lock, picks: { ...(st.bass.picks ?? {}) } });
   /** the spec the bass locks against: the drums as they play (the Kick lock hears them; the Clave lock reads spec.clave) */
@@ -333,15 +364,30 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   /** an arranged bass part into a spec */
   const placeBass = (spec, part) => ({ ...spec, parts: spec.parts.map((p) => (p.id === 'bass' ? part : p)) });
   /** a spec (its arps placed) with the entry's bass, arranged on this thread over the drums as they play */
-  const withBass = (st, spec, drums) => (bassOn(st) ? placeBass(spec, arrangeBass(lockSpecOf(spec, drums), materialsFor(st), bassOptions(st))) : spec);
+  const withBass = (st, spec, drums) => (bassArranges(st, drums) ? placeBass(spec, arrangeBass(lockSpecOf(spec, drums), materialsFor(st), bassOptions(st))) : spec);
   /** a big row's bass goes to the worker, as its arps do */
   const bassOnWorker = (st) => !!runBass && st.composed.stats.onsets > mainThreadOnsets;
   /** the voicing a spec plays: led when the voicing pass ran (its stats say so), else close */
   const voicedAs = (spec) => (spec?.stats?.voicing ? 'led' : 'close');
   /** the fold's first step: the entry's voicing when the composed spec plays the other one (rearrange.js revoice), or null */
   const voicingStep = (st) => ((st.voicing ?? 'led') !== voicedAs(st.composed) ? { kind: 'voicing', voicing: st.voicing ?? 'led' } : null);
-  // per spec: the bass's offer while Compose's own plays (arrangeBass at the default: its bars' runner-ups), for bassOf;
-  // null while a big row's is on its way from the worker
+  // ── phase N (Amendment 2, rule 10, P27): the comp's density tier ──
+  /** the tier a spec's clave was chosen in (a frame clave's compDensity.asked), or null (a clave from the pattern, none) */
+  const tierOf = (spec) => (spec?.clave?.read === 'frame' && spec.clave.compDensity ? spec.clave.compDensity.asked : null);
+  /** the fold's step after the voicing's: the entry's density when the composed spec's clave was chosen in another tier
+   *  (rearrange.js reclave `{ density }`), or null */
+  const densityStep = (st) => { const t = tierOf(st.composed), d = st.compDensity ?? DEFAULT_COMP_DENSITY; return t && d !== t ? { kind: 'density', density: d } : null; };
+  /** phase N (rule 14, P30): the frame candidates as the edits leave them, the last fold step's that re-ranked them
+   *  (rearrange's `claveAlternates`: a chord change, a density or a clave chosen again), or null (the trace's) */
+  function rerankedOf(st) {
+    const f = folds.get(st);
+    if (!f || f.composed !== st.composed) return null;
+    for (let i = f.steps.length - 1; i >= 0; i--) if (f.steps[i].alts) return f.steps[i].alts;
+    return null;
+  }
+  // per spec: the bass's offer while a bass with no record plays (arrangeBass at Compose's own: its bars' runner-ups), for
+  // bassOf; null while a big row's is on its way from the worker. Phase N: Compose's own bass carries its record, so this
+  // is only a spec composed with the bass pinned to the one before (`bass: { density: 'sparse', lock: 'free' }`)
   const offers = new WeakMap();
   function offerOf(st) {
     const spec = st.spec;
@@ -416,7 +462,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     if (!runRearrange) return false;
     if (e.kind === 'lead' && e.smooth) return true;
     const n = st.composed.stats.onsets;
-    if (e.kind === 'clave' || e.kind === 'voicing') return n > mainThreadOnsets;
+    if (e.kind === 'clave' || e.kind === 'voicing' || e.kind === 'density') return n > mainThreadOnsets;
     return n > mainThreadOnsets || (e.kind === 'lead' && st.composed.knobs.table === 'full' && n > leadFullOnsets);
   }
   /** an edit record → rearrange's edit and options */
@@ -425,6 +471,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     if (e.kind === 'clave') return { edit: { ...(e.id != null ? { clave: e.id } : {}), relation: e.relation ?? st.composed.clave?.relation ?? 'sync' }, opts: {} };
     // phase H: the chords' voicing, rearrange's `revoice` door
     if (e.kind === 'voicing') return { edit: { voicing: e.voicing }, opts: {} };
+    // phase N: the comp's density, rearrange's `reclave` door ({ density })
+    if (e.kind === 'density') return { edit: { density: e.density }, opts: {} };
     if (e.kind === 'chord') return { edit: { [splitSpec(st.composed) ? 'span' : 'bar']: e.bar, chord: { rootTone: e.rootTone, quality: e.quality } }, opts: {} };
     const line = st.trace?.lines?.[e.lineId];
     if (!line) throw new Error(`composer: no line ${e.lineId} in the trace`);
@@ -473,15 +521,19 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
    */
   function runFold(st) {
     let f = folds.get(st);
-    if (!f || f.composed !== st.composed) { f = { composed: st.composed, base: { ...st.composed, drums: undefined }, steps: [], gen: 0, applying: false }; folds.set(st, f); }
-    // phase H: the voicing switch first (rearrange.js revoice), so the edits after it voice as Compose would
-    const v = voicingStep(st), mine = ++f.gen, list = [...(v ? [v] : []), ...orderedEdits(st.edits)], sigs = list.map((e) => JSON.stringify(e)), was = st.spec;
+    // phase N: the base keeps Compose's drums, so a chord swap re-mines Compose's own bass (Moving · Kick) over the kick it
+    // covers, as Compose's own swap would (with none, the lock would fall back to Free in that bar)
+    if (!f || f.composed !== st.composed) { f = { composed: st.composed, base: { ...st.composed }, steps: [], gen: 0, applying: false }; folds.set(st, f); }
+    // phase H: the voicing switch first (rearrange.js revoice), so the edits after it voice as Compose would; phase N: then
+    // the comp's density (reclave), so the chord edits after it re-read and re-rank the clave in its tier
+    const v = voicingStep(st), d = densityStep(st), mine = ++f.gen, list = [...(v ? [v] : []), ...(d ? [d] : []), ...orderedEdits(st.edits)], sigs = list.map((e) => JSON.stringify(e)), was = st.spec;
     let i = 0, spec = f.base;
     while (i < list.length && f.steps[i] && f.steps[i].sig === sigs[i]) { spec = f.steps[i].spec; i++; }
     f.steps.length = i;
     // phase L: the bars a step run now re-read the clave in (a chord swap, phase I P20): the comp and the perc moved there
     const reclaved = new Set();
-    const commit = (r) => { for (const k of r.reclavedBars ?? []) reclaved.add(k); spec = applyRearrange(spec, r); f.steps.push({ sig: sigs[i], spec }); i++; };
+    // phase N (P30): a step that re-ranked the frame candidates keeps them (`alts`), for the picker
+    const commit = (r) => { for (const k of r.reclavedBars ?? []) reclaved.add(k); spec = applyRearrange(spec, r); f.steps.push({ sig: sigs[i], spec, alts: r.claveAlternates ?? null }); i++; };
     // stale: a newer fold of this state took over, or a Compose landed (a new fold record) while a worker step ran; a
     // stale answer, or a stale failure, never touches the state
     const stale = () => mine !== f.gen || folds.get(st) !== f || st.composed !== f.composed;
@@ -493,10 +545,12 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     };
     // phase H: a big row's bass in the worker, over the spec with its arps and the drums as they play
     const bassStep = (arped) => {
-      if (!bassOn(st) || !bassOnWorker(st)) return finish(arped);
+      if (!bassOnWorker(st) || (!bassOn(st) && !ownCoversKick(st))) return finish(arped);
       const line = list.length ? { ...spec, drums: st.composed.drums } : st.composed, arpedSpec = arped === undefined ? withArps(st, line) : arped ? placeArps(line, arped) : line;
+      const drums = arrangeDrums(arpedSpec, st.drumOptions);
+      if (!bassArranges(st, drums)) return finish(arped);   // phase N: Compose's own, over the kick it covers
       f.applying = true;
-      return Promise.resolve(runBass({ key: materialsKey(arpedSpec), spec: lockSpecOf(arpedSpec, arrangeDrums(arpedSpec, st.drumOptions)), options: bassOptions(st) })).then((part) => (stale() ? STALE : finish(arped, part)),
+      return Promise.resolve(runBass({ key: materialsKey(arpedSpec), spec: lockSpecOf(arpedSpec, drums), options: bassOptions(st) })).then((part) => (stale() ? STALE : finish(arped, part)),
         (err) => { if (stale()) return STALE; f.applying = false; throw err; });
     };
     const loop = () => {
@@ -564,9 +618,11 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     const again = rebass(st);   // phase H: a bass locked to the kick follows the drums
     return again ? again.then(() => result) : Promise.resolve(result);
   }
-  /** phase H: the drums moved under a bass locked to the kick → the bass arranged again (the fold, its edits kept), or null */
+  /** phase H: the drums moved under a bass locked to the kick → the bass arranged again (the fold, its edits kept), or null;
+   *  phase N: Compose's own bass covers the kick too, so it follows the drums as they play (settleState arranges it again
+   *  where their kick isn't the one it covers, and plays Compose's again where it is) */
   function rebass(st) {
-    if (!ready(st) || !bassOn(st) || st.bass.lock !== 'kick') return null;
+    if (!ready(st) || (bassOn(st) ? st.bass.lock !== 'kick' : !ownCoversKick(st))) return null;
     return applyEdits(st, { kind: 'bass', detail: { drums: true } });
   }
   /** the drum grid as it plays now: the entry's own (mode grid or prime), else the arrangement written as one */
@@ -682,7 +738,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   const entrySnap = (st) => ({ target: st.input.target, placements: st.placements, spec: st.spec, composed: st.composed, trace: st.trace, parts: st.parts, drums: st.drums,
     drumOptions: JSON.parse(JSON.stringify(st.drumOptions)), edits: JSON.parse(JSON.stringify(st.edits)), undo: st.undo.slice(), redo: st.redo.slice(), dropped: st.dropped,
     progression: JSON.parse(JSON.stringify(st.progression)), field: st.field, tempoBpm: st.tempoBpm, lastMs: st.lastMs, dirty: st.dirty, error: st.error, status: settled(st),
-    arps: JSON.parse(JSON.stringify(st.arps ?? lineArps())), bass: JSON.parse(JSON.stringify(st.bass ?? composedBass())), voicing: st.voicing ?? 'led' });
+    arps: JSON.parse(JSON.stringify(st.arps ?? lineArps())), bass: JSON.parse(JSON.stringify(st.bass ?? composedBass())), voicing: st.voicing ?? 'led',
+    compDensity: st.compDensity ?? DEFAULT_COMP_DENSITY });
   /** a compose in flight for this state is dropped (its answer is for another input), as touch() does */
   const dropFlight = (st) => { if (st.status === 'composing') { bump(st); flights.delete(st); st.status = settled(st); } };
   /** a new clip, or none: the pins, the field and the edits were another meter's bars (proposed) */
@@ -753,6 +810,9 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       const options = { seed: st.input.seed, overrides: overrides(), worker: st.table === 'full', progression: api.progressionInput() };
       // phase H: the chords' voicing, sent only when close (led is Compose's default), so the composed spec needs no switch
       if ((st.voicing ?? 'led') === 'close') options.overrides.voicing = 'close';
+      // phase N: the comp's density, sent when it isn't the default (sparse–medium), so the composed spec needs no switch;
+      // not to a composition whose clave has no tier (the pattern's, or a comp in notes: Compose refuses it there)
+      if ((st.compDensity ?? DEFAULT_COMP_DENSITY) !== DEFAULT_COMP_DENSITY && !(st.composed && !st.composed.refused && !tierOf(st.composed))) options.overrides.compDensity = st.compDensity;
       // a typed chord chart (CHART_ORDER.md): its bars and changes (not with a MIDI target: the two together are not built)
       const shape = st.input.target ? null : shapeOfText(st.field?.text);
       if (shape) options.changes = shape;
@@ -783,7 +843,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
             // Phase E: the clave choice kept through it is applied the same way (the fold's last step), and an arp pick
             // its phrase no longer offers is dropped (said in state.dropped.arps), the arps then arranged again without it.
             // Phase H: the bass the same (a pick its bar no longer offers dropped: state.dropped.bass), and the voicing.
-            if (arpsOn(st, spec).length || st.edits.clave || bassOn(st) || voicingStep(st)) {
+            // Phase N: the comp's density, and Compose's own bass over a kick it didn't cover (the window's drums).
+            if (arpsOn(st, spec).length || st.edits.clave || bassOn(st) || voicingStep(st) || densityStep(st) || kickMoved(st, st.drums)) {
               try {
                 const out = runFold(st); if (out && typeof out.then === 'function') await out;
                 if (dropMissedPicks(st)) { const again = runFold(st); if (again && typeof again.then === 'function') await again; }
@@ -958,16 +1019,17 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     /** the bars whose fundamental differs from Compose's (a swap's modulation re-pitching later bars) */
     retunedBars: () => (ready(state) ? [...new Set(state.spec.chords.flatMap((c, k) => (Math.abs(c.fundamentalRatio - state.composed.chords[k].fundamentalRatio) > 1e-12 ? [c.bar] : [])))] : []),
     /** the edits as JSON export carries them (null with none); B2: `arps` when a part is in Arp; phase E: `clave` when chosen;
-     *  phase H: `bass` when it isn't Compose's own, `voicing` when close */
+     *  phase H: `bass` when it isn't Compose's own, `voicing` when close; phase N: `compDensity` when it isn't the default */
     editsExport() {
       const e = state.edits, grid = state.drumOptions.grid && (state.drumOptions.mode === 'grid' || state.drumOptions.mode === 'prime');
       const arps = ARP_PARTS.some((id) => state.arps?.[id]?.mode === 'arp') ? JSON.parse(JSON.stringify(state.arps)) : null;
       // phase H: the bass when it isn't Compose's own, the voicing when close
       const bass = isComposedBass(state.bass) ? null : JSON.parse(JSON.stringify(state.bass)), voicing = (state.voicing ?? 'led') === 'led' ? null : state.voicing;
-      if (!hasEdits(state) && !grid && !state.field && !arps && !bass && !voicing) return null;
+      const compDensity = (state.compDensity ?? DEFAULT_COMP_DENSITY) === DEFAULT_COMP_DENSITY ? null : state.compDensity;
+      if (!hasEdits(state) && !grid && !state.field && !arps && !bass && !voicing && !compDensity) return null;
       return { chords: JSON.parse(JSON.stringify(e.chords)), lead: JSON.parse(JSON.stringify(e.lead)), order: [...e.order],
         drums: grid ? { mode: state.drumOptions.mode, grid: JSON.parse(JSON.stringify(state.drumOptions.grid)), from: e.grid?.from ?? null } : null, field: state.field ? state.field.text : null,
-        ...(arps ? { arps } : {}), ...(e.clave ? { clave: { ...e.clave } } : {}), ...(bass ? { bass } : {}), ...(voicing ? { voicing } : {}) };
+        ...(arps ? { arps } : {}), ...(e.clave ? { clave: { ...e.clave } } : {}), ...(bass ? { bass } : {}), ...(voicing ? { voicing } : {}), ...(compDensity ? { compDensity } : {}) };
     },
     /**
      * A bar's alternates (a pure read of the kept trace): part 'chords' → the bar's 12 candidates; 'lead' → the bar's
@@ -1193,22 +1255,50 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
      * pattern, phase L), relation, partner: { pattern, text, source, barTexts }, strokes (the comp's, as it plays), silent,
      * composedId, composedRelation, edit (state.edits.clave), asked (not among the alternates), alternates: [{ …the
      * trace's (id, steps, span, pattern, onsets, score, terms, bars, from, patterns?, read?), text, source, label, curated,
-     * frame, inFrame, current, composed }] } | null (nothing composed, or a composition in notes)
+     * frame, inFrame, current, composed }] } | null (nothing composed, or a composition in notes).
+     * Phase N (Amendment 2): `alternates` are the frame candidates re-ranked over the chords as they play (P30: the last
+     * fold step's `claveAlternates`), else the trace's; `reranked` says which. `density` (a frame clave's; else null):
+     * { asked (the entry's), playing (spec.clave.compDensity: { asked, played, fellBack }), share, tier (the clave's own),
+     * choices }.
      */
     claveOf() {
       const s = ready(state) ? state.spec : null;
       if (!s?.clave) return null;
-      const c = s.clave, own = state.composed.clave, ev = compEventOf(state.trace), N = s.knobs.bars;
+      const c = s.clave, own = state.composed.clave, ev = compEventOf(state.trace), N = s.knobs.bars, re = rerankedOf(state);
       // phase L: a frame candidate (`frame`) and a curated clave read in frame (`inFrame`: its fixed steps land on in-frame
       // onsets only), named by its own label (`label`: the source without "· in frame")
-      const alternates = (ev?.alternates ?? []).map((x) => ({ ...x, text: claveText(x), source: claveSource(x), curated: !!x.from?.pattern, frame: !!x.from?.frame, inFrame: !!x.from?.pattern && x.read === 'frame',
+      const alternates = (re ?? ev?.alternates ?? []).map((x) => ({ ...x, text: claveText(x), source: claveSource(x), curated: !!x.from?.pattern, frame: !!x.from?.frame, inFrame: !!x.from?.pattern && x.read === 'frame',
         label: x.read === 'frame' && !x.from?.frame ? claveSource({ ...x, read: null }) : claveSource(x), current: x.id === c.id, composed: x.id === own?.id }));
       const p = c.partner;
       return { id: c.id, ...(c.name ? { name: c.name } : {}), text: claveText(c), pattern: c.pattern, source: claveSource(c), steps: c.steps, span: c.span ?? 1, score: c.score, terms: { ...c.terms }, from: { ...c.from }, bars: c.bars,
         read: c.read ?? 'pattern', frame: !!c.from?.frame, barTexts: barTextsOf(c, N),
         relation: c.relation, partner: { pattern: p.pattern, text: claveText(p), source: p.source, barTexts: barTextsOf(p, N) }, strokes: s.parts.find((x) => x.id === 'comp')?.strokes?.length ?? 0,
         silent: c.relation === 'fill' ? p.silent + p.shared : c.silent, composedId: own?.id ?? null, composedRelation: own?.relation ?? null,
-        edit: state.edits?.clave ? { ...state.edits.clave } : null, asked: !alternates.some((x) => x.current), alternates };
+        edit: state.edits?.clave ? { ...state.edits.clave } : null, asked: !alternates.some((x) => x.current), alternates, reranked: !!re,
+        density: tierOf(state.composed) ? { asked: state.compDensity ?? DEFAULT_COMP_DENSITY, playing: c.compDensity ? { ...c.compDensity } : null, share: c.share ?? null, tier: c.tier ?? null, choices: [...COMP_DENSITIES] } : null };
+    },
+    /**
+     * Phase N (Amendment 2, rule 10, P27): the comp's density tier ('sparse-med' | 'sparse' | 'medium' | 'dense'), live
+     * with no re-compose (rearrange.js reclave `{ density }`: the tier's best plays, byte for byte a Compose given that
+     * `compDensity`), one undo step. A clave picked from the list goes with it (it was the old tier's candidate; one undo
+     * restores both), Sync | Fill stays. Before any Compose it is only kept (the Compose is sent it). A clave with no tier
+     * (the pattern's, or a comp in notes) throws. → Promise<{ ok, kind: 'density', density, changedBars, … }>
+     */
+    setCompDensity(density) {
+      if (!COMP_DENSITIES.includes(density)) throw new Error(`composer: the comp's density is one of ${COMP_DENSITIES.join(', ')}, not ${JSON.stringify(density)}`);
+      const st = state;
+      if (!ready(st)) {
+        if ((st.compDensity ?? DEFAULT_COMP_DENSITY) === density) return Promise.resolve({ ok: true, noop: true, kind: 'density', density });
+        st.compDensity = density; changed();
+        return Promise.resolve({ ok: true, live: false, kind: 'density', density });
+      }
+      if (!tierOf(st.composed)) throw new Error('composer: this composition\'s clave has no density tier (a clave from the pattern, or a comp in notes)');
+      return edit('density', { density }, (x) => {
+        if ((x.compDensity ?? DEFAULT_COMP_DENSITY) === density) return false;
+        x.compDensity = density;
+        if (x.edits.clave?.id != null) { const { id, ...rest } = x.edits.clave; x.edits.clave = Object.keys(rest).length ? rest : null; }
+        return true;
+      });
     },
     /**
      * Phase E: the comp's clave ({ id: 'steps:pattern' | a curated name | a frame clave's 'frame:A/8/chord' (phase L) |
@@ -1236,14 +1326,16 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
      * The bass as it plays → { density, lock, picks (the entry's), densities, locks: [{ id, refusal (bassLockRefusal's
      * words over the spec and the drums as they play; null: free to pick) }], playing (an arrangement plays, not Compose's
      * own), ran (the lock that ran: a refused one falls back to 'free'), refused (why, or null), stats and bars (arrangeBass'
-     * `bass`: each bar's `alternates`, its runner-ups, the first the bar's best; Compose's own: its offer at the default),
-     * pending (a big row's offer is on its way from the worker) }
+     * `bass`: each bar's `alternates`, its runner-ups, the first the bar's best; Compose's own: its record, or a pinned
+     * spec's offer at Compose's own), pending (a big row's offer is on its way from the worker). Phase N: `own` (the entry's
+     * is Compose's own: Moving · Kick, no picks), `playing` (the window arranged it: not Compose's own as composed),
+     * `refollowed` (Compose's own arranged again over the drums as they play: their kick isn't the one it covered)
      */
     bassOf() {
       const b = (state.bass ??= composedBass()), s = ready(state) ? state.spec : null, part = s?.parts.find((p) => p.id === 'bass');
-      const arr = part?.bass ?? (s ? offerOf(state)?.bass : null) ?? null, over = s ? lockSpecOf(s, state.drums) : null;
+      const arr = part?.bass ?? (s ? offerOf(state)?.bass : null) ?? null, over = s ? lockSpecOf(s, state.drums) : null, moved = !!s && !bassOn(state) && kickMoved(state, state.drums);
       return { density: b.density, lock: b.lock, picks: { ...(b.picks ?? {}) }, densities: [...BASS_DENSITIES], locks: BASS_LOCKS.map((id) => ({ id, refusal: over && id !== 'free' ? bassLockRefusal(over, id) : null })),
-        playing: !!part?.bass, ran: arr?.stats?.lock ?? null, refused: part?.bass?.refused ?? null, stats: arr?.stats ?? null, bars: arr?.bars ?? null, pending: !!s && !arr };
+        own: isComposedBass(b), playing: !!part?.bass && (bassOn(state) || moved), refollowed: moved, ran: arr?.stats?.lock ?? null, refused: part?.bass?.refused ?? null, stats: arr?.stats ?? null, bars: arr?.bars ?? null, pending: !!s && !arr };
     },
     /**
      * The bass's density, lock and picks: { density, lock, picks ({ [bar]: a line's id }: replaces the picks whole) }, any
@@ -1462,7 +1554,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       const x = mark.snap;
       if (x.target) st.input.target = x.target; else delete st.input.target;
       Object.assign(st, { placements: x.placements, spec: x.spec, composed: x.composed, trace: x.trace, parts: x.parts, drums: x.drums, drumOptions: x.drumOptions, edits: x.edits,
-        undo: x.undo, redo: x.redo, dropped: x.dropped, progression: x.progression, field: x.field, tempoBpm: x.tempoBpm, lastMs: x.lastMs, dirty: x.dirty, error: x.error, status: x.status, arps: x.arps, bass: x.bass, voicing: x.voicing });
+        undo: x.undo, redo: x.redo, dropped: x.dropped, progression: x.progression, field: x.field, tempoBpm: x.tempoBpm, lastMs: x.lastMs, dirty: x.dirty, error: x.error, status: x.status, arps: x.arps, bass: x.bass, voicing: x.voicing, compDensity: x.compDensity });
       folds.delete(st); auditions.delete(st);
       if (live && st.spec && !st.spec.refused) api.perform(); else changed(st);
       return Promise.resolve({ ok: true, index: x.placements?.current ?? 0 });

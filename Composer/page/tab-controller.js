@@ -186,9 +186,11 @@ export function createTabController({ host = {}, runCompose, createContext, time
     highlights(plotted) {
       const plot = plotOf(plotted || {}), s = core.state;
       const parts = s.spec && !s.spec.refused ? core.currentParts() : null;
-      const key = [s.spec, s.drums, plot?.ticks, plot?.grid, ...(parts || [])];
+      const key = [s.spec, s.composed, s.edits?.clave?.id, s.drums, plot?.ticks, plot?.grid, ...(parts || [])];
       if (memo.key && memo.key.length === key.length && memo.key.every((v, i) => v === key[i])) return memo.value;
-      const value = plot && parts ? highlightsOf({ spec: s.spec, parts, drums: s.drums }, plot) : null;
+      // phase N: Compose's own spec too, and whether the clave was picked in the window, so the caption can say the bars a
+      // chord edit re-read the clave in, or the pick
+      const value = plot && parts ? highlightsOf({ spec: s.spec, parts, drums: s.drums, composed: s.composed, picked: s.edits?.clave?.id != null }, plot) : null;
       memo = { key, value };
       return value;
     },
