@@ -50,7 +50,8 @@ CASES.push({ name: '41:42:43 full', L: [41, 42, 43], T: 8, o: { worker: true } }
 CASES.push({ name: '8:7:6:5 exact, settle 0', L: [8, 7, 6, 5], T: 4, o: { overrides: { presence: 'exact', settlePasses: 0 } } });
 CASES.push({ name: '1597:987:610:377 8 bars', L: [1597, 987, 610, 377], T: 8, o: { overrides: { bars: 8 } } });
 CASES.push({ name: '768:769 8x8 even mod off', L: [768, 769], T: 8, o: { overrides: { bars: 8, slotsPerBar: 8, anchors: 'even', modulation: false } } });
-CASES.push({ name: '119:42:15:8 root, phase, comp asked', L: [119, 42, 15, 8], T: 8, o: { overrides: { root: '3/2', phase: [1, 7], compLayer: 'B' } } });
+CASES.push({ name: '119:42:15:8 root, phase, comp asked', L: [119, 42, 15, 8], T: 8, o: { overrides: { root: '3/2', phase: [1, 7], compStyle: 'notes', compLayer: 'B' } } });
+CASES.push({ name: '119:42:15:8 clave asked, fill', L: [119, 42, 15, 8], T: 8, o: { overrides: { clave: '8:x..x..x.', compRelation: 'fill' } } });
 CASES.push({ name: '41:42:43 settle 1', L: [41, 42, 43], T: 8, o: { overrides: { settlePasses: 1 } } });
 for (const mode of ['with', 'against', 'partition', 'bossa']) CASES.push({ name: `11:9:7:5 drums ${mode}`, L: [11, 9, 7, 5], T: 6, o: { drums: { mode } } });
 CASES.push({ name: '8:7:6:5 no drums', L: [8, 7, 6, 5], T: 4, o: { drums: false } });
@@ -200,7 +201,10 @@ function picksOf(trace, spec) {
   const mods = new Set(spec.modulations.map((m) => m.bar)), retunes = new Set(chosen.filter((e) => e.retune).map((e) => e.bar));
   if (JSON.stringify([...mods]) !== JSON.stringify([...retunes])) return 'retunes: not the spec\'s modulations';
   const comp = by('part').find((e) => e.part === 'comp');
-  if (comp.layer !== spec.stats.compLayer.layer) return 'comp layer';
+  // the comp in chords (Amendment 1): the clave, its partner and the alternates; in notes, the layer
+  if (spec.clave) {
+    if (comp.clave.id !== spec.clave.id || comp.clave.relation !== spec.clave.relation || comp.partner.pattern !== spec.clave.partner.pattern || !comp.alternates.length || comp.candidates !== comp.alternates && JSON.stringify(comp.candidates) !== JSON.stringify(comp.alternates)) return 'comp clave';
+  } else if (comp.layer !== spec.stats.compLayer.layer) return 'comp layer';
   return '';
 }
 
