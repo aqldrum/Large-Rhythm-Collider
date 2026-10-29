@@ -406,7 +406,8 @@ class PartitionsGlobalControls {
         const playback = window.toneRowPlayback;
         if (!this.elements.playBtn || !playback) return;
 
-        const isPlaying = playback.isPlaying;
+        // COMPOSITION LENS (sprint 2): the button shows whatever the canvas plays (the row, or its composition)
+        const isPlaying = playback.transportIsPlaying ? playback.transportIsPlaying() : playback.isPlaying;
         this.elements.playBtn.textContent = isPlaying ? '⏹ Stop' : '▶ Play';
         this.elements.playBtn.style.background = isPlaying ? '#ff4444' : 'var(--hud-accent, #00ff88)';
         this.elements.playBtn.classList.toggle('playing', isPlaying);

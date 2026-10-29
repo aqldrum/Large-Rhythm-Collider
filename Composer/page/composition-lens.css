@@ -1,0 +1,84 @@
+/* composition-lens.css — the Composition lens on the main page (Composer sprint 2, step 1), in the site's own look
+   (style.css: --hud-* tokens, #00ff88 accent, the layer strips' buttons): the header glyph, the Playback div's part
+   strips, and the Scale Selection / Consonance Families locks. Classes: composition-*, part-strip-*, glyph-*. */
+
+/* ── the glyph: an icon chip sized like the Cosmos button (42 × 28, 1px border, 5px radius), no text ── */
+#composition-glyph {
+    display: inline-flex; align-items: center; justify-content: center; position: relative;
+    width: 42px; height: 28px; padding: 0; margin: 0; box-sizing: border-box;
+    background: rgba(12, 12, 12, 0.85); border: 1px solid var(--hud-border); border-radius: 5px;
+    color: var(--hud-text-muted); cursor: pointer; z-index: 2001;
+    transition: border-color var(--transition-speed), color var(--transition-speed), box-shadow var(--transition-speed), background var(--transition-speed);
+}
+#composition-glyph[hidden] { display: none !important; }
+#composition-glyph svg { width: 22px; height: 22px; display: block; overflow: visible; }
+#composition-glyph svg ellipse, #composition-glyph svg .glyph-beam { fill: currentColor; stroke: none; }
+#composition-glyph svg .glyph-stems { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+#composition-glyph:hover, #composition-glyph:focus-visible { border-color: var(--hud-accent); color: var(--hud-text); outline: none; }
+#composition-glyph:focus-visible { box-shadow: 0 0 0 2px rgba(0, 255, 136, 0.35); }
+
+/* lit: the Composition lens is on */
+#composition-glyph.lit { border-color: var(--hud-accent); color: var(--hud-accent); background: rgba(0, 255, 136, 0.10); box-shadow: 0 0 10px rgba(0, 255, 136, 0.35); }
+/* composing: a subtle shimmer across the chip */
+#composition-glyph.composing { border-color: rgba(0, 255, 136, 0.6); color: var(--hud-accent); overflow: hidden; }
+#composition-glyph.composing::before {
+    content: ''; position: absolute; inset: 0; border-radius: 4px; pointer-events: none;
+    background: linear-gradient(100deg, transparent 20%, rgba(0, 255, 136, 0.28) 50%, transparent 80%);
+    background-size: 220% 100%; animation: glyph-shimmer 1.3s linear infinite;
+}
+@keyframes glyph-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+/* ready, once a session: one breath of glow */
+#composition-glyph.glyph-breathe { animation: glyph-breathe 2.4s ease-in-out 1; }
+@keyframes glyph-breathe {
+    0%, 100% { box-shadow: 0 0 0 rgba(0, 255, 136, 0); border-color: var(--hud-border); }
+    45% { box-shadow: 0 0 14px rgba(0, 255, 136, 0.55); border-color: var(--hud-accent); color: var(--hud-text); }
+}
+/* a rhythm that couldn't be composed: the tip says why */
+#composition-glyph.refused { color: #8a6a6a; }
+
+/* the tooltip: on hover and on keyboard focus ("Compose" / "Back to the row") */
+#composition-glyph::after {
+    content: attr(data-tip); position: absolute; top: calc(100% + 6px); right: 0; white-space: nowrap; max-width: 360px;
+    overflow: hidden; text-overflow: ellipsis; padding: 3px 8px; border-radius: 4px; font-size: 11px; letter-spacing: 0.02em;
+    background: var(--hud-header); border: 1px solid var(--hud-border); color: var(--hud-text);
+    opacity: 0; transform: translateY(-2px); pointer-events: none; transition: opacity 0.15s, transform 0.15s;
+}
+#composition-glyph[data-tip=""]::after { display: none; }
+#composition-glyph:hover::after, #composition-glyph:focus-visible::after { opacity: 1; transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+    #composition-glyph.glyph-breathe, #composition-glyph.composing::before { animation: none; }
+}
+
+/* ── the part strips (the layer strips' grammar: a row of coloured buttons over one part's controls) ── */
+.composition-part-strips .part-strip-toggles { gap: 6px; }
+.composition-part-strips .part-strip-btn { position: relative; padding: 4px 9px; font-size: 11px; }
+.composition-part-strips .part-strip-btn.off { text-decoration: line-through; opacity: 0.35; }
+.composition-part-strips .part-strip-btn.off.active { opacity: 0.7; }
+/* the layer a part leans on: a small dot in that layer's colour */
+.composition-part-strips .part-strip-layer {
+    position: absolute; top: -4px; right: -4px; width: 8px; height: 8px; border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.6); pointer-events: none;
+}
+.composition-part-strips .part-strip-level { width: 100%; accent-color: var(--hud-accent); }
+.composition-part-strips .part-strip-sound { max-width: 180px; }
+.composition-part-strips .part-strip-status { color: var(--hud-text-muted); font-size: 11px; margin-bottom: 8px; }
+.composition-part-strips .part-strip-note { color: #888; font-size: 10px; line-height: 1.4; }
+
+/* ── Scale Selection under the lens: ProgressionBar's lock pattern, a class of its own ── */
+.composition-locked .scale-row { pointer-events: none; }
+.composition-locked [data-scale-action] { pointer-events: none; opacity: 0.45; }
+#scale-chart-container.composition-locked { position: relative; outline: 1px solid rgba(0, 255, 136, 0.35); outline-offset: 2px; border-radius: 4px; }
+#scale-chart-container.composition-locked::before {
+    content: '🔒 composition'; position: absolute; top: -9px; right: 6px; z-index: 3;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.04em; color: #062a18;
+    background: var(--hud-accent); padding: 1px 6px; border-radius: 4px; pointer-events: none;
+}
+
+/* ── Consonance Families under the lens: locked, with its one-line note ── */
+#interconsonance-families-content.composition-locked > :not(.composition-lock-note),
+#partitions-families-container.composition-locked { pointer-events: none; opacity: 0.45; }
+.composition-lock-note {
+    font-size: 11px; color: var(--hud-text-muted); padding: 6px 8px; margin-bottom: 6px;
+    border: 1px solid rgba(0, 255, 136, 0.25); border-radius: 4px; background: rgba(0, 255, 136, 0.05);
+}

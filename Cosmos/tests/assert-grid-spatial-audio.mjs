@@ -9,7 +9,7 @@ import {
   SpatialGridRowPlayer, culledGridRowFrequency, nearestCulledToneVoices,
   nextRowLayerGapTicks, rowEnvelopePlan, shouldScheduleRowAction,
 } from '../audio/spatial-grid-row-player.js';
-import { getRecipe } from '../audio/instruments/instrument-presets.js';
+import { getRecipe } from '../../Audio/voices/recipes.js';
 import { bedTargetsForPolicy, harmonyPolicySelectionKey, matchHarmonyTarget, normalizeHarmonyPolicy, signedCircularCentsDistance } from '../audio/harmony-policy.js';
 import { AUDIO_LISTENER_FORWARD, AUDIO_LISTENER_UP, toAudioListenerPosition } from '../audio/spatial-audio-frame.js';
 import {
@@ -642,7 +642,7 @@ const aura = readFileSync(new URL('../ui/grid-row-aura.js', import.meta.url), 'u
 const worker = readFileSync(new URL('../workers/cull2-program-worker.js', import.meta.url), 'utf8');
 const page = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
 const style = readFileSync(new URL('../../style.css', import.meta.url), 'utf8');
-const voiceRenderer = readFileSync(new URL('../audio/instruments/instrument-voice.js', import.meta.url), 'utf8');
+const voiceRenderer = readFileSync(new URL('../../Audio/voices/voice.js', import.meta.url), 'utf8');
 check('compiler is a dedicated worker receiving compact finalized ownership',
   worker.includes('compileGridAudioProgram') && flight.includes('ProgramWorkerPool') && flight.includes('ratioOwners: z.ratioOwners'));
 check('main scheduler only schedules precompiled row programs',
@@ -683,9 +683,10 @@ check('debug overlay scroll captures the wheel only under the pointer and contai
 check('debug overlay renders a sticky root-policy summary and explainable candidate table',
   flight.includes("className = 'sky-root-policy'") && flight.includes("className = 'sky-root-policy-table'") &&
   flight.includes('ROOT SELECTION · LIVE POLICY') && style.includes('#sky-debug-panel .sky-root-policy') && style.includes('position: sticky'));
-check('three independent gain buses feed muteGainNode through a constant-power MIX crossfade',
-  audio.includes('bedGain.connect(muteGainNode)') && audio.includes('rowsGain.connect(muteGainNode)') &&
-  audio.includes('auditionGain.connect(muteGainNode)') && audio.includes('Math.cos(mix * Math.PI / 2)') &&
+// Compose mode (E1, 2026-10-22): the three buses meet at flightGain (the flight's own gate, not MUTE) before muteGainNode.
+check('three independent gain buses feed muteGainNode (through the flight gate) with a constant-power MIX crossfade',
+  audio.includes('bedGain.connect(flightGain)') && audio.includes('rowsGain.connect(flightGain)') &&
+  audio.includes('auditionGain.connect(flightGain)') && audio.includes('flightGain.connect(muteGainNode)') && audio.includes('Math.cos(mix * Math.PI / 2)') &&
   audio.includes('Math.sin(mix * Math.PI / 2)'));
 check('audition bus is wired through its own gain, independent of bed/rows crossfade',
   audio.includes('distGainNode.connect(auditionGain)') && audio.includes('setAuditionListen'));

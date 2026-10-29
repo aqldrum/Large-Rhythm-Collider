@@ -7,6 +7,14 @@
     <meta name="description" content="Large Rhythm Collider is a browser-based engine for polyrhythm analysis, visualization, and tuning system exploration.">
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="Playback/AdvancedPlayback/progression-bar.css?v=8">
+    <!-- Composer tab in the Partitions window (Composer/page/) -->
+    <link rel="stylesheet" href="Composer/page/composer-tab.css?v=20261028.4">
+    <!-- COMPOSITION LENS (sprint 2): the header glyph, the part strips, the Scale/Families locks (Composer/page/) -->
+    <link rel="stylesheet" href="Composer/page/composition-lens.css?v=20261023">
+    <!-- COMPOSITION LENS (sprint 2, step 2): the theater — the scrim and the floating caption (Composer/page/theater.js) -->
+    <link rel="stylesheet" href="Composer/page/theater.css?v=20261023">
+    <!-- TUTORIAL (sprint 2, step 3): the guided tour — spotlight, popups, motion (Tutorial/tour-driver.js) -->
+    <link rel="stylesheet" href="Tutorial/tour.css?v=20261023">
 </head>
 <body>
     <!-- Black Canvas Background -->
@@ -97,12 +105,14 @@
                             <button class="dropdown-section-header" type="button" data-target="tutorial-panel">
                                 <div class="dropdown-section-text">
                                     <h2 class="dropdown-section-title">Tutorial</h2>
-                                    <p>Quick-start walkthrough</p>
+                                    <p>A guided tour, or the full guide</p>
                                 </div>
                                 <span class="dropdown-section-icon">+</span>
                             </button>
                             <div id="tutorial-panel" class="dropdown-section-content" hidden>
-                                <button id="tutorial-show-btn" class="tutorial-show-btn" type="button">Show Tutorial</button>
+                                <!-- TUTORIAL (sprint 2, step 3): the guided tour (Tutorial/tour-boot.js) and the old slides, as the guide (TutorialUI.js) -->
+                                <button id="tutorial-show-btn" class="tutorial-show-btn" type="button">Take the tour</button>
+                                <button id="tutorial-slides-btn" class="tutorial-show-btn" type="button">Read the guide</button>
                             </div>
                         </div>
 
@@ -122,6 +132,9 @@
                 </nav>
             </div>
             <div class="title-bar-controls">
+                <!-- COMPOSITION LENS (sprint 2): the glyph — hidden until a rhythm generates; a lens toggle (row ⇄ its
+                     composition), wired by Composer/page/toolbar-glyph.js. Beamed eighths, no text on the button. -->
+                <button id="composition-glyph" class="composition-glyph" type="button" aria-pressed="false" aria-label="Compose" data-tip="Compose" data-state="hidden" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path class="glyph-stems" d="M9.2 17.2V6.6M20 15.2V4.6"></path><path class="glyph-beam" d="M9.2 6.6 20 4.6v2.7L9.2 9.3Z"></path><ellipse cx="6.6" cy="17.4" rx="2.7" ry="1.95" transform="rotate(-22 6.6 17.4)"></ellipse><ellipse cx="17.4" cy="15.4" rx="2.7" ry="1.95" transform="rotate(-22 17.4 15.4)"></ellipse></svg></button>
                 <button id="cosmos-enter-btn" class="reset-btn" title="Fly the rhythm cosmos — select a rhythm out in space and load it into the engine"><img class="cosmos-icon" src="assets/images/cosmos.png" alt="Cosmos"></button>
                 <button id="reset-display-btn" class="reset-btn">Reset Display</button>
             </div>
@@ -463,7 +476,7 @@
     </script>
 
     <!-- Interface Core Modules -->
-    <script src="Core Interface/LRCModule.js"></script>
+    <script src="Core Interface/LRCModule.js?v=20261023"></script>
     <script src="Core Interface/LRCHudController.js"></script>
     <script src="Core Interface/ExpandedInfoView.js"></script>
     <script src="Playback/Partitions/PartitionsDistribution.js"></script>
@@ -471,9 +484,9 @@
     <script src="Playback/Partitions/PartitionsBlockLights.js"></script>
     <script src="Playback/Partitions/PartitionsSamples.js"></script>
     <script src="Playback/Partitions/TransposeUI.js"></script>
-    <script src="Playback/Partitions/PartitionsGlobalControls.js"></script>
-    <script src="Playback/Partitions/PartitionsPlayback.js?v=20260703c"></script>
-    <script src="Playback/Partitions/PartitionsUI.js?v=20260811b"></script>
+    <script src="Playback/Partitions/PartitionsGlobalControls.js?v=20261023"></script>
+    <script src="Playback/Partitions/PartitionsPlayback.js?v=20261021"></script>
+    <script src="Playback/Partitions/PartitionsUI.js?v=20261022"></script>
     <script src="Core Interface/LRCSearch.js?"></script>
     <script src="Core Interface/LRCInterconsonance.js"></script>
     <script src="Core Interface/LRCExport.js"></script>
@@ -482,7 +495,7 @@
     <script src="Core Interface/CollectionsUI.js"></script>
 
     <!-- Visualizations -->
-    <script src="Core Interface/LRCVisuals.js"></script>
+    <script src="Core Interface/LRCVisuals.js?v=20261022"></script>
     <script src="Visualizations/NodePopups.js"></script>
     <script src="Visualizations/NodeUI.js"></script>
     <script src="Visualizations/ReflectionsExport.js"></script>
@@ -566,25 +579,29 @@
             <div class="tutorial-footer">
                 <button type="button" class="tutorial-close-btn">Close</button>
                 <span class="tutorial-copyright">Avery Logan © 2025</span>
-                <label class="tutorial-dismiss">
-                    <input type="checkbox" id="tutorial-dismiss-checkbox">
-                    <span>Do not show again</span>
-                </label>
             </div>
         </div>
     </div>
 
     <!-- Audio -->
         <script src="Tutorial/TutorialContent.js"></script>
-        <script src="Tutorial/TutorialUI.js"></script>
-        <script src="Playback/LayerControlsUI.js"></script>
+        <script src="Tutorial/TutorialUI.js?v=20261023"></script>
+        <script src="Playback/LayerControlsUI.js?v=20261021"></script>
         <script src="Playback/PlaybackMainUI.js?v=20260703"></script>
         <script src="Playback/ScaleSelectionUI.js"></script>
         <script src="Playback/ConsonanceFamiliesUI.js"></script>
-        <script src="Playback/AudioEngine.js?v=20260703"></script>
+        <script src="Playback/AudioEngine.js?v=20261021"></script>
         <script src="Playback/Scheduler.js"></script>
         <script src="Playback/MIDIOut.js?v=20260811"></script>
-        <script src="Playback/ToneRowPlayback.js?v=20260811a"></script>
+        <script src="Playback/ToneRowPlayback.js?v=20261023"></script>
+        <!-- Shared voice library (Audio/voices/) as window.lrcVoices: the layers' sounds -->
+        <script type="module" src="Audio/lrc-voices-bridge.js?v=20261021"></script>
+        <!-- The Composer (Composer/) as window.lrcComposer: the Composer tab beside Partitions, and (sprint 2) the
+             Composition lens: the header glyph, the composition store, the part strips, the one transport -->
+        <script type="module" src="Composer/page/composer-bridge.js?v=20261028.4"></script>
+        <!-- TUTORIAL (sprint 2, step 3): the guided tour (Tutorial/tour-*.js) as window.lrcTour; after the bridge, whose
+             lens it presses -->
+        <script type="module" src="Tutorial/tour-boot.js?v=20261023"></script>
         <script src="Core Interface/AudioEffects.js?v=20241022"></script>
 
         <!-- Progression Solver (Quality Painting on the main page) -->
@@ -593,7 +610,7 @@
         <script src="Playback/AdvancedPlayback/ProgressionSolver.js?v=2"></script>
         <script src="Playback/AdvancedPlayback/PaintTimeline.js?v=1"></script>
         <script src="Playback/AdvancedPlayback/PaintEngine.js?v=1"></script>
-        <script src="Playback/AdvancedPlayback/ProgressionBar.js?v=9"></script>
+        <script src="Playback/AdvancedPlayback/ProgressionBar.js?v=10"></script>
 
     <!-- ══ COSMOS FLIGHT-VIEW (POC) — full-swallow overlay, hidden until the title-bar ✦ Cosmos icon ══
          Purely additive: default-hidden via CSS (#cosmos-view); body.cosmos-active reveals it full-viewport.

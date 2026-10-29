@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Composer Lab</title>
+<!-- The LRC Composer's lab: one rhythm's row composed and performed. Not linked from index.html. Serve the repo root
+     as a static site and open /Composer/lab/composer-lab.html. -->
+<style>
+  :root { --bg: #111; --panel: #1a1a1a; --cell: #2a2a2a; --line: #444; --text: #fff; --muted: #aaa; --accent: #00ff88; --warn: #ffb347; --bad: #ff4444; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px 'Segoe UI', Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 12px 0 0; color: var(--accent); font-weight: 600; letter-spacing: .5px; }
+  main { padding: 12px 16px; display: grid; gap: 12px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  label { color: var(--muted); }
+  input, select, button { background: var(--cell); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: inherit; }
+  input[type=number] { width: 68px; }
+  input.layer { width: 64px; text-align: center; }
+  #tempo { width: 120px; accent-color: var(--accent); }
+  #tempoBpm.changed { border-color: var(--warn); color: var(--warn); }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  #go { background: var(--accent); color: #000; font-weight: 700; border: none; padding: 7px 22px; min-width: 120px; }
+  #go.stop { background: var(--bad); color: #fff; }
+  #go:disabled { opacity: .6; cursor: wait; }
+  .row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  .knob { display: flex; flex-direction: column; gap: 3px; }
+  .chosen { font-size: 11px; color: var(--muted); }
+  .chosen.over { color: var(--warn); }
+  .readouts { display: flex; flex-wrap: wrap; gap: 18px; font-family: monospace; }
+  .readouts b { color: var(--accent); font-weight: 400; }
+  #refusal { color: var(--bad); font-weight: 600; }
+  #refusal:empty { display: none; }
+  .lanes { display: grid; gap: 4px; position: relative; overflow-x: auto; }
+  .lane { display: grid; grid-template-columns: 300px 1fr; gap: 8px; align-items: stretch; }
+  .lane .head { display: flex; gap: 6px; align-items: center; background: var(--cell); padding: 4px 6px; border-radius: 4px; }
+  .lane .head .name { width: 52px; font-weight: 600; }
+  .lane .head select { width: 104px; }
+  .lane .head input[type=range] { width: 60px; accent-color: var(--accent); }
+  .toggle { padding: 2px 6px; font-size: 11px; }
+  .toggle.on { border-color: var(--accent); color: var(--accent); }
+  .bars { display: grid; gap: 2px; position: relative; }
+  .bar { background: var(--cell); border-radius: 3px; position: relative; min-height: 30px; overflow: hidden; }
+  .bar .tick { position: absolute; top: 6px; bottom: 6px; width: 2px; background: var(--accent); opacity: .85; }
+  .bar .count { position: absolute; right: 4px; bottom: 2px; font-size: 10px; color: var(--muted); }
+  .bar .chord { position: absolute; left: 6px; top: 6px; font-weight: 600; }
+  .bar .mod { position: absolute; right: 4px; top: 3px; font-size: 10px; color: var(--warn); }
+  .lane.off .bars { opacity: .3; }
+  .bar .chord.targeted { color: var(--accent); }
+  .bar .chord.fallback { color: var(--warn); }
+  #progression select { max-width: 220px; }
+  #playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; display: none; }
+  details summary { cursor: pointer; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; font-size: 12px; }
+  td { border-top: 1px solid var(--line); padding: 3px 6px; vertical-align: top; }
+  td:first-child { color: var(--accent); white-space: nowrap; font-family: monospace; }
+  td:nth-child(2) { font-family: monospace; white-space: nowrap; }
+  .note { color: var(--muted); font-size: 11px; }
+  /* drums: a band a voice in the drum lane's bars */
+  .bar .dtick { position: absolute; width: 2px; height: 4px; }
+  .bar .dtick.kick { top: 4px; background: #ff6b6b; } .bar .dtick.snare { top: 9px; background: #f9ca24; } .bar .dtick.hat { top: 14px; background: #aaa; }
+  .bar .dtick.perc { top: 19px; background: #4ecdc4; } .bar .dtick.cym { top: 24px; background: #fff; }
+  .bar .dlabel { position: absolute; right: 4px; top: 3px; font-size: 10px; color: var(--muted); }
+  #drumKit { margin-top: 8px; }
+  #drumKit select { width: 120px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>LRC Composer — lab</h1>
+  <label>Layers</label>
+  <input class="layer" id="l0" type="number" min="0"><input class="layer" id="l1" type="number" min="0"><input class="layer" id="l2" type="number" min="0"><input class="layer" id="l3" type="number" min="0">
+  <label>Cycle s</label><input id="cycle" type="number" min="0.5" step="0.5">
+  <label>Seed</label><input id="seed" type="number" step="1">
+  <label title="portamento: how long a held (legato) voice slides to its next note">Glide</label><input id="glide" type="range" min="0" max="500" step="1"><span id="glideOut" class="note"></span>
+  <label title="playback tempo: plays the composed cycle faster or slower, live, without composing again (pitch unchanged)">Tempo</label><input id="tempo" type="range" min="30" max="300" step="1"><input id="tempoBpm" type="number" min="30" max="300" step="0.1" title="BPM"><button id="tempoReset" class="toggle" title="back to the tempo Compose chose">reset</button>
+  <select id="preset"></select>
+  <button id="go">Compose</button>
+  <button id="export" title="download the spec as JSON">JSON</button>
+  <span id="status" class="note"></span>
+</header>
+<main>
+  <section>
+    <h2>Knobs — blank or auto leaves the choice to Compose</h2>
+    <div class="row" id="knobs"></div>
+  </section>
+  <section>
+    <h2>Progression — a root a bar from the row's own tones; auto leaves the bar to Compose</h2>
+    <div class="row" id="progression"></div>
+    <div class="row" style="margin-top: 8px"><button id="progTake" title="fill every bar with the root the last compose chose">take from last compose</button><button id="progClear" title="every bar back to auto">clear</button><span id="progNote" class="note"></span></div>
+  </section>
+  <section>
+    <div class="readouts" id="readouts"></div>
+    <div id="refusal"></div>
+  </section>
+  <section>
+    <h2>Lanes</h2>
+    <div class="lanes" id="lanes"><div id="playhead"></div></div>
+    <div class="row" id="drumKit" title="the drum kit: a sound a voice (Audio/drums' made kit, or the site's samples); off silences the voice"></div>
+  </section>
+  <section>
+    <details id="decisions"><summary>Decisions — what Compose chose, and why</summary><table id="decisionTable"></table></details>
+  </section>
+</main>
+<script type="module" src="./composer-lab.js"></script>
+</body>
+</html>

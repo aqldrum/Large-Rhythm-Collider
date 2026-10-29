@@ -1,0 +1,312 @@
+/* composer-tab.css — the Composer tab inside the Partitions window (Composer/page/composer-tab.js), in the window's
+   own look: #1a1a1a panels, #2a2a2a cells, #444 lines, #00ff88 accents. Every class is ctab-*; the tab strip in the
+   window's title bar is lrc-window-tab*. */
+
+/* the tab strip in the Partitions window's title bar */
+.lrc-window-tabs { display: flex; gap: 6px; margin-left: 16px; }
+.lrc-window-tab { background: rgba(40, 40, 40, 0.6); border: 1px solid #444; color: #ccc; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; letter-spacing: 1px; }
+.lrc-window-tab:hover { background: rgba(60, 60, 60, 0.8); color: #fff; }
+.lrc-window-tab.active { background: #00ff88; color: #000; border-color: #00ff88; }
+
+/* the two hosts */
+.ctab-left { width: 50%; container-type: inline-size; container-name: ctab-left; display: flex; flex-direction: column; overflow: hidden; background: #1a1a1a; padding: 12px 16px; gap: 8px; box-sizing: border-box; color: #ccc; font-size: 12px; }
+.ctab-inspector { background: #2a2a2a; border: 1px solid #444; border-radius: 4px; padding: 10px; overflow: hidden; display: flex; flex-direction: column; gap: 6px; min-height: 0; color: #ccc; font-size: 12px; }
+
+.ctab-left input, .ctab-left select, .ctab-left button, .ctab-inspector input, .ctab-inspector select, .ctab-inspector button {
+  background: #222; color: #fff; border: 1px solid #444; border-radius: 4px; padding: 3px 6px; font: inherit; font-size: 11px; }
+.ctab-left button, .ctab-inspector button { cursor: pointer; }
+.ctab-left button:hover, .ctab-inspector button:hover { border-color: #00ff88; }
+.ctab-left input[type=range], .ctab-inspector input[type=range] { padding: 0; accent-color: #00ff88; border: none; background: none; }
+
+.ctab-head { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; padding-bottom: 8px; border-bottom: 1px solid #333; }
+.ctab-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ctab-rhythm { color: #ccc; margin-right: 6px; }
+.ctab-rhythm b { color: #00ff88; font-weight: 600; letter-spacing: 1px; }
+.ctab-seed { width: 56px; }
+.ctab-num { width: 64px; }
+.ctab-num.changed { border-color: #ffb347 !important; color: #ffb347 !important; }
+.ctab-tempo { width: 110px; }
+.ctab-glide { width: 90px; }
+.ctab-muted { color: #888; font-size: 11px; }
+.ctab-status { color: #888; font-size: 11px; }
+.ctab-left .ctab-go { background: #00ff88; color: #000; font-weight: 700; border: none; padding: 5px 18px; min-width: 104px; font-size: 12px; }
+.ctab-left .ctab-go.stop { background: #ff4444; color: #fff; }
+.ctab-left .ctab-go:disabled { opacity: .55; cursor: default; }
+.ctab-btn { color: #00ff88 !important; }
+.ctab-toggle { padding: 1px 6px !important; font-size: 10px !important; }
+.ctab-toggle.on { border-color: #00ff88 !important; color: #00ff88 !important; }
+
+.ctab-note { color: #ccc; background: rgba(0, 255, 136, 0.06); border: 1px solid #2f5d45; border-radius: 4px; padding: 6px 8px; flex-shrink: 0; }
+.ctab-refusal { color: #ff4444; font-weight: 600; flex-shrink: 0; }
+.ctab-refusal:empty { display: none; }
+.ctab-readouts { display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: monospace; font-size: 11px; flex-shrink: 0; }
+.ctab-readouts b { color: #00ff88; font-weight: 400; }
+
+.ctab-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 4px; }
+.ctab-lanes { display: grid; gap: 4px; position: relative; }
+/* STEP 4e: the matrix fills the left half (rows share the height), and scrolls sideways when its columns get narrow */
+.ctab-matrix-wrap { flex: 1 0 auto; min-height: 380px; display: flex; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+.ctab-matrix { flex: 1; grid-template-rows: auto minmax(64px, 1.3fr) auto repeat(4, minmax(48px, 1fr)) minmax(62px, 1.1fr); outline: none; }
+.ctab-matrix:focus-visible { box-shadow: 0 0 0 1px #2f5d45; border-radius: 4px; }
+.ctab-lane { display: grid; grid-template-columns: 112px 1fr; gap: 6px; align-items: stretch; }
+.ctab-lane-head { display: flex; gap: 4px; align-items: center; background: rgba(255, 255, 255, 0.03); border: 1px solid #333; border-radius: 4px; padding: 3px 4px; }
+.ctab-lane .ctab-lane-name { flex: 1; text-align: left; border: none !important; border-left: 3px solid #888 !important; border-radius: 2px !important; background: none !important; font-weight: 600; font-size: 12px !important; padding: 2px 6px !important; }
+.ctab-lane.selected .ctab-lane-head { border-color: #00ff88; background: rgba(0, 255, 136, 0.07); }
+.ctab-lane.off .ctab-bars { opacity: .3; }
+.ctab-bars { display: grid; gap: 2px; position: relative; }
+.ctab-bar { background: #2a2a2a; border-radius: 3px; position: relative; min-height: 26px; overflow: hidden; }
+.ctab-tick { position: absolute; top: 5px; bottom: 5px; width: 2px; }
+.ctab-chord { position: absolute; left: 5px; top: 5px; font-weight: 600; color: #fff; font-size: 11px; }
+.ctab-chord.targeted { color: #00ff88; }
+.ctab-chord.fallback { color: #ffb347; }
+/* a chord chart's split bar: each chord at its span's place, a faint rule between (CHART_ORDER.md P10) */
+.ctab-chord.ctab-chord-span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctab-span-rule { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed rgba(255, 255, 255, 0.25); pointer-events: none; }
+.ctab-mod { position: absolute; right: 4px; top: 2px; font-size: 10px; color: #ffb347; }
+.ctab-dlabel { position: absolute; right: 4px; top: 2px; font-size: 9px; color: #888; }
+.ctab-dtick { position: absolute; width: 2px; height: 4px; }
+.ctab-dtick.kick { top: 3px; background: #ff6b6b; } .ctab-dtick.snare { top: 8px; background: #f9ca24; } .ctab-dtick.hat { top: 13px; background: #aaa; }
+.ctab-dtick.perc { top: 18px; background: #4ecdc4; } .ctab-dtick.cym { top: 23px; background: #fff; }
+.ctab-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; pointer-events: none; display: none; z-index: 2; }
+
+.ctab-decisions summary { cursor: pointer; color: #888; }
+.ctab-decisions-table { border-collapse: collapse; width: 100%; margin-top: 6px; font-size: 11px; }
+.ctab-decisions-table td { border-top: 1px solid #333; padding: 2px 5px; vertical-align: top; }
+.ctab-decisions-table td:first-child { color: #00ff88; white-space: nowrap; font-family: monospace; }
+.ctab-decisions-table td:nth-child(2) { font-family: monospace; white-space: nowrap; }
+
+/* the inspector */
+.ctab-insp-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex-shrink: 0; }
+.ctab-swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.ctab-insp-name { color: #fff; font-size: 13px; margin-right: 4px; }
+.ctab-insp-head select { max-width: 130px; }
+.ctab-level { width: 70px; }
+.ctab-insp-parts { display: flex; flex-wrap: wrap; gap: 4px; flex-shrink: 0; }
+.ctab-inspector .ctab-part-pick { font-size: 10px; padding: 1px 6px; border-left-width: 3px !important; }
+.ctab-inspector .ctab-part-pick.active { color: #00ff88; }
+.ctab-insp-tabs { display: flex; gap: 4px; border-bottom: 1px solid #444; padding-bottom: 6px; flex-shrink: 0; }
+.ctab-inspector .ctab-insp-tab { background: rgba(40, 40, 40, 0.6); color: #ccc; padding: 3px 10px; }
+.ctab-inspector .ctab-insp-tab.active { background: #00ff88; color: #000; border-color: #00ff88; }
+.ctab-insp-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 8px; }
+.ctab-sub { color: #00ff88; font-size: 12px; font-weight: 600; }
+.ctab-knobs { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+.ctab-knob { display: flex; flex-direction: column; gap: 2px; }
+.ctab-knob label { color: #aaa; font-size: 11px; }
+.ctab-knob input[type=number] { width: 64px; }
+.ctab-prog select { max-width: 190px; }
+.ctab-chosen { font-size: 10px; color: #888; }
+.ctab-chosen.over { color: #ffb347; }
+
+/* the Compose animation (compose-animator.js): a caption above the lanes, the lanes filling in as the parts land */
+.ctab-left .ctab-go.skip { background: #ffb347; color: #000; }
+.ctab-caption { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; background: rgba(0, 255, 136, 0.05); border: 1px solid #2f5d45; border-radius: 4px; padding: 5px 8px; }
+.ctab-caption-label { color: #00ff88; font-weight: 600; }
+.ctab-caption-detail { color: #ccc; font-family: monospace; font-size: 11px; }
+.ctab-caption-beats { display: flex; flex-wrap: wrap; gap: 3px; }
+.ctab-beat { font-size: 9px; letter-spacing: .5px; color: #666; border: 1px solid #333; border-radius: 3px; padding: 0 4px; }
+.ctab-beat.past { color: #2f8f62; border-color: #2f5d45; }
+.ctab-beat.now { color: #000; background: #00ff88; border-color: #00ff88; }
+.ctab-left.ctab-animating .ctab-readouts, .ctab-left.ctab-animating .ctab-decisions { visibility: hidden; }
+.ctab-lane .ctab-bars { transition: opacity .25s ease-out; }
+.ctab-lane.ctab-anim-hidden .ctab-bars { opacity: .08; }
+.ctab-lane.ctab-anim-labels .ctab-tick { visibility: hidden; }
+.ctab-chord.ctab-anim-hot { color: #c56cf0; }
+.ctab-bar.ctab-anim-flash { background: rgba(255, 179, 71, 0.18); box-shadow: inset 0 0 0 1px #ffb347; }
+
+/* ── STEP 4e: the matrix (matrix.js), the typed field, the context inspector ── */
+.ctab-mhead { display: grid; grid-template-columns: 112px 1fr; gap: 6px; align-items: end; }
+.ctab-mcorner { padding-left: 6px; font-size: 10px; }
+.ctab-mnums { min-height: 0; }
+.ctab-mnum { font-size: 10px; color: #777; font-family: monospace; padding-left: 4px; }
+.ctab-mnum.in-pick { color: #00ff88; }
+.ctab-mnum.now, .ctab-pick.now { color: #fff; text-shadow: 0 0 4px #00ff88; }
+.ctab-cell { cursor: pointer; border: 1px solid transparent; box-sizing: border-box; }
+.ctab-cell:hover { border-color: #444; }
+.ctab-cell.selected { border-color: #00ff88; box-shadow: inset 0 0 0 1px rgba(0, 255, 136, 0.35); background: #2d3430; }
+.ctab-cell.edited { background-image: linear-gradient(135deg, rgba(255, 179, 71, 0.10), transparent 40%); }
+.ctab-cell.retuned { box-shadow: inset 0 -2px 0 rgba(255, 179, 71, 0.55); }
+.ctab-dot { position: absolute; width: 5px; height: 5px; margin: -2px 0 0 -2px; border-radius: 50%; opacity: .9; pointer-events: none; }
+.ctab-dot.held { width: 3px; height: 3px; margin: -1px 0 0 -1px; opacity: .5; }
+.ctab-lane.drums .ctab-bar { min-height: 40px; }
+.ctab-badge { position: absolute; right: 3px; bottom: 2px; font-size: 9px; line-height: 12px; min-width: 12px; text-align: center; color: #000; background: #8fd9b5; border-radius: 6px; padding: 0 3px; }
+.ctab-edited { position: absolute; left: 3px; bottom: 1px; font-size: 10px; color: #ffb347; }
+.ctab-chord { pointer-events: none; }
+.ctab-retune { font-size: 10px; color: #ffb347; }
+.ctab-cell .ctab-retune { position: absolute; left: 5px; bottom: 2px; white-space: nowrap; }
+.ctab-cell.edited .ctab-retune { left: 16px; }
+.ctab-mini { position: absolute; left: 4px; right: 4px; top: 4px; bottom: 13px; display: grid; grid-template-rows: repeat(5, 1fr); gap: 1px; pointer-events: none; }
+.ctab-mstep { background: rgba(255, 255, 255, 0.04); border-radius: 1px; }
+.ctab-mstep.on { opacity: .75; } .ctab-mstep.accent { opacity: 1; }
+.ctab-mstep.kick.on, .ctab-mstep.kick.accent { background: #ff6b6b; } .ctab-mstep.snare.on, .ctab-mstep.snare.accent { background: #f9ca24; }
+.ctab-mstep.hat.on, .ctab-mstep.hat.accent { background: #aaa; } .ctab-mstep.perc.on, .ctab-mstep.perc.accent { background: #4ecdc4; }
+.ctab-mstep.cym.on, .ctab-mstep.cym.accent { background: #fff; }
+.ctab-mstep.silent { background: none !important; box-shadow: inset 0 0 0 1px #ffb347; }
+.ctab-cell .ctab-dlabel { top: auto; bottom: 1px; }
+.ctab-lane.ctab-anim-labels .ctab-dot, .ctab-lane.ctab-anim-labels .ctab-mini { visibility: hidden; }
+
+/* the typed progression field, across the top of the Chords row */
+.ctab-fieldrow { display: grid; grid-template-columns: 112px 1fr; gap: 6px; align-items: stretch; }
+.ctab-field-head { justify-content: flex-start; }
+.ctab-field-label { color: #c56cf0; font-weight: 600; font-size: 11px; padding-left: 6px; }
+.ctab-field-wrap { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ctab-left input.ctab-field { width: 100%; box-sizing: border-box; font-family: monospace; font-size: 12px; border-color: #3d2f45; }
+.ctab-left input.ctab-field:focus { border-color: #c56cf0; outline: none; }
+.ctab-field-strip { display: grid; gap: 2px; }
+.ctab-res { font-family: monospace; font-size: 10px; color: #888; padding: 1px 4px; border-radius: 2px; display: flex; flex-wrap: wrap; gap: 0 4px; align-items: baseline; min-width: 0; overflow: hidden; }
+.ctab-res-name { color: #ddd; font-weight: 600; }
+.ctab-res.ok .ctab-res-mark { color: #00ff88; }
+.ctab-res.amber { background: rgba(255, 179, 71, 0.10); } .ctab-res.amber .ctab-res-name, .ctab-res.amber .ctab-res-detail { color: #ffb347; }
+.ctab-res.error { background: rgba(255, 68, 68, 0.10); } .ctab-res.error .ctab-res-name { color: #ff6b6b; }
+.ctab-field-notes { font-size: 10px; color: #ffb347; }
+.ctab-dropped { flex-shrink: 0; color: #ffb347; font-size: 11px; background: rgba(255, 179, 71, 0.06); border: 1px solid #5d4a2f; border-radius: 4px; padding: 4px 8px; }
+
+/* the bar picker: only on narrow widths, where the matrix shows one bar */
+.ctab-barpick { display: none; flex-wrap: wrap; gap: 4px; align-items: center; flex-shrink: 0; }
+.ctab-left .ctab-pick { padding: 2px 9px; font-family: monospace; }
+.ctab-left .ctab-pick.active { border-color: #00ff88; color: #00ff88; }
+@container ctab-left (max-width: 600px) {
+  .ctab-barpick { display: flex; }
+  .ctab-matrix { min-width: 0 !important; }
+  .ctab-bars, .ctab-field-strip { grid-template-columns: 1fr !important; }
+  .ctab-bars > .ctab-bar, .ctab-bars > .ctab-mnum, .ctab-field-strip > .ctab-res { grid-column: auto !important; }
+  .ctab-bars > .ctab-bar:not(.in-pick), .ctab-bars > .ctab-mnum:not(.in-pick), .ctab-field-strip > .ctab-res:not(.in-pick) { display: none; }
+  .ctab-playhead { display: none !important; }
+  .ctab-lane, .ctab-fieldrow, .ctab-mhead { grid-template-columns: 84px 1fr; }
+}
+
+/* the context inspector */
+.ctab-inspector .ctab-insp-tab.ctab-ctx-tab { font-weight: 600; }
+.ctab-ctx { gap: 6px; }
+.ctab-ctx-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.ctab-ctx-head b { color: #fff; font-size: 13px; }
+.ctab-tag { font-size: 10px; color: #ffb347; border: 1px solid #5d4a2f; border-radius: 3px; padding: 0 4px; }
+.ctab-legend { font-size: 10px; }
+.ctab-alts { display: flex; flex-direction: column; gap: 2px; }
+.ctab-inspector .ctab-alt { display: grid; grid-template-columns: 22px minmax(52px, auto) 1fr auto auto auto; gap: 8px; align-items: baseline; text-align: left; background: #222; padding: 3px 8px; }
+.ctab-inspector .ctab-alt.current { border-color: #2f8f62; }
+.ctab-inspector .ctab-alt.auditioning { border-color: #ffb347; background: rgba(255, 179, 71, 0.10); }
+.ctab-alt-mark { color: #00ff88; font-size: 10px; font-family: monospace; }
+.ctab-alt-name { color: #fff; }
+.ctab-alt-ratio, .ctab-alt-cents { font-family: monospace; color: #aaa; font-size: 10px; }
+.ctab-alt-q { color: #888; font-size: 10px; }
+.ctab-alt-support { color: #00ff88; font-size: 10px; } .ctab-alt-support.amber { color: #ffb347; }
+.ctab-audition { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; border-top: 1px solid #333; padding-top: 6px; }
+.ctab-audition.on .ctab-muted { color: #ffb347; }
+.ctab-inspector .ctab-keep:not(:disabled) { border-color: #00ff88; }
+.ctab-inspector button:disabled { opacity: .45; cursor: default; }
+.ctab-editnote { font-size: 10px; color: #8fd9b5; font-family: monospace; }
+.ctab-editnote.amber { color: #ffb347; }
+.ctab-pin { font-size: 10px; }
+.ctab-notes td:first-child { color: #aaa; }
+.ctab-steps { display: grid; gap: 2px; align-items: center; }
+.ctab-step-num { font-size: 9px; color: #666; text-align: center; font-family: monospace; }
+.ctab-step-voice { font-size: 10px; color: #aaa; }
+.ctab-inspector .ctab-step { height: 20px; padding: 0 !important; background: #1f1f1f; border-color: #3a3a3a; }
+.ctab-inspector .ctab-step.on { background: #3d6b55; }
+.ctab-inspector .ctab-step.accent { background: #00ff88; }
+.ctab-inspector .ctab-step.kick.on { background: #8a4444; } .ctab-inspector .ctab-step.kick.accent { background: #ff6b6b; }
+.ctab-inspector .ctab-step.snare.on { background: #8a7420; } .ctab-inspector .ctab-step.snare.accent { background: #f9ca24; }
+.ctab-inspector .ctab-step.hat.on { background: #666; } .ctab-inspector .ctab-step.hat.accent { background: #ccc; }
+.ctab-inspector .ctab-step.perc.on { background: #2f7a75; } .ctab-inspector .ctab-step.perc.accent { background: #4ecdc4; }
+.ctab-inspector .ctab-step.cym.on { background: #888; } .ctab-inspector .ctab-step.cym.accent { background: #fff; }
+.ctab-inspector .ctab-step.silent { background: transparent !important; border: 1px dashed #ffb347; }
+.ctab-silent-note { color: #ffb347; font-size: 10px; }
+.ctab-presets { display: flex; flex-wrap: wrap; gap: 3px; }
+.ctab-inspector .ctab-preset { font-size: 10px; padding: 1px 6px; }
+.ctab-inspector .ctab-preset.active { border-color: #00ff88; color: #00ff88; }
+.ctab-prime { display: flex; flex-direction: column; gap: 3px; }
+.ctab-prime-lane { position: relative; height: 26px; background: #202020; border: 1px solid #333; border-radius: 3px; overflow: hidden; }
+.ctab-prime-bar { position: absolute; top: 0; bottom: 0; background: rgba(0, 255, 136, 0.07); }
+.ctab-light { position: absolute; bottom: 2px; width: 1px; height: 8px; background: #4ecdc4; opacity: .45; }
+.ctab-light.chosen { height: 16px; opacity: .75; }
+.ctab-light.struck { height: 20px; opacity: 1; background: #7ff5ec; }
+.ctab-light.dark { background: none; border-left: 1px dashed #666; opacity: .6; }
+
+/* ── MIDI targets (phase B): the MIDI clip control, the lead row's clip marks, the clip's notes in the inspector ── */
+.ctab-target { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; background: rgba(255, 255, 255, 0.02); border: 1px solid #333; border-radius: 4px; padding: 5px 8px; }
+.ctab-target-label { color: #fff; font-size: 12px; letter-spacing: .5px; }
+.ctab-left .ctab-tonic { max-width: 140px; }
+.ctab-left.ctab-dropping { box-shadow: inset 0 0 0 2px #00ff88; }
+.ctab-left.ctab-dropping .ctab-target { border-color: #00ff88; background: rgba(0, 255, 136, 0.08); }
+.ctab-clip-line { display: flex; flex-wrap: wrap; gap: 2px 6px; font-family: monospace; font-size: 11px; color: #aaa; }
+.ctab-clip-item.name { color: #fff; font-weight: 600; font-family: inherit; }
+.ctab-clip-item.ok { color: #00ff88; }
+.ctab-clip-item.amber { color: #ffb347; }
+.ctab-clip-item.red { color: #ff6b6b; }
+.ctab-clip-error { color: #ff6b6b; font-weight: 600; font-size: 11px; }
+.ctab-clip-alts { display: flex; flex-direction: column; gap: 4px; }
+.ctab-places { display: flex; flex-wrap: wrap; gap: 3px; }
+.ctab-left .ctab-place { display: flex; gap: 6px; align-items: baseline; font-size: 10px; padding: 2px 7px; background: #222; }
+.ctab-left .ctab-place b { color: #fff; font-family: monospace; }
+.ctab-place-where { color: #8fd9b5; }
+.ctab-left .ctab-place.current { border-color: #2f8f62; }
+.ctab-left .ctab-place.auditioning { border-color: #ffb347; background: rgba(255, 179, 71, 0.10); }
+.ctab-left .ctab-place:disabled, .ctab-left .ctab-keep:disabled, .ctab-left .ctab-revert:disabled { opacity: .45; cursor: default; }
+/* a clip note in the lead row: amber when substituted, hollow red when silent, a tail when its note-off is late */
+.ctab-dot.clip.fringe, .ctab-dot.clip.shift { box-shadow: 0 0 0 1.5px #ffb347; }
+.ctab-dot.clip.hard { background: none; box-shadow: inset 0 0 0 1.5px #ff4444; width: 6px; height: 6px; margin: -3px 0 0 -3px; opacity: 1; }
+.ctab-dot.clip.late::after { content: ''; position: absolute; left: 100%; top: 50%; width: 5px; height: 1px; background: #ffb347; }
+.ctab-dot.clip { overflow: visible; }
+/* comping in chords (COMP_ARP_ORDER.md A4): a borrowed tone hollow, a ring in the part's colour (set as `color`) */
+.ctab-dot.borrowed { background: none; box-shadow: inset 0 0 0 1.5px currentColor; width: 6px; height: 6px; margin: -3px 0 0 -3px; opacity: .95; }
+.ctab-notes tr.borrowed td:nth-child(2) { font-style: italic; color: #c9b8d6; }
+.ctab-comp-line { gap: 0; }
+/* the Arp mode (COMP_ARP_ORDER.md B3): the Line | Arp switch, a segmented pair, and its knobs on the same row */
+.ctab-arp { gap: 6px; }
+.ctab-arp-switch { display: inline-flex; }
+.ctab-inspector .ctab-seg { padding: 1px 8px; font-size: 10px; border-radius: 0; }
+.ctab-inspector .ctab-seg:first-child { border-radius: 3px 0 0 3px; }
+.ctab-inspector .ctab-seg:last-child { border-radius: 0 3px 3px 0; border-left: none; }
+.ctab-inspector .ctab-seg.on { border-color: #00ff88; color: #00ff88; }
+.ctab-inspector .ctab-arp-switch.refused .ctab-seg { opacity: .45; cursor: not-allowed; }
+.ctab-arp select { font-size: 10px; }
+/* phase E: the clave and arp pickers — a clave by its pattern, monospace; the alternates as the chords' are */
+.ctab-clave { gap: 6px; flex-wrap: wrap; }
+.ctab-clave-pattern { font-family: ui-monospace, Menlo, monospace; letter-spacing: 1px; color: #fff; }
+.ctab-clave-source { font-size: 10px; }
+.ctab-inspector .ctab-alt.ctab-clave-alt.curated { border-style: dashed; }
+.ctab-arp-sub { margin-top: 4px; }
+.ctab-arp-missed { font-size: 10px; }
+/* phase H: the bass's Density and Lands on, the chords' Close | Led */
+.ctab-bass, .ctab-voicing { gap: 6px; flex-wrap: wrap; }
+.ctab-bass select { font-size: 10px; }
+.ctab-inspector .ctab-bass-lock .ctab-seg + .ctab-seg { border-left: none; }
+.ctab-inspector .ctab-seg.refused { opacity: .45; cursor: not-allowed; }
+.ctab-bass-refused, .ctab-bass-missed { color: #ffb347; font-size: 10px; }
+.ctab-bass-refusal, .ctab-voicing-stats { font-size: 10px; }
+.ctab-bass-sub { margin-top: 4px; }
+/* phase L (BASS_VOICING_ORDER.md Amendment 1): the comp head's bar clave, the frame claves by source, a lock's hits
+   covered (the missed in amber), a walk's fill */
+.ctab-clave-bar { margin-left: 6px; font-size: 10px; }
+.ctab-clave-bar .ctab-clave-pattern { font-size: 11px; }
+.ctab-clave-name { font-size: 10px; }
+.ctab-clave-score { color: #00ff88; }
+.ctab-inspector .ctab-alt.ctab-clave-alt .ctab-clave-inframe { margin-left: 4px; }
+.ctab-bass-hits, .ctab-bass-fill { font-size: 10px; }
+.ctab-bass-missed-hits { color: #ffb347; }
+/* phase N (Amendment 2): the comp's density row, a fall-back in amber; Compose's own bass following the drums */
+.ctab-comp-density-row { gap: 6px; flex-wrap: wrap; }
+.ctab-comp-density-row select { font-size: 10px; }
+/* phase O (Amendment 3): the comp's tolerance select, its "fill from the chords" toggle and what the strokes found */
+.ctab-comp-strum-row { gap: 6px; flex-wrap: wrap; }
+.ctab-comp-strum-row select { font-size: 10px; }
+.ctab-comp-tier, .ctab-bass-refollowed { font-size: 10px; }
+.ctab-comp-tier.amber { color: #ffb347; }
+.ctab-clip-notes tr.fringe .ctab-clip-kind, .ctab-clip-notes tr.shift .ctab-clip-kind, .ctab-clip-notes tr.late td:last-child { color: #ffb347; }
+.ctab-clip-notes tr.hard td { color: #ff6b6b; }
+.ctab-clip-tag { color: #fff; border-color: #555; }
+
+/* Details (Composer/CLEAN_MIDI_ORDER.md, phase A): off, the clean view hides what only Details shows; on, the window as
+   before, and what only the clean view shows (its short forms) gives way */
+.ctab-left:not(.ctab-details-on) .ctab-detail, .ctab-inspector:not(.ctab-details-on) .ctab-detail { display: none !important; }
+.ctab-details-on .ctab-clean-only { display: none !important; }
+.ctab-details.has-hidden { border-color: #ffb347 !important; color: #ffb347 !important; }
+.ctab-summary { flex-shrink: 0; font-family: monospace; font-size: 11px; color: #888; }
+/* the clean view's alternates mark: a dot, its count in the title */
+.ctab-left:not(.ctab-details-on) .ctab-badge { font-size: 0; min-width: 0; width: 6px; height: 6px; padding: 0; border-radius: 50%; right: 4px; bottom: 4px; }
+
+/* MIDI out (CLEAN_MIDI_ORDER.md, phase B): the header's MIDI button and the panel under the header */
+.ctab-midi.open { border-color: #8fd9b5 !important; }
+.ctab-midi-panel { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; border: 1px solid #444; border-radius: 4px; background: #222; }
+.ctab-midi-panel .ctab-knob select { max-width: 220px; }
+.ctab-midi-status.amber { color: #ffb347; }

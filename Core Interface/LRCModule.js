@@ -37,10 +37,14 @@ class LRCModule {
         return (a * b) / this.gcd(a, b);
     }
 
-    calculateTotalLCM(a, b, c, d) {
-        const lcmAB = this.lcm(a, b);
-        const lcmABC = this.lcm(lcmAB, c);
-        return this.lcm(lcmABC, d);
+    // COMPOSITION LENS (sprint 2): the grid of the layers given, ignoring missing ones. Callers pass only the active
+    // layers (`...activeLayers`), so a rhythm with blank C and D used to compute lcm(x, undefined) = NaN. Missing,
+    // zero or non-numeric layers are skipped now; four whole layers give exactly what they gave before (lcm(1, a)
+    // is a, then the same chain). No layer at all: 0 (no grid).
+    calculateTotalLCM(...layers) {
+        const present = layers.filter(v => Number.isFinite(v) && v > 0);
+        if (present.length === 0) return 0;
+        return present.reduce((grid, v) => this.lcm(grid, v), 1);
     }
 
     // ====================================
@@ -242,7 +246,10 @@ class LRCModule {
         // Reset frequency tracking
         this.ratioFrequencies.clear();
         
-        const fundamental = Math.max(...spacesPlot);
+        // A loop, not Math.max(...spacesPlot): spreading a row-sized array overflows the stack past ~124k onsets
+        // (Composer sprint fix, 2026-10-22).
+        let fundamental = spacesPlot[0];
+        for (let i = 1; i < spacesPlot.length; i++) if (spacesPlot[i] > fundamental) fundamental = spacesPlot[i];
         const ratioMap = new Map();
         const spacesMapping = new Map(); // Maps fraction -> array of spaces plot indices
         
@@ -349,7 +356,9 @@ class LRCModule {
     generateToneRowData(spacesPlot, fundamentalFreq = 110) {
         if (!spacesPlot || spacesPlot.length === 0) return [];
         
-        const fundamental = Math.max(...spacesPlot); // Largest space as fundamental
+        // Largest space as fundamental; a loop, not a spread (stack overflow past ~124k onsets; 2026-10-22)
+        let fundamental = spacesPlot[0];
+        for (let i = 1; i < spacesPlot.length; i++) if (spacesPlot[i] > fundamental) fundamental = spacesPlot[i];
         const toneRowData = [];
         
         spacesPlot.forEach((space, index) => {

@@ -11,9 +11,9 @@ import { classifyLateEvent, LATE_CLAMP_TOLERANCE_SECONDS } from './transport-clo
 // choice, timing, stealing, budget and the star bus; the renderer owns the nodes. The selected recipe
 // arrives through the injected `getRecipe` accessor (see the constructor), so no palette definition or
 // audio composition root is imported.
-import { getRecipe as presetRecipe, DEFAULT_INSTRUMENT } from './instruments/instrument-presets.js';
-import { planVoice } from './instruments/voice-plan.js';
-import { createInstrumentVoice } from './instruments/instrument-voice.js';
+import { getRecipe as presetRecipe, DEFAULT_INSTRUMENT } from '../../Audio/voices/recipes.js';
+import { planVoice } from '../../Audio/voices/plan.js';
+import { createInstrumentVoice } from '../../Audio/voices/voice.js';
 
 const LAYERS = new Set(['A', 'B', 'C', 'D']);
 export const CULLED_ROW_FUNDAMENTAL_HZ = 220;
@@ -194,7 +194,7 @@ export class SpatialGridRowPlayer {
   // the summed detune offset, which is the one harmonic fact it does not own.
   // telemetry: an optional sink with lateEvent(latenessMs, emitted) — Cosmos/audio/audio-telemetry.js's meter.
   // Optional so the headless guards can build a player without one.
-  // getRecipe: (role) => a frozen instrument role recipe (instrument-presets.js). The NARROW instrument
+  // getRecipe: (role) => a frozen instrument role recipe (Audio/voices/recipes.js). The NARROW instrument
   // dependency — the composition root injects one that reads the live selected palette, so a selection
   // change is picked up by the next scheduled voice without this module importing the audio root or any
   // palette catalog. Defaults to the classic (today's) recipe so headless guards render at parity.

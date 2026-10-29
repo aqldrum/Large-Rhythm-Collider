@@ -136,27 +136,17 @@ class AudioEngine {
         }
     }
 
-    stopAllOscillators() {
-        const oscillators = [...this.playback.activeOscillators];
-        this.playback.activeOscillators = [];
-        oscillators.forEach((osc) => {
+    // Hard cleanup: every sounding voice fades to silence over 20 ms and stops — even one already releasing, and a
+    // ringing struck sound.
+    stopAllVoices() {
+        const voices = [...this.playback.activeVoices];
+        this.playback.activeVoices.clear();
+        const ctx = this.playback.audioContext;
+        const now = ctx ? ctx.currentTime : 0;
+        const tail = 0.02;
+        voices.forEach((voice) => {
             try {
-                const ctx = this.playback.audioContext;
-                const now = ctx ? ctx.currentTime : 0;
-                const tail = 0.02;
-                osc.onended = null;
-                if (osc.frequency && osc.frequency.cancelScheduledValues) {
-                    osc.frequency.cancelScheduledValues(now);
-                }
-                const gainNode = osc.__cleanupGain;
-                if (gainNode && gainNode.gain?.setValueAtTime) {
-                    const current = gainNode.gain.value;
-                    gainNode.gain.setValueAtTime(current, now);
-                    gainNode.gain.linearRampToValueAtTime(0, now + tail);
-                    osc.stop(now + tail + 0.01);
-                } else {
-                    osc.stop(now + tail);
-                }
+                voice.fadeOut(now, tail);
             } catch (_) {
                 // Already stopped
             }

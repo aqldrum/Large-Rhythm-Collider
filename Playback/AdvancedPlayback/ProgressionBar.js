@@ -453,6 +453,7 @@
         // safe). Updates "in time" with the brackets as the playhead crosses sections.
         _paintChartForSection(si) {
             if (!this.timeline) return;
+            if (this.chartYielded()) return;   // the Composition lens owns the readout (it calls repaintChart on leaving)
             const stage = this.timeline.stages[si];
             if (!stage) return;
             const set = new Set(stage.mask);
@@ -468,6 +469,17 @@
                 el.textContent = `${stage.mask.length} in ${stage.chordSymbol || 'chord'}`;
             });
             this._chartSection = si;
+        },
+
+        // COMPOSITION LENS (sprint 2, step 2): under the Composer's Composition lens the Scale chart is its readout
+        // (Composer/page/panel-locks.js puts `composition-locked` on it), so this bar's own chart paint yields while
+        // that class is there, instead of repainting it every frame; the lens calls repaintChart() as it leaves.
+        chartYielded() {
+            const chart = document.getElementById('scale-chart-container');
+            return !!(chart && chart.classList.contains('composition-locked'));
+        },
+        repaintChart() {
+            if (this.locked && this.timeline) this._paintChartForSection(this._activeSection());
         },
 
         // ---- viz-mode support ----
@@ -819,7 +831,7 @@
                     // — rebuilding every frame would destroy elements mid-click and break clicks.
                     if (this._bracketSig() !== this._lastSig) this._renderBrackets();
                     // scale chart highlight follows the active section live (in time with brackets)
-                    if (this.locked) {
+                    if (this.locked && !this.chartYielded()) {
                         const as = this._activeSection();
                         this._paintChartForSection(as);
                         // Centrifuge's pitch ring shows one chord at a time → swap its tones

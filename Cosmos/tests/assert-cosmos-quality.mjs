@@ -21,7 +21,7 @@ check('order runs low → ultra', QUALITY_ORDER.join(',') === 'low,medium,high,u
 
 console.log('\n[2] Monotonicity — raising quality only adds work, never removes it');
 // bloomMaxRange non-decreasing means a higher tier keeps MORE rhythms (bigger allowed range) — Low is strictest.
-const NUMERIC_BUDGETS = ['poolCap', 'spawn', 'evict', 'spawnMin', 'dprCap', 'solveBacklog', 'bloomMaxRange', 'maxFps'];
+const NUMERIC_BUDGETS = ['poolCap', 'spawn', 'evict', 'spawnMin', 'dprCap', 'solveBacklog', 'bloomMaxRange', 'maxFps', 'composeBudget', 'dustMax'];
 for (const key of NUMERIC_BUDGETS) {
   let ok = true, prev = -Infinity, trail = [];
   for (const id of QUALITY_ORDER) { const v = QUALITY_TIERS[id][key]; trail.push(v); ok = ok && v >= prev; prev = v; }

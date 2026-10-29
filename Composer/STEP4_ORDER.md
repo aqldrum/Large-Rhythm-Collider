@@ -1,0 +1,197 @@
+# Step 4: the Composer window rework (work order, 2026-10-25)
+
+This builds `STEP4_RECOMMENDATIONS.md` (read it first: it has the measurements, the dependency graph and the APIs). Avery took the proposed answer on all 8 open questions. They are now **decided**, as below.
+
+Integration branch: `composer-sprint-2` (steps 1–3 at 3c6cb66). Phases branch from it as `step4/<phase>` in their own worktrees `.claude/worktrees/step4-<phase>`. The planner reviews each phase, runs the suites and merges. Workers are background Opus agents. Never `main`, never pushed. Verification is the Node suites; Avery does the browser pass.
+
+## Decisions (Avery, 2026-10-25: "take the proposed answers")
+
+1. **A chord swap keeps the lead.** The lead is not re-mined over the new chord. Its notes off the new chord count as exceptions, and the bar's bass, comping, inner and chord voices follow the chord.
+2. **Lead alternates are per phrase:** what the miner already makes (4 bars at S = 8), from the trace's runner-up lines. No per-bar lead mining.
+3. **Typed symbols are relative.** C is the composition's base root, as the Composer already names chords. They are not absolute pitch through the fundamental.
+4. **An off-frame symbol resolves to the nearest cluster at any offset**, shown amber with its cents. With modulation on, Compose's own modulation rule may retune there. With modulation off, it stays amber and is flagged `offGrid`. It is never silently snapped into the frame.
+5. **Edits through a re-compose:**
+   - chord edits (swapped or typed) are kept as **pins** (root + quality), and Compose solves around them;
+   - lead edits are dropped;
+   - a pin whose root tone isn't in the new row is dropped and shown amber.
+6. **The drum grid works at slot resolution:** S·m places a bar, with m = 1 unless S < 4 (`beatsOf(S)`). No half-slots.
+7. **The prime for the two-level partition** (RE-RULED by Avery, 2026-10-25, after 4c measured that "nearest N·S" leaves level 2 nearly the identity and silences the downbeat when p < N·S). **p is a seeded random prime above N·S, up to the low triple digits. Level 2 uses Partitions' own distribution of N·S over p.** The first ruling, "the prime nearest N·S", is superseded. A worker revises 4c's prime mode after 4d merges.
+8. **The lanes become the matrix.** There's no separate tab.
+
+Also from the recommendations, taken as written:
+- **Pinned for local edits:** the comp layer, `baseHz` and the lead's legato.
+- **Fixed during a swap:** `targets.scale`.
+- **Chords don't follow a lead swap by default.** "Chords follow" is an option.
+- **The inner is re-mined bar-locally,** with boundaries; "smooth the phrase" is optional, in the worker.
+- **Edits are live edits:** they don't make the entry dirty, the glyph recalls spec + edits, and each entry has a small undo stack.
+- **Drum grid strings:** `x` a stroke, `X` an accent, `.` off. An edit turns the mode to `grid`.
+
+## Phases
+
+| Phase | Branch | Depends on | Edits | Status |
+| --- | --- | --- | --- | --- |
+| 4a. Core: trace caps → builder refactor (byte-identical) → `rearrange.js` | `step4/core` | — | `core/compose.js`, `core/harmony.js`, `core/lines.js`, `core/trace.js`, new `core/rearrange.js`, `page/trace-frames.js` (slice) | MERGED (578d861..0c63f1e) |
+| 4b. Typed progression: `chord-symbols.js`, resolve, `barMaterials`, quality pins | `step4/typed` | — | new `core/chord-symbols.js`, `core/progression.js` | MERGED (6a92539..ac83a05) |
+| 4c. Drum grid source, presets ⇄ grid, prime level 1 | `step4/drums` | — | `core/drums.js` | MERGED (83211fc..d8c7886) |
+| 4d. Store: `edits`, pins, `drumOptions.grid`, invalidation, undo; the controller merge | `step4/store` | 4a, 4b, 4c merged | `store/`, `perform/composer-controller.js` | built on `step4/store` |
+| 4e. UI: the matrix, then the four inspector contexts ∥ the typed field | `step4/ui` | 4d merged | `page/composer-tab.*`, `page/tab-controller.js`, new `page/matrix.js` + `page/audition.js`, `page/plot-overlay.js`, `page/composer-bridge.js`, the controller's audition helper | MERGED (d31c1d1..83e682c) |
+| 4f. Final merge, suites, browser list | `composer-sprint-2` | all | — | DONE (below) |
+
+4a, 4b and 4c run in parallel: they touch disjoint files.
+- 4b must not edit `harmony.js` or `compose.js`. It extends `readProgression` and `chooseChordOnRoot` in `progression.js` only. 4a must not edit `progression.js`.
+- If either needs the other's file, it stops and reports. The planner sequences it.
+
+## Phase specs
+
+### 4a. Core (sequential inside the phase)
+1. **The trace caps option.** `compose(..., { trace: { caps } })`, defaulting to the recommended `chordCandidates` 12 and `runnersUp` 8. `trace-frames.js` slices back to 6 and 3, so the main-page show and the Cosmos dust are unchanged (test that).
+2. **Always request the trace from the controller,** independent of "show the work". The show still obeys the setting.
+3. **The builder refactor.**
+   - Lift compose.js' part builders into exported per-bar functions: `chordVoicesOfBar`, `compOfBar` (layer given), `bassOfBar` and `innerOf({ from, bars })`, plus harmony.js' `chordRecord`.
+   - Compose calls them.
+   - **The gate:** a byte-identity test across `rhythms.mjs`, seeds, every override, progressions and every drum mode. The settle baseline and every existing suite stay unchanged.
+4. **`core/rearrange.js`.**
+   - `rearrange(spec, row, cells, { bar, chord: candidate })` and `rearrange(spec, row, cells, { phrase, line: lineId, chordsFollow })` → `{ parts, drums, chords, changedBars, retunedBars }`.
+   - The bar-local inner via a new `rules: { before, after }` in `lines.js`; optional `smoothPhrase`.
+   - Report modulation re-pitching as `retunedBars`.
+   - **Identity test:** rearranging a bar with its own chord, or a phrase with its own line, gives the spec byte for byte.
+   - **Cost test:** a chord swap is ≤ ~20 ms on the 16k row (lean on the main thread).
+
+### 4b. Typed progression
+1. **`core/chord-symbols.js`:** a pure port of `ProgressionSolver.parseChordSymbol` (accidentals, suffixes, slash bass) → `{ rootPc, intervals }`. Add a parity test against the site parser over a symbol list.
+2. **Resolve per bar** against `rootCandidates`, by decisions 3 and 4:
+   - **the root:** the least |dev| in the class, presence breaking ties. It's supported inside the frame, otherwise amber with cents and the modulation rule applies;
+   - **the quality:** support by `chooseChordOnRoot`'s every-class-but-one test, giving ✓, a missing class shown amber ("no ♭7"), or a fallback shown amber.
+3. **`barMaterials(layers, T, knobs)`:** row + cells for resolving before a compose (~1 ms).
+4. **`progression` accepts `[{ ratio, quality } | null]`.**
+   - `readProgression` takes the object form, and `chooseChordOnRoot` honors a supported forced quality, otherwise it falls back as today.
+   - **Identity:** the existing ratio form behaves exactly as before.
+5. **Pure display helpers:** symbol ↔ pin list both ways, so the lab's ratio picks and the field are two views of one list.
+
+### 4c. Drum grid
+1. **`arrangeDrums` gains a `grid` source** (`drumOptions.grid`: one string per voice per bar). Each cell lands through the existing `land()`: the nearest onset in the place's window, then one place wider, else silent (reported as a silent cell). Fills and crashes stay options over the grid.
+2. **Presets ⇄ grid.** `gridOf(arrangeDrums output)` maps each hit's `pos` to `round(pos·m)`. Grid(preset) must arrange the preset's own hits; test this for every mode and pattern.
+3. **The prime partition mode.**
+   - **Level 1:** implement `levelOneLights(g, { source: 'prime', p })`: p lights evenly from the downbeat, each on `g.nearest()`. The default p is the prime nearest N·S (decision 7).
+   - **Level 2:** cell j covers lights ⌊j·p/P⌋…, and a lit cell strikes its first light. The default selection is `selectLights(P, hits)`, turned to the downbeat; the grid replaces it.
+   - Expose the level-1 lights' real times for the UI strip.
+4. **Tests:** every grid stroke's tick is a real onset; the silent-cell report; the prime mode's light count and the level-2 mapping; the existing drum outputs unchanged when no grid is given.
+
+### 4d. Store
+- **Per entry:** `edits: { chords: { [bar]: { rootTone, quality, from: 'swap' | 'typed' } }, lead: { [phrase]: { lineId, chordsFollow } } }`, plus `drumOptions.grid` and an undo stack.
+- **The controller merges** spec + edits (as `currentParts()` merges live edits today). It uses `rearrange` for swaps, and the worker with a per-key row cache for rows too big for the main thread.
+- **Invalidation by decision 5:**
+  - a re-compose keeps chord pins (sent as `progression` objects) and drops lead edits;
+  - pins missing from the new row are dropped and shown amber;
+  - edits never make the entry dirty, and the glyph recalls spec + edits.
+- **Tests:** recall with edits and no re-solve; undo/redo; pins surviving a seed change; a dropped pin flagged; part strips and the lens showing edited parts.
+
+### 4e. UI (decision 8)
+- **The lanes become the matrix.**
+  - The six part rows, with one column per bar. Each cell is a mini view (slot dots, the chord name, the drum grid in miniature) with an alternates badge. Lead cells span their phrase.
+  - The typed field runs across the top of the Chords row, aligned to the columns, with cents and amber inline.
+  - The selected cell lights its notes on the mirrored plot (the overlay's `getSelected` seam).
+- **The inspector** follows the selected cell. Part-level sound/legato/level move to a slim header row. The contexts:
+  - **Chords:** 12 candidates with support;
+  - **Lead:** 8 runner-ups with cost per note, and "chords follow";
+  - **Bass, Comping, Inner:** "follows bar k's chord", a re-mine button, and the comp layer pin;
+  - **Drums:** the bar's step grid, the presets, and the prime mode with its level-1 strip.
+- **Audition:** a first click auditions an alternate live at the next bar boundary; a second click keeps it. Esc reverts the audition. Undo/redo use ⌘Z / ⇧⌘Z inside the window.
+- Show "retunes bars k–m" wherever a swap re-pitches later bars.
+- **Narrow widths:** the matrix scrolls horizontally, or a bar picker appears.
+- The main-page part strips and the lens keep working on edited compositions.
+
+### 4f. Final
+Merge, run the full suite, then write a browser list for Avery: swaps (chord, lead, chords-follow), audition/keep/revert, undo, the typed field (supported, amber, off-frame with modulation on and off), the drum grid (edit, preset, prime mode, silent cells), recall through the glyph with edits, and a re-compose keeping chord pins.
+
+## Process
+- Every phase commits in logical steps with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never use `git stash`.
+- Full suite from the worktree root, clean = prints nothing (59 suites at 3c6cb66):
+  `for t in Composer/tests/assert-*.mjs Cosmos/tests/assert-*.mjs Audio/tests/assert-*.mjs Playback/MIDIOut.test.mjs; do node "$t" >/dev/null 2>&1 || echo FAIL $t; done`
+- Each phase adds a DESIGN_NOTES section, with calls marked **proposed** and Avery's decisions above marked **decided**, plus a Log line below.
+- Each phase report lists its edits to shared files, for the planner's merges.
+
+## Log
+- 2026-10-25: order written; Avery took the proposed answers on all 8 questions.
+- 2026-10-25: 4a, 4b and 4c dispatched in parallel (Opus), each in its own worktree off b69a39e.
+- 2026-10-25: 4b built on `step4/typed`: `core/chord-symbols.js` (parser parity, tokenizer, `barMaterials`, `resolveSymbols`, symbols ⇄ pins) and quality pins in `core/progression.js`. The ratio form is byte-identical, and `assert-chord-symbols.mjs` is added (60 suites). Quality pins on a root pinned twice with different qualities wait on a one-line harmony.js seam (DESIGN_NOTES "Step 4b"), for after 4a.
+- 2026-10-25: 4b merged. Owed after 4a merges: a one-line pin change in harmony.js `chordsFrom` (~line 315), `{ tone: pin, cents: row.toneCents[pin], ...(progression.qualities ? { quality: progression.qualities[k] } : {}) }`, so a root pinned with two qualities honors each bar's quality (byte-identical without quality pins). Open for Avery: flats come back sharp when the field is rewritten from pins (keep the typed text?); show both names after a modulation?
+- 2026-10-25: 4c built on `step4/drums`: the `grid` source (`mode: 'grid'`, silent cells), `gridOf` (exact for backbeat, every pattern and prime; `against` onset-exact; `with` 28 % and `partition` 34 % keep their onsets), and `mode: 'prime'` (p nearest N·S, as decided; measured: its level-2 swing is up to a whole slot, and below N·S the downbeat cell goes silent; proposed: p ≈ 4·N·S). Unchanged without a grid (595 hashes). 60 suites clean. DESIGN_NOTES "Step 4c".
+- 2026-10-25: 4c merged. FLAGGED for Avery: decision 7 (p = the prime nearest N·S) leaves ~1 light per level-2 cell, so level 2 is nearly the identity. The ⌊j·p/C⌋ cut makes a sawtooth up to a whole slot deep (more polyrhythm than swing), and when p < N·S the downbeat cell goes silent (19 of 28 test meters). Suggested: p ≈ 4·N·S (or at least above N·S), and/or Partitions' own L2 cut. Also: `with`/`partition` perc rows re-land on their own onset only 28–34 % of the time through a grid round trip. 4d/4e must add 'grid' and 'prime' to the controller's drum-mode labels (they are kept out of DRUM_MODES).
+- 2026-10-25: 4a (Core) built on `step4/core`: the trace caps option (`trace: { caps }`, ALTERNATE_CAPS 12/8, `capTrace`, the show cut back), the controller always asking for the trace, the builder refactor (byte-identical against a frozen copy, 729 cases), and `core/rearrange.js` (chord swap, lead swap, chords follow, the bar-local inner with `rules: { before, after }`). A chord swap is a 4.9 / 10.9 ms median (lean / full) on the 16k row. 62 suites clean. DESIGN_NOTES "Step 4a: core rearrange".
+- 2026-10-25: 4a merged (docs conflicts only). The planner applied 4b's seam in harmony.js (`chordsFrom` passes each bar's own quality), retired the "waits on harmonize" caveat in `describeProgression`, and turned its test into a positive one. 64/0 suites, including the 729-case identity gate (live progression.js and drums.js). Owed: the `against` drum mode re-draws later bars after a swap (52 of 336); seed per bar in drums.js. 4d/4e: add `grid` and `prime` to the controller's drum-mode labels. A rhythm composed with the work hidden now recalls with the short show (the trace is always kept).
+- 2026-10-25: decision 7 re-ruled by Avery: p is a seeded random prime above N·S (to the low triple digits), and level 2 uses Partitions' own distribution of N·S over p. The 4c prime revision is queued after 4d.
+- 2026-10-25: 4d (Store) built on `step4/store`. Each entry keeps `composed` (Compose's spec) and `spec` (composed + edits, a fold of `rearrange` in the edits' order, each step kept), so the player, lanes, plot, strips, lens and recall read the edits with no page edit. Actions: `swapChord`, `swapLead` (chords follow, smooth), `setProgressionField` (the typed text kept as the source; typed chord edits), the drum grid (`setDrumGrid`, `setDrumCell`, `applyDrumPreset`), `undo`/`redo` (50), `alternatesOf`. A re-compose bakes chord edits into `progression` as `{ ratio, quality }` pins, drops lead edits, drops a pin the new row lacks and keeps the grid only on the same meter, all said in `state.dropped`. Edits run on the main thread up to 32,768 onsets (a lead swap on the full table to 2,048), else in the compose worker (`kind: 'rearrange'`, rows kept per key); smoothPhrase always there. The owed items are done: `grid`/`prime` are in the controller's drum modes, and `against` is seeded per bar (its 4 baseline variants left out, 527 hashes unchanged). `assert-store-edits.mjs` is added (65 suites). DESIGN_NOTES "Step 4d: store edits and pins".
+- 2026-10-25: 4d merged (log conflict only). Open for Avery (4d): should undo survive a re-compose; should removing a pin through the field re-arm the glyph; should a swapped chord stay pinned through "chords follow"; should the field show the fallback that actually plays (chosen with the lead); move `barMaterials` to the worker for huge rows (~270 ms at 524k)? Audition has no API of its own (4e: swap + undo leaves a redo step).
+- 2026-10-25: 4c prime revision built on `step4/prime` (decision 7 as re-ruled). p is a seeded random prime in (N·S, max(199, the next prime ≥ 2·N·S)] (the range proposed), drawn from `${seed}/drums/prime`, so no other part or `against` bar moves. Level 2 is Partitions' own `getSecondaryAllowedSet(p, N·S)` (for a prime p, identical to its UI's `computeL2Coverages` cut), turned so light 0, the downbeat, is always chosen. Proposed: a dark chosen light lands within its cell; the controller drops an asked p a new meter outgrows (`state.dropped.p`). Measured: level 2 moves a stroke at most half a slot over the drawn range (mean 0.05–0.16 by S), deeper the nearer p is to N·S; merges under 1.5 % on dense rows. `prime` output gains `drawn`, `range`, `chosen`, and `struck[].tick`/`snap`. `assert-drum-prime.mjs` added (66 suites). DESIGN_NOTES "Step 4c", "The prime partition, revised".
+- 2026-10-25: the prime revision was merged cleanly (dd91af9..4ef233d, merge ea053e8); 66/0 suites. Decision 7 as re-ruled:
+  - **p:** drawn uniformly from the primes in (N·S, U], U = max(199, the smallest prime ≥ 2·N·S), from its own draw `${seed}/drums/prime`.
+  - **Level 2:** Partitions' own `getSecondaryAllowedSet(p, C)`, matching what the live UI plays (`computeL2Coverages`) for every C ≥ 3. The downbeat always sounds.
+  - **A dark chosen light:** lands within its cell instead of going silent (proposed).
+  - **The feel:** a drift-and-reset under half a slot, shaped by p mod C. True long-short alternation appears only when p mod C ≈ C/2. A small p gives a push-and-pull rubato; a p near U is almost straight.
+- 2026-10-25: **WRAPPED for the night.** 4a–4d and the prime revision are merged on composer-sprint-2 (tip below). **Next: 4e (the matrix UI), not started.**
+- 2026-10-25: 4e dispatched (Opus) at Avery's request, to finish step 4 for a full browser test.
+
+- 2026-10-25: 4e (UI) built on `step4/ui`. The lanes are the bar × part matrix (decision 8): six rows, a column a bar, lead cells a phrase, each cell a mini view with an alternates badge and edited / "retunes bars k–m" marks; a selected cell is ringed on the mirrored plot (`plot-overlay.js` `getFocus`); arrows and Enter. The typed field runs over the Chords row with each bar's resolution inline (applied on Enter or blur, the text kept). The inspector follows the cell (chords: 12 candidates; lead: 8 runner-ups, chords follow, smooth; bass/comping/inner: what they follow, the comp layer read-only; drums: the step grid, every preset, the prime strip) beside the four settings sections. Audition (held to the next bar boundary while performing) / keep / revert, with a controller helper so a reverted audition leaves no redo step. Undo/Redo buttons and ⌘Z / ⇧⌘Z. A bar picker under 600 px. `assert-page-matrix.mjs` added (67 suites). DESIGN_NOTES "Step 4e".
+## Morning notes (Avery)
+
+**State:**
+- composer-sprint-2 holds sprint 2 steps 1–3 and step 4 phases 4a–4d plus the prime revision. 66 Node suites pass. Not pushed, not on main.
+- The step-4 work has no UI yet (4e), so a browser pass shows only steps 1–3 behaving as before, now reading the edited composition.
+- **Serve it with caching off.** Module imports carry no version strings, and a stale cached module gives "does not provide an export named …":
+  `python3 -c "import http.server as h` / `class H(h.SimpleHTTPRequestHandler):` / `    def end_headers(self): self.send_header('Cache-Control','no-store'); super().end_headers()` / `h.test(HandlerClass=H, port=8000)"` (four lines), or keep DevTools' Disable cache ticked.
+
+**Open calls, all proposed in the code:**
+- **4b:**
+  - Flats come back sharp when the field is rebuilt from pins. 4d now keeps the typed text while the field is the source.
+  - After a modulation, should both chord names show?
+- **4c:**
+  - Should the whole kit play on the prime lights, or just the perc (as built)?
+  - Keep `with`/`partition` perc rows tied to their source until edited (they round-trip only 28–34 %)?
+- **4c prime:**
+  - Is the ceiling U right, and should the draw stay uniform?
+  - Should a dark chosen light land within its cell (built) or stay silent?
+  - Under 4 slots, p is drawn above N·S·m. Right?
+  - A stale asked p is dropped after a meter change. Right?
+- **4d:**
+  - Should undo survive a re-compose?
+  - Should removing a pin via the field make the glyph compose again?
+  - Should a swapped chord stay pinned through "chords follow"?
+  - Should the field show the fallback that actually plays?
+  - Should `barMaterials` move to the worker for huge rows?
+- **From your pass:**
+  - The tutorial opening needs more reading time.
+  - "Show the work" should be slower.
+  - The glyph contact sheet is coming from another agent.
+  - The improvise direction is recorded in `DIRECTIONS.md`.
+- **Elsewhere:** the two Cosmos fold fixes are still uncommitted in the composer-sprint worktree (not on this branch).
+- 2026-10-25: 4e merged (row conflict only); 67/0 suites. **Step 4 is complete.** The browser test is below.
+
+## Browser test: all of step 4 (Avery)
+
+Serve the **composer-sprint-2** worktree with caching off (the no-store server in the Morning notes above, or DevTools' Disable cache). Open `localhost:8000`.
+
+1. **The matrix.** Generate **41:42:43** with an 8 s cycle. Double-click the Playback header and pick the **Composer** tab. Under Lines, set Bars 8 and Slots 8, then Compose. Expect six rows × 8 columns, two lead cells (bars 1–4 and 5–8), a "Typed" row above Chords, and alternates badges on the Chords and Lead cells.
+2. **Selecting.** Click Chords bar 2: only that bar's violet nodes are ringed on the plot. The inspector reads "Bar 2 · Chords" with 12 candidates (● now, C Compose's, ✓/amber). Click lead bars 5–8: the whole phrase is ringed. Try ←/→/↑/↓ and Enter.
+3. **Chord swap.** Press Perform, then click an amber candidate: it changes at the next bar line. Click it again to keep it: the cell gets ✎ and Undo is enabled. Click another candidate and press Esc: it reverts, and Redo stays disabled.
+4. **Lead swap.** On Lead bars 5–8, keep a runner-up: the chords stay. Toggle "chords follow": the chord names re-choose. Then "smooth the phrase": the header says "applying in the worker…" (it needs a swapped lead first).
+5. **Undo/redo.** With the matrix focused, ⌘Z and ⇧⌘Z step through, and the buttons agree. Inside the typed field, ⌘Z only undoes text.
+6. **The typed field.**
+   - `G D#m A# Bb7`, then Enter: ✓ on D#m and A#, amber "no 5" on G, amber "no ♭7" on A#7, and the text keeps "Bb7".
+   - `G#` in bar 1: amber, −17.5¢, "may retune".
+   - Harmony → Modulation off, then Compose: `G#` says "offGrid".
+   - `D#m D#sus4`, then Compose: each bar keeps its own quality.
+7. **Re-compose.** With a swapped chord and a swapped lead, set Seed to 7 and Compose. The chord stays pinned, and the amber line says the lead swap was dropped.
+8. **The drum grid.** Drums bar 1: click a perc step through `.` → x → X → `.`, and the cell gets ✎. Try "son", then "grid". On **8:7:6:5** with Bars 8 and Slots 8, fill a whole perc row: dashed hollow "no onset here" steps appear.
+9. **Prime.** Click "prime": the strip shows p and its range, chosen lights tall, struck lights bright. Listen for a perc drift-and-reset of under half a slot against the backbeat. Its shape depends on p mod (N·S); see the prime revision's Log line.
+10. **Recall.** Close the window and press the header glyph: the edited composition plays with no Compose.
+11. **The main page.** The part strips follow the edits: the lead dot follows the swapped lead, and an edit in the window shows in the strips.
+12. **A big row.** **65536:65535** (131,070 onsets), Compose. Chord and lead swaps go through the worker ("applying…"), and Keep/Revert wait for them.
+13. **Narrow.** Shrink the window: below 600 px for the left half, a bar picker shows one bar at a time; wider than that, the matrix scrolls sideways.
+14. **Regression.** Re-run the steps 1–3 checks (the glyph, theater, tutorial, recall). Composing in the lab at `/Composer/lab/composer-lab.html` should work as before.
+
+**4e's open calls:**
+- Audition while performing always waits for the next bar boundary.
+- Another edit during an audition keeps the audition.
+- Should "smooth the phrase" also work on Compose's own line? That needs a controller action.
+- Dot height is pitch within the part's whole range.

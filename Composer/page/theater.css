@@ -1,0 +1,52 @@
+/* theater.css — "show the work" as theater (Composer sprint 2, step 2; proposed). theater.js puts
+   `composition-theater` on <body> during a rhythm's first animated compose, and `composition-theater-lifting` for the
+   fade out. Only these selectors change anything, so removing the class restores the page exactly. The scrim dims the
+   HUD panels but the Playback div (theater.js THEATER_KEEP) and the header, the glyph kept lit; the caption floats
+   on the canvas. */
+
+body.composition-theater #rhythm-submit-div,
+body.composition-theater #rhythm-info-div,
+body.composition-theater #visualizations-div,
+body.composition-theater #search-div,
+body.composition-theater #title-bar .title-content,
+body.composition-theater #title-bar .title-bar-controls > :not(#composition-glyph) {
+    opacity: 0.18; filter: saturate(0.4) brightness(0.7);
+    transition: opacity 0.45s ease, filter 0.45s ease;
+}
+body.composition-theater-lifting #rhythm-submit-div,
+body.composition-theater-lifting #rhythm-info-div,
+body.composition-theater-lifting #visualizations-div,
+body.composition-theater-lifting #search-div,
+body.composition-theater-lifting #title-bar .title-content,
+body.composition-theater-lifting #title-bar .title-bar-controls > :not(#composition-glyph) {
+    transition: opacity 0.32s ease, filter 0.32s ease;   /* theater.js LIFT_MS */
+}
+/* the glyph stays visible, and lit */
+body.composition-theater #composition-glyph {
+    border-color: var(--hud-accent); color: var(--hud-accent);
+    box-shadow: 0 0 14px rgba(0, 255, 136, 0.5);
+}
+/* every click skips while the scrim is up: say so with the cursor */
+body.composition-theater, body.composition-theater * { cursor: pointer; }
+
+/* the caption: the animation's step, floating on the canvas under the header */
+.composition-theater-caption {
+    position: fixed; top: calc(62px + var(--canvas-top-margin, 0px)); left: 50%; transform: translateX(-50%); z-index: 2000;
+    max-width: min(640px, calc(100vw - 32px)); box-sizing: border-box; padding: 6px 14px; border-radius: 6px;
+    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 4px 10px;
+    font: 12px/1.4 monospace; color: var(--hud-text, #e0e0e0); text-align: center;
+    background: rgba(10, 10, 10, 0.72); border: 1px solid rgba(0, 255, 136, 0.35);
+    pointer-events: none;
+}
+.composition-theater-caption .composition-theater-label { color: var(--hud-accent, #00ff88); font-weight: 700; }
+.composition-theater-caption .composition-theater-detail { color: var(--hud-text-muted, #9aa); }
+.composition-theater-caption .composition-theater-hint { flex-basis: 100%; color: #777; font-size: 10px; letter-spacing: 0.04em; }
+.composition-theater-caption .composition-theater-hint[hidden] { display: none; }
+
+/* (theater.js never raises the scrim under prefers-reduced-motion; this is a belt for the fade) */
+@media (prefers-reduced-motion: reduce) {
+    body.composition-theater #rhythm-submit-div, body.composition-theater-lifting #rhythm-submit-div,
+    body.composition-theater #rhythm-info-div, body.composition-theater-lifting #rhythm-info-div,
+    body.composition-theater #visualizations-div, body.composition-theater-lifting #visualizations-div,
+    body.composition-theater #search-div, body.composition-theater-lifting #search-div { transition: none; }
+}

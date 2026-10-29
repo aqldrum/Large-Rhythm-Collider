@@ -1,0 +1,2528 @@
+# Composer: design notes (draft, 2026-10-21; updated 2026-10-23)
+
+Working notes from Avery's chat with Claude. Items marked **decided** are Avery's calls; everything else is a proposal or an open question. The 2026-10-21 sprint built phases 1–5 on branch `composer-prototype` (the "Phase" sections below), and Avery's first listening pass on 2026-10-22 is recorded under "First listening pass". The drums were built on the night of 2026-10-22 ("Drums"), on branch `sprint/drums`. The compose trace, the shared source for animating Compose, was built the same night ("Compose trace"), on branch `sprint/trace`, and Compose animated from it on the main page ("Compose animation on the main page"), on branch `sprint/animate`. `Composer/README.md` is the short way in: how to run it and where things are.
+
+## Direction
+
+- **The LRC goes its own way (decided).** This is a new port inside the LRC codebase, eventually deployed to the live site. chunk-tunes (`Compiler/Codex Compiler (dev)/Overworld/econ/runtime/chunk-*.js`) is a reference, not an upstream: much of it is about the Overworld map (chunks, villages, depots, quests, the Book). We take the mining ideas and the pure modules worth keeping, and adapt them freely. Nothing is synced back.
+- **Compose from the tone row itself, without reassembly (decided).** chunk-tunes extracts material from a super-row and builds a separate composition. The LRC Composer decomposes one rhythm's own row: every line, chord and clave is a selection of onsets the rhythm already plays, in the place it already plays them. That is the difference that matters, and most of the choices below follow from it.
+- **Compose, then Perform (decided).** The button reads Compose. Once a composition is ready, it switches to Perform.
+
+## Scope of v1
+
+- **One cycle of one rhythm (decided).**
+- **Later:** a sequence of several loops of the same row, each with a different decomposition. This is where variation, development and form would come from, without leaving the rhythm.
+
+## Time: cells, not "cycle = bar"
+
+A cycle can be a dozen ticks or trillions. Overworld grids top out around 100K. So the cycle can't simply be the bar.
+
+- **A cell-based approach keyed to onset density and timing goals (decided).** It starts with partitioned anchors: P pulses of size G or G±1, as in Partitions. Those pull lines with a steady internal rhythm out of the noisier polyrhythm.
+- **Two knobs: bar length and number of bars (decided).** Together they set how fast the row is partitioned, and with the cycle duration that sets the tempo. Compose picks them; the user can override them for their own compositions.
+- **The arithmetic,** for a cycle of duration T seconds, N bars, S slots per bar and b beats per bar:
+  - bar = T / N
+  - slot = T / (N·S)
+  - tempo = 60·N·b / T BPM
+
+  Example: 8:7:6:5 at a 4 s cycle with N = 2, b = 4 gives 120 BPM.
+- **Open:** does Compose aim at a tempo range and solve for N, or aim at an onset density per slot and let the tempo fall out?
+
+## Pitch: the frame, and roots
+
+- **The frame width is a knob, defaulting to ±15¢, a 30¢ window, as in the Progression Solver (decided).**
+  - A correction: chunk-lines' `frameCents = 25` is the window's total width (±12.5¢), not ±25¢.
+  - Every tone still gets one of the 12 classes by nearest 100¢ step (the ±50¢ bucket). The frame decides which tones count as in tune for their class.
+  - **Open:** are fringe tones (in a class but outside the frame) chunk-lines' "outside" tones, allowed on a weak slot where they resolve by step? Or are they excluded?
+- **Roots belong to chords, as in the Progression Solver (decided).** A chosen melody's pitch-class set implies a chord, and the chord sets the root. The frame centres on that root, so it moves from chord to chord.
+- **Harmony follows melody (leaning, Avery).** Mine the melody first and derive the chords from what it sounds. Searching a tone set for the most parsimonious progression is the alternative or the fallback.
+- **Modulation is in (leaning, Avery: "I kind of think we should").** The root can change mid-composition by retuning the whole thing, so melodies and chords can be strung together.
+  - Inside one rhythm this is natural: the row keeps its ratios and only the reference pitch moves. "Retune" means moving the fundamental.
+  - Prior art to read:
+    - Cosmos's modulation route (`Cosmos/audio/sky-modulation.js`, `sky-root.js`)
+    - the Progression Solver's retune (`noteToHz`: it moves the fundamental so chord 1's root is the typed note)
+    - main Playback's fundamental glide (`handleFundamentalChange`), with `setFrequency` on the shared voice handle
+  - **Open:** is a modulation a jump at a section boundary, or a glide? And is it chosen by Compose, by the user, or both?
+
+## Articulation: legato per part (decided)
+
+Main Playback's legato control acts like a sustain pedal: each layer's voice holds until the next note. In the Composer, legato belongs to the part, not to the rhythm's layers. A part's legato setting applies only to that part's notes, even though every part draws its notes from the same row.
+
+- **Legato on:** a note holds until that part's next note. It ignores the row's own next onset and any other part's notes.
+- **Legato off:** a note lasts its own length, which is proposed as its slot, or the gap to the part's next note if that is shorter.
+- **Struck sounds** keep the rule already agreed for main Playback: in legato they retrigger on every note.
+- **Compose sets a default per part.** The proposal: pads and inner voices on, bass and lead chosen by Compose, comping off. The user can flip any part.
+
+## Sprint defaults (proposed 2026-10-21, not ruled; Avery away)
+
+1. Timing goal: a 90–130 BPM target in 4/4. N is chosen from 1, 2, 4 or 8, and S is around 8. The knobs override this.
+2. Fringe tones: chunk-lines' "outside" tones, allowed on a weak slot where they resolve by step.
+3. Modulation: a jump at a bar boundary, chosen by Compose, with a switch to turn it off.
+4. Chords follow the lead. Parsimony only breaks ties.
+5. Size gate: taken from the cost probe (see "The gate, from the probe" below): a hard cap of 1,048,576 onsets.
+6. Parts may share onsets. Every note must be an onset the row actually plays.
+
+## Cost and the size gate
+
+- **Why one row may scale better than a super-row.**
+  - District 90090 was heavy because its super-row merged a thousand rhythms into millions of nodes. One LRC row is a single rhythm.
+  - chunk-lines sizes a slot's window in onsets (`moments = 12` around the anchor), not as a share of the slot. So a slot's candidates are the tones of about 12 moments however large the tuning is, and a line is at most 32 slots (`MAX_SLOTS`).
+  - That suggests per-line cost grows with the number of slots and the tone variety near each anchor, not with the size of the tuning. A large tuning should mostly add variety. This is unmeasured.
+- **Consequence:** on a large row, one line uses a small fraction of the onsets. Decomposing the rest across parts, and later across passes, is the point, not waste.
+- **Limits in the code we'd port:**
+  - `MAX_GRID = 2^25`
+  - ticks stored as 32-bit integers
+  - at most 65,535 distinct tones
+  - the whole row built in memory
+
+  Past those, positions would need 64-bit floats (exact below 2^53) or BigInt.
+- **The gate: by onset count, like the Cosmos rhythm card's 16,384-onset cap (leaning, Avery).** The number is open until measured.
+- **Proposed first task: a cost probe before the port.** Run row build, slot candidates and line mining on single LRC rows of increasing onset count and tone count. Record time and memory, and pick the gate from the curve rather than guessing. Rows from a few hundred to a few million onsets, with 10 to several hundred distinct tones.
+- **The probe ran (2026-10-21; `Composer/probe/FINDINGS.md` in the probe worktree).** The picker is 85–99 % of Compose below 100k onsets. Its time follows candidates per slot, which the onset-sized window bounds, so it doesn't grow with onsets; it flattens past about 60 tones. Build and memory grow linearly with onsets and take over only at 1–2M onsets.
+
+### The gate, from the probe (proposed, not ruled)
+
+- **(a) A hard cap of 1,048,576 onsets (2^20).** Above it, `buildRow` returns `{ tooDense, onsets, gate }`. This replaces the 16,384 placeholder, which protected nothing the Composer pays for.
+- **(b) Where Compose runs.**
+  - Up to 100,000 onsets it may run on the main thread in a lean mode.
+  - Otherwise, and always for the full table, it runs in a module worker. The phase 5 lab runs Compose in a worker by default.
+  - `compose.js` (phase 4) is one pure call that runs in either place, with lean or full as a parameter.
+- **(c) A minimum-tones gate: fewer than 3 distinct tones returns `{ tooFewTones, tones, min }`.** The probe's 1-tone row "composed" 83 lines on one pitch. The row still builds; `toneGate(row)` in row.js is what the miner (and later Compose) asks.
+- **(d) A worker pool** (the table's pieces are independent; the slowest is about 0.25 s) is a later optimisation, not this sprint.
+- **A limit the new cap makes reachable:** a grid past 2^53 is refused as `{ tooLarge }`. Under 16,384 onsets that was nearly impossible. Under 2^20 it isn't: four coprime layers near 10,000 (about 40k onsets, e.g. 10007:10009:10037:10039) or three near 208,000 already pass it.
+  - **The refusal stands for v1** (planner, 2026-10-21; proposed, not ruled; Avery decides).
+  - **Open item:** BigInt or two-part positions in row.js and cells.js would lift it.
+
+## Phase 1: row and cells (built 2026-10-21, sprint)
+
+`Composer/core/row.js` and `Composer/core/cells.js`, checked by `Composer/tests/assert-row.mjs` and `assert-cells.mjs`. On 52 rhythms (up to 5,368 onsets, most with 4 layers), the row and the even-anchor slot candidates equal chunk-super-row's normalized row and `slotCandidates` for the same single rhythm, and the onset-sized window equals chunk-lines' `buildLattice` swing. A second, tick-by-tick producer checks every tone and every slot in exact fractions.
+
+Choices made without a ruling. Each is **proposed, not ruled**:
+
+- **Tones are keyed by their exact fraction.** The kernel and the live site (`LRCModule.decimalToFraction`) spell a ratio as its best fraction with a denominator up to 1000. That is exact for small rhythms. Past that it rounds: in the tests, by up to 0.9¢, and two different tones can get one spelling (426:317:285 has 204 tones and 203 spellings). It can also spell a ratio just under the octave as 2/1. The row keeps the site's spelling beside each tone as `toneLabels`, so the lab can name tones the way the main page does.
+- **Layer A is `layers[0]`, as the LRC names layers.** chunk-super-row sorts layers smallest first. A 0 is an absent layer, as in `generateCompositeRhythm`.
+- **No 2^25 grid cap.** One rhythm has one denominator, so ticks are 64-bit floats, exact below 2^53. A grid past 2^53 is refused as `{ tooLarge, grid, limit }`. Since the gate went to 2^20 this is reachable; see "The gate, from the probe".
+- **The gate counts onsets from the layers alone** (inclusion–exclusion over gcds), so refusing a dense row costs nothing. A row of exactly the gate builds.
+- **Partitioned anchors cut the grid,** Partitions' Grid mode. Sequence and Grouping aren't ported. The pulse order is Partitions' own (`PartitionsBlocks.calculatePartitionSizes`), so a Composer slot and a Partitions block match. The tests show it's a rotation of Bjorklund's pattern and of chunk-timeline's `euclid` for every T ≤ 300, P ≤ 64. A given order of pulses (a dragged one) is accepted.
+- **When P is more than the grid,** the cut is made on a grid `subdivide` = ⌈P / grid⌉ times finer, rather than refused.
+- **The window reaches `swing` of the way to each neighbouring anchor.** With even anchors that is exactly chunk-super-row's window. With partitioned anchors each side scales with its own pulse, so at swing 0.5 every onset belongs to exactly one slot, and an onset exactly midway goes to the slot before it. Windows never overlap, so `slotOfNode` names each onset's single slot, or none.
+- **The onset-sized window uses the row's mean density** (chunk-lines' formula: about `moments` onsets per slot on average; measured 0.99 × moments on rows of 1,000+ onsets). It doesn't take the nearest k onsets around each anchor. Since phase 2 the swing is kept as the exact fraction moments·P / (2n), not rounded to 1/10,000 as chunk-lines rounds it: the probe found the rounded window drifting past about 0.6M onsets. At about 10^6 onsets a slot now holds 11.97 onsets for `moments` = 12. A swing given as a number is still read to 1/10,000, as chunk-super-row reads it.
+- **The phase is a fraction of the cycle in both modes** (`phaseAtTick` turns a tick into one). A slot's registers are a sorted list, not a bit mask, because on large grids they pass 31.
+
+- **Cents are rounded the way chunk-tunes' `toneCents` rounds them** (its fold through `+ 1200` drops the low bits). Keeping the extra bits made two lines that the picker prices alike to the last digit break the other way, against chunk-lines' choice.
+- **The site's spellings (`toneLabels`) are made the first time they're read.** Past a denominator of 1,000 each costs up to a thousand divisions.
+
+Cost, measured once (not the probe): 4099:4093:4091:4079 (16,359 onsets, 4,177 tones) builds its row in about 13 ms and a 32-slot cut in about 0.3 ms. 700001:300007 (1,000,007 onsets, 150,004 tones) builds in about 0.35–0.5 s.
+
+## Phase 2: frame and lines (built 2026-10-21, sprint)
+
+`Composer/core/frame.js` and `Composer/core/lines.js`, checked by `Composer/tests/assert-frame.mjs` and `assert-lines.mjs`; `Composer/tests/time-lines.mjs` prints the timing table below.
+
+**Parity.** On 21 single rhythms, with chunk-lines' 25¢ frame matched by ±12.5¢ here, its window's swing and its downbeat, the lattice matches candidate for candidate. chunk-lines' picker and this one pick the same lines at the same costs in all 3,150 lead and arp runs (6,290 lines). Eight test rhythms are left out: the kernel rounds some of their tones (phase 1 keys tones exactly), so the two tone sets differ. On small lattices every valid line is enumerated, and the picker's cheapest line of each length is the true one.
+
+Choices made without a ruling. Each is **proposed, not ruled**:
+
+- **The frame knob is `frameCentsEachSide`** (default 15, as decided). Every tone has a class 0–11, the nearest 100¢ step from the root. A tone exactly halfway goes to the step above, so deviations lie in [−50, 50). ±frame is inclusive.
+- **The default root.** First built as the tone whose frame holds the most onsets: one sweep round the 100¢ circle, O(tones log tones), about 0.5 ms at 4,177 tones. On tone-rich rows that picked a tone heard only twice (4093/3252 on 4099:4093:4091:4079), and that tone gave only 2 of 6 downbeats. Revised in phase 3:
+  - **The rule** (planner; proposed, not ruled): a root needs max(2, 1% of the row's onsets) onsets of its own. Among those tones, the frame's total onsets wins; then the most-heard root, then 1/1, then the lowest cents.
+  - **The fallback** (builder; proposed, not ruled). The planner's fallback was the old rule. But on tone-rich rows no tone reaches 1% (the most-heard tone on the 16k row sounds 24 times of 16,359), so the old rule picked the heard-twice tone again. Instead the bar drops to half the most-heard tone's count, at least 2; only if that also fails does every tone qualify.
+  - **What it picks now:**
+    - 4099:4093:4091:4079: 4093/2304, heard 18 times, frame of 5,169 onsets
+    - 768:784: 3/2, heard 192 times
+    - 768:769: 3/2, heard 20 times
+    - 2048:2049: 16/15, heard 16 times
+    - All four now give the full 6 of 6 downbeats at 2×8 and at 4×8.
+  - **Superseded 2026-10-22: presence is measured by the root's ±frame cluster (decided, Avery).** See "Cluster presence and settling" below. The rule above stays reachable as `presence: 'exact'`.
+- **The class report** gives, for each class, its core and fringe ratios with fraction, cents, deviation and onsets, most-heard first. It reads only per-tone counts: O(tones) plus a sort per class, under 2 ms at 4,177 tones.
+- **A line is mined on a span of the cycle's cells** (`from`, `bars`), not on a cut of its own. Compose fixes one phase and one meter for the cycle (phase 4), so every part reads the same slots and every note is an onset at its own time. chunk-lines' per-line downbeat search becomes the `downbeats` helper, for whoever picks the cycle's phase. Its `partitions` / 'auto' cut search isn't ported: the cells fix S.
+- **Fringe tones are chunk-lines' outside tones** (Sprint default 2): only on a weak slot, followed within a step (250¢) by a tone inside the frame, never last.
+- **Bass is its own type.** Overworld's bass is the sparse lead played two octaves down; here that would just be the lead's sparse lines again. So the bass is sparse, one octave wide (its register is set when it's played, phase 4), and weighs accent and close twice as hard (it leans on strong slots and on its root). It moves stepwise or wide, over rise, fall, arch and valley. Lead and arp are chunk-lines' own, setting for setting. The cell type (one bar) is left to phase 4.
+- **Two tables.** The full table is every type × band × contour × motion: 58 runs per cut. The lean table is each type at its first motion: 24 runs per cut.
+- **Dedupe and ranking.** A line found twice is kept once per type: the cheaper per note within one motion, otherwise the first found. Unlike chunk-lines, a bass and a lead with the same notes both stay. The table is ranked cheapest per note first. A line's id is `cl1:` plus a hash of its type, span, phase and notes.
+- **Under a harmony** (`targets` with a scale), chunk-lines' harmony weights apply (contour 0.5, outside 0.8). Phase 3 passes the per-bar targets in chunk-lines' shape.
+
+**Timing** (Node, this machine; `node Composer/tests/time-lines.mjs`). Lean is 2 downbeats × (2×8, 4×8) × the lean table: 96 runs. Full is 6 downbeats × (2×8, 4×8) × the full table: 696 runs. Columns are build ms, frame plus class report ms, and mining ms for lean and full.
+
+| rhythm | onsets | tones | build | frame + classes | lean | full |
+|---|--:|--:|--:|--:|--:|--:|
+| 4099:4093:4091:4079 | 16,359 | 4,177 | 12 | 3.4 | 181 | 2,047 |
+| 768:784 (48:49 ×16) | 1,536 | 24 | 0.5 | 0.0 | 190 | 2,074 |
+| 768:769 | 1,536 | 384 | 0.9 | 0.3 | 163 | 1,718 |
+| 2048:2049 | 4,096 | 1,024 | 2.4 | 0.8 | 159 | 1,908 |
+| 5792:5793 | 11,584 | 2,896 | 7.2 | 1.8 | 121 | 1,598 |
+
+This agrees with the probe: the picker is the cost, it doesn't track onsets, and the full table belongs in a worker. The slowest single cut of the full table was 0.45 s.
+
+## Phase 3: harmony from melody, roots, modulation (built 2026-10-21, sprint)
+
+`Composer/core/harmony.js`, checked by `Composer/tests/assert-harmony.mjs`. `harmonize(row, cells, { root, frameCentsEachSide, modulation, table, referenceName })` returns `{ lead, chords, targets, modulations, passes, exceptions }`. `chooseChord` (one bar, from cents) and `modulationStep` are exported as its pure core, so the hand-made cases test them directly.
+
+How it works. Each choice here is **proposed, not ruled**:
+
+- **The lead first.** Rooted lines with no harmony, on the frame's root, mined phrase by phrase. A phrase is as many bars as 32 slots hold: 8×8 gives two phrases of 4 bars. The lead is the miner's top-ranked line.
+- **The grid.** The composition's 12 classes are 100¢ steps from the base root. Every bar sounds at an offset in cents, 0 until a modulation.
+- **A bar's material.** Every tone its slot windows hold, weighted by onsets plus strikes, and the lead's notes in that bar.
+  - **Strong notes** are the lead's notes on the downbeat and, when a bar has an even slot count, on the middle beat. If neither sounds, the bar's first lead note is its strong note.
+  - A lead note on a fringe tone of the base frame is a passing tone: it neither asks for a chord tone nor counts toward one.
+- **The chord.** Candidate roots are the bar's tones that are the most heard within their own ±frame. For each candidate, every quality is read in that root's frame and ranked by:
+  1. fewest strong lead notes not held
+  2. most lead notes held
+  3. support: the bar's weight on the chord's classes over the bar's total, less 0.08 per chord tone and a small prior per quality (0 for the common triads and sus4, 0.02 for sus2 and the sevenths, 0.06 for dim, aug, m7b5, dim7 and mMaj7)
+  4. voice-leading distance to the previous chord (parsimony, as a tie-break only)
+  5. the lower root, then the simpler quality
+- **The vocabulary.** Triads (maj, m, dim, aug), sus (sus4, sus2, 7sus4) and sevenths (7, m7, maj7, m7b5, dim7, mMaj7). Intervals are QualityCatalog's. Every name reads back through ProgressionSolver's `parseChordSymbol` to the same classes. Names are spelled from the base root, called C unless `referenceName` says otherwise.
+- **Root tone and frame.** The chosen root tone is the bar's own tone, and `rootNode` is an onset of it in the bar's windows. The bar's frame is centred on it.
+- **The targets.** One bar per chord, read in that bar's frame (root 0, the chord's intervals, its tone and cents). The parent scale is the union of the chords' grid classes, and each bar also carries that scale in its own frame's steps. lines.js now takes one frame per bar and a per-bar scale.
+- **Modulation.** When a chosen root sounds more than ±frame off the grid at its bar's offset, the fundamental is retuned from that bar on, snapping the root exactly onto the nearest grid step. It is recorded as `{ bar, cents, fundamentalRatio = 2^(cents/1200) }`, relative to the base fundamental. Offsets accumulate across modulations; they are not folded back into ±50¢.
+  - With `modulation: false`, only roots on the grid are candidates. A bar with none keeps its best root, flagged `offGrid`, and nothing is retuned.
+- **The second pass.** The lead is re-mined over these targets. Per phrase, the kept line is the one with the lower cost per note under the harmony weights; the first lead is re-scored on the same lattice, and counts as invalid if any of its notes breaks a rule there. The chords stay those derived from the first lead. A strong note of the kept lead that its chord does not hold is counted in that chord's `exceptions`, not hidden.
+
+Measured (180 harmonizations on 9 rows × 5 meters × 2 anchor modes × modulation on and off, lean table):
+
+- The second pass's lead was kept in 186 of 216 phrases (86%).
+- 6 of 814 strong lead notes are exceptions.
+- 46 retunes with modulation on.
+- 6 chords flagged off-grid.
+
+Timing (ms, one downbeat; lean / full):
+
+| row | 2×8 | 4×8 | 8×8 |
+|---|--:|--:|--:|
+| 4099:4093:4091:4079 | 25 / 69 | 98 / 322 | 154 / 509 |
+| 768:784 | 8 / 27 | 86 / 308 | 143 / 393 |
+| 768:769 | 20 / 66 | 106 / 373 | 200 / 687 |
+
+**Open, for Avery.**
+- **Chords follow the first lead.** The planner kept this (proposed, not ruled). Avery has since asked for settle passes, the chords re-derived from the kept lead until they settle: see "Cluster presence and settling" below. `settlePasses: 0` is the behaviour described here.
+- **Offsets fold into [−50, +50)¢, as a pure relabel** (planner, phase 5; proposed, not ruled; this corrects the phase 4 entry).
+  - The fold never moves a pitch. Each modulation's snap and its `fundamentalRatio` are exactly as unfolded.
+  - When the cumulative offset leaves [−50, +50)¢, the grid that names the classes shifts by whole classes instead. Chords' `rootPc`, `pcs` and names, and the reported `offsetCents` and `cents`, change; nothing else does.
+  - The sounding values stay alongside: `rawOffsetCents`, `rawCents`, `gridPcs`, `gridRootPc`, `fundamentalRatio`. The line targets are built on the sounding grid.
+  - On 768:769 in 8×8, bar 5 reads −98.0¢ raw and +2.0¢ folded, its root named one class up. Every note's hz is identical either way (tested in assert-harmony and assert-compose).
+  - `foldOffsets: false` (also a Compose override) gives the raw offsets and names.
+  - The phase 4 version moved the fundamental by 100¢ and was wrong. It is replaced.
+- **Rare colours stay for Avery to hear.** How often each quality appears over the 378 chords with modulation on in the harmonization sweep (`assert-harmony.mjs` prints this table):
+
+| quality | chords | share |
+|---|--:|--:|
+| major_7th | 96 | 25.4% |
+| major_triad | 90 | 23.8% |
+| sus4 | 62 | 16.4% |
+| minor_triad | 34 | 9.0% |
+| sus2 | 32 | 8.5% |
+| minor_major_7th | 18 | 4.8% |
+| dom7_sus4 | 16 | 4.2% |
+| dim_triad | 8 | 2.1% |
+| dominant_7th | 8 | 2.1% |
+| aug_triad | 6 | 1.6% |
+| minor_7th | 4 | 1.1% |
+| half_dim7 | 4 | 1.1% |
+| dim7 | 0 | 0% |
+
+**Flag for Avery:** maj7 leads the table. mMaj7 and aug come mostly from tone-rich rows, where they hold one more lead note than a triad would.
+
+## Phase 4: arrangement and Compose (built 2026-10-21, sprint)
+
+`Composer/core/compose.js` and `Composer/core/compose-worker.js` (a module worker running the same pure call), checked by `Composer/tests/assert-compose.mjs`.
+
+**The call.** `compose(layers, cycleSeconds, { seed = 1, overrides, worker })` returns a deterministic, JSON-serialisable spec: the same inputs and seed give byte-identical JSON. Refusals are `{ version, input, refused: true, reason: 'tooDense' | 'tooLarge' | 'tooFewTones', detail }`.
+
+**The spec phase 5 reads:**
+
+- `{ version: 'composer-spec-v1', input: { layers, cycleSeconds, seed, overrides }, knobs, chords, modulations, parts, decisions, stats }`
+- `knobs`: `{ bars, slotsPerBar, beatsPerBar: 4, anchors, phase: [num, den], frameCentsEachSide, root, modulation, table, tempoBpm, leader: 'lead', baseHz, cycleSeconds }`
+- `chords[bar]`: `{ bar, name, quality, intervals, pcs, rootPc, rootTone, rootNode, offsetCents (named), rawOffsetCents, fundamentalRatio, offGrid, exceptions, empty }`
+- `modulations`: `[{ bar, cents (named), rawCents, fundamentalRatio }]`
+- `parts`: lead, chords, comp, bass, inner, each `{ id, role, sound, struck, legato, enabled, notes }`
+- each note: `{ node, tick, time, ratio, octave, hz, duration, velocity, bar, slot, slotSeconds, retrigger }`, plus `voice` on the chords part
+- `timeline`: `{ slotStarts, barStarts }` in seconds from the downbeat (added in phase 5 for the lab's lanes and playhead)
+- `hz` = baseHz × ratio × 2^octave × the bar's `fundamentalRatio`
+- `time` counts seconds from the phase (bar 1's downbeat). The cycle loops, so a note in bar 1's first window that falls just before the downbeat sounds at the end of the cycle.
+- `decisions`: `[{ what, value, why }]`, one per choice: frame, root, bars, slots, tempo, anchors, phase, modulation, table, leader, comping layer, and sound, legato and enabled for each part, plus baseHz.
+- `stats`: onsets, tones, grid, onsets per slot, notes per part, lead phrases, second-pass wins, exceptions, chord voices per bar, bass bars opened on the root, inner notes on lead slots, the comping layer and its score; since 2026-10-22 also `settle` (see "Cluster presence and settling").
+- Since 2026-10-22 `decisions` also lists `presence` and `settlePasses`, and both are overrides.
+
+How it works. Each choice here is **proposed, not ruled** unless marked decided:
+
+- **The meter.** N is whichever of 1, 2, 4, 8 puts 60·N·4/T inside 90–130 BPM, the nearest 110 when several do. When none does, the nearest one, and the spec says so.
+  - S starts at 8. While the slots would hold under 3 onsets each on average, S drops to 6, 4, then 3, and only then N halves, keeping the tempo before the slots. Example: 8:7:6:5 in 4 s plays 2 bars of 3 slots at 120 BPM.
+- **The other knobs.**
+  - Anchors are partitioned (decided: "it starts with partitioned anchors").
+  - The phase is one of the root's first three downbeats, picked by the seed.
+  - Frame ±15¢ (decided); the root comes from `defaultRoot`; modulation is on; the leader is the lead (v1).
+  - The lean table runs on the main thread; the full table when `worker: true`.
+- **The seed** drives the phase, the chords, comping and inner sounds (each from its proposed pair), and ties between comping layers. Everything else is rule-based.
+- **Chords.** Each chord class gets one voice, root first: the bar's onset of that class (inside the bar's frame) with the most strikes, then the earliest.
+  - The voices stack close from an octave under the bar's root, each the lowest register above the voice under it.
+  - A voice sounds at its onset, so a chord builds as its tones arrive.
+  - Legato in a chord part works per voice: a note holds until that voice's next note.
+- **Comping.** One layer of the rhythm, cut into the bars and their slots. A slot's step is the layer's first strike in it, and it sounds only when that strike's tone is one of the bar's chord tones (rhythm-claves.js' tone sets, chunk-comping.js' ranking).
+  - The layer chosen makes the best claves: 25–50% of its steps sounding, a straight (4, 8, 16) or triplet (3, 6, 12) count of steps per bar, and a stroke in every bar.
+  - A bar with no stroke is struck once on its root onset.
+  - Overworld cuts a layer by its own strike count. That fails here: a layer of a large rhythm strikes hundreds of times a bar, which first gave 350 comping notes on the 16k row. Cutting by slot steps fixes it.
+- **Bass.** Mined bar by bar, rooted on the bar's root tone, two octaves under the lead's range.
+  - The line must open on a tone of the root's class where it can; lines.js gained a `startTones` rule for this. Otherwise the cheapest line wins, and a bar with no line plays its root onset.
+  - Before `startTones`, the 16k row opened 0 of 8 bars on the root; now it opens 8 of 8.
+- **Inner voice.** A lead line, sparse or mid band, over the chords an octave under the lead.
+  - It never plays the lead's onsets, and pays 0.6 per note on a slot where the lead sounds. lines.js gained `avoidSlots`, `avoidNodes` and an `avoid` weight for this.
+- **Sounds.**
+  - Lead: flute when legato, vibes when not.
+  - Bass: sub when legato, upright when not.
+  - Chords: warm or glassbed. Comping: marimba or kalimba. Inner: reed or harp. These three are picked by the seed.
+  - A sound is "struck" when its Audio/voices note recipe has a struck envelope.
+- **Legato** (decided: per part, its own notes only).
+  - On: a note holds until the part's next note.
+  - Off: a note lasts its slot, or the gap to the part's next note if that is shorter.
+  - The last note runs to the end of the cycle.
+  - A struck sound in legato retriggers on every note. A held sound is struck once and moved: only its first note has `retrigger`.
+  - Defaults: chords and inner on, comping off, bass off. The lead is on when its median gap is 2 slots or less.
+- **Pitch.** baseHz puts the lead's median pitch at √(440·660) ≈ 539 Hz, before any bar's retune.
+- **Velocity.** Lead 0.8, +0.1 on strong beats. Chords 0.45. Comping 0.55, +0.1 per extra layer striking. Bass 0.75. Inner 0.5.
+
+**Timing** (Node; Compose end to end):
+
+| row | meter | lean | full |
+|---|---|--:|--:|
+| 4099:4093:4091:4079 (16,359 onsets), 16 s | 8 × 8 | 308 ms | 1,000 ms |
+| 768:784, 8 s | 4 × 8 | 242 ms | 947 ms |
+| 768:769, 8 s | 4 × 8 | 105 ms | 377 ms |
+
+Lean stays under the 1 s main-thread target on all three rows.
+
+## Phase 5: the lab page (built 2026-10-21, sprint)
+
+`Composer/lab/composer-lab.html`, not linked from `index.html`. Serve the repo root as a static site and open `/Composer/lab/composer-lab.html`; a module worker can't start from `file://`.
+
+The code is split in three:
+- `lab-controller.js`: the state and actions, no DOM.
+- `lab-player.js`: the scheduler and audio graph, no DOM.
+- `composer-lab.js`: a thin view over both.
+
+(2026-10-22 night: the controller and player moved to `Composer/perform/`, shared with the main page's Composer tab. See "Composer tab on the main page".)
+
+`Composer/tests/assert-lab.mjs` drives the controller and player against a recording mock AudioContext.
+
+How it works. Each choice here is **proposed, not ruled**:
+
+- **Inputs.** Four layers (blank or 0 means absent), the cycle in seconds (8 by default) and a seed.
+  - The page opens on 41:42:43 and composes it at once.
+  - Six presets: 41:42:43, 8:7:6:5, 19:17:16:15, 119:42:15:8, 768:769, and 4099:4093:4091:4079.
+- **The table decides where Compose runs.** Full runs in the module worker; lean runs on the main thread. Each is Compose's default in that place, so the table is never logged as an override.
+  - A knob change re-composes by itself only on the lean table, and only while a lean compose takes under 300 ms.
+- **The main button.** Compose → Composing… → Perform ⇄ Stop. Any change to an input, knob or table stops playback and returns it to Compose.
+- **Knobs.** Bars, slots per bar, frame ±¢, modulation and anchors. Blank or "auto" leaves the choice to Compose. Each knob shows what Compose chose, or "asked:" in amber when it was overridden.
+- **Lanes.** One row per part and one column per bar, each column as wide as its bar lasts.
+  - Each row has a sound select (every note-role sound in Audio/voices), a legato toggle, an on/off toggle and a level slider.
+  - Notes show as ticks at their times. A glided note shows as a fainter tick.
+  - The chords row names each bar's chord. A modulation shows as "↻ ±cents", with the raw offset in its tooltip.
+  - A sound or legato change re-articulates the part with compose.js' `rearticulate` (the decided legato rule). Nothing is re-mined.
+- **Readouts.** Tempo, meter, root, baseHz, onsets, tones, table, compose time and the chords. A refusal is said in plain words. The decisions list (what, value, why) sits in a collapsible panel.
+- **Export.** JSON downloads the spec with the parts as they play now.
+- **Playback.**
+  - The page makes its own AudioContext on the first Perform.
+  - A scheduler ticks every 25 ms and books 150 ms ahead, looping the cycle from the moment Perform was pressed.
+  - Each part has its own gain bus with a level, feeding a master gain (0.8), then a DynamicsCompressor limiter (−10 dB, 6:1), then the destination.
+  - A note with `retrigger` starts a `note`-role voice: `planVoice` and `createInstrumentVoice`, with the note's velocity as the peak. The notes after it without `retrigger` glide that held voice with `setFrequency` (12 ms) at their times; in the chords part, per voice. The voice is released when its chain ends.
+  - A note alone is planned with its own duration, so a struck sound damps where its note ends.
+  - Stop fades every live voice over 30 ms and books nothing more.
+  - A white playhead moves across the lanes.
+
+## Cluster presence and settling (built 2026-10-22, branch `composer-settle`)
+
+Two changes to the core: `Composer/core/frame.js`, `lines.js`, `harmony.js` and `compose.js`, checked by `assert-frame.mjs`, `assert-harmony.mjs` and `assert-compose.mjs`. `Composer/tests/settle-baseline.mjs` holds sha256 hashes of e3909e1's output on 119 fixed cases (23 Compose specs, 96 harmonizations), so the "nothing moved" claims below are tested byte for byte.
+
+### The root's presence by its ±frame cluster (decided, Avery)
+
+Avery: "the ±frame cluster neighborhood is the right call, at least for rhythms at this level of complexity."
+
+- **The measure (decided).** A tone's presence is the onsets of every tone in its ±frameCentsEachSide cluster: its own class, octave-equivalent, within ±e of it (`inCluster`, the same test as chooseChord's `near`). `clusterPresence(row, e)` computes it for every tone in one sweep over the tones sorted by cents mod 1200, unrolled three laps so the window wraps at 0/1200, O(tones log tones). At e = 50 the tone exactly 50¢ above belongs to the next class, as `classOfCents` has it. The sweep takes 39 ms on 150,004 tones, and it is checked against every pair on the 52 test rhythms at 7 knobs.
+- **The candidates (proposed).** The candidates are the cluster representatives: a tone that is the loudest tone of its own cluster, by onsets, then strikes, then the lower index. This is how chooseChord picks a bar's candidate roots. The sweep finds them with a monotone deque, in the same pass.
+- **The rungs (proposed, as asked).** The rungs are the old ones, applied to cluster presence:
+  1. a cluster heard max(2, 1% of the onsets) times;
+  2. else, half the largest representative's cluster, at least 2;
+  3. else, any representative.
+
+  Among the candidates, the frame's total onsets wins. Ties go to cluster presence, then the root's own onsets, then 1/1, then the lowest cents.
+- **Downbeats (proposed).** `downbeats(row, P, count, tone, { cluster: e })` takes the root's cluster. It tries the root's own first onset first, then the heaviest onsets of any tone in its cluster. Compose passes `cluster: e`, so a root heard only a few times still gets its downbeats.
+- **The old rule stays as `presence: 'exact'`.** It is an option on `defaultRoot` and a Compose override. Compose with `presence: 'exact', settlePasses: 0` reproduces e3909e1's specs byte for byte, once the new fields are taken out.
+
+What it picks, old (`exact`) against new (`cluster`). Frame is the onsets the root's ±15¢ frame holds. Downbeats are those found out of those asked: 6 asked with even anchors at 4 × 8, and 3 asked with partitioned anchors at Compose's own meter.
+
+| row | rule | root | heard | cluster | frame | downbeats, even 4×8 | downbeats, Compose's |
+|---|---|---|--:|--:|--:|--:|--:|
+| 4099:4093:4091:4079 (16 s, 8×8) | exact | 4093/2304 | 18 | 416 | 5,169 | 6/6 | 3/3 |
+| | cluster | 4093/2048 | 24 | 455 | 5,153 | 6/6 | 3/3 |
+| 768:784 (8 s, 4×8) | both | 3/2 | 192 | 192 | 864 | 6/6 | 3/3 |
+| 768:769 (8 s, 4×8) | both | 3/2 | 20 | 48 | 496 | 6/6 | 3/3 |
+| 2048:2049 (8 s, 4×8) | both | 16/15 | 16 | 140 | 1,266 | 6/6 | 3/3 |
+| 41:42:43 (8 s, 4×8) | exact | 41/37 | 2 | 8 | 70 | 2/6 | 2/3 |
+| | cluster | 41/22 | 2 | 2 | 70 | 2/6 | 2/3 |
+| 1597:987:610:377 (8 s, 4×8) | both | 372099/204416 | 16 | 88 | 1,134 | 6/6 | 3/3 |
+
+- **Four of the six rows keep their root.** 1597:987:610:377 keeps its root, but its phase moves (42/377 to 34/1597), because downbeats 2 and 3 now come from the cluster's heaviest onsets.
+- **On 4099:4093:4091:4079 the root becomes the most-heard ratio,** 4093/2048, heard 24 times. The old root, 4093/2304, isn't a representative: a louder tone sits within ±15¢ of it. The new root costs Compose more: about 520 ms lean against 340 ms, and 1.7 s full against 1.1 s, with settlePasses 0. Its frame is 16 onsets smaller.
+- **Flag for Avery: 41:42:43.** On this row (124 onsets, 41 tones) the 1% rung is 2, so nearly every representative qualifies and the frame decides. The new root, 41/22, is alone in its cluster and heard twice, so Compose still finds only 2 of 3 downbeats. The old root, 41/37, had the same frame (70 onsets) but was not a representative. Ruling the rungs (rather than the measure) would change this. One option: let cluster presence break ties before the frame.
+- **Where it differs.** On the 52 test rhythms, 5 pick a different root than `exact`. A tone heard twice in a cluster heard 428 times (4093/2324) finds 2 of 6 downbeats on its own onsets and 6 of 6 from its cluster.
+
+### Settle passes: lead ↔ chords until the chords settle (requested by Avery; the rules proposed, not ruled)
+
+Today's pipeline is round 0. Chords come from the rooted lead, the lead is mined again over them, and per phrase the cheaper per note is kept.
+
+**`settlePasses`** (`harmonize` option and Compose override, an integer 0–3, default 3) adds up to that many rounds. Each round i ≥ 1:
+
+1. Re-derives every bar's chord from the lead round i − 1 kept, by the same `chooseChord` rules: strong notes, held notes, support, the voice-leading tie-break. The modulation offset is walked from bar 1 again.
+2. Rebuilds the targets.
+3. Mines the lead over them, and keeps per phrase the cheaper per note of that line and the kept one, re-scored on the new targets. This is the same `costOn` comparison as round 0's.
+
+When the loop stops (all proposed):
+- **Converged.** A round's chords equal the round before's: the same root tone, quality and sounding offset in every bar. The round before is kept, and nothing is re-mined.
+- **The cap.** After `settlePasses` rounds, the last round is kept.
+- **Oscillated.** A round's chords equal an earlier round's. The loop stops and keeps the round of the cycle with the fewest strong-note exceptions, then the lower lead cost per note, then the earlier round.
+
+The pure loop is exported as `settleRounds` and tested on made-up states, because no real oscillation turned up (below).
+
+Exceptions are counted at the end: the final kept lead against the final chords. Compose builds every other part from the final chords and targets.
+
+Recorded:
+- **In the spec.** `stats.settle: { rounds, converged, oscillated, changedBarsPerRound, exceptionsPerRound, chosenRound }`, and a `settlePasses` decision.
+- **In harmonize's result.**
+  - `settle`: the same fields, plus the cap, the cycle and the lead cost per round.
+  - `passes.rounds`: per round, `changedBars` (the bar indices), `newerKept`, and per phrase which line was kept.
+  - `lead.kept` tags each phrase's line with the pass it came from: `first`, `second` or `round1`–`round3`.
+- **`settlePasses: 0` is e3909e1 byte for byte** on 96 harmonizations and 23 specs (with `presence: 'exact'` in Compose).
+
+**Measured.** 12 rows × 4 meters (2×8, 4×8, 8×8, 4×6), partitioned anchors, the cluster root, modulation on, cap 3. The rows are 8:7:6:5, 11:9:7:5, 19:17:16:15, 119:42:15:8, 768:784, 768:769, 504:234:520:297, 2048:2049, 97:103:37, 41:42:43, 1597:987:610:377 and 4099:4093:4091:4079.
+
+| | lean | full |
+|---|--:|--:|
+| runs | 48 | 48 |
+| converged | 47 | 47 |
+| hit the cap | 1 (1597:987:610:377 4×8: 3, 1, 1 bars) | 1 (97:103:37 4×6: 1, 3, 2) |
+| oscillated | 0 | 0 |
+| rounds used: 1 / 2 / 3 (1 = the first re-derivation already agrees) | 27 / 14 / 7 | 21 / 20 / 7 |
+| round 1: runs with chords changed, bars changed | 21 of 48, 37 bars | 27 of 48, 42 bars |
+| round 2 | 7 of 21, 8 bars | 7 of 27, 11 bars |
+| round 3 | 1 of 7, 1 bar | 1 of 7, 2 bars |
+| newer lead kept: round 1 / 2 / 3 | 14 of 28 / 3 of 7 / 1 of 1 phrases | 18 of 32 / 5 of 8 / 1 of 1 |
+| strong-note exceptions, before → after | 1 → 1 | 0 → 0 |
+
+- **A wider search.** 860 harmonizations: the 52 test rhythms and 7 more, × 5 meters × 2 anchor modes × modulation on and off, lean.
+  - No oscillation, and 10 hit the cap.
+  - Exceptions went from 6 to 2: 4 runs fewer, none more. 11:9:7:5 at 3×5 goes from 1 to 0, and it is a test case.
+- **The lead's cost per note isn't monotone across rounds.** For example, 1597:987:610:377 4×8 goes 0.523 → 0.508 → 0.488 → 0.513. Each round is priced on its own targets, so settling is a fixed-point search, not a descent.
+- **A pre-existing oddity, not new.** On 11:9:7:5 8×8 one phrase keeps a round-0 line whose re-score is Infinity, because no line was mined over the chords. It only matters to the oscillation tie-break.
+
+**Timing.** Node, this machine, Compose end to end, median of 3–5 runs, ms.
+
+| row | meter | table | settlePasses 0 | 1 | 3 | rounds at 3 (bars changed) |
+|---|---|---|--:|--:|--:|---|
+| 4099:4093:4091:4079, 16 s | 8×8 | lean | 518 | 660 | 658 | 2 (5, 0) |
+| | | full | 1,712 | 1,740 | 1,770 | 1 (0) |
+| 768:784, 8 s | 4×8 | lean | 264 | 323 | 322 | 2 (1, 0) |
+| | | full | 1,017 | 1,320 | 1,323 | 2 (1, 0) |
+| 768:769, 8 s | 4×8 | lean | 116 | 114 | 114 | 1 (0) |
+| | | full | 408 | 408 | 407 | 1 (0) |
+| 4099:4093:4091:4079, `presence: 'exact'` | 8×8 | lean | 331 | 438 | 440 | 2 (2, 0) |
+| | | full | 1,021 | 1,433 | 1,424 | 2 (1, 0) |
+
+- **A round that re-mines costs about one more lead pass:**
+  - lean: +59 ms (768:784), +107 ms (4099:4093:4091:4079, exact root) and +142 ms (cluster root);
+  - full: +303 ms (768:784) and +412 ms (4099:4093:4091:4079, exact root).
+- **A round that only confirms costs 0–30 ms.** It re-derives the chords and mines nothing.
+- **That's close to the expected +70–100 ms lean and +200–350 ms full per round,** a little over on the 16k row.
+- **Lean stays under 1 s everywhere.** The 16k row is the slowest at about 0.66–0.72 s with the default cap.
+
+## Targeted progressions (built 2026-10-22 night, sprint)
+
+**Decided (Avery):** the user can define the progression instead of the lead-driven first pass. Per chord slot (one chord a bar in v1) they pick a chord ROOT from the row's own tones, shown as ratios. The solver picks the QUALITY from what that bar's own tones support over that root, and mines the lead and every other part under it. Every note stays a real onset of the row. A slot left on "auto" is solved as today, so a progression can be partly targeted.
+
+**Built.** `Composer/core/progression.js` (pure, like the rest of `core/`), checked by `Composer/tests/assert-progression.mjs` (39 checks) and 12 more in `assert-lab.mjs`.
+
+- **Input.** `compose(layers, T, { progression })`: one entry a bar, each a ratio of the row (`'3/2'`), `{ ratio }`, or `null` / `''` / `'auto'`. With no progression, or every entry auto, Compose runs exactly as before: the spec is byte-identical (input included), and the e3909e1 baseline still holds with an all-null progression. A progression that pins anything is copied into the spec's `input.progression`, so JSON export carries it.
+- **Root candidates.** `rootCandidates(layers | row, { frameCentsEachSide, presence, root })` lists the row's ±frame clusters by their representative (the loudest tone of its own cluster, as a bar's candidate roots are picked), the base root first and then in pitch order up from it. Each has its ratio, cents, a note name on the composition's grid (the base root called C, as chords are named, before any modulation), presence (the cluster's onsets) and whether it sits off the grid. It picks the same base root Compose would, so it works before a compose. It's cheap enough for the main thread: 0.1–3 ms on the small presets, 20 ms on the 16,359-onset row (33 clusters; 768:769 has the most, 57).
+- **Where it branches.** `harmonize` takes an optional `progression: { roots, choose }` (one tone or null a bar, and `chooseChordOnRoot`). In every derivation (round 0 and each settle round), a pinned bar's chord comes from `choose` and an auto bar's from `chooseChord`, so **the settle passes re-derive the quality under the kept lead and never move the root.** A phrase whose bars are all pinned skips the first, unharmonized lead pass: its chords come first, from the roots and the bar's tones, and the lead is mined over them. Compose reads the progression after the meter, passes it in, and builds every other part from the final chords as before.
+
+**The rules (each proposed, not ruled):**
+
+- **The root is the pick, exactly.** The chord's root tone is the tone asked, and its frame is centred on it. `rootNode` is the bar's onset of that exact tone, or null when only its ±frame cluster (or nothing of it) sounds in the bar. The chord voices take whatever onset of the root's class the bar has inside the frame, so a cluster neighbour still voices it.
+- **Supported quality.** A quality of the catalog is supported when the bar sounds all its classes but at most one (`MAX_MISSING = 1`). The root counts as one of them, so over a root the bar doesn't sound, every other class must sound. That's the slack Compose's own chords already take: of 70 auto chords on ten rows, 45 sound whole in their bar, 22 lack one class, and 3 (sevenths) lack two. The supported qualities are ranked as `chooseChord` ranks them: strong lead notes not held, lead notes held, support, voice-leading, then the simpler quality.
+- **Fallback, never a throw.** When no catalog quality is supported, the thinnest dyad whose other tone the bar sounds: a power chord (`5`) on the fifth, else the root and its major (`no5`) or minor (`mno5`) third. Failing those, the root alone (`no3no5`). Every fallback name reads back through ProgressionSolver's `parseChordSymbol`. The chord carries `fallback`, and the decisions list names the bar, what the nearest quality lacked, and what was played instead. Picking every candidate on every bar of 8:7:6:5 and 41:42:43 (142 composes): 34 fell back, none threw.
+- **Modulation.** A picked root runs harmony.js' own rule (`modulationStep`). Off the grid at its bar's offset, the fundamental retunes from that bar on, for every part. With modulation off, the root is kept, flagged `offGrid`, and nothing is retuned. On 41:42:43, 21/11 (+41.7¢) on bar 1 retunes it by −41.7¢.
+- **Mixed progressions.** A phrase holding an auto bar runs the first lead pass as today. Its auto bars are derived from that lead, and its pinned bars rank their qualities with it too. A fully pinned phrase skips that pass. This is the cheapest rule that keeps auto bars exactly as Compose would find them from a lead.
+- **Length mismatch.** A longer list is cut to N bars and a shorter one padded with auto, and the decisions list says so. A ratio that isn't a tone of this row makes that bar auto, and is said. If every pin is cut away, Compose is lead-led, with an all-auto `progression` decision saying why. Malformed input (not a list, or an entry that isn't a ratio) throws.
+- **Reporting.** `knobs.leader` and the `leader` decision say `lead`, `progression` (every bar pinned) or `mixed`. A `progression` decision gives `'auto'` or `'ratio → name'` a bar, with the reasons. With a progression, each spec chord carries `targeted` and `fallback`.
+
+**Measured.**
+- **Timing** on the 16,359-onset row (8 bars, the auto roots fed back, best of 3, ms): lean auto 564–678, targeted 302–316, mixed (every other bar) 648–682; full auto 1,709–1,735, targeted 1,063–1,188, mixed 1,715–1,756. Fully targeted is about twice as fast lean, because the first lead pass is skipped. Mixed costs the same as auto.
+- **"Take from last compose"** gives the same roots back (tested on 7 rows). It doesn't give the same chords: on ten rows, 18 of 36 qualities came back the same. With every bar pinned, round 0 ranks qualities by the bar's support alone, since there's no lead yet to vote. The lead is then mined over those chords, and the settle round agrees with them. For example, on the 16k row the auto Bmaj7 AmMaj7 … Cmaj7 come back as Bdim Am … Csus4.
+
+**The lab.** A Progression section has one select a bar: auto, then the 8 most heard clusters, then all of them in pitch order. Each entry reads ratio · note name · cents · presence, with a tooltip for the cluster size and whether it's off the grid. Under each select is the chord that bar got ("asked → Gsus4", or "(fallback)"). The editor has as many bars as Compose will use (the bars knob, else `chooseMeter`). "Take from last compose" seeds it with the spec's roots, "clear" sets every bar back to auto, and new layers clear it. A `progression` readout counts targeted bars, the leader and any fallback bars. In the chords lane, targeted chord names show in the accent colour and fallbacks in amber.
+
+**Open, for Avery:**
+1. **Chords-first or lead-voted round 0 when every bar is pinned?** Built chords-first, as asked: the qualities come from the bar's support, then the lead follows. The alternative is to still mine the unharmonized lead and let it vote on the quality over the fixed roots, as mixed bars do. "Take from last compose" would then reproduce more of the auto tune (18 of 36 qualities match today), at the cost of the 2× speed-up. Which do you want, or should it be a switch?
+2. **The slack of one missing class.** Should a targeted chord be allowed to claim a tone the bar doesn't sound (a triad over root and fifth only)? Auto chords already do this about a third of the time. The stricter rule ("every class but the root") produced dyad fallbacks on most bars of tone-rich rows.
+3. **Fallback names.** `5`, `no5`, `mno5` and `no3no5` are ProgressionSolver spellings. Would "C (root)" read better than `Cno3no5`?
+4. **The candidate list** is the global clusters, not per bar. A root heard often in the cycle may not sound in the bar it's picked for (the decisions say so). Should the editor show per-bar presence, or mark candidates that don't sound in each bar?
+5. **Names before modulation.** Candidate names are on the base grid. After a retune earlier in the cycle, the chord name the bar ends up with can read a class away from the name in the menu.
+6. **More than one chord a bar** (v2) would need the slot editor to split a bar. The input is already one entry a slot.
+
+## First listening pass (Avery, 2026-10-22)
+
+**Heard and confirmed working:** clean loops with no clicks (after the fix below); every part plays correctly; the lead's legato behaves right across sounds; modulation markers and retunes (e.g. 1597:987:610:377, 8 bars, all auto: chords 6 and 7, Em −29.4¢ and Esus4 +6.7¢); a ±35¢ frame "works exactly as intended" and takes longer to compute, as expected. On the chords: "I am actually finding the chord progressions to be pretty sick", with a fair spread of qualities that depends on the rhythm.
+
+**Why modulation off changes only the second half.** Everything downstream of a bar's chord is mined from it. With modulation off, the chord that needed a retune changes, so its phrase's targets change, and that phrase's lead, bass, inner voice, comping and chord voices change with them. Phrases whose chords didn't change stay the same.
+
+**Fixed after listening:**
+- **Portamento was far too long** (`Audio/voices/voice.js`, e3909e1). A glide booked ahead used `cancelAndHoldAtTime`, which in a real engine holds nothing when nothing is scheduled after that time, so the exponential ramp ran from the voice's previous event across the whole gap between notes. Each param now remembers the value it settled on and re-sets it at the glide's start. The same flaw was in the old live-site fundamental glide, and this fixes it there too once merged.
+- **A click at the loop point** (7fba64d). This was the same flaw on the gain: once an envelope had settled at sustain, a release's linear ramp ran from the envelope's last event. Booked early, a held note sank slowly across its whole length; booked late (inside the lookahead), the gain jumped down at once. Releases and fades now start from the settled value at their own time. This is the note role only; Cosmos's roles are untouched, and its `releaseAudition` and `holdRowEnvelope` use the same pattern, unexamined.
+
+**Added to the lab:**
+- Glide (portamento, 0–500 ms, default 12).
+- Live tempo (30–300 BPM, with reset), d58c08b. Spec time maps to the clock in segments, and a held chain's moves and release are booked incrementally, so a change reaches voices already holding.
+- Settle passes (0–3) and Root presence (cluster | exact), b98250d.
+
+**Avery's directions from the pass:**
+- **Bass:** leaps are more acceptable in the bass than in inner voices; the root should be clearly stated most of the time, where the row allows. Next: weight root-class tones on the bar's strong slots, not just the opening note.
+- **Comping** gets chords, as in chunk-tunes.
+- **v2, bass-led composition:** bass and melody are intertwined, so the first and second lead passes could be run as bass parts instead of melody lines.
+- **The inner voice** is fine for a first pass. More options later, e.g. a full arpeggiator.
+- **Drums** are the next step, in a new thread.
+
+## Drums (built 2026-10-22 night, sprint)
+
+`Composer/core/drums.js` and `Composer/core/drum-patterns.js`, checked by `Composer/tests/assert-drums.mjs`; the lab's Drums lane is checked in `assert-lab.mjs`. Avery's design for the sprint was single level (the brief); everything below is **proposed, not ruled**, except where it repeats the brief.
+
+**The call.** `arrangeDrums(spec, options)` reads only the spec: its input layers, knobs, timeline, `stats.grid` and parts. It never reads the row. A row's onsets are its layers' pulses (layer v strikes every grid / v ticks), so the onset nearest any place in the cycle is the nearest pulse of one of at most four layers. That makes arranging cost about 0.1 ms, even on the 16k row, so the lab re-arranges on the main thread with nothing re-composed. `compose()` ends with `spec.drums = arrangeDrums(spec, options.drums)`; `drums: false` leaves them out. The drums draw from a seeded generator of their own (`${seed}/drums`), so they never move one of Compose's draws, and every other field of the spec stays byte-identical whatever the drum mode (tested). `settle-baseline.mjs`' `normSpec` leaves the drums out, and the hashes didn't change.
+
+**`spec.drums`:** `{ version, enabled, mode, options, kit, beats, partition, bars: [{ bar, mode, fill, crash, why }], hits: [{ voice, bar, pos, slot, tick, time, velocity, strikes, snap }], decisions, stats }`.
+- Voices: kick, snare, hat, perc, cym. The kit is Audio/drums choices, `made:kick` etc. by default; `''` turns a voice off.
+- `pos` is the stroke's place in its bar, in slots. `time` counts from the downbeat and is computed exactly as compose.js times a note, so a stroke on a note's onset sounds with that note.
+- `snap` says how a stroke landed: `slot` (the nearest onset to its place), `wide` (found on the second look), `note` (a part's own onset) or `layer` (from the partition).
+
+**How it works:**
+- **Every stroke is an onset the row plays.** One correction to the brief: anchors are grid ticks, and only some of them are onsets. The downbeat is an onset (the phase is one of the root's onsets); the other anchors aren't, in general. So each stroke aims at a place in the bar and lands on the onset nearest it, within that place's window: half-way to the neighbouring places. For a whole slot, that's cells.js' swing-0.5 window, and the test checks each landing against cells.js' exact (BigInt) nearest node. If no onset is in the window, the stroke looks once more, a whole place either side (`wide`), and is otherwise left out (`silent`). On every preset and test row nothing needed the wider look and nothing went silent.
+- **The beats.** The bar's S slots are cut in 4 beats the way Partitions cuts a block (cells.js `partitionSizes`, the PartitionsBlocks port), so any S works: S = 5 gives slots 0 1 2 3, S = 6 gives 0 2 3 5, S = 7 and 8 give 0 2 4 6, S = 11 and 13 give 0 3 6 9. Under 4 slots a bar, the bar is cut in S·m sub-slots (m = ceil(4/S), the way cells.js subdivides a small grid), and a beat between anchors lands on a real onset inside its slot. For S = 3 the beats fall at slots 0, 1, 1.5 and 2.5; 8:7:6:5 plays them that way.
+- **backbeat (the default, from the brief).** Kick on beats 1 and 3 (the call on 3 was left to me), snare on 2 and 4, and a hat on every slot, with the beat slots a little louder. Bar 1's kick is the phase onset itself, at time 0.
+- **with.** The backbeat, plus a perc stroke on every slot where the lead or the comping strikes, on that note's own onset (the lead's when both strike). It's accented where both strike, or on a strong slot.
+- **against.** The backbeat, plus perc on the slots that both the lead and the comping leave empty, at most ⌊S/2⌋ a bar (at least 1). Off-beat slots come first, then the seed decides. This is the only mode that reads the seed.
+- **partition (single level, from the brief's sliding downbeat).** Partitions' grid mode cuts the cycle from tick 0; here the cycle starts at the composition's downbeat.
+  - **The layer** is one that strikes the downbeat (Avery's idea: phase × v is whole). If several do, the one whose pulses per bar are nearest S wins, then the slowest.
+  - **The blocks** are its v pulses, counted from the downbeat. That's grid mode at P = v, and each block starts on one of that layer's onsets.
+  - **What sounds** is Partitions' secondary pattern E(hits, v), turned so its first stroke is the downbeat (getSecondaryAllowedSet). The test runs `PartitionsDistribution.js` itself and matches it exactly.
+  - **How many:** hits = min(v, N·S), about one a slot, or N·hitsPerBar when asked. The line plays on the perc, over the backbeat.
+- **Curated patterns** (drum-patterns.js), written chunk-tunes style: `steps` per bar and an x per stroke (X for an accent), each step a fraction of the bar.
+  - chunk-tunes' six (rock = its backbeat, four, funk, soca, bossa, shuffle), kept stroke for stroke.
+  - New: halftime, son clave 3-2 and rumba clave 3-2 (two-bar patterns that restart at each phrase), and a phrase-end fill.
+  - A stroke at fraction f lands through the beats: beat ⌊4f⌋, then its share of that beat's sub-slots, rounded. Patterns therefore agree with the backbeat's beats on any S, and an uneven beat stretches its subdivisions.
+  - On 8 slots, rock is kick 0 4, snare 2 6, a hat on every slot. On 16 slots, funk keeps its sixteenths. On 3 slots, rock keeps four quarter strokes, on half slots.
+- **Fills, a pattern per section.** The last bar of each phrase of 4 bars or more (harmony.js `phrasesOf`) plays the fill over its second half, from beat 3: snare in eighths then sixteenths, getting louder, with a kick under it. A crash opens the bar after the fill, which is bar 1 when the fill is in the last bar.
+  - 41:42:43, 119:42:15:8 and 768:769 (4 × 8) fill bar 4; the 16k row (8 × 8) fills bars 4 and 8.
+  - 8:7:6:5 (2 × 3) and 19:17:16:15 (2 × 8) don't fill.
+  - `perBar: { bar: mode }` gives a bar its own mode.
+- **Velocities.** Kick 0.85, snare 0.75, hat 0.3, perc 0.5, cym 0.55; +0.12 on an accent, and +0.04 for each extra layer striking that onset, so the row's own accents carry over.
+
+**Lab.** A drums lane under the parts:
+- Lane controls: a mode select (the four modes, then each pattern by name), a fills toggle, on/off and level.
+- Lane display: a tick per stroke, one band per voice, with each bar's mode in its corner.
+- **Drum kit row:** a sound per voice (off, the made kit, or the site's `assets/audio` samples).
+- **Live changes:** any lane or kit change re-arranges from the spec while it plays, with nothing re-composed. A new Compose keeps the lane's options.
+- **Playback:** the player books strokes on the same clock map as the notes, so the loop, the phase and live Tempo all apply. Strokes go through Audio/drums into a `drums` bus. Made sounds play at the stroke's velocity. A sample plays at the velocity × that made channel's `sampleLevel` (chunk-tunes' balance), and the made sound stands in until the sample loads.
+- **Decisions and export:** the decisions list adds the drums' decisions and a row per bar (what it plays and why). JSON export carries the drums as they play.
+
+**The deferred two-level prime partition** (built in step 4c: "Step 4c: drum grid and the prime partition" below). As Avery described it:
+- **Level 1** lights a prime number of evenly spread lights over the cycle, from double to low triple digits.
+- **Level 2,** the bars × slots partition, chooses which lit lights stay on. It treats them as a new even grid, whatever their uneven timing, and that adds a distinct swing.
+
+The seam: `levelOneLights(grid, { source })` names the level-1 source and `selectLights(count, hits)` chooses among them. Source `'layer'` is today's single level. Source `'prime'` throws "deferred". Level 2 would be `selectLights(q, N·S)` over q prime lights, each landed on its nearest onset the way any stroke is.
+
+**Heard so far:** nothing. Avery's browser and listening pass is owed.
+
+**Open (for Avery):**
+1. **Kick on 3:** kept in the default backbeat, with snare on 2 and 4 and a hat every slot. Hats every slot, or only on the beats?
+2. **Partitions' beat order on odd S:** the block cut puts the long beat last on S = 5 (1 1 1 2) and first on S = 6 (2 1 2 1). Keep Partitions' order, or always put the long beat first?
+3. **The partition layer when several strike the downbeat:** the one with pulses per bar nearest S (then the slowest). Or always the slowest, or the root's own layer?
+4. **The partition's density:** min(v, N·S) hits is close to an even pulse on large layers (768:769 → E(32, 769); the 16k row → E(64, 4093)), and audibly uneven only on small ones (41:42:43 → E(32, 43)). Is that the swing you want from single level, or should hits per bar be a lab knob? It's in the API (`hitsPerBar`) but not in the lab yet.
+5. **Fills** only on phrases of 4 bars or more, so 2-bar loops never fill. Every phrase end, or every second?
+6. **with / against** read only the lead and the comping. Should the bass vote too?
+7. **The partition line on the perc, over the backbeat.** Should it take the hat's place instead?
+
+## Compose trace (built 2026-10-22 night, sprint)
+
+**Asked (Avery, 2026-10-22):** animate Compose in two places, so people can see what happens under the hood. On the main page's Linear Plot, at a brisk but readable pace: how the root is chosen, how a lead line is chosen, the chords under it, the lead re-chosen and tested as the chords go back and forth, and the percussion coming in. In Cosmos: a rhythm's onsets drift up as dust, then are selected from and rebuilt into the composition. Both are renderers of one shared trace; this phase built the trace, not the renderers.
+
+**Built.** `Composer/core/trace.js` (pure, like the rest of `core/`), with its contract in `Composer/TRACE.md`, checked by `Composer/tests/assert-trace.mjs` (19 checks).
+
+- **Opt-in.** `compose(layers, T, { trace: true })` adds `spec.trace`. Off, the default, the spec is byte-identical to before; the e3909e1 baseline holds with the trace off, and on once the trace is taken off. On, the spec without `trace` is byte-identical to off on 89 composes (seeds, overrides, progressions, every drum mode, the full table): the trace observes and never steers. It never draws from the seed.
+- **How it hooks in.** A recorder made by `createTrace(row)` is handed down the pipeline. The steps call `rec?.x(...)`, which a null recorder skips, arguments and all. Hooks:
+  - `compose.js`: one call per step (row, root, meter, phase, cells, progression, harmony, bass bar, inner phrase, parts, drums)
+  - `harmony.js`: `harmonize` takes `trace`; it reports each lead mining (its ranked lines), each derivation's chords and each settle round
+  - `chooseChord` and `chooseChordOnRoot`: an optional `observe` callback sees every (root, quality) they rank, and, on a pinned bar, every quality rejected as unsupported
+  - `frame.js`: gains `rankRoots`, `defaultRoot`'s own ranking spelled out (a shared `rootRanking`, so the two can't drift; its first is `defaultRoot`'s pick on every test row)
+- **Content.** Ordered, untimed events (`row`, `root`, `meter`, `phase`, `cells`, `progression`, `lead`, `chord`, `settle`, `harmony`, `part`, `drums`, `done`). Onsets are referred to by row index. A `nodes` table spells each referenced onset (tick, ratio, cents, layers, strikes), so a renderer can place it without the row. Lines are referred to by id and held once in a `lines` table. Each lead event carries the chosen line and up to 3 runners-up with their costs; each chord event the top 6 (root, quality) candidates with their scores, the pick, any retune and, on a pinned bar, the fallback and the unsupported qualities.
+- **The worker** passes `options.trace` through; the trace is plain JSON and survives the structured clone.
+- **Pacing.** `traceTimeline(trace, { pace, seconds, budgets })` groups the events into beats (row, root, meter, cells, progression, line, chords, line2, settle 1..n, harmony, parts, drums, done) with relative starts and durations. It's pure (no clock), compressible, and about 6–8 s at pace 1.
+
+**Measured** on the 16,359-onset row (8 × 8):
+- **Size:** 109 KB of JSON lean (45 events, 323 onsets, 30 lines) and 96 KB full.
+- **Time:** compose 660 ms off, 664 ms on (+0.7 %); full 1,722 vs 1,724 ms.
+- **Trace off against the core from before the trace (d9f2f85):** unchanged, medians of 662 vs 655 ms lean and 1,753 vs 1,732 ms full.
+
+**Proposed, not ruled:**
+1. **The caps:** 8 root candidates with 12 sampled onsets each, 3 runner-up lines, 6 chord candidates, 256 notes a part and 512 drum hits. Raising them is cheap.
+2. **The chord candidates** are the top 6 overall. That can be several qualities over one root; a per-root best might read better on the plot.
+3. **The timeline budgets** (`TIMELINE_SECONDS`): chords and line about 0.9 s each, a settle round 0.45 s, and changed bars weighted twice unchanged ones.
+4. **Where the trace lives:** `spec.trace`, so the worker needs no second channel. A JSON export that shouldn't carry it takes it off.
+
+**Open, for Avery:** nothing to rule yet. The pacing and caps are for whoever builds the first renderer to tune, against the Linear Plot and the Cosmos dust layer.
+
+## Composer tab on the main page (built 2026-10-22 night, sprint)
+
+Avery's layout (the brief): a **Composer tab beside the Partitions tab**, in the same window. Partitions stays as it was. The upper-right Linear Plot stays visible and shows the Composer's selections live. Everything below that isn't the brief is **proposed, not ruled**. Nothing here has been seen in a browser yet.
+
+**Open it.** Double-click the Playback panel's header, as for Partitions. The window's title bar now has a tab strip, **Partitions | Composer**. The Composer tab swaps the window's left half and lower right for its own. The mirrored plot (upper right) is shared by both tabs.
+
+**What was built:**
+- **Promoted, shared with the lab** (`Composer/perform/`). Both the lab and the tab use these; the lab's old module names re-export them.
+  - `composer-controller.js` (was `lab/lab-controller.js`). New: `setInput({ layers, cycleSeconds })` takes the rhythm from outside, and a `beforePerform` hook. A change while Compose runs now drops that answer and turns the button back to Compose; before, a late answer could land on the new input. `kitChoices(voice, base)` takes the samples' base path.
+  - `composer-player.js` (was `lab/lab-player.js`). New: an optional `destination` (default `ctx.destination`), at the planner's request for Cosmos. `timers` stays injectable and `tick()` public, so a host can drive the pulse itself. Both are tested in `assert-lab.mjs`.
+  - `compose-runner.js`: the worker for the full table, the main thread for the lean one (moved out of the lab's view).
+  - `readouts.js`: what a view says about a spec, as data. That covers the knob fields and what Compose chose, the readouts line, a refusal in plain words, the decisions rows, and the progression editor's and lanes' labels. Both views now say the same things the same way.
+- **The page** (`Composer/page/`):
+  - `plot-highlights.js`: **the seam.** It's a pure mapping from spec to per-part node highlights (`highlightsOf`), plus the playhead mapping (`playheadAt`, `playheadX`) and what sounds at a moment (`soundingAt`).
+    - Each note's and stroke's absolute `tick` is found among the plotted onsets by an exact binary search, so every lit index is a real dot of the rhythm on the plot. A spec of another rhythm maps to `null`.
+    - The playhead turns spec time into the onset at or before it, plus the way into its gap. The plot's x is by index, so it steps evenly from dot to dot.
+    - A later sprint can animate Compose from its trace by handing the overlay one highlight set per step.
+  - `plot-overlay.js`: draws them through **the draw hook**, `LRCVisuals.setComposerOverlay()`.
+    - At the end of each Linear Plot draw, the overlay washes the row dark, leaving the invert button clear. Then it draws a dot in each part's colour on each of its nodes (drum strokes as squares). The selected part goes on top with a ring; a part that's off is drawn faint. Finally it snapshots the canvas.
+    - During Perform, each animation frame blits the snapshot back, then draws the playhead line, a ring on the onset under it and a glow on each node that's sounding.
+    - No dot of the row is redrawn per frame, so a 16k-onset row costs the same as 8:7:6:5.
+    - With no overlay set, the Linear Plot draws exactly as before. The test checks this call for call against d9f2f85.
+  - `tab-controller.js`: the shared controller, plus the page's rhythm, the one-sound rule, the selection and the memoized lit nodes.
+  - `composer-tab.js` and `composer-tab.css`: the view.
+  - `composer-bridge.js`: `window.lrcComposer` and the `lrccomposerready` event, the way `lrc-voices-bridge.js` exposes the voices.
+- **Site edits, small and marked:**
+  - `index.html`: the bridge (a module) and the CSS.
+  - `PartitionsUI.js`: the tab strip, the two hosts, `setActiveTab` and `showComposerTab`. Leaving the window or the tab hides the Composer.
+  - `LRCVisuals.js`: the hook, plus loops for the plot's min and max.
+  - `LRCModule.js`: the `Math.max(...spacesPlot)` at line 245, and the same spread in `generateToneRowData`, are loops now. A 200k-onset plot works; the old code overflowed in Node.
+
+**Behaviour (the brief), and the calls made (proposed):**
+- **The rhythm.** Compose reads the current page rhythm: LRCModule's layers and Playback's cycle duration.
+  - A new rhythm (`rhythmGenerated`) or a new cycle (checked each frame while the tab is shown) stops Composer playback and turns the button back to Compose.
+  - New layers clear the progression (its ratios belonged to the old row); a new cycle keeps it.
+  - **Proposed:** a cycle change counts as a rhythm change.
+  - **Proposed:** a site layer of 1 is given to Compose as absent. A layer of 1 adds no onset of its own, and the site's readouts count only layers above 1.
+- **One sound at a time.** Perform first stops main playback, and Partitions plays only under main playback. Main playback starting stops the Composer.
+  - **Proposed:** leaving the Composer tab, or closing the window, stops it too, so the Composer only sounds while its lanes and plot are in view.
+- **No auto-compose on open (proposed).** The lab composes at once, but on the page a 16k row takes about 1.7 s in the worker. You press Compose.
+- **The plot.** The lit nodes show only on the Linear Plot. On another plot type, the tab shows a note and a "Show the Linear Plot" button; it doesn't switch the plot by itself (proposed), because switching plots stops main playback.
+  - Lit nodes for a spec made on the same rhythm stay lit after a knob change, until the next Compose; the lanes behave the same way.
+- **Part colours (proposed):** lead white, chords violet `#c56cf0`, comping pink `#ff9ff3`, bass blue `#54a0ff`, inner orange `#ff9f43`, drums red `#ff4757` (squares). They're chosen apart from the four layer colours. The **wash** dims the row to about 40% so the selections read on dense plots.
+- **Layout.** Each lane head is a part's name (click it to select the part) and an on/off toggle. Sound, legato and level live in the inspector, per the brief.
+  - Tempo and Glide sit in the header: they're global to Perform.
+  - The inspector opens on the section the part belongs to: chords → Harmony; lead, comping, bass and inner → Lines; drums → Drums. Any section can be picked by hand.
+  - Under Harmony: the progression editor, modulation, settle passes and root presence. Under Lines: bars, slots per bar, anchors, the table and glide. Under Drums: mode, fills, on/off, level and the kit. Under Tuning: the frame, the root, baseHz, and each bar's chord and offset.
+- **The window remembers the tab** it was last on while the page is open (no storage), and reopens there.
+- **Audio.** The Composer makes its own AudioContext on the first Perform and feeds its own limiter into the destination. It doesn't pass through the main page's master or effects (`AudioEffects.js`), and there's no MIDI out.
+
+**Tests** (Node, over a small DOM in `tests/dom-stub.mjs`, with the site's own classic scripts loaded in a vm by `tests/site-scripts.mjs`):
+- `assert-page-highlights.mjs` (94 checks): every lit index is the site's own onset at the note's tick, per part, on 8:7:6:5 up to the 16,359-onset row. It also covers the playhead mapping, what sounds when, and the overlay's drawing on a recording canvas.
+- `assert-page-tab.mjs` (34): the rhythm, cycle and layer changes, a change mid-compose, one sound at a time through an injected host, the progression and drums carried, the selection.
+- `assert-page-view.mjs` (38): the bridge's exports, and the tab end to end (Compose, lanes, Perform, frames, main taking over, the inspector, the Linear Plot note, a rhythm change, a refusal, hide). It also runs the lab on the shared modules.
+- `assert-page-site.mjs` (27): every path index.html references exists, and the module graph resolves. It also covers the LRCModule fix (with the old version overflowing), the LRCVisuals hook (identical with no overlay), and PartitionsUI's tab strip.
+
+**Open (for Avery):**
+1. **Playback across tabs.** Should the Composer keep playing when you switch to the Partitions tab, so you can look at its controls while listening? Built: it stops.
+2. **The wash.** Is dimming the row right, or should the row keep its layer colours under the lit nodes? And are the part colours readable?
+3. **Other plot types.** Should the lit nodes also show on the Wheel or Centrifuge, or is the Linear Plot enough?
+4. **The Composer's audio path.** Should it go through the page's master and effects (and MIDI out), or stay on its own graph as built?
+5. **Auto-compose on open** for small rows, as the lab does?
+6. **Zoom into a section** (decided as later): the lanes have one column a bar. The Linear Plot gesture (cmd/alt+scroll) is suspended while the window is open, as it is for Partitions.
+7. **Found, not fixed** (fixed 2026-10-23, sprint 2 step 1: see "Composition lens and store"): in Node, `LRCModule.calculateTotalLCM(...activeLayers)` returns NaN for fewer than four layers. `lcm(x, undefined)` is NaN, so a rhythm entered with blank layers (768:769 with C and D empty) gets a NaN grid. Entering 1 for an unused layer works. This is untested in a browser; worth a look as its own live-site fix.
+
+## Cosmos Compose mode (built 2026-10-22 night, sprint)
+
+Cosmos's Rhythm and Grid cards gained a COMPOSE button (phase E1: audio and logic; the dust and the choreography are E2). The cross-project calls are here; the Cosmos side is in `Cosmos/engine/cosmos-compose.js`'s header, and the seam survey is the git-ignored `Cosmos/docs/composition-survey-2026-10-22/REPORT.md`.
+
+**Decided (Avery, 2026-10-22).**
+- A Rhythm card composes its one rhythm. A Grid card (a bloomed grid) composes a **superrow** of the grid's rhythms up to a budget; a huge grid composes a window of itself, never a refusal. "Fitted of visible" is the barometer.
+- The ambient bed is silenced completely while a composition plays, and restored after.
+- The composition takes over Cosmos's clock (which SPEED drives as an onset density) at its own tempo, and hands it back when it ends.
+- The player keeps flying; the composition stops when the player leaves and the grid falls out of range.
+- The drums are the Composer's, as they are.
+
+**The superrow (`core/superrow.js`; proposed).**
+- Every rhythm of a Cosmos bloom has lcm = G, so the superrow lives on G's own ticks: no LCM problem, and G < 2^24 is far under the 2^53 gate.
+- A node is a distinct (tick, tone) pair, each onset keeping its own rhythm's tone (chunk-super-row's rule). Strikes are summed and saturated at 255; octave is the lowest merged.
+- `layers` are the pulses: the 4 commonest layer values of the admitted rhythms, `owners` where each strikes. Comping and the drums' partition light read these.
+- A one-rhythm superrow is that rhythm's row, field for field, and composes to the identical spec, drums included (`tests/assert-superrow.mjs`).
+- **compose() takes a prebuilt row:** `compose(layers, T, { row })`, read as `arguments[2]?.row` in place of `buildRow(layers)`. That is two lines in `compose.js`, marked; the signature line is untouched, to keep the merge with the trace clean. Pass `row.layers` as `layers` so the spec's input and the drums read the pulses.
+- **The window** is a fill over the caller's order. Cosmos orders the rhythms inside the card's cardinality band nearest the focus: the last node clicked in that bloom, else the eye at press time, fixed at press.
+  - It skips a rhythm over the gate alone, or over the budget alone (a rhythm's own onsets are distinct ticks).
+  - It counts a candidate's room exactly, by its NEW (tick, tone) pairs only, so a rhythm whose onsets are already nodes is free.
+  - The budgets: Θ nodes (Cosmos's tier key `composeBudget`, 16k / 65k / 262k / 262k), Σ ≤ 2^21 source onsets, and the gate (1,048,576) as the ceiling.
+  - A work cap (2^23 onsets examined) bounds monster grids; what it doesn't reach is `unreached`.
+- Node → (rhythm, onset) members go back as CSR arrays, the dust E2 needs.
+- `superrow-worker.js` builds and composes in one module worker. On the survey's grids, the whole job takes 0.5–2.4 s at every budget, monsters included: 166,320 at Θ 65k is 51 rhythms in 0.9 s, and 7,920 composes whole in 2 s.
+
+**Tempo (proposed).** Both kinds choose their own cycle: `cycleSecondsForTempo(n)` picks N bars of the 8, 4, 2, 1 the row holds without going sparse, at T = 240·N / 110. Compose's `chooseMeter` then lands exactly on N bars at 110 BPM and never halves N. It is never T = n / rate (for a superrow, that would put the tempo near 1 BPM). While a composition plays, Cosmos's SPEED knob is held (it dims and reads the composition's BPM). A value set meanwhile waits for flight.
+
+**The player.** `Composer/lab/lab-player.js` is imported by exactly one Cosmos file, `Cosmos/audio/cosmos-composer-player.js`, so Phase C's move is a one-line re-point.
+- The player runs with `timers: {}`; its `tick()` is called by Cosmos's worker-driven transport pulse, with Cosmos's 250 ms horizon.
+- The shared player (`Composer/perform/composer-player.js`) is given Cosmos's composition bus as its `destination` (the merge replaced E1's temporary `wrapContext` proxy).
+- The composition does not go to MIDI out in v1.
+
+**Open (for Avery).**
+1. **Superrow strikes.** Summed strikes pin comping's accent (0.1 × (strikes − 1)) at velocity 1 on a wide superrow. `strikes: 'log2'` is built as the alternative; the default stays `'sum'`.
+2. **The duplicate rule.** Should the same tone at the same tick from two rhythms stay one node (built), or two?
+3. **The focus.** Is it the last node clicked in the bloom, else the eye (built)? Or the bloom's centre?
+4. **The stop radius.** It is one cell inside the tier's evict shell after a 400 ms dwell, faded over the 2 cells before (Low: fades from 7 cells, stops at 9 of 10).
+5. **The seed.** It is fixed at 1, so the same target gives the same composition. Should a second press reseed?
+6. **A five-layer rhythm** can't be composed (the row reads at most 4 layers). Blooms don't make them today.
+
+## Compose animation on the main page (built 2026-10-22 night, sprint)
+
+**Asked (Avery, 2026-10-22):** animate what the Compose button does, even if it makes Compose a little slower. Show how the root is chosen, how a lead line is chosen, how chords are chosen under it, how the lead is re-chosen and tested as the chords go back and forth, and how the percussion comes in. Brisk but readable. Everything below that isn't the brief is **proposed, not ruled**. Nothing here has been seen in a browser yet.
+
+**How it runs.** With **show the work** on (a toggle in the tab's header, on by default):
+1. Compose asks for its trace (`{ trace: true }`, through the worker). While it runs, the plot washes dark and a soft band sweeps it with "composing…" in the corner. No step is shown before the trace is back (proposed: compose first, then animate; the simplest honest order).
+2. The trace plays on the Linear Plot and in the tab, paced by `traceTimeline` with the page's own beat budgets (`ANIMATION_BUDGETS`), fitted into 4–7.5 s. Measured: 7.45 s on 8:7:6:5 and 41:42:43; 7.5 s on the 16k row, fitted down from 8.0 s.
+3. It ends exactly on the lit nodes the tab already draws, and the plot goes back to the overlay's ordinary draw. Perform then works as before.
+
+**What each beat shows** (`page/trace-frames.js`):
+- **Row:** a scan line sweeps the plot.
+- **Root:** the candidates pulse in turn, weakest first, each on its sampled onsets, sized by presence. The caption names each ratio and how often its ±frame cluster is heard. The rejects turn grey and fade; the winner holds in the accent green, with a burst.
+- **Meter and phase:** the bar lines sweep in; the downbeat candidates flash in turn and the chosen downbeat bursts.
+- **Cells:** the slot anchors tick in, each with a bracket under the plot spanning its window.
+- **Lead:** the runners-up are drawn as faint lines through their onsets, then fade; the chosen line draws in white, note by note. It stays on the plot until the lead part lands.
+- **Chords:** a bar at a time, the bar tints violet. Its candidates flick through on their root onsets and in the chords lane, weakest first. Then the pick's root rings and its chord tones light: the bar's trace onsets whose class from the root is one of the chord's intervals, within the frame (harmony.js' own test).
+- **Lead again and settle rounds:** the held line pulses while a new one is tested against it. If the held line wins, it brightens. If it loses, it turns amber and fades while the new line draws in. A settle round flashes its changed bars in amber, in the lanes too; a converged round glows green once.
+- **Parts:** each part's notes cascade in, in time order and in its colour, each with a small pop. Its lane fades in as it starts.
+- **Drums:** the strokes drop into place bar by bar, as squares.
+
+**The tab meanwhile.**
+- A caption above the lanes shows the step and a line of detail (for example "the held line costs 0.6398 vs a new one at 0.3985 → the new line wins"). Under it, a strip of beats lights up as they pass.
+- The lanes wait, faint, until their part lands. The readouts and decisions are hidden until the end (proposed, so the answer isn't given away).
+- The Compose button says **Skip ▸**.
+
+**Skip and cancel.**
+- **Skip:** the Skip button, a click anywhere in the tab, a click on the plot (the window's mirror canvas) or Esc jumps to the end.
+- **Cancel:** any change drops the animation, with no stale draw: a knob, the seed, a selection, a part toggle, the rhythm, main playback starting (even while Compose is still running), leaving the tab, or turning show the work off. A change of knob or seed then shows the spec's lit nodes as before a change, and the button goes back to Compose. A new rhythm lights nothing.
+
+**Show the work off** is the tab exactly as it was: Compose asks for no trace, there's no shimmer or caption, and the spec lands at once. The setting is kept in `localStorage` (`lrc.composer.showWork`, `'0'` or `'1'`). Every access is wrapped, so a storage that throws (a private window) reads as on.
+
+**Only the Compose button animates (proposed).** A lean-table auto-recompose after a knob change doesn't.
+
+**Performance.**
+- The overlay keeps its snapshot/blit approach. While animating, the overlay's draw washes the plot and snapshots it with no lit node (the base). Each animation frame is one blit of that base plus what the frame names.
+- Frames are bounded by the trace (its 323 onsets on the 16k row) plus the final lit nodes, never the row.
+- Measured on the 16,359-onset row: at most 309 nodes a frame and at most 412 canvas marks and segments, against 16,359 onsets. Building the scene takes about 0.5 ms and a frame about 0.006 ms.
+- The trace itself adds under 1 % to Compose (TRACE.md).
+
+**Code.**
+- `page/trace-frames.js`: **pure.** `buildScene({ trace, plot, final })` reads the trace once against the plot: every trace `node` is found among the plotted onsets by its tick, and the bars, slot windows and chord tones are found too. `frameAt(scene, t)` gives the draw state at t: marks on onsets, polylines through onsets, rules, bar bands, slot brackets, the row's sweep line, the parts landed so far and the lanes' state. At t ≥ the end it gives exactly the final lit nodes. Cosmos's dust renderer could follow the same pattern: build a scene, then ask it for frames.
+- `page/compose-animator.js`: the driver (idle → waiting → playing → idle, on an injected clock: `wait`, `start`, `skip`, `cancel`, `tick`), the painter (`paintFrame`, `paintShimmer`), and the setting's storage.
+- **Small edits:**
+  - `plot-overlay.js`: `setScene` and `paint`. `drawLitPart`, `partOrder` and `litRadius` are now exported, so the painted last frame draws dots exactly as the overlay does.
+  - `tab-controller.js`: `view.showWork` and `setShowWork`; Compose asks for the trace when it's on; `onMainStarted`.
+  - `composer-tab.js`: the toggle, the caption, Skip, the wiring.
+  - `composer-tab.css`: the caption and the lanes' states.
+  - `composer-bridge.js`: passes `clock` and `storage`, and exposes `animator`.
+  - `perform/composer-controller.js`: `compose({ trace })` keeps the trace apart from the spec, in `state.trace`, so the spec, the lanes and JSON export are the same either way.
+  - `perform/compose-runner.js`: forwards `trace`, both ways.
+- **Tests:** `tests/assert-page-animate.mjs` (144 checks).
+  - The frames run forward, the parts only gain nodes, and the last frame is exactly the tab's lit nodes, on 7 cases from 8:7:6:5 to the 16k row. Those include re-arranged drums and a pinned progression.
+  - Every node a frame draws is a plotted onset that the trace or the lit nodes name.
+  - Each beat's story is there.
+  - Per-frame counts stay bounded on the 16k row.
+  - The painted last frame matches the overlay's own draw, dot for dot.
+  - End to end in the tab: skip, cancel on each change (with no draw after), the toggle off as before, and storage.
+  - `assert-page-view.mjs` now runs with the setting off (stored `'0'`): it's the tab as it was.
+
+**Open (for Avery):**
+1. **The pace.** About 7.5 s, fitted. Is that brisk enough, or should a small row run shorter than a big one? On the 16k row the chords get about 0.13 s a bar (2 flicks), and the unchanged bars of a settle round only blink.
+2. **Hiding the readouts** until the end, or keeping them visible throughout?
+3. **The colours.** The root and the selections are in the window's accent green, the candidates pale grey, a change amber, and the chords in their part's violet.
+4. **Chord tones** are lit only among the onsets the trace names in that bar (its slots' nearest onsets, the lead's notes, the root samples), not every onset of the bar. That keeps a frame bounded on the 16k row. Light every onset of the bar's chord classes instead?
+5. **Skip on any click in the tab** may be too eager. Esc and the Skip button might be enough.
+6. **Auto-recompose** (lean table, a knob change) doesn't animate. Should it, maybe faster?
+
+## Cosmos onset dust and choreography (built 2026-10-22 night, sprint)
+
+**Asked (Avery, 2026-10-22):** Cosmos blooms a grid into its rhythms, but has never bloomed a rhythm into its onsets. In Compose mode those onsets appear as tiny cosmic dust, a pool; the pool is selected from, and the composition is rebuilt from it. Then the dust stays in sync with the composition as it plays: it shows what's under the hood, "a treat for playing with the system". The black orb could expand into a blank canvas for it. On a Rhythm card only that rhythm's dust animates; on a Grid card many rhythms feed one superrow pool. The player keeps flying, and the composition stops out of range (E1). Everything below that isn't the brief is **proposed, not ruled**. Nothing here has been seen in a browser yet.
+
+**The picture is the music: a clock face of the cycle.** It sits in a unit disc around the composing grid.
+- A mote's **angle** is its onset's place in the cycle, tick / grid, clockwise. Once the phase is chosen, 12 o'clock is the downbeat.
+- Its **radius** is its tone: the cents within the octave, from 1/1 at 0.30 to 2/1 at 0.92. Each tone is a ring, and time runs along the spokes.
+- Its **height** is its register: z = the note's octave. The painter scales by 1 / (1 − 0.12·z), so the lead sits just outside its tone ring and the bass inside it.
+- The drums sit on their own ring outside the face: kick 1.00, snare 1.05, perc 1.08, hat 1.11, cymbal 1.15.
+
+**The motes.** There are three populations, drawn in this order:
+- **Grains (the pool).** The onsets the composition was made from, sampled evenly and jittered off their exact place, like a nebula.
+  - On a Rhythm card they are its row's onsets, sampled in the worker (up to 10,000).
+  - On a Grid card they are the superrow's **source** onsets: every (rhythm, onset) that merged into a node. A node gets dust in proportion to the rhythms striking there.
+- **Keys.** Every onset the compose trace names, at its exact place. These are what the selection lights.
+- **Voices (the composition).** One per spec note (part, node, chord voice) and one per drum stroke, in the part's colour. They use the main page's colours (`PART_COLORS`).
+
+**The phases.**
+1. **Bloom-out** (0.9 s). The grains and keys stream out of their rhythm's node in the bloom and into the pool. On a Rhythm card that's the one node; on a Grid card it's every admitted rhythm's node. The start positions come from the draw loop's own lattice, seen on the view plane.
+2. **Selection.** The trace's timeline, using the page's beat budgets with the dust's own stress (`DUST_BUDGETS`), fitted to 3 s:
+   - the row: a hand sweeps the pool;
+   - the root: the candidates' sampled onsets pulse in turn, weakest first; the rejects grey out and the winner holds in green;
+   - the meter: the bar spokes ring in;
+   - the phase: the downbeat candidates flash, then **the whole face turns until the chosen downbeat is at 12 o'clock**;
+   - the cells: the slots tick in on the rim;
+   - the lead: the runners-up are faint filaments through their notes, and the chosen line draws in white;
+   - the chords: per bar, the bar's arc tints, the candidates flick on their roots, and the pick's root and chord tones light;
+   - the settle rounds: changed bars flash amber, and a converged round flashes green once;
+   - the parts: each part's voices rise, in time order, from their onset's place to their register, in their colour;
+   - the drums: the strokes drop onto the drum ring, bar by bar.
+3. **Performance.** The voices sit on the face, with a hand at the audio playhead and faint bar spokes. The lead and bass are drawn as faint filaments through their notes in time order. Each booked note (`onNote`, ~250 ms ahead) flashes its own voice when the audio clock reaches its `when`, so the flash lands where the hand is. The grains drift as a faint halo in three slow bands.
+4. **Dissolve** (0.8 s) on any stop. The director then clears.
+
+**Timing (proposed): the audio starts at once.** E1 performs on 'composed', and the selection is compressed to 3 s (`SELECTION_SECONDS`). Notes flash the dust from the first one, including during the selection, where the voice sits before it lands. A click on the canvas, or Esc, during the bloom-out or the selection skips to the performance. The alternative, holding the audio until the selection ends, would delay E1's perform and keep the flight bed playing meanwhile. It's not built.
+
+**The veil.**
+- While the worker composes, the orb's veil swells to 0.35.
+- From 'composed', it rises to 1 over 0.6 s, times E1's range `level`. It's full at level 1 and thins as you fly away, so leaving reads as the composition dissolving.
+- It goes down with the dissolve.
+- The face starts on the bloom's own disc (its projected centre and radius) and moves to the canvas centre as the veil rises: the orb becomes the canvas.
+- **Under a full veil the loop skips what it hides** (a cull, not paint-over): the cube walls, the Web frame, the connectors, the constellations, the ships, the stars (draw and pick), the blots and every bloom cloud (draw and pick). The ship in chase view stays: it's you.
+- A canvas click under a full veil does nothing, so it can't close the card.
+- Below full, the composing grid's nodes give way (`dustNodeDim`). The chosen rhythm (or the admitted rhythms) fade more slowly than the rest, so on a Rhythm card you see only its rhythm's dust leave (proposed: dim, not hide). Other blooms fade with the veil.
+
+**Caps (proposed).**
+- **Motes a frame,** by the tier key `dustMax`: 1,500 / 3,000 / 6,000 / 10,000 (Low → Ultra). Voices come first, then keys, then grains sampled evenly into the room left.
+- **Fixed per frame:** 160 sprite glows, 96 flashes, 12 filaments, 96 lines and 24 arcs.
+- **Deterministic:** the jitter is a hash of the mote, never `Math.random`.
+
+**Drawing.**
+- The cosmos-perf lesson holds: there is no gradient per mote.
+- Motes are batched: one `Path2D` per (colour, 1/16 alpha band, 0.5 px size bucket), with squares under 2.2 px and arcs above. They're added with `'lighter'`. 10,000 motes take about 16 fills.
+- Glows are a `drawImage` of a sprite baked once per (colour, size bucket, DPR).
+- It's DPR-aware: no mote is under one device pixel.
+
+**Measured** (Node, M4 Max). The scene was grid 27,720: 451 rhythms → 141,542 superrow nodes, with a pool of 2,097,094 source onsets.
+- At Ultra the scene has 10,000 motes: 236 voices, 337 keys and 9,427 grains. It builds in 8 ms, once.
+- `frameAt` takes 0.29 ms in the bloom-out, 0.12 ms in the selection and 0.17 ms in the performance.
+- The painter's JS (its batching, on a stub canvas) takes 0.37 ms a frame. The raster cost needs Avery's browser.
+
+**Code.**
+- `Cosmos/engine/compose-choreo.js`: **pure**. `buildDustScene`, `frameAt` (a struct-of-arrays frame), `createDustDirector` (the lifecycle from E1's events, on injected times) and `dustNodeDim`.
+- `Cosmos/ui/compose-dust.js`: the painter and `dustView`.
+- **Small edits:**
+  - `flight-view.js`: the `COMPOSE DUST (E2)` blocks.
+  - `cosmos-compose.js`: `trace` and `dust` options. The trace and dust are taken off the spec before it plays and ride on 'composed'. Off, E1 is exactly as it was.
+  - `compose-worker-client.js`: `rhythm()` carries `dust`.
+  - `compose-worker.js`: `options.dust` → `sampleRowDust`. The row is built once and handed to compose; the spec is unchanged.
+  - `superrow-worker.js`: the reply gains `toneCents` and `octave`.
+  - `cosmos-quality.js`: `dustMax`.
+- **Tests:** `Cosmos/tests/assert-compose-dust.mjs` (75 checks). `assert-superrow.mjs` checks the new reply fields and the superrow's trace; `assert-cosmos-quality.mjs` checks that `composeBudget` and `dustMax` are non-decreasing.
+
+**Open (for Avery).**
+1. **Audio at once, with a 3 s selection,** or hold the audio for a slower selection (6–8 s, as on the main page)? At 3 s the root's candidates get about 30 ms each.
+2. **The full veil for the whole composition.** You fly blind until the fade's last 2 cells. Should the veil hold somewhat below full (say 0.85), so the cosmos glimmers through?
+3. **The face:** a clock with tone rings. Or the bars in a ring around the star? Or the face fixed in 3D space, instead of a screen-facing canvas?
+4. **On a Rhythm card, dim or hide** the other nodes of its bloom (built: dim, until the full veil hides them)?
+5. **A click under the full veil** does nothing. Should it skip, stop, or pick through?
+6. **The grains:** jittered off their place (a nebula), or exact?
+7. **Parallax:** the face is screen-facing. A small parallax with the camera's turn would make flying feel more present.
+
+## Composition lens and store (sprint 2, step 1; built 2026-10-23)
+
+The model (Avery agreed, 2026-10-23; `SPRINT2_ORDER.md`): a composition is a **reading of the row**, not a second player. A glyph in the header toggles the canvas between the row and its composition, and the one Play/Stop plays whatever the canvas shows. Everything below that isn't the order is **proposed, not ruled**. Nothing here has been seen in a browser yet.
+
+**The store** (`Composer/store/composition-store.js`, pure).
+- **One entry per rhythm + cycle** (`rhythmKey`: `8:7:6:5@4`, the layers as four whole numbers). An entry *is* one composition's state, the shape the shared controller acts on (`newCompositionState`): the input, knob overrides, table, spec and trace, the parts as they play now (on/off, sound, legato), their levels, the drum options and drums, the progression, the playback tempo, and the status and dirty flags.
+- **The controller binds an entry** (`composer-controller.js` `bind(state)`, sprint 2). The page's tab controller selects the page's rhythm in the store and binds that entry, so `tab.state` is the current rhythm's composition. A bind stops playback. The lab keeps the state it starts with, unchanged.
+- **One compose in flight per entry.** Compose on a composing entry joins the compose in flight (the same promise). A compose lands in the entry it was started for, even after the page has moved on: it is cached, not dropped (before sprint 2 the tab dropped it). A change to that entry while it composes drops the answer, as before.
+- **The LRU keeps 4 rhythms (proposed).** The least recently selected goes first, never the current one and never one composing (the store runs over its capacity until that compose lands).
+- **A new cycle of the same layers** starts from that row's last entry's edits: seed, knobs, table, progression, drum options, levels and glide. It doesn't take the spec (proposed: the edits belong to the row, the spec to the row at that cycle). New layers start fresh.
+- **Recall** (`recallable`): an entry with a spec that isn't refused, and isn't **dirty**. Proposed: a seed, knob, table or progression change since the last Compose makes the glyph compose again; live edits (parts on/off, sounds, legato, levels, drums) don't, and they're in the recall. A clean refusal is known (`refused`), so the glyph says why with no re-solve.
+- **The lens** (`'row' | 'composition'`) and `subscribe` (select, lens, made, change, evict) live here too. `made(key, by)` records whether the glyph or the window made the last spec (informational; step 2's "first compose vs cached" reads the lens's `recalled` instead).
+
+**The lens** (`Composer/page/lens.js`).
+- **Row → composition** (the glyph pressed, a rhythm on the page):
+  - main playback stops;
+  - **proposed:** on another plot type the canvas switches to the Linear Plot, and the prior type comes back with the row;
+  - the overlay seat is claimed, so the lit nodes and the playhead are on the main canvas whether the Composer window is open or not;
+  - the panels adapt (below).
+  - Then a **recall** plays at once (no Compose, no animation). With no composition yet, it **composes**: with "show the work" on, the canvas shimmers, the trace is animated on the main canvas (the existing animator, the lens's own instance), then it plays.
+  - **Proposed:** Esc, a click on the main canvas, or Play during the animation skips to the landing and plays. Play while Compose runs waits.
+- **Composition → row:** the glyph again, a new rhythm, a new cycle (noticed on the next frame), the row started by another path, or a plot type picked by hand.
+  - The animation is dropped and the composition stops; it stays in the store.
+  - The seat is released, so with the window closed the plot draws exactly as before (call for call, tested on the real LRCVisuals).
+  - The panels and the plot type are restored.
+  - **Proposed:** a plot type picked by hand under the lens goes back to the row, and the pick stands (the lit nodes are the Linear Plot's).
+  - **Proposed:** the glyph pressed during Compose goes back to the row at once; the compose lands in the store, unplayed.
+- **A refusal or an error** goes back to the row. The glyph's tip says why ("Compose — Too few tones: …") until the next rhythm.
+- **The one transport.** `ToneRowPlayback.togglePlayback` hands Play/Stop to `lrcComposer.transport` while the lens owns it. Under the lens it plays and stops the composition through the shared player (the controller's `perform`/`stop`, so one thing sounds at a time). Stop keeps the composition and the lens. Under the row lens nothing changes. `updatePlayButton` and the Partitions window's button show whatever the canvas plays.
+- **The window under the lens** edits the same entry. **Proposed:** closing it, or switching to its Partitions tab, no longer stops playback while the lens owns it.
+
+**The glyph** (`Composer/page/toolbar-glyph.js`, the markup in `index.html` as `#composition-glyph` so a tutorial can find it).
+- Beamed eighths in an inline SVG, in a 42 × 28 chip like the Cosmos button, placed before it. No text.
+- **States** (`data-state`): hidden (no rhythm) → ready → composing (a shimmer) → lit (the lens).
+- **The breath:** it breathes once a session, the first time it's ready (`sessionStorage` `lrc.composer.glyphBreathed`, every access wrapped).
+- `aria-pressed` is the lens. The tooltip (`data-tip`, shown on hover and keyboard focus) says "Compose" or "Back to the row". It's a `<button>`, so Enter and Space work. `prefers-reduced-motion` turns the breath and the shimmer off.
+
+**The panels.**
+- **Part strips** (`part-strips.js`). The layer strips' grammar: a row of six part buttons (Lead, Chords, Comping, Bass, Inner, Drums, bordered in the part colours) over the picked part's controls (Mute, Sound, Level). For the drums, Sound is the pattern (proposed).
+  - Picking a part picks it in the window too (its inspector, and the ring on the plot).
+  - A change in either view shows in both: levels through the controller's new `onLevel`, so neither slider re-renders mid-drag; everything else through `onChange`.
+  - **Proposed:** each part button carries a dot in the colour of the layer that strikes most of its lit onsets.
+  - The layer strips are only hidden, and the Layer Controls header reads "Part Controls" meanwhile.
+- **Scale Selection** (`panel-locks.js`): locked with ProgressionBar's `_lockScale` pattern, under its own class (`composition-locked`) so the two locks never undo each other. It's alive as a readout:
+  - playing, the rows of the current bar's chord tones light up (the chord voices' tones that bar, plus its root), and the count reads "3 in Cmaj7 · bar 2";
+  - **proposed:** stopped, every tone the composition plays is lit;
+  - the Composer's exact fractions match the site's spelling (checked on three rows), with a ½¢ fallback;
+  - rows are painted by class, with no rebuild and no write to the selection; on the row the chart is rebuilt from the playback's own selection.
+- **Families:** locked, with the note "the composition is choosing; return to the row to edit".
+
+**The page API for steps 2 and 3** (`window.lrcComposer`):
+- `lens`:
+  - `press({ pace })`, which resolves to the phase once it settles
+  - `toComposition`, `toRow`, `skip`
+  - `mode`, `phase` (`idle`, `composing`, `animating` or `landed`), `glyph()`, `refusal`, `priorPlot`
+  - `onChange(fn)` with the events `composing`, `animating` (with the scene and pace), `landed` (`recalled`), `row`, `change` and `glyph`
+- `transport`, `store`, `glyph`, `seat`, `panels`.
+- **The `pace` seam:** `createComposeAnimator().start({ …, pace })` scales the scene's clock; the scene itself is unchanged.
+- Step 2's scrim can hang on `composing`/`animating` and lift on `landed`. Step 3 calls `lens.press({ pace })` after generating.
+
+**Site edits** (small, marked `COMPOSITION LENS (sprint 2)`):
+- `index.html`: the glyph and its stylesheet, with versions bumped.
+- `ToneRowPlayback.js`: `togglePlayback`, `updatePlayButton` and a new `transportIsPlaying`.
+- `PartitionsGlobalControls.js`: `updatePlayButtonState`.
+- `LRCModule.js`: **the live-site LCM bug.** `calculateTotalLCM(...layers)` now skips missing, zero and non-numeric layers, and returns 0 with none. A rhythm with blank C and D used to get a NaN grid. Four layers give exactly the old grid (400 random rhythms, checked against the old code).
+- No edit to `LRCVisuals.js`, `PartitionsUI.js`, `Cosmos/` or the lab.
+
+**Tests:**
+- `assert-store.mjs` (38): keys, the entry shape, select and the carry-over, the LRU, events, the lens, recall without re-solve, the in-flight rules.
+- `assert-page-lens.mjs` (77), over the real LRCModule (generating from the inputs), the real LRCVisuals, ToneRowPlayback's transport methods and PartitionsGlobalControls in a vm. It covers:
+  - glyph states and the breath;
+  - compose → animate → play on the main canvas; the playhead with the window closed;
+  - the scale readout bar by bar; the transport;
+  - strips ⇄ window for mute, sound, level, drums and selection, and the layer dot;
+  - the row restoring everything (the plot call for call);
+  - cached recall with the window's edits; a new rhythm; a new cycle;
+  - skip by Esc, click and Play; press during Compose; pace;
+  - the plot-type switch and restore; 768:769 with blank C and D, end to end; a refusal.
+- `assert-page-site.mjs` (+13): the glyph markup, the stylesheet, the lens's modules in the graph, the LCM fix (old vs new), and the row lens's transport unchanged.
+- Two existing tests changed with the model: `assert-page-tab.mjs` (a new key is a fresh, idle entry; the old one cached) and `assert-page-animate.mjs` (it reads `tab.state` live).
+
+**Open (for Avery):**
+1. **Recall vs dirty.** Should the glyph recall the last spec even after a seed, knob or progression change in the window (built: no, it composes again)?
+2. **The glyph back to the row stops playback** (the planner's call, built). Or should playback carry over to the row?
+3. **The window's own Perform** still plays the composition with the lens on the row; it doesn't flip the lens. Should it?
+4. **The Partitions window's Play** under the lens plays the composition too (one transport). Is that right inside Partitions?
+5. **Stopped readout:** all of the composition's tones (built), or the first bar's chord?
+6. **The part strips' grammar:** one part's controls at a time, like the layers (built), or all six as compact rows?
+7. **ProgressionBar open under the lens:** its own lock paints the scale chart every frame, so the two readouts would fight. Close it on entering the lens, or leave it? (Step 2: the bar yields the chart to the lens; see "Theater".)
+8. **Module caching:** the bridge's imports carry no `?v=`, so a browser pass needs a hard reload after pulling. (Step 2: no clean fix; see "Theater".)
+
+## Theater (sprint 2, step 2; built 2026-10-23)
+
+The order (`SPRINT2_ORDER.md`, step 2): during a rhythm's first animated compose, a scrim dims the page around the canvas, the caption floats on it, any click or Esc skips, a recall plays a short version, reduced motion jumps to the landing, and callers get a `pace`. Everything below that isn't the order is **proposed, not ruled**. Nothing here has been seen in a browser yet.
+
+**The module** (`Composer/page/theater.js` + `theater.css`, `lrcComposer.theater`). It's driven by the lens's events and owns no clock; it draws nothing on the canvas.
+- **The scrim** is one class, `composition-theater`, on `<body>`. `theater.css` dims four of the five HUD panels (Rhythm Input, Rhythm Info, Visualizations, Search) and the header's title and buttons, and lights the glyph.
+  - **Proposed:** the Playback div stays lit ("the other four divs"): its part strips are where the performance takes over when the scrim lifts. Dimming all five is one selector in `theater.css` (and `THEATER_KEEP`).
+  - Nothing on the panels themselves is written, so removing the class restores them exactly (tested: each panel's and the header's class, style, attributes and dataset, before and after).
+  - It goes up on `composing` (with an animation coming) and stays through `animating`. It lifts on `skip`, `landed` and `row`, and fades through `composition-theater-lifting` for 320 ms.
+- **The caption** is the animation frame's own label and detail (the trace's captions), in a box of its own fixed under the header, over the canvas. Under the full show it also says "click or Esc to skip". It's made when shown and removed when hidden. The short version gets the caption but no scrim (**proposed**: dimming the page for 1.5 s would flash).
+- **Skips while the scrim is up** (capture-phase listeners on the document, removed with the scrim):
+  - any click, except on the glyph, skips to the landing and is swallowed, so a click meant to skip doesn't also press the button under it (**proposed**);
+  - a press (`pointerdown`, `mousedown`, `touchstart`) is swallowed too, so no panel drag starts under the scrim; it doesn't skip;
+  - Esc skips; other keys pass;
+  - the glyph is the cancel: back to the row.
+- **During Compose** (the shimmer), a skip is **queued** (`lens.skip()` now does this): the scrim lifts at once, the shimmer runs on, and the compose lands straight on the landing, unanimated. Esc and a canvas click do the same in the lens itself, so this works without the scrim (a short re-compose).
+- **A window opened mid-show** (Partitions or the Expanded Info View: their `visualizationOverlayStateChanged`, or `lrcComposer.showTab()`) skips to the landing, so the window opens on the composition playing, never on a half-drawn frame (**proposed**: a skip, not a cancel; the planner's word was "cancel").
+- **The other cancels** (a new rhythm, a new cycle, the glyph) are the lens going back to the row. The theater takes down the scrim, the caption and its listeners. Tested: after each one, the later frames draw nothing (zero canvas calls), no frame is queued, and the plot is the row's call for call.
+
+**The lens's timing** (small edits to `lens.js`):
+- **The full show** (the whole trace, fitted to 4–7.5 s) plays once per rhythm and cycle (store key) a page: the first animated compose of that key, seen or skipped.
+- **The short version** is `trace-frames.js` `recallTimeline`: the same scene builder on a timeline where only root (0.4 s), lead (0.5 s), parts (0.45 s) and drums (0.15 s) get time, 1.5 s at pace 1. Every other beat is zero-length, so no frame stops on one (what they leave behind still shows).
+  - It plays for a **recall**, and for a **later compose** of the same key (after a seed or knob edit; **proposed**: "only the first compose animates the full ~7.5 s").
+  - A recall with no trace (made with "show the work" off) lands at once.
+- **No motion:** "show the work" off, or `prefers-reduced-motion` (the bridge's `motionAllowed(win)`, a `motion` dep of the lens), means no shimmer, no animation and no scrim. Compose runs, then it lands; a recall lands at once. The trace is still asked for while the work is shown, so the window's Decisions table keeps it.
+- **The events' details:** `composing` `{ showWork, animate, short }` · `animating` `{ scene, pace, recalled, short }` · `skip` `{ queued }` · `landed` `{ recalled }`. `lens.onFrame(fn)` gives each animation frame (`fn(frame, { short })`), so the theater never ticks the animator itself, and the glyph doesn't re-render 60 times a second.
+- **One frame loop:** the loop now carries a generation. A cancel and a re-press before the next frame used to leave the old queued frame alive, which ran a second loop (two ticks and two paints a frame, for good). Found while testing "no stale draws"; fixed and tested.
+
+**For the tutorial (step 3):** `await lrcComposer.lens.press({ pace })` resolves to `'landed'` once the animation lands and the performance has started (or to `'idle'` if it went back to the row: a refusal, or a cancel).
+- `pace` divides the animation's duration: the full show lasts `scene.end / pace` seconds and the short one `1.5 / pace`. Compose's own solve time isn't scaled. A pace that isn't a positive number is 1.
+- To wait without the promise, listen for `lens.onChange` `landed` (and `row` for the way out). The scrim is `lrcComposer.theater.up`. `animating` carries `scene.end`, for a budget.
+- Note: the tutorial's own spotlight clicks must not be dispatched as page clicks while the scrim is up, or they skip the show.
+
+**Carry-overs from step 1:**
+1. **ProgressionBar vs the lens's readout (proposed: the bar yields).** `ProgressionBar._paintChartForSection` and its frame loop's chart paint now do nothing while the Scale chart carries the lens's `composition-locked` (`ProgressionBar.chartYielded()`). That covers the loop, a bracket drag and a solve. On the way out, the lens's Scale lock rebuilds the chart from the row's selection, then calls `ProgressionBar.repaintChart()`, so a locked voicing shows its section again exactly as before the lens. The bar's own lock, its brackets and its PaintEngine are untouched. Tested on the real ProgressionBar in a vm.
+2. **Cache-busting: not cleanly possible; documented.** ES modules resolve a relative import against the importer's URL *without* its query, so the bridge's `?v=` can't reach the modules under it. A version on every import means rewriting every static import in the bridge's 35-module graph on every bump. A per-file import map could work, but it has to list every module, and the compose worker doesn't see the page's import map. The site is static GitHub Pages (no headers of ours), which serves `max-age=600`, so the live site heals within ten minutes. For a browser pass after pulling: hard-reload, or keep DevTools' "Disable cache" on. The bridge's `?v=` (bumped to `20261023.2`) still refreshes the entry, and the stylesheets' `?v=` work as before.
+
+**Site edits** (small): `index.html` (`theater.css` linked; the bridge's and ProgressionBar's `?v=` bumped); `ProgressionBar.js` (`chartYielded`, `repaintChart`, the two yields, marked `COMPOSITION LENS (sprint 2, step 2)`).
+
+**Tests:** `assert-page-theater.mjs` (79), over the real LRCModule, LRCVisuals, ToneRowPlayback transport and ProgressionBar. It covers:
+- the scrim on and off with the panels' exact restore, and theater.css' selectors;
+- the caption and its label; the lift and its timer;
+- the timing of the full show vs the recall's 1.5 s, and the short version's beats;
+- eight skip paths, plus three queued during Compose;
+- the swallowed press, and the glyph as a cancel;
+- the cancels with no stale draw, and the one frame loop;
+- reduced motion and the setting off; `motionAllowed`;
+- pace on both versions, and bad paces;
+- ProgressionBar yielding and getting the chart back.
+
+`assert-page-lens.mjs` now expects the short version before a recall plays (78).
+
+**Open (for Avery):**
+1. **Which panels dim:** four, with Playback lit (built), or all five?
+2. **A click under the scrim:** swallowed (built), or passed through to what it lands on as well as skipping?
+3. **The short version:** for a recall and a later compose (built), or should a recall just land (the order allowed either)? Is 1.5 s right?
+4. **A window opened mid-show:** skip to the landing (built), or cancel back to the row?
+5. **The window's own Compose animation** (in the Composer tab) doesn't yet respect `prefers-reduced-motion`. Should it?
+6. **The full show is once a page per rhythm and cycle.** Should it be once a session (sessionStorage), like the glyph's breath?
+
+## Interactive tutorial (sprint 2, step 3; built 2026-10-23)
+
+The order (`SPRINT2_ORDER.md`, step 3, and Avery's words for the opening): replace the text tutorial with a guided, animated one, "much more interactive rather than text based", with a playing composition in front of the user within 5–10 s of "Begin", then a short tour while it plays. Everything below that isn't the order is **proposed, not ruled**. Nothing here has been seen in a browser yet.
+
+**The opening** (Avery's four lines, in order):
+1. **"Welcome to the Large Rhythm Collider!"** The popup sits over the main canvas, which a glint circles. Its buttons: Begin, Not now, and "or read the guide".
+2. **"This machine eats numbers…"** The spotlight moves to Rhythm Input, and four generated layers are typed into the real fields. Each field is focused and cleared, then typed a digit at a time; every keystroke is an `input` event (insertText with its digit), then one `change`. The field being typed glows.
+3. **"…to turn structure…"** The real Generate button is clicked: its form submits, and the HUD sorts and generates as for a person. A ripple marks the press. The spotlight then moves to the canvas while the Linear Plot appears.
+4. **"…into music."** The spotlight is on the glyph. The tour presses it through `lrcComposer.lens.press({ pace: 2 })`, never a page click. The theater's full show plays, then the performance starts.
+
+**The scrim leads the show.** While `lrcComposer.theater.up` is true, the tour yields: its spotlight and popup are hidden (`lrc-tour--yield`, `aria-hidden`), and nothing of the tour can be clicked. Any click on the page then skips the show, so the tour dispatches none. Its frame loop checks the scrim each frame and comes back as it lifts.
+
+**The layer generator** (`tour-script.js` `generateLayers(seed)`, pure and seeded).
+- **The criteria** (`layerProblems`):
+  - four distinct 3-digit layers;
+  - none divides another;
+  - the gcd of the set is 1;
+  - greatest first, so the Rhythm Input takes them unchanged (`siteAccepts`: the HUD sorts, and LRCModule parses with `parseInt`);
+  - Compose's own refusal gates pass (`composerAccepts`: `buildRow` + `toneGate`, exactly what `compose()` refuses on);
+  - the tone count is inside the band.
+- **The bias (proposed): 12–144 distinct tones, drawn from the 95 three-digit numbers with no prime factor above 7.**
+  - Uniform 3-digit sets have hundreds of tones (median 437 over 3,000 coprime sets; only about 2 % land in the band). That means a Scale chart hundreds of rows long, and a crowd in every ±15¢ frame.
+  - 7-smooth layers repeat their gaps. The generator's sets (seeds 1–500) have tones at p10 29, p50 70, p90 124, and still sound unlike 12-TET. A set takes about 3.7 draws (half a millisecond); a fallback set (480:320:252:175) is there if 4,000 draws fail (never seen).
+- The page seeds it from the clock; the tests use fixed seeds.
+
+**The timing budget** (`openingBudget`). The parts:
+- the beats: read 500 ms, after typing 250, Generate aimed 350, the plot seen 700, the glyph aimed 600 (2.4 s);
+- the typing: 4 × 40 ms to clear, 12 × 55 ms for the digits, 3 × 90 ms between fields (1.09 s);
+- the site's generate (measured in Node: 7–56 ms);
+- Compose's solve (not scaled);
+- the show, `scene.end / pace`.
+
+**The pace is 2 (proposed).** The full show is always fitted to about 7.45–7.5 s on these rows, so it plays in 3.75 s. Measured in Node on 8 generated sets (the worker's full table with the trace, 0.36–0.97 s), Begin to playing takes 7.6–8.2 s (typical 7.9). With a 1.5 s solve, 0.3 s of site work and the longest show it is still 9.0 s. At pace 1 the same opening takes 11.9 s. In the test, the driver's own virtual clock lands within 0.1 s of the model.
+
+**The tour, while it plays.** Each stop waits for Next, and the music keeps playing.
+1. **Part strips.** The Playback div opens through its own minimize button. The spotlight is on the strips, and the popup explains Lead, Chords, Comping, Bass, Inner and Drums, and the layer dot.
+2. **The Scale readout,** locked, with each bar's chord tones lit.
+3. **The advanced Composer.** The spotlight is on the Playback title, with a double-click ripple every 2.4 s. The popup describes the window, and a **Peek inside** button opens it on its Composer tab. Leaving the stop closes it again and puts back the tab the window remembered. A window the user opens by hand during this stop is closed on leaving too (proposed: "don't leave the window open").
+4. **Cosmos,** pointed at, not entered.
+5. **Back to the row.** The spotlight is on the glyph, with "Read the guide" and Done. Its text follows the lens: under the composition it explains the lens; on the row it says the composition is kept and plays at once on the next press.
+
+**Navigation.**
+- **Next, Back, Skip.** Next and Back are buttons, and → and ← work while the focus is in the popup. Back never goes into the opening, since its steps are actions, not pages. Skip on a stop is Next. In the opening, "Skip ▸" hurries: the beats go, the typing finishes at once (still a real event per digit), and the show is skipped to the landing (queued while Compose runs).
+- **Esc, or ×,** ends the tour at any point. During the show, the theater's own Esc also skips to the landing, so the music starts and the tour is gone.
+- **The lens moving under the tour.** If the lens goes back to the row (the glyph, or a rhythm generated by hand), a stop that needs the composition (the strips, the scale) gives way to the last stop. Next and Back skip those stops while the lens is on the row.
+
+**A clean exit** (every path, tested):
+- the half-typed fields are restored when Generate wasn't pressed yet;
+- the panels and Playback sections the tour opened are closed again, except the Playback div while the composition plays (proposed: its transport and strips are what's sounding);
+- the Composer window opened during its stop is closed, and its tab put back;
+- the overlay, the listeners, the motion timers and the typing glow are removed, and the focus goes back where it was;
+- the lens is left wherever it is.
+
+**Accessibility.**
+- The popup is a `role="dialog"` (non-modal), labelled by its title and described by its text. Its primary button takes the focus on each stop, and the welcome's Begin is focused, so Enter begins.
+- **Reduced motion** (`prefers-reduced-motion`, read at start): the root carries `lrc-tour--still`, with no glide, pulse, glint or ripple. The theater then jumps to the landing on its own (step 2), so the opening is typing, Generate and the solve.
+- **Touch screens** (`pointer: coarse`): the fields aren't focused while typed, so the on-screen keyboard doesn't jump up. The events are the same.
+- **The mobile layout** (`body.mobile-mode`, a scrolling page): each stop scrolls its target into view.
+
+**The first visit (proposed).** The tour opens by itself once, 900 ms after the page's `load`, and only when `localStorage` can say it hasn't been seen (`lrc.tour.seen`, written on every start). It doesn't open:
+- when the storage is missing or throws (it would otherwise open on every visit);
+- when the old slides' "Do not show again" was ticked (`lrcTutorialDismissed`);
+- on a page launched with a rhythm in its URL (`?layers=`, `?a=`…), since the tour would type over it;
+- in Cosmos.
+
+The menu's **Take the tour** (`#tutorial-show-btn`) restarts it any time, closing the menu first. Pressed mid-tour, it starts again from the welcome.
+
+**The old content is the guide.** `TutorialUI.js` no longer opens the slides on load, and their "Do not show again" box is gone. They open from the menu's **Read the guide** (`#tutorial-slides-btn`), the welcome's "or read the guide" and the last stop's "Read the guide" (`window.LRCTutorialSlidesUI`). `TutorialContent.js` is untouched.
+
+**Code** (`Tutorial/`):
+- `tour-script.js`: **pure.** The generator and its criteria, the timing model, the steps as data (id, phase, action, title, text, targets with fallbacks, reveal, needs, motion, peek), navigation (`nextIndex`, `backIndex`) and the first-visit rule.
+- `tour-driver.js`: the DOM driver, `createTour({ win, doc, composer, timers, raf, motion, storage, seed })`, with `start`, `begin`, `next`, `back`, `skip`, `end`, `togglePeek` and `onEvent`. Its pure `placePopup` sets the popup's placement, clamped to 16 px gutters. Everything is injected, so it runs on the DOM stub.
+- `tour-boot.js`: `window.lrcTour`, the menu button and the auto-open.
+- `tour.css`: the spotlight (a ring whose shadow dims the rest; it never takes a click), the popup, the ripple, the yield and still states, in the site's `--hud-*` tokens and accent.
+
+**Site edits (small):**
+- `index.html`: `tour.css`; `tour-boot.js` as a module after the bridge; the menu's two buttons; the dismiss checkbox removed; `TutorialUI.js?v=`.
+- `TutorialUI.js`: no auto-show, `#tutorial-slides-btn`, `LRCTutorialSlidesUI`.
+
+No change to the Composer's modules.
+
+**Tests:** `Composer/tests/assert-tutorial.mjs` (99 checks), in the suite command's glob. It runs over the real bridge (store, lens, theater), LRCModule, LRCVisuals, the HUD's minimize and form handlers and the old TutorialUI. It covers:
+- the generator on 400 seeds, its criteria's refusals, and Compose on 8 sets;
+- the budget, with the solve measured;
+- every target on the page, and the module graph;
+- `placePopup`, including at phone width;
+- the opening end to end: the typed sequence, the real Generate, `press({ pace: 2 })`, no click while the scrim is up, and the driver's clock against the model;
+- every stop with Next, Back, the keys and the peek;
+- Esc on the welcome, mid-typing (the fields restored) and while playing;
+- Skip ▸;
+- the glyph and a hand-generated rhythm mid-tour;
+- reduced motion;
+- the guide;
+- the menu's restart;
+- the auto-open (fresh, seen, throwing storage, URL rhythm, Cosmos).
+
+**Open (for Avery):**
+1. **The bias.** Is a 7-smooth pool with 12–144 tones right for a first impression, or should the tour's numbers be uniformly random 3-digit (hundreds of tones)?
+2. **The pace.** 2 (3.75 s show, ~8 s opening), or brisker?
+3. **The scrim leads** during the show (built). Or should the tour's "…into music." caption stay up over the scrim?
+4. **Esc during the show** ends the tour, and the theater skips to the music (built). Should it end the tour and let the show run?
+5. **The Playback div stays open** at the end while the composition plays (built); everything else the tour opened is closed. Close it too?
+6. **The Composer stop:** describe it with a "Peek inside" button (built), or open and close the window by itself?
+7. **First visit:** someone who ticked the old slides' "Do not show again" isn't shown the tour unasked (built). Show them the new one once anyway?
+8. **The tour types over the current rhythm** (a restart from the menu replaces the user's layers; the old composition stays cached). Ask first when a rhythm is already on the page?
+
+## Step 4b: typed progression (built 2026-10-25, branch `step4/typed`)
+
+`Cmaj7 Am7 Dm7 G7`, one symbol a bar, read against the composition's own tones before any compose. Built as `Composer/core/chord-symbols.js` (new) and an extension of `core/progression.js`, checked by `Composer/tests/assert-chord-symbols.mjs` (57 checks). No other module changed: `assert-progression.mjs` passes unchanged.
+
+**Decided (Avery, STEP4_ORDER.md):**
+- **3. Symbols are relative.** C is the composition's base root, as the Composer already names chords; they are read on the base grid, not as absolute pitch through the fundamental.
+- **4. Off the frame,** a symbol resolves to the nearest cluster at any offset, shown amber with its cents. With modulation on, Compose's own rule may retune there; with it off, it stays amber and is flagged `offGrid`. It is never snapped into the frame.
+
+**The API:**
+- **`parseChordSymbol(text)`:** a port of the site's `ProgressionSolver.parseChordSymbol`: accidentals (♯ ♭ 𝄪 𝄫), suffixes (Δ − ° ø, 6/9, alterations, add / no / omit), slash bass. It returns the site's own fields, plus `bass` (the slash bass's class, when there is one). Parity with the site's parser, loaded in a vm, holds on every field of 116,211 symbols (140 root spellings × 83 suffixes × 10 slash forms, plus edge cases).
+- **`tokenizeField(text)`:** the site's tokenizer (`|`, `,`, `;`, tabs, newlines and spaces all separate), with each token's character span for inline marks. `readToken` adds two marks of the Composer's own (**proposed**): an auto token (`-`, `.`, `_`, `?`, `auto`) leaves its bar to Compose; a trailing `*` (`D*`) pins the root and leaves the quality to Compose, which is what a lab ratio pick is.
+- **`barMaterials(layers, T, knobs, { row })`:** the row, the meter, the root, the phase (the seed's first draw, as in Compose), the cells, each bar's tones as harmony.js reads them, and `rootCandidates`. `knobs` is a spec's `knobs`, or Compose's overrides plus `seed`. Tested against 105 composes (5 rhythms × 7 override sets × 3 seeds): the same meter, phase, root and cells, again from `spec.knobs`; and harmonize's support for 13 pinned chords re-derived from its bar tones.
+- **`resolveSymbols(field, materials, { frameCentsEachSide, modulation, keep })`,** per bar:
+  - **the root:** the candidate cluster of the symbol's class with the least |dev|, more presence breaking ties. Inside the ±frame it's supported (`F −2.0¢`). Outside, the nearest cluster at any offset, amber, with `mayRetune` (modulation on) or `offGrid` (off). A class the row lacks entirely reaches into the next class (on 8:7:6:5, `F` → 35/32, `F −113.7¢`);
+  - **the quality:** the symbol's intervals as a Composer quality, then `chooseChordOnRoot`'s test on the bar's tones: ✓ (whole), amber `no ♭7` (one class short: kept), or amber `fallback: Dm` (Compose's own pick over the root, shown without the lead, so provisional);
+  - **the bars:** more symbols than bars, the extras dropped and flagged; fewer, the rest auto; a symbol that doesn't parse is said and left auto.
+  - It returns `pins`, `[{ ratio, quality } | null] × N`: Compose's progression. `progressionOf(resolved)` is the same, or null when every bar is auto.
+- **`pinsToField(pins, materials)` / `fieldToPins(field, materials, { keep })`:** the two views of one list. A pin list becomes the field in the Composer's chord names: base root C, sharps, `CHORD_QUALITIES`' suffixes, `D*` for a root with no quality, `-` for an auto bar, trailing autos cut. With `keep`, pins → field → pins is the identity (216 lists: every candidate × every quality, and none), and so is field → pins → field for fields in the Composer's names.
+- **progression.js:**
+  - an entry may be `{ ratio, quality }` (a quality id of `CHORD_QUALITIES` or `FALLBACK_QUALITIES`; `qualityById`), and `readProgression` returns `qualities`;
+  - `chooseChordOnRoot` takes `pin.quality`. It keeps the quality where the bar supports it (a catalog quality: every class but at most one; a fallback dyad: its other tone sounding), and the settle passes keep it too. Otherwise it falls back exactly as before, reporting `forced: { quality, honored, missing }`;
+  - `describeProgression` says per bar whether the asked quality was kept, unsupported, or waiting on the seam.
+
+**The seam (needs harmony.js, after 4a merges).** `harmonize` hands `choose` the pin as `{ tone, cents }`, without its bar. So `harmonyPins` keys a quality by its root tone. That is exact unless one root is pinned with two qualities, or with one and none (`F Cmaj7 Fsus4 F`). Those bars choose freely, and the decisions say so (`ambiguous`). The one-line fix, in `chordsFrom` at harmony.js:315:
+`{ tone: pin, cents: row.toneCents[pin], ...(progression.qualities ? { quality: progression.qualities[k] } : {}) }`
+After it, `pin.quality` wins on every bar (already tested through `choose`), and specs without quality pins stay byte-identical (`qualities` is absent then).
+
+**The ratio form's identity.** Eight targeted composes (traced, worker, modulation off, too long, ratios not of the row) hash byte-identical to b69a39e's `progression.js`, and `{ ratio, quality: null }` composes the `{ ratio }` spec. Every resolved field composed (162 fields of every kind on 119:42:15:8) keeps its roots, keeps each supported quality, and never forces an unsupported one.
+
+**Measured** (Node, M4 Max): `barMaterials` 0.03 ms on 8:7:6:5, 0.08 ms on 119:42:15:8, 11.5 ms on the 16,359-onset row (2.2 ms given its row; the rest is `buildRow`). `resolveSymbols` 0.03 ms, and 0.09 ms on the 16k row.
+
+**Proposed calls:**
+- **Symbols the Composer has no quality for** (C9, C6, C13♯11) take the richest catalog quality inside them, and the rest is dropped and said (C9 → C7, "no quality with its 2"). C/E is the triad, as the site folds a slash bass into the set. The slash bass isn't voiced (v1's bass roots on the chord).
+- **A dyad pinned** (`C5`, `Cno5`) is supported when its other tone sounds, the fallback rule. The every-class-but-one rule would pass a power chord whose fifth is silent.
+- **The auto marks** `-` `.` `_` `?` `auto` and the free-quality mark `D*`.
+- **`keep`:** a pinned ratio still of the symbol's class is kept, so a lab pick that isn't the class's nearest cluster survives a field edit.
+- **The fallback shown** is Compose's pick without the lead. Compose's real pick can differ, because the lead votes.
+
+**Open, for Avery:**
+1. **Flats come back sharp** (`Bb7` → `A#7`) when the field is rewritten from pins. Should the UI keep the typed text while the field is the source, and rewrite only on a lab pick (proposed), or spell flats?
+2. **Names after a modulation.** The field reads on the base grid (decision 3). After an earlier retune, the composed chord's (folded) name can read a class away from the typed symbol. Show both?
+3. **Unsupported qualities.** The field says the fallback. Should the pin keep the asked quality, so a later re-compose that supports it honors it (built: the pin keeps it), or drop it to the fallback?
+
+## Step 4c: drum grid and the prime partition (built 2026-10-25, branch `step4/drums`)
+
+`Composer/core/drums.js`, checked by `Composer/tests/assert-drum-grid.mjs` against `Composer/tests/drums-baseline.mjs` (the drums' sha256s at b69a39e, never edited). The spec is `STEP4_ORDER.md` "4c". Decisions 6 (slot resolution) and 7 (p: first "the prime nearest N·S", **superseded**; re-ruled as a seeded random prime above N·S, see "The prime partition, revised" below) are Avery's, marked **decided**; everything else is **proposed**. Nothing here has been heard or seen in a browser.
+
+**The API:**
+- `arrangeDrums(spec, { ..., grid, p })`. `grid` is `{ voice: [one string a bar] }` for kick, snare, hat, perc and cym: `x` a stroke, `X` an accent, `.` off. A voice left out is silent.
+- New modes, `SOURCE_MODES = ['grid', 'prime']`, kept out of `DRUM_MODES` (the presets' list, which the lab's mode select reads). `ALL_DRUM_MODES` is both. A grid with no mode plays as mode `grid`; with another mode it waits unread (proposed: the store can keep a grid while a preset plays). `perBar` takes the new modes too.
+- `gridOf(arrangement)` → the grid of any arrangement. `readGrid(grid)` checks one.
+- The prime partition: `nearestPrime(n)`, `isPrime(n)`, `gridShape(g)` → `{ m, places, cells }`, `primeLights(g, p)`, `cellLights(j, p, C)`, `primePartition(spec, g, { p, hitsPerBar, lit })`. `levelOneLights(g, { source: 'prime', p })` no longer throws. (The revision adds `seed`, `primeRange`, `drawPrime`, `primeSelection`, `nextPrime`, `PRIME_CEILING`, and changes `cellLights`: see "The prime partition, revised".)
+- Only when a bar is in mode `grid` or `prime`, the output gains `silentCells: [{ bar, voice, place }]`, and with `prime` also `prime: { p, cells, hits, lights, selected, struck, silent, emptyCells, perCell }` (the revision adds `drawn`, `range` and `chosen`). Prime strokes are `snap: 'prime'` and carry `cell` and `light`.
+
+**The grid (decided: slot resolution).**
+- S·m places a bar, with m = 1 unless S < 4 (`beatsOf`): 8 places on 8 slots, 6 on 3 (half slots).
+- Each cell goes through the same `land()` as every stroke: the nearest onset in the place's window, then one place wider, else silent. A silent cell is reported as `{ bar, voice, place }` and counted in `stats.silent`.
+- An `x` is the voice's velocity, and `X` adds `GRID_ACCENT`. That's the patterns' +0.12, except the hat's +0.08, the backbeat's own beat lift (proposed), so a backbeat written as a grid plays back at its own velocities.
+- Fills and crashes stay options over the grid, as over every mode: in a fill bar the grid's kick, snare and hat give way from beat 3 (its perc and cym stay), and a crash opens the next bar.
+- **No grid, no prime: byte for byte as before.** The new keys appear only when used, and `readDrumOptions` adds `grid` and `p` only when they're given. 595 hashes = 17 cases × 35 option variants, every mode.
+
+**Presets ⇄ grid.** `gridOf` maps a hit's `pos` to place round(pos·m); a place rounding to the bar's end is the next bar's first. A prime stroke maps to its cell in the perc row. The fills' strokes (kick and snare from beat 3 of a fill bar) and the crashes are left out, since they're options. The accent is read off the stroke's velocity, less its strikes' lift. Measured on 28 rows (Compose's meters, plus asked meters with S = 2, 3, 5, 6, 7, 11, 13), fills on and off:
+
+| mode | round trip |
+|---|---|
+| backbeat, all 9 patterns, prime | **exact**, every field of every hit (616 runs) |
+| against | the same onsets every time (416/416); only its off-beat lift (+0.05) can't be written as x or X, so the velocity differs in 44 of 56 runs |
+| with | the backbeat exact and the stroke count kept, but only **28.4 %** of its 556 perc strokes re-land on the same onset. Moved strokes are a median 0.30 slots off (90th percentile 0.67, max 1.28; a median of 90 ms) |
+| partition | the backbeat exact; **34.2 %** of its 952 perc strokes re-land on the same onset (median 0.22 slots off, max 0.74); 6 pairs share one place and merge |
+
+The recommendations guessed that `with` "nearly always" re-lands on its own onset. It doesn't: a lead or comping note can be any onset in its slot's window, not just the one nearest the anchor, and the layer's pulses are where they are. At slot resolution (decision 6) an edit to a `with` or `partition` bar re-lands those strokes on the anchors' onsets, which is audibly straighter.
+
+**The prime partition, first build** (`mode: 'prime'`; Avery's two-level design, quoted in the order). **SUPERSEDED on 2026-10-25:** p and level 2 below are the first rule, kept as the record of what was measured. The rule as it is now built is "The prime partition, revised", after the open questions.
+- **Level 1:** p lights, light i aimed at i/p of the cycle from the downbeat. Each lands on the onset nearest it within half a light either side, then within a whole light, else it's dark (`snap: 'light' | 'wide' | null`). So the lights are real onsets, uneven in time, and light 0 is the downbeat. **p is the prime nearest N·S (decided).** Under 4 slots a bar it's the prime nearest the N·S·m cells (proposed: otherwise the cells would outnumber the lights about m to 1). Of two equally near primes, the larger is taken (proposed). `p` can be asked, and must be prime.
+- **Level 2:** the grid's C = N·S·m cells read the p lights as an even grid. Cell j covers lights ⌊j·p/C⌋ up to the next cell's, and a lit cell strikes its first light, on the perc.
+  - **The cells lit:** by default `selectLights(C, hits)`, Partitions' secondary pattern from the downbeat. hits = C by default, every cell (proposed, the partition mode's "a pulse a slot"), or N·hitsPerBar. With a grid, the grid's perc row lights the cells, and its X accents. Without one, the first cell is accented.
+  - Partitions' own L2 (`PartitionsBlocks.computeL2Coverages`, `calculatePartitionSizes(p, C)`) cuts the same sizes but puts the long cells one or two places over. The order's ⌊j·p/C⌋ is built here.
+- **The voices (proposed):** the prime line plays on the perc, over the backbeat, as the partition line does. With a grid, the grid's kick, snare, hat and cym play under it as in mode `grid`, and its perc row is the selection. So `gridOf` of a prime arrangement arranges back exactly.
+- **For the UI strip:** `spec.drums.prime.lights` is `[{ i, at, tick, time, r, bar, pos, slot, snap }]`.
+
+**How the swing came out under the first rule** (every cell lit; deviation of each struck light from its cell's even place j/C, in slots; the anchors are within 0.001 of that on these rows):
+
+| row (cells) | p | lights a cell | level-1 landing, mean / max | struck vs even, mean / max | downbeat cell |
+|---|---|---|---|---|---|
+| 41:42:43 (32) | **31** (nearest) | 0–1 | 0.10 / 0.28 | 0.53 / 1.05 | **silent** |
+| | 37 | 1–2 | 0.10 / 0.30 | 0.42 / 0.90 | light 0 |
+| | 131 (≈ 4·C) | 4–5 | 0.08 / 0.24 | 0.16 / 0.36 | light 0 |
+| | 251 | 7–8 | 0.06 / 0.13 | 0.08 / 0.21 | light 0 |
+| 768:769 (32) | **31** | 0–1 | 0.007 / 0.016 | 0.52 / 1.00 | **silent** |
+| | 131 | 4–5 | 0.007 / 0.019 | 0.12 / 0.24 | light 0 |
+| 97:103:37 (16) | **17** | 1–2 | 0.03 / 0.07 | 0.43 / 0.93 | light 0 |
+| | 67 | 4–5 | 0.02 / 0.06 | 0.11 / 0.26 | light 0 |
+| 16k row (64) | **67** | 1–2 | 0.002 / 0.004 | 0.47 / 0.94 | light 0 |
+| | 257 | 4–5 | 0.002 / 0.007 | 0.12 / 0.25 | light 0 |
+
+What the table says:
+- **Level 1 is nearly even, as Avery said.** It's within a tenth of a slot on small rows and a few thousandths on big ones.
+- **The deviation is level 2's: the sawtooth of ⌊j·p/C⌋.** The struck light sits up to C/p slots before its cell's even place, with |p − C| (more generally p mod C) teeth a cycle.
+- **With p nearest N·S** (one light a cell), that sawtooth is up to a whole slot deep: 37 lights over 32 cells rush by 5/37 of a slot a cell and jump back 5 times a cycle. That's closer to a 37-against-32 polyrhythm sampled onto the slots than a swing, and it drifts up to a full slot off the backbeat under it.
+- **When the nearest prime is below N·S** (32 → 31, 8 → 7, 24 → 23, 48 → 47), ⌊j·p/C⌋ leaves cell 0 empty. So **the downbeat cell is silent**, and cell 1 strikes the downbeat light a slot early. That's the default on 19 of the 28 test meters.
+- **With p near 4·N·S** (131 for 32 cells), each cell holds about 4 lights. The struck lights sit at most about a quarter slot early, with p mod C teeth (3 for 131/32), a swing-sized push. That matches Avery's "triple digits… almost perfectly in time" for level 1, with level 2 adding the swing.
+
+**Open (for Avery):**
+1. ~~**Should p sit above N·S?**~~ **Answered (Avery, 2026-10-25): yes, a seeded random prime above N·S, to the low triple digits** (built: "revised" below). Proposed then: yes, a prime about 4·N·S (or a pick from the triple-digit primes), so a cell holds several lights and level 2's swing is about ¼ slot rather than a whole one. At least never below N·S, which silences the downbeat cell. Decision 7 is built as ruled.
+2. ~~**The level-2 cut**~~ **Answered: Partitions' own distribution** (built: "revised" below; for a prime p its secondary pattern and its UI's L2 cut are the same selection). Asked then: the order's ⌊j·p/C⌋ (built), or Partitions' own `calculatePartitionSizes(p, C)` cut (the same sizes, with the long cells one or two places over)?
+3. **The prime line's voices:** perc over the backbeat (built). Should the whole kit ride the prime lights instead?
+4. **Default density:** every cell lit (built). Or thinner by default, say hitsPerBar = 5 of 8?
+5. **with / partition under an edit:** they re-land on the anchors' onsets (only 28 % and 34 % keep their onset). Should the store keep a `with` or `partition` perc row bound to its source until that row itself is edited?
+6. **A dark light, or an empty cell,** is silent and reported. Should it strike the cell's next light instead? (Revised: no cell is empty now, and a dark chosen light lands within its cell's reach, proposed: "revised" below.)
+
+**The prime partition, revised** (step 4c-prime, built 2026-10-25, branch `step4/prime`; `tests/assert-drum-prime.mjs`, 27 checks; Node only, not heard).
+
+**The rule (decided, Avery 2026-10-25): p is a seeded random prime above N·S, up to the low triple digits, and level 2 uses Partitions' own distribution of N·S over p.** In Avery's words, the grid is a string of lights all turned off. Level 1 says which to turn on. Level 2 treats those as a new grid, irrespective of level 1's uneven notes, and says which stay on. A large prime is granular enough to be almost in time; level 2 adds the distinct swing.
+
+- **The range (proposed):** p is one of the primes in (C, U], uniformly, with C = N·S cells (N·S·m under 4 slots, proposed, as before) and U = max(199, the smallest prime ≥ 2C) (`primeRange`, `PRIME_CEILING`). So small meters reach the low triple digits, and a large one still has primes up to about 2C. 32 cells: the 35 primes 37–199. 104 cells (8 × 13): 107–211.
+  - Partitions has no range convention to match: its two count inputs are plain numbers, capped at 64 in the UI, below Avery's triple digits.
+- **The draw:** one draw from the drums' own generator `${seed}/drums/prime` (`drawPrime(C, seed)`), beside `against`'s per-bar `${seed}/drums/${bar}`. Compose's parts and chords, and `against`'s bars, never move (tested). The seed is `drumOptions.seed`, else the spec's: the same seed, the same p. The decisions say p was drawn, from where, and by the seed (`drums.prime`, `drums.seed`).
+- **An asked `p`** must be a prime above C. Anything else is refused (an error, as before for a non-prime). A drumOptions.p that a new meter's cells outgrow is dropped by the controller on the next Compose, and said in `state.dropped.p = { was, cells }`; the mode then draws its own (proposed).
+- **Level 1:** unchanged. p lights at i/p of the cycle from the downbeat, each on the onset nearest it within half a light, then a whole light (`primeLights`). Light 0 is the downbeat.
+- **Level 2:** `primeSelection(p, C)` is Partitions' `getSecondaryAllowedSet(p, C)`: E(C, p), turned so that its first stroke is index 0. It chooses C of the p lights in order, and cell j strikes the j-th (`chosen[j]`).
+  - **The downbeat cell sounds:** the turn puts light 0 first, always, so cell 0 strikes the downbeat light. With `hitsPerBar` the cells lit are E(N·hitsPerBar, C), turned the same way, so cell 0 stays lit.
+  - **Parity, against the site's own scripts in a vm:** `euclidPattern` is `generateEuclideanPattern` on 27,025 (steps, pulses). `primeSelection` is `getSecondaryAllowedSet` for every prime p in range, C = 1–120 (3,546 pairs). For C ≥ 3 it is also exactly the live UI's L2 cut, `computeL2Coverages` (the starts of `calculatePartitionSizes(p, C)`), which is what Partitions plays when its second count is typed. The two cuts part only at C = 2, which no meter has (the grid has at least 4 places a bar).
+  - Each cell holds Partitions' group, ⌊p/C⌋ or ⌈p/C⌉ lights (`cellLights`, `perCell`). No cell is empty.
+- **A dark chosen light (proposed):** in the triple digits a light is narrow (±1/p of the cycle), and on a sparse row many lights find no onset. A chosen light that is dark strikes the onset nearest its place within its cell's reach, half a cell either side and then a whole cell (`snap: 'cell' | 'cell-wide'` on the `struck` entry), as `land()` widens any stroke. Without this, 8:7:6:5 and 11:9:7:5 on their own Compose meters lost 28 % and 48 % of their cells. With it they lose none. A cell is still silent when no onset lies within a whole cell; that happens only on asked meters with more cells than the row has onsets.
+- **The grid, perBar, fills and the voices** are as in the first build: a grid's perc row lights the cells, its X accents, its other voices play as the grid. Without a grid the downbeat cell is accented.
+
+**Output changes** (`spec.drums.prime`; the store reads only `p`, and 4e has not been built):
+- new: `drawn` (p was drawn, not asked), `range: { above, upTo, primes }` (C, U, how many primes), `chosen: [light]` (cell j's light);
+- `struck` entries gain `tick` and `snap` (the stroke's onset; it's the light's own unless the light was dark);
+- `emptyCells` is always 0 now, kept for the shape; `perCell` is Partitions' group sizes;
+- unchanged: `p`, `cells`, `hits`, `lights` (its entries' keys too), `selected` (still the cells lit, not the lights chosen), `silent`.
+- API: new `primeRange(C)`, `drawPrime(C, seed)`, `primeSelection(p, C)`, `nextPrime(n)`, `PRIME_CEILING`. `cellLights(j, p, C, chosen?)` now returns Partitions' group for cell j, not ⌊j·p/C⌋. `levelOneLights` and `primePartition` take `seed`. `nearestPrime` stays, as a helper only.
+- Tests: `assert-drum-grid.mjs` keeps the grid, presets ⇄ grid (prime included) and the byte identity (527 hashes, `against` left out as before); its first-rule prime checks are replaced by `assert-drum-prime.mjs`. `assert-drums.mjs`'s seam check now expects a drawn prime. `assert-store-edits.mjs` adds 3 checks (the drawn p, an asked p, the dropped p).
+
+**How it swings now.** The deviation of each struck stroke from its cell's even place j/C, in slots. "Level 2" is Partitions' part alone (chosen[j]/p against j/C). "Struck" adds level 1's landing on the row's real onsets. The rows are 41:42:43, 119:42:15:8, 768:769 and 97:103:37, over N = 2–8 and 6 seeds each:
+
+| S | p/C drawn | level 2, mean / max | struck vs even, mean / max | strokes merged on one onset |
+|---|---|---|---|---|
+| 3 | 2.0–15.9 | 0.05 / 0.24 | 0.06 / 0.36 | 0.02 % |
+| 5 | 2.1–19.1 | 0.08 / 0.43 | 0.09 / 0.77 | 0 |
+| 7 | 1.8–13.6 | 0.11 / 0.50 | 0.13 / 0.91 | 0.05 % |
+| 8 | 1.6–11.9 | 0.12 / 0.49 | 0.15 / 0.84 | 0.07 % |
+| 11 | 1.4–8.7 | 0.15 / 0.49 | 0.19 / 1.31 | 0.6 % |
+| 13 | 1.3–7.4 | 0.16 / 0.50 | 0.21 / 1.42 | 1.4 % |
+
+- **p sets the depth.** By p/C, level 2's mean / max: 1–1.5: 0.18 / 0.50; 2–3: 0.13 / 0.49; 3–5: 0.09 / 0.33; 5–8: 0.05 / 0.17; 8 and up: 0.03 / 0.12 slots. Over the drawn range level 2 never moved a stroke more than half a slot. Forced to the first prime above C (p/C 1.01–1.21), it's 0.40 / 0.98: the first build's whole-slot sawtooth.
+- **p mod C sets the shape.** The struck light drifts from its cell's even place by less than a light (N·S/p slots), and resets about min(p mod C, C − p mod C) times a cycle. So 97 over 32 cells (97 mod 32 = 1) drifts steadily early, to 0.32 slot, and resets once, at the loop. 157 over 32 (mod 29) drifts late to 0.18 slot and resets 3 times. 151 over 16 (mod 7, near C/2) alternates ±0.05 slot cell to cell: the nearest to a long-short swing.
+- **Merges** (two cells striking one onset; the louder kept) stay under 1.5 % on these rows. On sparse rows (19:17:16:15, 8:7:6:5, 11:9:7:5) on asked meters, where the cells outnumber the onsets, 11–31 % merge.
+- Determinism: the same seed gives byte-identical drums (tested).
+
+**Open (for Avery), the revision:**
+1. **The range's top:** U = max(199, the next prime ≥ 2·N·S) (proposed). Should a large meter reach further, or the range favour some part of it? A small p/C (just above N·S) is the deepest drift, up to about half a slot, and 4·N·S and up is nearly straight.
+2. **The dark-light landing within a cell** (proposed), or silence as the first build had it?
+3. **Under 4 slots** p is drawn above the N·S·m cells, not N·S (proposed, as before).
+
+## Step 4a: core rearrange (built 2026-10-25)
+
+The order: `STEP4_ORDER.md` "4a. Core", built on `STEP4_RECOMMENDATIONS.md` §1. Avery's decisions there are marked **decided**; everything else here is **proposed, not ruled**. Node only: nothing here has been seen in a browser.
+
+**1. The trace caps option** (`core/trace.js`, `TRACE.md` "Caps").
+- `compose(..., { trace: { caps } })` keeps a bar's 12 best chord candidates and a phrase's 8 runner-up lines (`ALTERNATE_CAPS`, with `caps` over them). `trace: true` is unchanged at `TRACE_CAPS` (6 and 3). **Proposed:** `true` stays the show's caps because Cosmos's dust asks for `true` and reads every candidate and runner-up it is given; this keeps the dust unchanged without a Cosmos edit.
+- `capTrace(trace, caps)` cuts a 12/8 trace back to the 6/3 trace, byte for byte (events, node and line tables, caps, stats). `trace-frames.js` `buildScene` reads the trace through it, so the main page's show is the same frame for frame (tested on 3 rhythms × 241 frames).
+- On the 16k row the trace grows 109 → 153 KB (lean) and 96 → 129 KB (full). Compose's time doesn't move.
+
+**2. The controller always asks for the trace** (`perform/composer-controller.js`, marked STEP 4a). Every compose sends `trace: { caps: ALTERNATE_CAPS }` and keeps `state.trace`, whatever "show the work" says. The show still reads it only while the setting is on.
+- `compose-runner.js` now passes the `trace` option through as given (it turned any truthy value into `true`).
+- **A behavior change:** a rhythm composed with the work hidden now has a trace. Recalled later with the work shown, it plays the short version, where before it landed at once. Five page-suite checks were updated to this contract.
+
+**3. The builder refactor** (byte-identical).
+- **`compose.js`** exports the part builders it now calls:
+  - `partContext(row, cells, { cycleSeconds, phase, frameCentsEachSide })`
+  - `leadNotesOf`, `chordVoicesOfBar(ctx, chord, k)`, `compChoicesOf(ctx, chords)` and `compOfBar(ctx, chord, k, layer)`
+  - `bassOfBar(ctx, chord, k, { table, scale, target })`, `leadAvoidOf` and `innerOf(ctx, { from, bars }, { chords, targets, lead, table, rules })`
+  - `partOf(ctx, id, notes, { sound, legato, enabled, baseHz, ratioOf, voice })` and `specChordOf`
+- **`harmony.js`** exports:
+  - `pickFor`: chooseChord's tail, the modulation rule and the names for a given root and quality;
+  - `chordRecord(row, bar, pick, { eachSide, referencePc, pinned })`;
+  - `targetOfBar` and `targetsOf`, `exceptionsOfBar`;
+  - `barMaterial` and `strongNotesOf`, now exported.
+- **The gate:** `tests/assert-refactor-identity.mjs` composes 729 cases with the live core and with a frozen pre-refactor copy, and the two JSON texts must be equal. The cases: every rhythm × 2 seeds, every override, progressions, every drum mode, the trace off/true/{caps}, and the 16k row.
+  - The copy is `tests/fixtures/{compose,harmony,lines}-before.js`, taken at ba590d5 and never to be edited. Row, cells, frame, progression, drums and trace are live in both, so 4b's and 4c's edits are checked by it too.
+- **One speed-up in `lines.js`:** a module-level memo of the close cost (a pure function of two fractions; same numbers, cleared at 2^18 entries). A bar-local re-mine on the 16k row went from a 17.8 to a 12.4 ms median.
+
+**4. `core/rearrange.js`.**
+- `rearrange(spec, row, cells, { bar, chord })` and `rearrange(spec, row, cells, { phrase, line, chordsFollow }, { trace, parts, drumOptions, smoothPhrase })`.
+  - They return `{ parts, drums, chords, modulations, changedBars, retunedBars, changed: { part: [bar] }, exceptions, stats }`.
+  - `applyRearrange(spec, r)` writes a result into a new spec.
+  - `materialsOf(spec)` rebuilds `{ row, cells }` from `spec.input.layers` and the knobs. It takes about 7 ms on the 16k row, and it isn't valid for Cosmos's superrow composes.
+- **Decided:**
+  - a chord swap keeps the lead (decision 1);
+  - lead alternates are the phrase's runner-ups (decision 2);
+  - the comp layer, `baseHz` and the lead's legato are pinned, and so are every part's sound, legato and on/off;
+  - `targets.scale` is fixed;
+  - the chords don't follow a lead swap unless asked;
+  - the inner is re-mined bar-locally.
+- **Proposed:**
+  - **The swapped bar's own target** reads scale ∪ its new chord's classes, so a chord tone is never "foreign" in its own bar. The parent scale and the other bars don't move.
+  - **The bar-local inner** uses `lines.js` `rules: { before, after }`, the inner's nearest notes either side of the bar as `{ pitch }`. Each move to them is priced as a move inside the line, `strict × interval × I`. There's no recovery flag and no wrap at bar 1. Absent, `pickLines` and `scoreLine` are unchanged, and the test checks that they agree on every boundary cost.
+  - **Exceptions of a changed bar** are its lead's strong notes off the new chord. A lead note foreign under the new chord's frame and target is a passing tone. A bar whose chord didn't change keeps the count Compose gave it.
+  - **"Unchanged" short-circuits.** A bar re-given its own chord keeps its inner, and a phrase re-given its own line keeps its inner and exceptions. That's what makes the identity test byte-exact. Its chord voices, comping, bass and every part's articulation are still rebuilt through the builders.
+  - **Chords follow** runs `chooseChord` bar by bar along the phrase over the new lead, walking the offset and the voice-leading. A pinned (`targeted`) bar keeps its chord. On a settled spec's own lead it chooses the spec's chords again (24/24 phrases).
+  - **The re-pitch.** Later bars keep their root and quality, and the modulation rule is re-run at their new incoming offset; `retunedBars` lists those whose `fundamentalRatio` moved.
+  - **An empty bar** that took the swapped bar's chord takes the new one.
+  - **The drums** are `arrangeDrums(rearranged spec, spec.drums.options)`, which reproduces the spec's own drums. Backbeat never moves, and `with` moves only in edited or retuned bars. **`against` can spill:** its seeded draws run in bar order, so a changed slot count re-draws later bars (52 of 336 swaps measured). A per-bar seed in `drums.js` (4c's file) would fix it.
+- **Measured** on the 16k row:
+  - a chord swap: lean 4.9 ms median, 6.7 max; full 10.9 ms median, 19.2 max; the first swap on a spec about 11 ms (the part context, cached per cells after that);
+  - a lead swap, bar-local: lean 11.7 ms, full 37.8 ms;
+  - `smoothPhrase` (the whole phrase): lean 68 ms, full 294 ms, so that one is for the worker.
+- **Kept, a Compose quirk:** a bass bar with no line plays its chord's root onset, with `slot` the onset's posSlot. That can be the previous bar's last slot when the root sounds in the bar's first window just before its downbeat. The refactor keeps it byte for byte.
+- **Tests:** `assert-trace-caps.mjs`, `assert-refactor-identity.mjs` and `assert-rearrange.mjs`. The rearrange suite covers:
+  - identity on 78 bars × 2 and 25 phrases;
+  - 927 candidate swaps and 200 runner-up swaps, every note a real onset in its bar and slot at its retune;
+  - only the dependent bars and parts moving;
+  - the boundaries;
+  - the costs.
+
+## Step 4d: store edits and pins (built 2026-10-25, branch `step4/store`)
+
+The order: `STEP4_ORDER.md` "4d. Store". Avery's decisions there are marked **decided**; everything else is **proposed, not ruled**. Node only: nothing here has been seen or heard in a browser. Built in `store/composition-store.js`, a new `store/composition-edits.js` (pure), `perform/composer-controller.js`, `perform/compose-runner.js` and `core/compose-worker.js` (the worker path), a one-line `materialsKey` in `core/rearrange.js`, and `against` in `core/drums.js`. Checked by `tests/assert-store-edits.mjs` (88 checks).
+
+**The entry** (`newCompositionState`, new fields):
+- `composed`: Compose's own spec, never touched.
+- `spec`: the composition **as edited**, composed + edits. With no edits it is the same object as `composed`. **Proposed:** keeping the edited spec in `spec` means the player, the tab's lanes, the plot overlay, the part strips, the Scale readout, the lens and its recall all read the edited composition with no change of theirs (none of `page/` was edited).
+- `edits`: `{ chords: { [bar]: { rootTone, quality, from: 'swap' | 'typed', asked? } }, lead: { [phrase]: { lineId, chordsFollow, smooth? } }, order, grid }`.
+  - `order` (`'chord:3'`, `'lead:1'`) is the order the edits apply in. A changed edit moves to the end; a removed one drops out.
+  - `asked` (typed chords only) is the quality the field asked for. `quality` is what plays: the asked one where the bar supports it, else Compose's own pick over the root (`chooseChordOnRoot`, with the bar's lead). The pin keeps `asked` (4b's open question 3, as built there).
+  - `grid`: `{ bars, slotsPerBar, from }`, the meter `drumOptions.grid` was written for, and the mode it came from.
+- `drumOptions.grid`: the step grid (4c's shape).
+- `field`: `{ text }`, the typed progression as the user typed it (4b's open question 1, proposed: the text is the field's source, so flats stay flats; only the swapped bar's symbol is rewritten).
+- `undo` / `redo`: snapshots of the edits, the field, the pins and the drum mode and grid. At most `UNDO_LIMIT` = 50 (proposed).
+- `dropped`: what the last Compose dropped, for the UI's amber: `{ pins: [{ bar, ratio, quality, reason: 'notInRow' | 'pastBars' }], unhonored: [{ bar, ratio, asked, got }], lead: [{ phrase, lineId }], grid: { was, now } | null }`, or null.
+- `progression` is now the pin list Compose is sent, `[ratio | { ratio, quality } | null]`: the lab's root picks are the ratio form, a re-compose bakes the chord edits in as `{ ratio, quality }`. `progression()` (the lab's editor) still reads ratios.
+
+**Edits are live (decided).** No edit makes the entry dirty, and the glyph recalls spec + edits with no re-solve. The parts' sound, legato, on/off and levels stay live as before, over the edited notes (re-articulated, never re-mined).
+
+**The merge** (`perform/composer-controller.js`). The edited spec is a fold: `rearrange` + `applyRearrange` once per edit, in `order`, starting from the composed spec (its drums left out; the drums are arranged after, over the edited spec, with the entry's own drum options). The fold keeps each step's spec, so:
+- a new edit is one rearrange;
+- an undo of the last edit is none (the step before is kept);
+- a changed or removed edit re-runs only the steps after it.
+
+Two proposed rules make the order safe:
+- **A swap to the chord Compose made removes the edit** (unless the phrase's chords follow a swapped lead), so swapping back is the composed spec byte for byte (4a's identity). The same goes for a lead swapped back to its kept line. A typed chord is kept even then: the user typed it, and it is a pin on the next Compose.
+- **A lead swap with "chords follow" drops the chord edits of its phrase** (they would otherwise come back as pins). A chord swapped in that phrase afterwards applies after it, so it wins.
+
+**The API that 4e calls** (each action returns a Promise of `{ ok, kind, changedBars, retunedBars, … }`; on the main thread it has applied before it returns; a failure rolls the edit back and says `{ ok: false, error }`):
+- `swapChord(bar, candidate | { rootTone, quality })`; `swapLead(phrase, lineId, { chordsFollow, smooth })`;
+- `setProgressionField(text)` → `{ resolution, live }`; `progressionField()` → `{ text, typed, resolution }` (per bar: cents, amber, the pin);
+- `setDrumGrid(grid)`, `setDrumCell(bar, voice, place, 'x' | 'X' | '.')`, `applyDrumPreset(mode)`, and `drumGrid()` → `{ grid, mode, own, bars, places, m, silentCells }`;
+- `undo()`, `redo()`, `canUndo()`, `canRedo()`;
+- `alternatesOf(bar, 'chords' | 'lead')`: a pure read of the kept trace. For chords, the bar's chosen-round candidates (12), each marked `current` and `composed`, with `currentIndex` (-1 when the bar plays a typed chord that isn't among them). For the lead, the bar's phrase: the kept line first, then its runner-ups (8), each with `perNote` and its shape. Other parts: null.
+- reads: `effectiveSpec()`, `composedSpec()`, `hasEdits()`, `applying()` (a worker edit in flight), `retunedBars()` (vs Compose's), `editsExport()`;
+- events: `onEdit(fn)` → `fn(result, state)` after each applied edit, plus `onChange` as before.
+
+**Chord swaps and the field.**
+- A candidate from `alternatesOf` goes straight into `swapChord`.
+- **The typed field** resolves the text with `resolveSymbols` against `barMaterials(…, composed.knobs, { row })`. With a composition, each typed bar is a typed chord edit (live), and an auto bar has no chord edit and no pin (the field is the whole chord row's view: swaps show in it as their names). Proposed: removing a pin through the field doesn't make the entry dirty; it only changes what the next Compose is sent. Before any compose, the field's pins are Compose's progression, and the entry goes dirty, as a root pick does.
+- A bar already pinned with the same root and asked quality, and composed over that pin, gets no edit.
+- **A swap rewrites only its own bar's symbol** in a typed field (`rewriteToken`): the user's separators and spellings elsewhere are kept, and trailing autos are cut.
+
+**The drums.**
+- `setDrumCell` starts the grid from the drums as they play now (`gridOf`), sets the cell, and turns the mode to `grid` (decided: an edit turns the mode to grid). Proposed: a `prime` mode stays `prime`, since the grid's perc row is its selection.
+- `applyDrumPreset(mode)` plays the preset as itself (its own arrangement, exactly), and the grid shows it through `gridOf` until a cell is edited. Proposed: a preset clears the entry's own grid rather than storing `gridOf(preset)` (with `with` or `partition` a stored grid would re-land 66–72 % of the perc strokes, 4c's measurement).
+- `grid` and `prime` are in the controller's drum-mode choices and labels now (`drumModeChoices()` is `ALL_DRUM_MODES`). `setDrums({ mode: 'grid' })` with no grid yet starts one from the drums as they play.
+
+**A re-compose (decided, 5).**
+- At Compose's start the chord edits are written into `progression` as `{ ratio, quality }` (a typed one's asked quality), and Compose solves around them. Until the compose lands they still play over the old spec.
+- When it lands, a pin is checked against the new spec: not `targeted` there means the new row lacks the root (`notInRow`) or the bar is past the new meter (`pastBars`). It is dropped from the pins and listed in `dropped.pins` (a typed field's symbol for it becomes `-`). A pin whose quality the new bar can't support stays a pin and is listed in `dropped.unhonored`.
+- The lead edits are dropped and listed. The edits are cleared (they are pins now), and so is the undo stack (proposed: its steps belong to the old spec).
+- **The drum grid** is kept when the meter (N, S) is unchanged, else dropped. The mode goes back to the one the grid came from, and `dropped.grid` says so.
+- Proposed: new layers in the lab clear the pins and the field, as they always cleared the progression. The chord edits still go through the check above, so they show as dropped.
+- **A new cycle of the same row** (the store's `inheritEdits`) carries the chord edits as pins, the field and the drum grid (checked on its first Compose), never the lead edits.
+
+**Where an edit runs** (proposed). Measured in Node, M4 Max, on the chosen round's candidates (rearrange + applyRearrange; the materials once per composition):
+
+| row | onsets | materials | chord swap, lean: median / max | full: median / max |
+| --- | --- | --- | --- | --- |
+| 768:769 | 1,536 | 1–2 ms | 1.9 / 4.5 ms | 4.9 / 7.5 ms |
+| 3001:2999:2003:1999 | 9,999 | 4–7 ms | 4.1 / 5.6 | 9.0 / 14.3 |
+| 4099:4093:4091:4079 | 16,359 | 7–8 ms | 4.6 / 6.2 | 10.4 / 15.8 |
+| 16384:16383 | 32,766 | 12–15 ms | 5.8 / 15.0 | 11.1 / 16.7 |
+| 65536:65535 | 131,070 | 43–45 ms | 15.3 / 24.0 | 20.5 / 28.3 |
+| 262144:262143 | 524,286 | 250–267 ms | 53 / 107 | 61 / 102 |
+
+A lead swap costs the table, not the row: lean 4–13 ms (1.5k to 32k onsets), full 15 ms at 1,536 and 35–42 ms from 10k up; chords following add 5–10 ms.
+- **`MAIN_THREAD_ONSETS` = 32,768.** Up to it, every edit runs on the main thread (a chord swap ≤ ~17 ms, plus the materials once). Past it, the module worker runs it.
+- **`MAIN_THREAD_LEAD_FULL_ONSETS` = 2,048.** A lead swap on the full table runs in the worker past this.
+- **`smooth`** (smoothPhrase, 68–294 ms on the 16k row) always runs in the worker.
+- **No worker given** (Node, the lab's default runner): everything runs on the main thread.
+- **The worker** is the Compose worker. `compose-worker.js` answers `{ kind: 'rearrange', key, spec, edit, opts }`, and keeps the row and cells of the last 3 keys (`materialsKey`: the layers and the knobs the cells read). `compose-runner.js` exposes it as `runCompose.rearrange`, which the controller takes as its default `runRearrange`. The trace stays on the page: a lead swap sends the line's notes.
+- Measured through a mocked worker on 65536:65535 (in-process, a structured clone each way): the first swap 79 ms (the row built in the worker), the next 18 ms. A rearrange on the main thread with the row given: 25 ms.
+- An edit while one is in the worker supersedes it (`{ superseded: true }`). The newer fold applies both, reusing every step already made. A worker answer that comes back after a Compose has landed is dropped too.
+
+**`against`, seeded per bar** (`core/drums.js`, owed from 4a). Each bar draws its empty-slot order from its own generator, `${seed}/drums/${bar}` (it was one generator in bar order). Over 168 candidate swaps on 4 rows, no bar but the swapped one moves (before: 52 of 336 swaps re-drew later bars). This changes `against`'s output, so `drums-baseline.mjs` stays frozen and `assert-drum-grid.mjs` leaves out its 4 `against` variants with the reason stated; the other 527 hashes are byte for byte. The prime's p rule is left alone (Avery hasn't re-ruled it).
+
+**JSON export** is the composition as it plays (edits and all) plus `playback`, and, when there are any, `edits: { chords, lead, order, drums: { mode, grid, from } | null, field }`.
+
+**Open, for Avery:**
+1. **Re-compose clears undo.** After a Compose the chord edits are pins and the old steps have no spec to apply to. Keep it that way, or keep an undo step that restores the pins?
+2. **The field and pins.** Taking a pin out through the field (an auto bar) doesn't make the entry dirty: the spec still plays the pinned chord until the next Compose. Is that right, or should the glyph compose again?
+3. **"Chords follow" drops the phrase's chord edits.** Or should a swapped chord stay pinned through it?
+4. **A typed quality the bar can't support** plays Compose's pick over the root (with the lead) live, and stays the asked pin for the next Compose. 4b's field shows the fallback without the lead, so the two can name different chords. Show what plays?
+5. **The field on rows past the threshold** still reads the bars on the main thread (`barMaterials` with the row: ~10 ms at 16k, ~270 ms at 524k, once per composition). Move it to the worker too?
+
+## Step 4e: the matrix and the context inspector (built 2026-10-25, branch `step4/ui`)
+
+The order: `STEP4_ORDER.md` "4e. UI", the layout of `STEP4_RECOMMENDATIONS.md` §4. **Decided** (decision 8, Avery): the lanes BECOME the matrix, with no tab of their own. Everything else here is **proposed, not ruled**. Node only: nothing here has been seen or heard in a browser.
+
+**Files.** New: `page/matrix.js` (pure: the matrix and the inspector's lists as data), `page/audition.js` (the audition, no DOM), `tests/assert-page-matrix.mjs` (83 checks). Edited: `page/composer-tab.js` + `.css` (the view), `page/tab-controller.js` (the cell selection), `page/plot-overlay.js` (the `getFocus` seam), `page/composer-bridge.js` (passes it), `perform/composer-controller.js` (the audition helper), `index.html` (`?v=`). No `core/`, `store/`, `Cosmos/` or `PartitionsUI.js` edit.
+
+**The matrix** (the window's left half, under the header and readouts).
+- Six rows, Lead, Chords, Comping, Bass, Inner, Drums (the lanes' order; the row head is still the part's name and its on/off), and a column a bar, each as wide as its bar lasts. A bar-number row on top. The matrix grows to fill the left half (the empty space of Avery's screenshot); under ~56 px a column it scrolls sideways.
+- **A cell is a mini view:** the part's notes as dots (x its time in the cell, y its pitch within the part's whole range; a retriggered note larger than a held one); the chord's name (and the modulation's ↻ as before); the drums as the bar's step grid in miniature (5 voices × S·m places, a silent step outlined amber).
+- **A lead cell spans its phrase** (decision 2: 4 bars at S = 8).
+- **The marks:** a badge counting the cell's alternates (chords: the candidates not playing; lead: the lines not playing); ✎ on a cell changed from Compose's output (its notes or chord differ; the drums when its own grid differs from the preset it came from); "↻ retunes bars k–m" on the chord cell whose edit re-pitched later bars, and an amber underline on those bars.
+- **Selecting a cell** (a click, or the arrows) selects its part and bar (`tab.selectCell`). The overlay rings exactly the cell's nodes on the mirrored plot (`getFocus`: the cell's notes found by tick, a lead cell its whole phrase) while the inspector shows the cell's context; on a settings section the whole part is ringed as before. With no `getFocus` the overlay draws exactly as before.
+- **The keyboard** (the matrix is focusable): ←/→ a bar (a lead cell: a phrase), ↑/↓ a part, Enter opens the cell (its context, focus on its first alternate).
+- **The playhead** runs across the matrix during Perform, as across the lanes before; the bar playing is lit on the bar numbers and the bar picker.
+- **What the last Compose dropped** (`state.dropped`, decision 5) is said in an amber line above the matrix: a pin not in the new row or past the meter, a quality the bar can't support, the lead swaps, the drum grid, an asked p.
+
+**The typed field** runs across the top of the Chords row ("Typed"): one text input over the bars, and under it each bar's resolution in its column (`resolveSymbols`' per bar): the symbol's name, the root's cents, ✓, or amber with the reason in its tooltip (a missing class, the fallback, off the frame with "may retune" or "offGrid"), an unparsed symbol red; the resolution's notes (extra symbols, bars left auto) under it.
+- **Applied on Enter or on leaving the field (proposed).** Esc puts the applied text back. The text is kept as typed (4d keeps it as the field's source: `Bb7` stays `Bb7`). The input is one element for the tab's life: a re-render moves it and never drops what's being typed.
+- Before any compose (a rhythm, no composition) the field shows alone, its pins Compose's progression.
+- ⌘Z while typing in it is the text's own undo, not the composition's.
+
+**The inspector.** A slim header row: the selected part's name, sound, legato, on/off and level (for the drums: mode, fills, on/off, level), then the part picks, then the tabs: **the cell's context** (the default, named "Bar 2 · Chords", "Bars 1–4 · Lead") beside the four settings sections as before (Harmony with the root picks and harmony knobs, Lines, Drums with the kit, Tuning). Picking a part keeps the context (now that part's bar); on a settings section a part opens its own section, as before. The body keeps its scroll while it shows the same cell.
+- **Chords:** the bar's 12 candidates (`alternatesOf`), each with its name, root ratio and cents, quality, and support: ✓ when it holds every strong lead note, else amber "n off"; ● plays now, C Compose's. "Typed" or "swapped" when the bar is edited; a typed chord not among them is said.
+- **Lead:** the phrase's lines, Compose's first, then its runner-ups, with the cost a note, the note count and the shape (band, motion, contour). **Chords follow** (off by default, as decided) applies to the next swap; on a swapped phrase it re-applies the swap with it flipped (one undo step). **Smooth the phrase** re-mines the inner over the phrase in the worker; it needs a swapped lead, because `swapLead` to Compose's own line is "no edit", and Compose's inner is already mined over the phrase.
+- **Bass, Comping, Inner:** "follows bar k's chord: D (root 21/20, major triad)", a button to that chord's cell, the bar's notes (slot, ratio, octave, Hz), "re-mined" when they differ from Compose's. Comping shows its layer, pinned through edits, read-only (`stats.compLayer`; there's no setter). Inner offers "smooth the phrase" once the phrase's lead is swapped. Bass and comping have no re-mine of their own in the API: they re-mine with their chord.
+- **Drums:** the bar's step grid (5 voices × S·m places; the beat numbers on top). A click cycles `.` → `x` → `X` → `.` through `setDrumCell`; a silent step is hollow (dashed amber, "no onset here"), from `silentCells`. The presets: every mode and pattern, then `grid` (the drums as they play, written as the grid: `setDrumGrid`) and `prime`, each `applyDrumPreset` (undoable). With mode `prime`, the **prime strip**: every level-1 light at its real time over the cycle (a dark light dashed at its aim), the lights level 2 chose taller, the struck ones bright, this bar's span shaded, and "p = 167, drawn — a prime in (64, 199], one of 28 · 64 cells choose 64 of the 167 lights".
+- **Drum modes:** `grid` and `prime` are in every mode list already (4d put them in `drumModeChoices()`; the header select, the strips' select and the lab all read it; checked).
+
+**Audition / keep / revert** (`audition.js` over the controller's new helper).
+- **A first click** on an alternate auditions it live. **Stopped,** it applies at once. **Performing,** it's held for the next bar boundary and applied 0.3 s of clock time before it (`LEAD_SECONDS`, above the player's 150 ms lookahead), so the new bar is booked from the new notes. **Which:** the player has no boundary scheduling of its own (it reads the parts every 25 ms tick, so an edit is heard within ~150 ms); the boundary is the audition module's, checked each frame. Proposed: always the next bar boundary, whichever bar the edit touches.
+- **A second click** on it, or Keep, keeps it as one undo step. **Esc** or Revert takes it back. A held one not applied yet is dropped. Another alternate clicked while one is open replaces it (still one audition).
+- **The controller helper** (`perform/composer-controller.js`, needed because swap + undo leaves a redo step, 4d's note): `audition(run)` snapshots the edits and both stacks before the first audition; `keepAudition()` leaves one undo step back to that snapshot; `revertAudition()` restores the snapshot and both stacks exactly, so no redo step is left and a redo stack that was waiting comes back. `auditioning()`. A Compose landing makes an open audition stale.
+- **Proposed:** any other edit (a typed field, a drum step, a preset, redo) keeps an open audition first; undo (⌘Z, the button) reverts it.
+
+**Undo/redo:** Undo and Redo buttons in the header, and ⌘Z / ⇧⌘Z (Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y elsewhere) while focus is in the window (the matrix, the inspector, or nothing focused), not while typing in a text field. The history is the entry's (per composition, from 4d).
+
+**Narrow widths (proposed):** the matrix scrolls sideways once its columns get under 56 px. Below 600 px of the left half (a CSS container query, `@container ctab-left (max-width: 600px)`, `NARROW_PX`), a bar picker appears and the matrix shows just the picked bar's column (the cells covering it carry `in-pick`), the typed field's strip too; the matrix's playhead hides there (the picker lights the bar playing).
+
+**Worker-path edits** (rows past 32,768 onsets, a full-table lead swap past 2,048, every smoothing): the header says "applying the edit in the worker…" while `applying()`; Keep and Revert wait for it.
+
+**Tests** (`assert-page-matrix.mjs`, 83, over the DOM stub and the site's composite rhythm, 41:42:43 at 8 × 8 and 8:7:6:5): the matrix 6 × N with lead cells spanning phrases; a cell's nodes ringed on the plot, exactly; arrows and Enter; the 12 alternates; audition → keep one undo step; audition → revert with no redo step and the waiting redo stack kept; two auditions kept as one step; the bar-boundary hold while performing; ⌘Z, ⇧⌘Z, Ctrl+Z, and not while typing; the lead context, chords follow, smoothing through a fake worker; bass, comping, inner; the field's inline ✓ and amber on Enter and blur, flats kept; drum steps cycling through `setDrumCell`; every preset; the prime strip against the prime output; a silent step; the narrow fallback; the model; recall through the glyph and the part strips on an edited composition; a re-compose keeping chord pins and dropping (and saying) the lead edits.
+- **Existing tests changed** (the markup legitimately changed): `assert-page-view.mjs` (a cell a bar is the Chords row now, the lead a cell a phrase; the inspector opens on the cell's context, so the kit check clicks the Drums section first); `assert-page-tab.mjs` (the default section is the context; a part picked on a settings section opens its own, as before); `assert-page-site.mjs` and `assert-page-theater.mjs` (the bridge's `?v=` checked as a minimum, since it was bumped).
+
+**Open, for Avery:**
+1. **The audition's moment:** always the next bar boundary while performing (built), or at once when the edited bar isn't the one sounding?
+2. **Another edit during an audition** keeps it (built). Or should it revert?
+3. **Smooth the phrase over Compose's own lead** (after a chord swap re-mined the inner bar-locally): the API has no edit for it (smoothing rides a lead swap). Worth a controller action?
+4. **Apply the field on Enter or blur** (built), or only on Enter?
+5. **The narrow fallback** at 600 px of the left half (one bar and a picker), or always scroll?
+6. **The dots' height** is pitch within the part's whole range. Would a fixed pitch window (an octave band) read better across parts?
+
+## MIDI targets (phase A; built 2026-10-26, branch `target/core`)
+
+The order: `TARGET_ORDER.md` phase A (A1–A4); the probe: `probe/midi-target/FINDINGS.md`. Avery's rulings 1–8 there are **decided**; P1–P7 are the planner's, followed as written except where marked; everything else here is **proposed, not ruled**. Node only: nothing here has a UI yet (phase B).
+
+**1. `core/midi.js`** (A1): the probe's `midi.mjs`, ported as a pure module.
+- `readMidi(bytes)`, `writeMidi({ ppq, bpm, timeSig, tracks })`, `decodeClip(file, { track, tolerance })`, `skyline(notes)`, `estimateKey(notes)`, `pcName(pc)`, `describeClip(clip)`.
+- `decodeClip` → `{ version, name, ppq, bpm, tempoBpm, timeSig, d, S, B, pickup, residual, exact, notes: [{ step, until, midi, pc, velocity }], dropped, key: { tonic, mode, r }, stepSeconds }`.
+  - `dropped` (P1): the track's notes not in the line, the skyline's lower notes and the graces two note-ons rounded onto one step.
+  - `tempoBpm`: the file's first tempo (120 with none), the seed of a target's playback tempo (decided 1/4).
+  - The step-relative tolerance (`EXACT_SHARE`) and the unquantized guess (`UNQUANTIZED_SHARE`) are the probe's.
+
+**2. `core/target.js`** (A2): the search, `placeClip(row, clip, { e, tonic, maxDriftCents, alternates, … })` → `{ placement, alternates, lanes, searched, ms }`.
+- **The vote, the refine and the lattices** are the probe's. The search's best equals brute force on the small rows (28/28), and on all 12 probe rows × 9 clips it equals the probe's best (108/108); the engine's materialized hits equal the search's in every one of those cases.
+- **Prune (P7):** N from B up; the first N at which some candidate fits every note ends the search, its lattices all tried, best first. A row without a full fit is searched to the probe's top N. Every N's vote buffers are reused.
+- **Drift (P3; ruling 6):** per phrase of the clip (harmony.js' 32-slot phrases), a Viterbi over the phrases at the best 8 distinct φ of each N. A state is (ψ, k) (12 lattices × 12 = 144), scored on the phrase's notes; adjacent phrases' tonics, at their realized cents (the lattice tone + 100 × its lane), at most `maxDriftCents` apart (30; 0 turns it off). The drift candidates join the no-drift ones, so drift never makes the best worse.
+  - **A call beyond the order:** ranked hits, then the least total drift, then tight hits, then cost. P3 lists tight hits before drift, but then a phrase would drift for timing alone, which its first clause ("drifts only when that gains notes") forbids. With the ranking as built, a placement drifts only when it gains notes: on the probe's 6 test rows × 7 clips never; scanning `rhythms.mjs` (rows under 3,000 onsets × Frère Jacques and Greensleeves), 4 cases (e.g. Greensleeves on 426:317:285, 18 → 19, 6.4¢).
+- **Materialized:** the best 16 distinct candidates are built as Compose plays them: φ rounded to a tick, `buildCells` (N × S, partitioned, swing ½), each phrase's frame centred on its lattice tone. Then ranked hits, least drift, note-off hits (P4), tight hits, cost; the best is the placement, the next 8 distinct the alternates.
+- **Misses (P2):** fringe (the class in the slot outside the frame), shift (an in-frame onset of the class one slot over), hard (silent). **Calls beyond the order:** a shift stays inside the window, lands strictly between its sounding neighbours, and never on a slot another sounding note holds (one note a slot).
+- **Note-offs (P4; ruling 7)** on the loop's own onsets (the window's, and those slot 0 holds before the first anchor, which sound at the loop's end), circular: the next note's note-on when the note-off is its step; else the onset nearest the note-off slot's anchor in its ±½-slot window, after the note-on and no later than the next note-on; else the next onset after the anchor, else the next note-on ("late"). The last note's next is the first (the loop wraps).
+- **The placement:** `{ N, B, S, P, phase, tick, window, share (W, the window's share of the cycle), band, phrases: [{ from, bars, psiTone, psiRatio, k, tonicCents, driftCents }], notes: [{ step, until, midi, pc, on: { node, kind, slot, offSlots, dev, pos }, off: { node, late, pos } | null }], hits, tight, offHits, cost, drift, misses, missing, J, search }`. `pos` is LOOP time as a share of the row's cycle; an off's `pos` is after its on's and may pass the loop's end.
+- **`laneReport(row, psiTone)`** → `{ psiTone, ratio, cents, counts: [12], empty }`; `placement.missing` and `lanes.missing` are the clip's classes whose lane is empty in their phrase's lattice (ruling 5).
+- **`targetRoot`** (P5) and **`registerOf`** (the lead's octaves: the clip's own contour, the tonic just above the root).
+- **The one clock read in core:** `ms`, a measurement that steers nothing.
+
+**3. Compose target mode** (A3): `compose(layers, T, { target: { clip, placement?, tonic?, maxDriftCents? } })`.
+- **Cells:** N × S from the placement's phase, partitioned, then `cells.js` `cropCells(cells, B)` (slots 0..B·S−1 with their own windows; `slotOfNode` −1 outside; `crop: { bars, P, end }`).
+  - **A call beyond the order:** the windows are Compose's own (about 12 onsets a slot), not swing ½. With swing ½ a slot on the 16k row holds ~250 onsets and the bass and inner miners took 30 s (`pickLines` 34 s of a 34 s profile); with the default windows the whole target compose takes ~0.3 s. The lead is pinned by node, so it needs no window; the anchors, slots and window are the placement's.
+- **`partContext`** takes `rowCycleSeconds`: with cropped cells, `cycleSeconds` is the loop, an onset in the window sounds at its own time on the row's cycle, one before the first anchor that slot 0 holds sounds at the loop's end (in the last slot), and any other is in no slot (`posSlot` −1) and no bar. Uncropped, every expression is the one it was.
+- **The lead:** harmony.js `harmonize(…, { lead: { notes } })` derives the chords from the pinned notes once: no mining, no second pass, no settling (`settle: { rounds: 0, pinned: true }`), each phrase a line record (`pl1:` ids, band `pinned`) for the trace and the rearrange. Each lead note carries `endTime` (its note-off onset) and `clipNote`; `articulate` and `partOf` honour `endTime` over the legato rule, and the rearrange keeps both.
+- **Knobs:** `bars` B, `slotsPerBar` S, `beatsPerBar` the clip's numerator, `cycleSeconds` the loop (W × T), `rowCycleSeconds` T, `cut: { bars: N }`, `tempoBpm` 60 × B × beats / loop, `leader: 'target'` (or `progression` / `mixed` with a progression).
+- **`spec.target`:** `{ clip, placement, misses, tempoBpm (the clip's), tonic, tonicAsked, maxDriftCents, lanes, alternates, search: { ms, barCounts, stoppedAt } | null }`; `input.target` is the target as given.
+- **Overrides:** `TARGET_SETS` (bars, slotsPerBar, anchors, phase, root, presence, settlePasses) are refused; the rest apply. A progression pins chords under the clip.
+- **Refusal:** a clip with more than 32 steps a bar (a line's limit) → `{ refused: true, reason: 'targetGrid' }`.
+- **`rearrange.js`:** `materialsOf` rebuilds the cut and crops it; `materialsKey` carries the cut (only when there is one); a chord swap works; a lead swap is refused (P6).
+- **`drums.js`** on a window: the drums' cycle is the loop (W = cycleSeconds / rowCycleSeconds); places run over [0, W); a stroke's time is its loop time (before the downbeat → the loop's end, past the window's end → its start); the partition layer counts its pulses inside the window and the prime partition spreads its lights over it. Without `cut`, every expression is the one it was (`drums-baseline.mjs` still matches).
+- **Identity:** with no target, Compose is byte for byte as before (`assert-refactor-identity.mjs`, 7/7).
+- **Trace:** a target compose's trace records the pinned lead as skipped mining (`skipped: 'pinned'`) and the pinned phrases as lines.
+
+**4. Measured** (Node 24, Apple M4 Max; `placeClip`, drift on, warm; then a target compose with that placement given, lean table):
+
+| row | onsets | Frère Jacques (32 notes, B 8) | Ode to Joy (15 notes, B 4) |
+|---|--:|---|---|
+| 8:7:6:5 | 22 | 5 ms: 5/32, N 8; compose 10 ms | 3 ms: 4/15, N 4; compose 4 ms |
+| 768:769 | 1,536 | 553 ms: 17/32, N 9 (66 N tried); compose 93 ms | 257 ms: 12/15, N 4 (70 tried); compose 23 ms |
+| 2047:2048 | 4,094 | 955 ms: 18/32, N 9 (66 tried); compose 77 ms | 459 ms: 13/15, N 5 (70 tried); compose 28 ms |
+| 275:1144:1260:234 | 2,852 | 41 ms: 32/32, N 8 (1 tried); compose 88 ms | 27 ms: 15/15, N 4 (1 tried); compose 79 ms |
+| 4099:4093:4091:4079 | 16,359 | 187 ms: 32/32, N 8 (1 tried); compose 127 ms | 148 ms: 15/15, N 4 (1 tried); compose 41 ms |
+
+The probe took 4.4–9.7 s on the 16k row; the prune (a full fit at N = B ends the search) is all of the gain there. The slowest rows now are the ones with no full fit, which search every N (up to ~1 s on 2047:2048); pruning those further (an upper bound from the vote's counts, a coarse N grid first) is left for when it's felt.
+
+**Tests:** `tests/assert-target.mjs` (46 checks; clips in `tests/fixtures/midi-clips.mjs`, ported from the probe's).
+
+## MIDI targets (phase B; built 2026-10-26, branch `target/ui`)
+
+The order: `TARGET_ORDER.md` phase B (B1–B5), on phase A's core ("MIDI targets (phase A)" above). Avery's rulings 1–8 are **decided**; P1–P7 are the planner's, followed as written; everything else here is **proposed, not ruled**. Node only: nothing here has been seen or heard in a browser (the checklist is in `TARGET_ORDER.md`).
+
+**1. The controller and the store** (B1; `perform/composer-controller.js`, `store/composition-store.js`).
+- **The entry's input:** `state.input.target = { clip, tonic, placement? }`. The clip is held as `decodeClip` gives it (plain JSON: the bytes never reach the store); `tonic` is the override (a pitch class) or null (the key estimate); `placement` is a kept alternate (absent: the search's best). Since it is the input, the glyph's recall, undo (the edits apply over the target's spec) and the LRU carry it with the rest of the entry.
+- **`state.placements`** (new): the last search's `{ tonic, list: [best, …alternates], current, lanes }`. A compose given its placement doesn't search and returns no alternates, so the list is kept from the compose that searched.
+- **`setTarget(bytes | clip | null, { tonic, name })`** decodes here (`readClip`, exported; midi.js' own errors), sets the input and composes (`compose(…, { target })` through the runner). A file that won't decode leaves the entry untouched and answers `{ ok: false, error }`. `null` clears the target and composes an ordinary composition at once.
+- **`setTargetTonic(pc | null)`** drops the placement and the list, and composes (placed again: the drift path and the root follow the tonic, P5).
+- **Placement auditions:** `auditionPlacement(i)` composes with `list[i]` given (no search) and, when it was playing, plays it again from the top; auditions in a row are one. `keepPlacement()` makes it the entry's (`input.target.placement`; the best kept is no placement, the search's own). `revertPlacement()` puts the entry back exactly as it was before the first audition (the spec object, the trace, the parts, the edits and stacks, the pins, the tempo) with no re-compose, and plays on if it was playing. `placementAudition()` → `{ index, from } | null`. An input change (`touch`) keeps an open audition.
+- **Tempo (decided 1/4):** a target compose seeds `state.tempoBpm` from `spec.target.tempoBpm` (clamped to `TEMPO_LIMITS`); `seedTempo()` is that seed (the spec's own tempo without a target), and Reset goes back to it. The player's factor is still the spec's natural tempo over the playback tempo, so the loop plays at the clip's own tempo.
+- **P6:** `alternatesOf(bar, 'lead')` is null on a target spec and `swapLead` throws ("the lead is the clip"). Chord swaps, the typed field and the drums work as usual.
+- **The knobs a target sets itself** (`TARGET_SETS` ∩ the knobs: bars, slots per bar, anchors, settle passes, presence) are left out of a target's compose (core refuses them), and `progressionBars()` is the clip's B.
+- **Where it runs (P7):** with `target`, the search runs inside `compose`, so it runs where Compose runs. The page's default table is full, so the worker. On the lean table, a target compose of a row past `mainThreadOnsets` (`onsetCount`, no row built) goes to the worker anyway, with `overrides.table` kept lean.
+- **The runner** (`compose-runner.js`) passes `target` both ways; the worker needed nothing new (it hands its options to `compose` whole).
+
+**2. The window** (B2; `page/composer-tab.js`, the pure `page/target-lines.js`, `page/tab-controller.js`).
+- **The control,** under the header: "MIDI clip", Choose a .mid… (a hidden file input, `.mid,.midi`), and a drop anywhere on the window (the left half or the inspector; the left half lights while a file is over it). While the tab is shown, a file dropped just outside the window is caught so the page never navigates to it. With no rhythm on the page, Choose is disabled and a clip is refused ("Generate a rhythm…").
+- **The decode line** (`decodeLine`): name (a nameless track takes the file's name), "4/4 on eighths (8 a bar)", bars, notes, "tonic F# minor (estimated, r 0.57)" or "tonic D (asked; …)", the clip's BPM; amber "chords reduced to their top note: n notes dropped" (P1) and "unquantized: the grid is a guess (off by up to x of a quarter)".
+- **The tonic** (P5): a select, "auto (F# minor)" then the 12 classes; a pick re-places and composes.
+- **The fit line** (`fitLine`): "8/15 notes hit" (amber unless all), "4 tight", "11/11 note-offs on onsets (n late)", "whole cycle" or "window: 4 of 5 bars, from 0.075 of the cycle", amber "3 substituted (2 off the frame, 1 a slot over)", red "4 silent", "the lattice drifts 6.4¢ over 2 phrases", red "the row can't play A" (decided 5). Shown once the target's compose has landed.
+- **The placements:** a chip per placement ("best · 8/15", "#2 · 9/15"…, where it sits, tight, substitutes, silent, drift; its lattice path in the tooltip), the current one outlined. A first click auditions it, a second click or Keep keeps it, Esc or Revert takes it back; the line under them says which is being heard.
+- **Clear** drops the clip and composes nothing: the entry goes dirty, and the next Compose is an ordinary one (Avery, 2026-10-26; it composed at once as first built). **Errors** in plain words (`targetError`): not a MIDI file, cut short, SMPTE, a format past 1, no notes, a time signature the grid can't hold. A refusal (a grid too fine for a line, `targetGrid`; too few tones) is said by the refusal line (`readouts.js refusalText` words `targetGrid` now).
+- The readouts add "clip ode-to-joy · 8/15 hit · 108.0 BPM", and the tempo readout says "(the loop as composed)" on a target. Reset's tooltip says "back to the clip's own tempo".
+- The Lines and Harmony knobs the clip sets are disabled, "chose 4 · the clip's".
+
+**3. The matrix** (B3; `page/matrix.js`, CSS).
+- **The lead row is the clip:** a dot per clip note, silent ones too. Its height is the clip's own MIDI pitch (the row's pitch can't place a silent note); x is the note's own time (a note sounding before slot 0's anchor, at the loop's end, is drawn at its slot).
+- **Marks:** amber ring for a substitute (fringe, shift); hollow red for a hard miss (silent: no onset, nothing lit on the plot); an amber tail for a late note-off. The cell's title counts them. No badge (no lead alternates).
+- **The lead's context** (the inspector) lists the phrase's clip notes: name and octave, bar.step, kind, the ratio it plays, its deviation, "late off"; the phrase's lattice (ψ, lane, the tonic's cents, the drift). It says the lead has no alternates and points at the placements.
+
+**4. The plot, the lens, the strips** (B4; `page/plot-highlights.js`, `page/plot-overlay.js`).
+- The lead's lit nodes are the clip's sounding nodes (hits and substitutes), with no change of the overlay: they are the lead part's notes.
+- **The window playhead:** `highlightsOf` carries `share` (`loopShare(spec)`: the loop over the row's cycle, 1 without a window), and `playheadAt(plot, phaseX, p, share)` maps the loop's p to phase + p × share on the full-cycle plot. The overlay's frame passes it, so the tab's and the lens's playheads both walk the window. The matrix's own playhead already ran over the loop's bars.
+- The glyph's recall plays the cached target composition with no re-solve; Play/Stop (the one transport) plays and stops it; the part strips and the Scale readout read it as any composition.
+
+**5. Tests:** `tests/assert-page-target.mjs` (61 checks): B1–B4 over the DOM stub and the site's composite rhythm, plus a big row (4099:4093:4091:4079) through a mocked worker and the lean table past `MAIN_THREAD_ONSETS`. Every suite passes.
+
+**Calls beyond the order (proposed):**
+1. **A new clip (or Clear) clears the pins, the typed field, the edits and the drum grid:** they were another meter's bars. The tonic and the placements keep them (the same clip, the same bars).
+2. ~~**Clear composes at once**~~ — overruled by Avery (2026-10-26): Clear composes nothing; Compose waits.
+3. **A placement audition plays from the top,** not at the next bar boundary: another placement can change the loop's length (N), and it is a whole compose (~0.1–0.6 s). Revert restores the entry without composing.
+4. **The best kept is no placement in the input,** so a later compose searches again (deterministic: the same best). An alternate kept is given on every later compose (no search).
+5. **A frame (±¢) change or new layers drop a kept placement** and the list (the frame decides what is in tune; the placement is the row's). **A new cycle of the same row carries** the clip, the tonic, the placement and the list (a placement's phase is a share of the cycle).
+6. **The lean table past `MAIN_THREAD_ONSETS`** goes to the worker for a target compose (P7's reading), its table kept lean (`overrides.table`).
+7. **The one core change:** `chord-symbols.js` `barMaterials` takes `{ cells }`, so the typed field reads a window's cropped cells (`materialsOf`'s) rather than rebuilding uncropped ones from the knobs. Identity and every suite unaffected.
+8. **No "show the work" animation on a clip's compose** from the control (the Compose button and the glyph still animate theirs). A target's trace builds a scene without errors (checked in Node, not in the suite).
+9. **The lead row's dots by the clip's pitch,** not the sounding pitch (so a silent note has a height).
+10. **A decode error changes nothing;** a refusal is the refusal line's (the control doesn't repeat it).
+
+**Follow-ups:**
+1. **The drums cut 4 beats a bar** (phase A): 3/4 (Greensleeves) and 6/8 are not honoured there.
+2. **The animation's drum bars on a window:** `trace-frames.js` places drum strokes in bars with `trace.cycleSeconds` (the loop), while a window's positions are shares of the row's cycle; the per-bar flashes can land a bar off. The trace would need the row's cycle (a one-field core change).
+3. **Chord names stay relative to C** (phase A's call 7): "Am" beside "the row can't play A" reads oddly. Naming from the clip's tonic is open.
+4. **The lab has no clip control** (the controller has it all).
+5. **Rows with no full fit** search every N (~1 s on 2047:2048), in the worker.
+6. **JSON export** carries `spec.target` whole (the clip and the placement).
+
+**Open, for Avery:**
+1. **Audition from the top** (built), or at the next bar boundary when the loop's length doesn't change?
+2. **Clearing the pins on a new clip** (built), or keep a typed progression across clips?
+3. **Clear** composes at once, or goes back to Compose and waits? **Ruled (Avery, 2026-10-26): it waits.**
+
+## Arp mode (phase B core; built 2026-10-27, branch `arp/core`)
+
+`COMP_ARP_ORDER.md`, step B1: `core/arp.js`, `arrangeArp(spec, materials, partId, { pattern, rate, range, legato })` with `partId` the lead or the inner. Like the drums, it's an arrangement over a finished spec and its materials (`materialsOf`): no re-compose, no DP, one pass over the onsets and one over the steps. Compose's own output (Line) is untouched, so every identity fixture holds. The result is the part as the spec has it (`partOf`'s shape, so it replaces `spec.parts[i]`), plus `arp` (the options and the stats) and `line` (the Line part, kept silent; `lineOf` gives it back, and arranging an arp part again starts from it).
+
+- **Steps (decided 3, Q2):** each slot is cut into `rate` equal windows of its time (1–4, default 2). A step's candidates are the onsets whose time falls in it and whose tone is a chord tone of the slot's chord: the span's chord in a chart's split bar. A step with none rests.
+- **The ladder and the patterns (Q3):** the chord's classes stacked close from the part's floor, over `range` octaves (1–3, default 2). Each step takes the candidate whose rung is next in the pattern's direction from the last note's rung. "Next" means more than half a semitone away, so a new chord's near-same rung doesn't count as a move. **Up** takes the nearest rung above and wraps to the step's lowest. **Down** mirrors it. **Up-down** turns where nothing lies ahead, and keeps its direction when nothing lies either way. **As played** takes the step's earliest candidate, on the rung of its class nearest the last note. Ties on a rung go to the earliest onset.
+- **The floor (proposed):** the lead's is its line's median pitch less half the ladder (median − 600 × range), so the arp's median sits on the line's (within 0–152¢ on the test rows). The inner's is the lead's floor less an octave (`REGISTER.inner`). With no lead notes, the median comes from baseHz.
+- **The inner (Q4):** never on the lead's onsets, and it rests on a step where a lead onset falls unless the rate is 3 or more. It reads the lead as the spec has it, so over an arp lead it avoids the arp's onsets (Q5).
+- **The lead (Q5):** arranged over the final chords; a MIDI target's lead is refused (`arpRefusal(spec, partId)` gives the reason, for B2's greyed switch).
+- **Lengths and velocity (Q6):** `articulate`, with each note's `slotSeconds` set to the step's seconds. Legato off: a note lasts its step (or the gap to the next note, if shorter). On: it holds to the next note. So `rearticulate`, a live legato or sound toggle, keeps the arp's lengths. Velocity is the part's, +0.1 on a slot's first step. hz is `partOf`'s.
+- **Stats** (`part.arp.stats`): floor, steps, notes, rests, chordSteps (steps holding a chord tone), chordShare, and the inner's restsForLead.
+- **Measured, at the defaults (seed 1):**
+
+  | row | inner | lead |
+  |---|---|---|
+  | 8:7:6:5 | 5 notes, 7/12 rests, 50% | 7 notes, 5/12 rests, 58% |
+  | 19:17:16:15 | 13 notes, 19/32 rests, 44% | 17 notes, 15/32 rests, 53% |
+  | 768:784 | 47 notes, 17/64 rests (all for the lead), 100% | 64 notes, no rests, 100% |
+  | 4099:4093:4091:4079 | 107 notes, 21/128 rests (all for the lead), 100% | 128 notes, no rests, 100% |
+
+  The percentage is the share of steps holding a chord tone. arrangeArp alone takes about 2.5 ms on the 16k row and under 0.3 ms on the others. Small rows rest a lot at rate 2: a half slot of a 22-onset row often holds no chord tone.
+- **Tests:** `tests/assert-arp.mjs` runs 8 rows × both parts × 4 patterns × rates 1–4 × ranges 1–3, with legato on and off. It checks every note's onset, step, class, rung and range, the shape against each step's candidates, the rests and stats, hz, velocity and lengths. It also covers the inner over a Line lead and an arp lead, a chart's split bar, a target (the lead refused; the inner inside three windows), determinism, Back to Line, the options, and the 16k row's time.
+
+**For B2:** the store keeps a part's mode and options (Q7). The controller replaces `spec.parts[i]` with `arrangeArp(...)` and restores it with `lineOf`. After any rebuild of the lead (a lead swap) or the chords (a chord swap, a re-compose), it re-arranges: rearrange the Line part, then the arp over it. An inner arp also re-arranges when the lead changes mode. The drums' *with* mode reads the lead's notes, so they re-arrange too. The order's default inner sound (harp, Q4) is the controller's to set; `arrangeArp` keeps the part's sound.
+## Comping in chords (phase A core; built 2026-10-27, branch `comp/core`)
+
+`Composer/COMP_ARP_ORDER.md` steps A1, A2 and A5's core tests. Decisions 1 (strum, then borrow) and 2 (every strike a stroke) are Avery's, marked **decided** there; P1–P10 are the builder's proposals, built as written except where noted below. Nothing here has been heard. The MIDI zone (A3) and the plot's rings and the inspector line (A4) are later steps.
+
+**The rule** (`core/compose.js`, `compChordsOfBar`, `strumOf`):
+- **Strokes (P1, decided 2).** Every slot the comp layer strikes is a stroke, at its first strike there. A bar or span with no strike is struck once on its root onset, as before. The stroke's own onset sounds only when its tone is a chord tone; otherwise it only sets the moment.
+- **The strum (P3, decided 1).** For each chord class, the class's onset nearest the stroke within ±¼ of the stroke's slot wins. Ties go to the most strikes, then the earliest. Each tone sounds at its own time. The window never leaves the stroke's bar, or its span in a chart's split bar, and the chord is that span's.
+- **Borrowed tones (P4).** A class missing from the window takes the bar's chord voice of that class (`chordVoicesOfBar`). It sounds at the stroke's onset and time with the voice's tone, marked `borrowed: true, from: <the voice's onset>`. If the chords part has no voice of that class either, the class is left out.
+- **Voicing (P5).** One voice per class, root first, at most 4, stacked close from an octave under the root (as the chord voices are). A note's `voice` is its class's index.
+- **Velocity (P7).** The stroke's own onset is 0.55, plus 0.1 for each extra layer striking it. The strum's other tones are 0.5, borrowed tones 0.45.
+- **Lengths (P6).** Each tone carries `holdTo`: the next stroke's time, or the span's end for the span's last stroke. `articulate` holds a note no further than that (and no further than its voice's next note). Legato off (the default): the shorter of that and the note's slot. On: all of it. `rearticulate` (the live legato toggle) groups the comp by voice and gives Compose's own lengths.
+- **The layer (P2).** The score has four parts, averaged over the bars. (1) The share of the bar's slots struck: 1 between 25 % and 60 %, falling to 0 at none and at every slot. (2) A straight or triplet count of strokes to the bar. (3) A stroke in every bar. (4) The strum's coverage: the share of the chord voices' classes found in the window rather than borrowed. `compLayer` still picks a layer by hand.
+- **The spec (P8).** Comp notes gain `voice`, `holdTo`, and `borrowed` and `from` where they apply. The comp part gains `strokes`: `[{ node, tick, time, bar, slot }]`, one a stroke. `stats.compStrum` is the share of the comp's tones found unborrowed. Two new decisions: `compStyle` and `compStrum` (the layer, its strokes and that share).
+- **`compStyle` (P9).** `overrides.compStyle: 'notes'` is the old one-note comp, byte for byte (no `strokes`, voices, `compStrum` or new decisions). `'chords'` is the default.
+
+**The probe's numbers, now** (seed 1; strokes, the comp's tones, the share found in the row, the strokes with no borrowed tone, and the old comp's notes for comparison):
+
+| row | onsets | meter | strokes | tones | from the row | pure strokes | old comp notes |
+|---|--:|---|---|--:|--:|--:|---|
+| 8:7:6:5 | 22 | 2×3 | 6 (layer B) | 15 | 60 % | 2/6 | 3 (layer A) |
+| 11:9:7:5 | 29 | 2×4 | 5 (D) | 15 | 27 % | 0/5 | 3 (A) |
+| 19:17:16:15 (3 s) | 64 | 1×8 | 8 (A) | 24 | 50 % | 1/8 | 3 (A) |
+| 16:12:9 | 30 | 2×4 | 8 (C) | 24 | 50 % | 0/8 | 7 (C) |
+| 119:42:15:8 | 172 | 4×8 | 15 (C) | 45 | 44 % | 0/15 | 6 (C) |
+| 426:317:285 | 1,024 | 4×8 | 32 (C) | 96 | 47 % | 1/32 | 5 (C) |
+| 768:769 | 1,536 | 4×8 | 32 (A) | 96 | 26 % | 0/32 | 5 (A) |
+| 768:784 | 1,536 | 4×8 | 32 (A) | 120 | 87 % | 16/32 | 16 (B) |
+| 4099:4093:4091:4079 | 16,359 | 8×8 | 64 (A) | 232 | 94 % | 51/64 | 8 (A) |
+
+On the 16k row, scoring every layer and building the bars takes about 10 ms. Compose's lean time is unchanged (about 0.53–0.59 s on a quiet machine, chords or notes).
+
+**Edits and the drums (A2, P9, P10).**
+- `rearrange.js` reads the style from the spec's comp part (`strokes` present means chords). A chord swap rebuilds the bar's strokes, strum and borrowed tones over the new chord, so a borrowed tone follows the new chord's voices. `builderNotes` keeps `voice`, `velocity`, `holdTo`, `borrowed` and `from`, and a borrowed tone keeps its source's tone. `stats.compStrum` is recounted. Every bar swapped to its own chord still gives the spec byte for byte.
+- The store and the controller pass whole specs and parts through `rearrange`, `applyRearrange` and `rearticulate`, so the fields survive. A JSON round trip of the spec rearranges the same (tested).
+- **The drums** read the comp's `strokes` (one a slot) in *with* and *against*, not the strum's tones (`drums.js`). Without `strokes` (notes), the expression is the one it was.
+
+**The frozen fixtures, kept.** No fixture or hash was edited. The tests that compare against them now compose with `compStyle: 'notes'` and delete the override from the spec's input before comparing:
+- `assert-refactor-identity.mjs`: the live call, plus the override list in the bad-override error (", compStyle" taken back out)
+- `settle-baseline.mjs`'s cases, in `assert-compose.mjs`, `assert-trace.mjs` and `assert-progression.mjs`
+- `assert-chord-symbols.mjs`: the b69a39e ratio hashes
+- `assert-drum-grid.mjs`: the `drums-baseline.mjs` cases
+
+`assert-drum-grid.mjs`'s fidelity specs also run with `'notes'`. Under chords, *with* → grid → re-landed loses one stroke to a merge on 19:17:16:15 at 8×6 (25 → 24: two strokes land on one place). `assert-composer-midi.mjs` runs with `'notes'` until A3 makes the Comp bus a zone of four, because the chords' strums would stack on its one channel.
+
+The invariant audits learned the new note. A borrowed tone's ratio is its `from`'s, and the comp's strokes, not its notes, are the layer's strikes. These audits are in `assert-compose`, `assert-progression`, `assert-rearrange`, `assert-chart`, `assert-drums` and Cosmos's `assert-compose-dust`.
+
+**Calls beyond the order (proposed):**
+1. **The window stays inside the bar** in a plain bar too, not only a span. A window crossing a bar line would mix chords and retunes, and near the downbeat it would wrap around the cycle.
+2. **A borrowed tone sounds on the stroke's onset** (`node`, `tick` and `time` are the stroke's). Its tone and ratio are the source voice's (`from`). So time, tick, slot and bar always agree with `node`; only the ratio comes from `from`.
+3. **`strokes` on the part,** so the drums read the strokes exactly. A stroke whose own tone isn't a chord tone has no note of its own.
+4. **The strum's score part counts only classes the chord voices have.** A class with no voice can be neither found nor borrowed.
+
+**Open, for Avery:**
+1. **On dense rows every layer strikes every slot** (768:769, 768:784, 426:317:285, the 16k row: 32/32 or 64/64 strokes). P2's density part is then 0 for every layer, and the comp is a chord on every slot, a pulse. Should comping thin itself there: a stroke every other slot, or a layer's own period over the slots?
+2. **Small rows borrow most of the chord** (11:9:7:5 27 %, 768:769 26 % from the row). Borrowed tones sound at the stroke's moment, so these comps are near-block chords. That is ruling 1 as decided, flagged only because it is audible.
+3. **The default change moves the drums' *with* and *against*** (the strokes are denser now). Their baselines stay frozen by running with `'notes'`, as P9 proposed.
+
+## Comping and Arp in the window (A3–A4, B2–B4; built 2026-10-27, branch `ui/comp-arp`)
+
+`COMP_ARP_ORDER.md` steps A3, A4, B2, B3 and B4, on the two cores above (no core compose rule changed; Compose's output is the same). Nothing here has been heard or seen in a browser.
+
+**A3: the Comp bus is an MPE zone of four** (`perform/composer-midi.js`, P11).
+- `ZONE_MEMBERS = { chords, comp }` generalises `CHORD_MEMBERS`: `COMP_MEMBERS` is channels 2–5, one comp voice a channel by its `voice` (its chord class's index), master channel 1. `channelOf`, `midiNotesOf`'s lanes, `setupBytes` (RPN 6 = 4 on the master, RPN 0 on each member), `allOff`'s channels and the .mid file's Comp track all follow. So `CLEAN_MIDI_ORDER.md`'s routing table is out of date on one row: Comp is no longer "a zone of one".
+- The old one-note comp (`compStyle: 'notes'`, no `voice`) plays on channel 2 of that zone.
+- The player's chains (`composer-player.js` `chainsOf`) lane the comp by voice too, as the chords are. Without that, a comp in chords with legato on would chain one voice's held note into another's.
+- A borrowed tone's pitch is its own `hz` (the source voice's tone, set by compose.js), and the sender reads only `n.hz`. The test checks it on borrowed tones whose onset has another tone.
+- `assert-composer-midi.mjs` no longer pins `compStyle: 'notes'`. It checks the comp's zone on the sink and in the file, its voices on 2–5 (more than one used), no channel holding two notes, the borrowed tones' hz, and the old comp on channel 2.
+
+**A4: the plot, the matrix, the inspector, the trace** (P12).
+- `plot-highlights.js`: a borrowed tone lights its **source** onset (`from`, found by the chord voice's tick: `sourceTicks`, `litTickOf`) as a ring. The lane gains `rings` (sources the part doesn't otherwise light), and its lit note is marked `ring`. `drawLitPart` draws rings hollow in the part's colour. The cell focus (`tab.cellFocus`) carries `rings` too, so a selected comp cell rings its sources. `soundingAt` glows the source while the borrowed tone sounds.
+- The Compose animation (`trace-frames.js`): a part's cascade leaves ring notes out, and they appear when the part has landed (the final frame is exactly the highlights, rings and all).
+- The matrix: a borrowed dot is hollow, a ring in the part's colour (`.ctab-dot.borrowed`), as a clip's substitutes are ringed. In Details' notes table its ratio is italic, and its title says so.
+- The comp cell's inspector line: `matrix.js` `compLine` gives "7 strokes · 82% from the row", the share behind Details (`ctab-detail`). Its title gives the counts.
+- The trace's `part` event already carried each note's `voice`. I added nothing there: the animation reads the lit notes, not the event's. `assert-page-matrix.mjs` checks that the comp event carries a voice on every note.
+
+**B2: the controller and the store** (Q5, Q7).
+- **Stored:** `state.arps = { lead, inner }`, each `{ mode: 'line' | 'arp', pattern, rate, range }` (`store/composition-store.js` `lineArps`). The knobs are kept while the part is in Line, so Arp comes back as it was. The arps are in the undo snapshots (`composition-edits.js`) and in the placement audition's snapshot. They are carried to a new cycle of the same row (proposed, as the drum options are).
+- **How it plays:** `state.spec` is composed + edits in Line (the fold, as before), then the arps over it (`arrangeArp`, the lead first so the inner hears the lead as it sounds), then the drums over that. Every rebuild therefore goes through the same order: a chord swap, a lead swap, an undo, a redo or a re-compose rebuilds the Line part, then re-arps it from the fresh line. An inner arp follows a change of the lead's mode, and the drums' *with* hears an arp lead. `state.composed` never plays the arps.
+- **Live:** `setArp(part, { mode, pattern, rate, range })` is one undo step through the same `edit()` door as a swap. The fold's steps are cached, so only the arps and the drums are rebuilt. `arpOf(part)` returns `{ mode, pattern, rate, range, playing, refusal, stats }`. Before any Compose it is only kept; the Compose arranges it as it lands.
+- **Big rows:** past `MAIN_THREAD_ONSETS` the arps go to the module worker (`runCompose.arp`, compose-worker's `answerArp`), from the same kept materials as its edits. Everything else arranges on the main thread: arrangeArp is about 2.5 ms on the 16k row.
+- **Q5:** while the lead is an arp, `alternatesOf(bar, 'lead')` is null, so the runner-ups and the badge are hidden. `swapLead` still works under it, since it swaps the line the arp is built from; the window just doesn't offer it. On a MIDI target, `arpRefusal` refuses the lead's Arp (`setArp` → `{ ok: false, error }`). Setting a clip also puts the lead back in Line (proposed), so it doesn't come back silently after Clear. The inner's Arp works on a target (inside the window).
+- **Q4, the sound:** an inner arp's own sound is the harp (`INNER_ARP_SOUND`). To keep a sound the user chose, `settleState` now carries a part's sound through a rebuild only where it differs from the spec's own part's sound. Legato and on/off always carry, as before. So switching the inner to Arp gives the harp, Line gives back its own sound, and a sound picked by hand stays in both modes. For every edit that existed before, this is the same as it was, because a rebuild never changed a part's own sound.
+- `editsExport` (JSON) gains `arps` when a part is in Arp. The spec's arp parts carry `arp` (the options and stats) and `line` (the silent line), as arrangeArp returns them.
+
+**B3: the window** (Q8).
+- The lead's and the inner's cell inspectors open on a **Line | Arp** pair. With Arp on, Pattern (Up, Down, Up-down, As played), Rate ("1–4 a slot") and Range ("1–3 oct") sit on the same row, as small selects.
+- Details adds "50 rests of 64 · 27% of steps on a chord tone"; its title gives the notes and the rests for the lead.
+- An arp lead's context is just the switch, the knobs and "Line brings the melody back, and its runner-ups". An arp inner hides "smooth the phrase", and its tag says arp.
+- On a target, the lead's (clip) context shows the switch disabled. Its title, and each button's, is arpRefusal's text.
+- The matrix's lane name and the Playback div's part strip read "Lead · arp" / "Inner · arp".
+- The tab stylesheet's `?v=` (20261027.3) and the bridge's (20261027) are bumped in `index.html`.
+
+**B4: the tests.** `assert-page-arp.mjs` (37 checks) covers:
+- the switch in both inspectors, Line by default
+- Arp live with no Compose, exactly arrangeArp over the spec in Line
+- the harp, and a chosen sound winning over it
+- each knob through its select, each one undo step
+- undo and redo through the header's buttons
+- an arp lead hiding its runner-ups, re-arranging the inner off its onsets and the drums' *with*
+- Back to Line restoring the melody byte for byte
+- a chord swap: the Line parts equal to `rearrange`'s, and the arps over them on the new chord's tones
+- a re-compose (same seed) keeping the modes
+- the glyph's recall with no Compose, and the strips' "· arp"
+- a target: the lead put back in Line, its switch disabled with arpRefusal's title, setArp refused, the inner free
+- the worker path (the same parts as on the main thread, and a re-compose re-arping there before it lands)
+
+A4's checks are in `assert-page-highlights.mjs` (rings, the hollow draw) and `assert-page-matrix.mjs` (the hollow dots, the comp line, the focus rings, the trace's voices).
+
+**Not verifiable in Node (for Avery's pass):**
+- what the rings look like on the plot (radius r − 0.75, hollow), and whether they read as "borrowed" next to the selected part's outer ring
+- how the switch and selects fit in the inspector at narrow widths
+- the harp under the lead
+- whether the inner's arp at rate 2 on small rows rests so much it sounds broken (41:42:43 at 4 × 8: 50 of 64 steps rest)
+- the Comp zone on a real MPE track (Ableton's MPE input on the Comp bus, now channels 2–5)
+
+## Mined arps (Amendment 1, phase D core)
+
+`COMP_ARP_ORDER.md`, Amendment 1, M1–M7 (built 2026-10-27, branch `arp/mined`). `core/arp.js` is rewritten: `arrangeArp(spec, materials, partId, { time, picks, legato })` mines the arp with chunk-lines' `arp` line type instead of walking a ladder (decided 7). It's still an arrangement over a finished spec, live, with no re-compose, and Compose's own output is unchanged. B1's walk survives only as the fallback. The part keeps B1's contract: `partOf`'s shape, `line` (`lineOf`), `arpRefusal`, and `arp`, which now holds `{ time, picks, legato, stats, phrases }`.
+
+- **The anchors (M1):** `buildCells(row, { bars, slotsPerBar: S × time, anchors, phase })` with the spec's own anchors mode and phase (a MIDI target's cut cropped as `materialsOf` crops it), for time 1, 2 or 3. Each anchor's window is buildCells' own (about 12 onsets). The cells are kept per time in a WeakMap against the materials' cells; time 1 is the spec's own cells. A time whose S × time passes 32 anchors a phrase (a chart at 12 or 16 slots a bar) runs at the largest that fits (`arpTimes(spec)`; `stats.time` says which ran, and the window greys the others). Proposed.
+- **The chords (M1):** `rearrange.js` gains `chordRecordsOf(spec, row, cells)`, a thin export at the file's end over its own `walkChords`. So the records carry the modulation offsets walked from bar 1 and a chart's spans, exactly as a rearrange rebuilds them (the test checks them against `spec.chords`, the 16k row's two modulations included). A span's slots are scaled by the time, and the targets are `targetsOf` over them.
+- **Mining (M1):** each phrase is `phrasesOf` over the S × time cells (≤ 32 anchors), mined with `ARP_TYPE`: chunk-lines' arp type with a second band, "few rests" (60–95 % of the anchors, `maxGap` 2), beside its "no rests". That's 5 contours × 2 bands, so at most 10 distinct lines a phrase. The miner's rules hold, so a note is a chord tone, a parent-scale tone, or a foreign tone on a weak anchor resolving by step (never last). An arp is not chord tones only: on the test rows 33–100 % of the notes are (below).
+- **Ranking and picks (M2):** "no rests" first, then "few rests", then cost per note. Each phrase keeps 10 alternates, `{ id, contour, band, n, perNote, chordTones, notes: [{ step, node, octave }] }`. `picks: { [phrase]: id }` plays another; the default is the first. A pick the phrase doesn't offer (its chords changed, or it was walked) falls back to the first, recorded as `missed`.
+- **Register and the inner (M3):** the lead's range starts 600¢ under its line's median, so the contour's octave is centred on it. The inner's starts an octave lower. The inner never takes the lead's onsets (`avoidNodes`) and pays `weights.avoid` 0.6 (innerOf's price) on an anchor whose window holds a lead onset (`avoidSlots` on the S × time grid). Over a dense arp lead that's every anchor, so the price stops discriminating, and the inner loses whole tones where the lead holds a window's only onset of them. That's the lattice's one-node-per-tone rule. On small rows the inner is then often walked.
+- **The fallback (M4):** a phrase with nothing mined is walked: B1's ladder in 'played', `time` steps a slot over its spec slots (2 octaves from 1200¢ under the line median; the inner an octave lower, off the lead and, below 3 a slot, resting where it strikes). It's marked `walked`. `stats` = `{ time, phrases, mined, walked, anchors, notes, rests, chordTones, chordShare, (inner) onLead }`.
+- **Knobs (M5):** time, picks, legato. Pattern, rate and range are gone (a mined arp lives in the type's own range). In the window, a Time select (×1, ×2, ×3) replaces Pattern, Rate and Range, and Details reads "N rests of M · P% chord tones · K of L phrases mined". The store's `arps[part]` is `{ mode, time, picks }`. `setArp(part, { mode, time, picks })` is one undo step, and `arpOf` adds `times` and `phrases` (for phase E's picker). There's no alternates UI yet: that's phase E.
+- **Velocity (proposed):** the part's, +0.1 on a note at a strong beat's anchor (the bar's downbeat or middle on the spec's grid). Q6's "a slot's first step" would accent every note at ×1. Lengths are B1's (`slotSeconds` the anchor's span).
+
+**M6, why 768:769 mined nothing.** It isn't a porting bug: chunk-lines has the same rule. The miner calls a slot *weak* (a foreign tone may pass there) when its strikes are under the phrase's median. 768:769 is struck evenly: every slot has 48 strikes (slot 0 has 49), so none is under the median, and every foreign tone is barred everywhere. Its 384 tones fill the octave, so ~70 % sit outside every ±15¢ frame (115 of 384 are inside F's). Each 12-onset window holds two narrow bands of pitch, so 8 of the 32 anchors at ×1 hold no in-frame scale tone. Two such anchors in a row break the bands' `maxGap` (1 and 2). **The fix:** `lines.js` gains an opt-in `weakTies` (`buildLattice`, `mineLines`): an anchor tied at the median and off the bar's strong beats is weak too. Absent, nothing changes, so Compose's lines and every fixture are untouched. `arrangeArp` mines each phrase without it first, and only a phrase that mines nothing is mined again with it (`phrase.weakTies`). Mining with it everywhere doubled the 16k row's time (×3: ~80 ms a part) and changed rows that didn't need it. 768:769 now mines ×1 (lead), ×2 (both) and half of ×3. The rest is walked. Its arps are 33–58 % chord tones.
+
+**Measured (seed 1; arps a phrase, W = walked; chord tones' share; ms a part, warm):**
+
+| row | ×1 inner / lead | ×2 inner / lead | ×3 inner / lead |
+|---|---|---|---|
+| 8:7:6:5 | [5] 100 % / [5] 100 % | W / W | W / W |
+| 19:17:16:15 | [8] 69 % / [9] 88 % | [5] 65 % / [4] 80 % | W W / W W |
+| 768:769 | W / [5] 55 %, ~12 ms | [5 5] 33 % / 40 %, ~30 ms | [5 W W 5] 51 % / 58 %, ~35 ms |
+| 768:784 | [10] 88 % / 88 %, ~8 ms | [10 10] 94 %, ~9 ms | [10 ×4] 89 %, ~12–16 ms |
+| 119:42:15:8 | [8] 78 % / [9] 88 % | [7 3] 77 % / [7 7] 83 % | [4 6 1 1] 69 % / [6 6 3 3] 77 % |
+| 4099:4093:4091:4079 | [10 10] 69 % / 73 %, ~23 ms | [5 5 10 5] 76 % / 80 %, ~38 ms | [5 10 10 W 10 10 10 5] 67 % / 66 %, ~54 ms |
+
+The small rows take under 4 ms. The 16k row's walked phrase at ×3 is bar 4, the first modulation: its last two anchors hold only foreign tones, and a line may not end on one. M7: the 16k row (16,359 onsets) stays on the main thread under `MAIN_THREAD_ONSETS` (32,768), so lead and inner together at ×3 are ~110 ms there. The planner's ~40 ms was measured with modulation off.
+
+**Tests:** `assert-arp.mjs` is rewritten. Over 8 rows × both parts × ×1–×3 (legato on and off at ×2), every mined note is a real onset inside its anchor's window on the test's own S × time cells, at its own time, one a window. Its class under the anchor's chord is a chord tone, a parent-scale tone, or a foreign tone resolved by step. hz, velocity and lengths are checked, and the part plays the picked alternate. Each walked phrase is exactly B1's 'played' steps, and the stats are recounted. It also covers `chordRecordsOf` against the spec's chords; the ranking ("no rests" over cheaper "few rests" in 38 of 64 mined phrases); picks and a missed pick; the fallback marked; 768:769's weak ties; the inner over a Line lead and an arp lead; register; a chart's split bar and a 16-slot chart's ×3 → ×2; a target's lead refused and its inner in three windows; determinism and Back to Line; the options; and ×1–×3 on the 16k row (each part under 150 ms). `assert-page-arp.mjs` follows the knobs: the Time select, a pick through `setArp`, and undo through them.
+## The clave (Amendment 1, phase C core; built 2026-10-27, branch `clave/core`)
+
+`Composer/COMP_ARP_ORDER.md` Amendment 1, phase C: R1–R5. Decisions 5 (the clave is mined from the row and is the comp's authority) and 6 (Sync by default, Fill a switch) are Avery's. R1–R5 are the builder's proposals, built as written except where noted below. Nothing here has been heard. The window (the clave picker, Sync | Fill) is Phase E.
+
+**The port** (`core/claves.js`, R1). rhythm-claves.js (`readRhythm`, `layerTones`, `tonesOfPitchClasses`, `barSizes`, `toneSets`, `layerClaves`, `claveTable`) and chunk-comping.js (`COMP_RULES`, `claveOf`, `chunkClaves` as `rowClaves`, `scoreClave`, `compCandidates`, `clavePartners`), rule for rule, on the Composer's row. Where chunk-tunes is on the machine, `assert-claves.mjs` checks them against it on 32 rhythms: whole, meeting and 4-strike tables row for row, the pools, the rankings and the top claves' partners. It skips rows whose tones the kernel rounds (a denominator past 1000) and rows with a repeated layer value, which chunk-tunes reads as one layer twice. Four things are adapted:
+- **Recurrence.** chunk-tunes' `held` is the share of a chunk's rhythms that hold a clave. A composition is one rhythm, so that term is always 1 and says nothing. The Composer reads `held` as recurrence: the bars of the table that hold the clave, over the most any clave of the same step count holds (`compCandidates(pool, { held: 'bars' })`). Per step count, so short claves, which have more bars to recur in, don't win on that alone. The port's default is still chunk-tunes' `'rhythms'`.
+- **Size tiers.** 'meeting' finds nothing up to 16 strikes on a row whose layers share no small factor: 768:769, 768:784, 426:317:285 and the 16k row (a bar of 4099 strikes meets nothing short of the whole layer). Decided 5 says the clave transcends the numbers' scale, so `rankRowClaves` tries 'meeting', then 'whole' (every size that cuts a layer whole), then 'every' (each size 3–16, a clipped last bar left out). The first tier with a candidate wins. `claveTable` gains `sizes: 'every'` for it.
+- **Cost.** A dense row has thousands of tones a layer, so thousands of one-tone sets. A one-tone set is read from the bars' own strikes, and a coarse set (every tone but 1/1, a 12-step grid step) is keyed by bit mask, with the same rows in the same order. The test checks 40 tables and 69 claves' partners against a line-for-line reference. A tone that never sounds twice in a bar is skipped: it leaves no row.
+- **The superrow.** Its nodes are (tick, tone) pairs, so a layer's strike is its tick's first node.
+
+The curated claves are the drum patterns' perc lines: son and rumba (two bars of 8 steps, `span: 2`) and bossa's rim (16 steps). They're scored by the same rules: held by the row where their pattern is in the pool, else 0.
+
+**One clave a composition** (`compose.js`, R2). `chooseClave` takes the best ranked clave. Ties (scores within 1e-9) go by `seededRandom(`${seed}/clave`)`, a generator of the clave's own. Compose's generator still makes the draws the comp layer's ties took, one per active layer, so no sound or phase moves. With no mined candidate at all, the best curated clave wins the same way. Its partner, for Fill, is the best `clavePartners` at the winning tier, else `complementClave`: the clave's gaps, Euclid-thinned to its own onset count.
+- `spec.clave = { id, (name, label,) steps, span, pattern, onsets (its steps), score, terms: { held, density, fit }, bars (the table's bars holding it), from: { layer, name, size, set, row } | { pattern: 'son' } | { asked: true }, relation, strokes, silent, partner: { id, steps, span, pattern, onsets, source: 'partner' | 'complement', together?, strokes, silent, shared } }`. A stroke is `{ bar, step, place, node, tick, time, slot, snap }`; a partner stroke landed on one of the clave's onsets is marked `shared`.
+- Two new decisions, `clave` and `compRelation`, say what was chosen and why: the tier, the layer, cut and tone set it came from, the score's terms, the ties, how many steps landed, and the partner or complement.
+- `stats.clave = { id, relation, strokes, silent }` replaces `stats.compLayer` in chords (`compLayer` stays for `compStyle: 'notes'`).
+- The trace's comp `part` event carries `clave`, `partner`, `tier`, `asked` and `alternates`: the top 12 ranked, then the three curated, each `{ id, steps, span, pattern, onsets, score, terms, bars, from }`. It keeps `layer`, `value` and `candidates` (= `alternates`) so the page's trace frames still read it until Phase E.
+- New overrides: `clave` ('steps:pattern', or 'son' | 'rumba' | 'bossa') and `compRelation` ('sync', the default, | 'fill'). `compLayer` under chords, and `clave` or `compRelation` under notes, are refused with a message.
+
+**Laid on the bars** (`claves.js` `layClave`, R3). A pass of the clave a bar, or two for son and rumba. Step j of n sits at place j·S·span/n slots and is landed by `drums.js` `landPlace`: the drums' own landing, now exported, which `arrangeDrums`' strokes use too, byte for byte. The window is half-way to the neighbouring places of the clave's n-step grid, then one place wider, else the step is silent. It's clipped to the step's bar, or in a chart's split bar to the span its place falls in, so the stroke plays that span's chord. The comp strokes are the clave's landed onsets (Sync), or its partner's not on a clave onset (Fill), one a node. The strum, borrowed tones, voicing, velocities and lengths (P3–P7) are unchanged. A bar or span with no stroke is struck once on its root onset, as before.
+
+**The drums hear the clave** (`drums.js`, R4). In backbeat, with and against, the perc also plays the clave's landed strokes (`snap: 'clave'`, with its `step`), the pass's first onset accented, unless `drumOptions.perc: 'pattern'`. So the perc and the comp share anchors in Sync and hocket in Fill. with / against still read the comp's strokes. A clave finer than the slots may strike a slot twice, so they take the first stroke a slot. partition, the curated patterns, grid and prime keep their own perc. A `drums.perc` decision names it. The drums only read `spec.clave`, so a spec with none (`compStyle: 'notes'`) arranges exactly as before. That's what keeps `drums-baseline.mjs` byte-identical: its calls were already pinned to `compStyle: 'notes'`, and they needed no `perc: 'pattern'`.
+
+**What retired** (R5). The chords style's comp layer score (P2) and decision 2's every-strike strokes (`compStrokesOf`). `compChoicesOf` is the notes style's only, and `compChordsOfBar(ctx, c, k, strokes, range)` takes the stroke onsets in place of a layer. `compStyle: 'notes'` is the frozen core, unchanged.
+
+**Edits** (`rearrange.js`). A chord swap re-strums the bar's clave strokes (`compNodesOf(spec.clave, from, to)`) over the new chord, and its borrowed tones follow the new chord's voices. The clave, its strokes and the perc never move: they're pinned like the comp layer was. A bar the clave leaves empty is struck on the new chord's root onset. A spec with comp strokes but no `spec.clave` (composed before this phase) re-strums its own strokes.
+
+**On the probe rows** (seed 1). Clave, where it was found, its partner, and the comp in Sync and Fill: strokes, and the share of tones from the row.
+
+| row | meter | clave (layer / bar size, tone set; tier) | ties | partner | Sync | Fill |
+|---|---|---|--:|---|---|---|
+| 8:7:6:5 (4 s) | 2×3 | `4:.xx.` (A 8 / 4, 7/4; meeting) | 4 | `x..x` (complement) | 4, 40 % | 4, 50 % |
+| 11:9:7:5 (6 s) | 2×4 | `5:...xx` (D 5 / 5, 5/4; meeting) | 4 | `xx...` | 4, 8 % | 4, 33 % |
+| 19:17:16:15 (3 s) | 1×8 | `16:.......x....x.xx` (C 16 / 16, step 10; meeting) | 2 | `...x..x.........` | 4, 42 % | 2, 17 % |
+| 16:12:9 (4 s) | 2×4 | `8:...x...x` (A 16 / 8, 1/1; meeting) | 9 | `.xx..x..` | 4, 58 % | 6, 44 % |
+| 119:42:15:8 (8 s) | 4×8 | `8:...x..x.` (D 8 / 8, 4/3; meeting) | 3 | `xxx.x...` | 8, 33 % | 16, 38 % |
+| 426:317:285 (8 s) | 4×8 | `6:x..x..` (A 426 / 6, step 0; whole) | 1 | `..x..x` | 8, 58 % | 8, 54 % |
+| 768:769 (8 s) | 4×8 | `4:..xx` (A 768 / 4, step 0; whole) | 2 | `xx..` | 8, 33 % | 8, 29 % |
+| 768:784 (8 s) | 4×8 | `4:..xx` (B 784 / 4, rest; whole) | 2 | `xx..` | 8, 80 % | 8, 80 % |
+| 4099:4093:4091:4079 (16 s) | 8×8 | `4:..xx` (A 4099 / 4, step 0; every) | 3 | `xx..` | 16, 93 % | 16, 84 % |
+
+Every step landed on these rows. Phase A's every-strike comp struck 6, 8, 32 and 64 times on 8:7:6:5, 19:17:16:15, 768:784 and the 16k row. The clave strikes 2–4 times a bar on every row, whatever its density. On the dense rows the winners are short, bunched claves (`..xx`): their tones come in pairs, as two near-equal layers' strikes nearly coincide.
+
+**Timing** (the 16k row, this machine, the same session). Compose lean is ~625 ms before and ~685 ms after; full is ~1.65 s both (within noise). The clave's own cost is ~60 ms for the table (the 'every' tier) and ~8 ms for the partners. Laying it is under 1 ms.
+
+**The frozen fixtures, kept.** No fixture or hash was edited. The baselines already compose with `compStyle: 'notes'` (phase A), which has no clave, so they hold unchanged. The test edits for the new default:
+- `assert-refactor-identity.mjs` strips ", clave, compRelation" from the bad-override message, as it strips ", compStyle".
+- `assert-trace.mjs`: the "comp asked" case adds `compStyle: 'notes'` (its `compLayer` is notes-only). A new "clave asked, fill" case. The comp event is checked by its clave in chords.
+- `assert-compose.mjs`: the audit reads the clave's strokes. The decisions list names `compStyle`, `clave`, `compRelation` and `compStrum`. The `compLayer` checks pin `compStyle: 'notes'`. A `clave` + `compRelation` check.
+- `assert-comp.mjs`: the brute force takes its strokes from the clave. Overrides now include Fill and asked claves. The 16k cost is the bars on the clave's strokes. "768:784 mostly pure" is ≥ 75 % (it's 80 %). The *with* check reads each slot's first stroke, with `perc: 'pattern'`.
+- `assert-drums.mjs`: *with* / *against* are checked with `perc: 'pattern'`, plus a new check of the clave over each layered mode.
+- `assert-rearrange.mjs`: the pin is the clave (or the layer in notes), and the strokes the clave's.
+- `assert-page-matrix.mjs`: the comp layer pin is gone in chords. The page's `if (L)` guard simply doesn't draw it, and the test expects none. The page itself wasn't touched.
+
+**For Phase E** (the window):
+- The picker's list is the trace's comp event `alternates` (top 12 mined + curated, with scores and terms). It's in the trace the page already composes with, as the lead's runner-ups are. The chosen one is `spec.clave.id`. Its pattern for display is `spec.clave.pattern` (`x..x..x.`), its source is `spec.clave.from`, and `span` is 2 for son and rumba.
+- A clave switch or Sync | Fill today means re-composing with `overrides.clave` / `compRelation`. A live switch needs a rearrange-style step: re-lay (`layClave` over `drumGrid`), re-strum every bar (`compChordsOfBar` with `compNodesOf`), re-arrange the drums. All the pieces are exported. It isn't built here.
+- `trace-frames.js` still says "on layer X (v), the best of N layers" for the comp. In chords, X is the clave's source layer (null for a curated clave). It needs rewording.
+- The page's comp-layer pin is gone in chords; the clave line replaces it.
+
+**Open (for Avery):**
+- On dense rows, the 4-step bunched claves (`..xx`) tie at the top with 8- and 16-step ones, and the seed picks. Should longer claves win ties (more shape per bar)?
+- The size tiers ('whole', then 'every') are proposed. Rows with coprime layers otherwise get no mined clave at all.
+- A Fill partner step that lands on one of the clave's onsets is silent (`shared`), so the comp never strikes with the perc. None did on the probe rows.
+- The tone sets are read from 1/1 (the Collider's 12-step grid, chunk-tunes' `centre` 0), not from the composition's root.
+
+## The clave and arp pickers (Amendment 1, phase E)
+
+`COMP_ARP_ORDER.md` Amendment 1, phase E (built 2026-10-27, branch `ui/clave-arp`): the window over phases C and D. Decided 6 (Sync by default, Fill a switch) and 8 (ranked arps chosen like the lead's runner-ups) are Avery's, and so is the Time ruling below. The rest is the builder's, proposed. Compose's own output is unchanged (every identity fixture holds). Nothing here has been heard or seen in a browser.
+
+**The live clave step** (`rearrange.js` `reclave(spec, row, cells, { clave, relation })`). Switching the clave or Sync | Fill never re-composes.
+- A relation switch keeps the clave and its landed strokes; only the comp and the drums are rebuilt.
+- Another clave is chosen with `claves.js` `chooseClave(rhythm, { asked })` over the row's ranking, kept per row in a WeakMap (`rankRowClaves` is the cost: ~60 ms on the 16k row, once). It's laid by `compose.js` `layCompClave`, factored out of Compose byte for byte (with `compUnitsOf`), so the two can't drift.
+- Every bar's comp is strummed again over its chord *as it plays* (`walkChords` over `spec.chords`, a chart's spans each), with `compChordsOfBar` on `compNodesOf`. The drums are arranged again, so the perc follows the clave.
+- Nothing else moves: the chords, lead, bass and inner, every part's sound, legato and on/off, and baseHz. The `clave`, `compRelation` and `compStrum` decisions are said again ("chosen in the window: …"). `stats.clave` and `stats.compStrum` follow.
+- `rearrange()` dispatches `{ clave, relation }` to it, so the worker's rearrange message carries it with no worker change. `applyRearrange` writes in the clave, its stats line and the decisions. `compStyle: 'notes'` (no clave) is refused.
+- **Equal to Compose:** 99 switches over 6 rows, 2 charts and a MIDI target give the comp, the drums, every other part, `spec.clave`, `stats.clave` and the strum's share byte for byte as a Compose given the same `overrides.clave` / `compRelation` (`assert-claves.mjs`).
+- **Timing, the 16k row:** Sync → Fill ~5 ms. Another clave ~63 ms the first time (the row ranked once), then ~4 ms. The small rows are under 3 ms. It runs on the main thread below `MAIN_THREAD_ONSETS`, in the worker above it, as the other edits do.
+
+**Stored as an edit** (`state.edits.clave`, `store/composition-store.js`). `{ id?, relation? }`: only what differs from Compose's own, or null.
+- `setClave({ id, relation })` is one undo step through the same `edit()` door as a swap. Compose's own clave or Sync again removes that field. The snapshots copy `edits`, so undo, redo and the audition carry it with nothing new.
+- **Applied last in the fold** (`orderedEdits` puts it after the chord and lead edits). So a chord swap under a chosen clave re-strums over the new chord with that clave, and a change of clave never re-runs the chord edits' steps.
+- **A re-compose** (`landEdits`) keeps the choice where the new composition's trace still offers the clave among its alternates. Otherwise the id is dropped and listed under "Compose dropped" ("the chosen clave x.x.x was dropped: …"). Sync | Fill is always kept.
+- The ranking reads only the row (its layers), so within one rhythm every listed clave stays offered: only a pattern set through `setClave` that is in no table (it plays, said "asked") is dropped. A new cycle of the same row carries the choice (proposed, as the drum options are), and so does a new MIDI clip; the landing check applies to both.
+- `hasEdits` counts it. `editsExport` carries it.
+- `claveOf()` gives the window `{ id, text, source, relation, partner, strokes, silent, composedId, edit, asked, alternates }`. Its alternates are the trace's comp event's (the mined top 12, then son, rumba, bossa), each marked `current` and `composed`.
+
+**The comp inspector** (`page/composer-tab.js` `claveBlock`), under the cell's strokes line:
+- **The clave line:** "clave", its pattern in a `<code>` (`claveText`: one group a bar, so son reads `x..x..x. ..x.x...`), its source (`claveSource`: "from layer A · 4 steps", "son clave 3-2", "bossa's rim", "asked"), a "chosen" tag when it's an edit, and **Sync | Fill** (the Arp switch's segmented style). Fill's title names the partner, or the complement, it strikes.
+- **Details:** the score and its terms, the tone set in words (`claveSetText`), and the pattern Fill strikes.
+- **The claves to choose from,** in the trace's order: the mark (● plays now, C Compose's), the pattern, the source, and (Details) the score. The curated rows are dashed. A click auditions the clave from the next bar, and a second click, Keep or Revert work exactly as the chords' alternates do (`audition.js`, the controller's `audition` / `keepAudition` / `revertAudition`: Revert leaves no redo step). The audition bar and the edit note follow.
+- `matrix.js` `compLine`'s title now says "strokes of the clave".
+
+**The arp picker** (`arpPicker`, in the lead's arp context and the inner's cell context while the part plays as an arp):
+- The phrase holding the cell (`from ≤ bar < from + bars`, on `arpOf(part).phrases`) heads it: "Arps · phrase 2". Its ranked arps follow, by contour and band ("arch · no rests"), ● on the one playing and C on the best-ranked (the default). Details: each one's cost a note, its share of chord tones and its notes.
+- A walked phrase says so ("walked: nothing could be mined here … no arp to pick") and lists nothing. A pick the phrase no longer offers (after a chord swap, say) is marked in amber, and the best-ranked plays.
+- **Audition:** a click runs `audition(() => pickArp(part, phrase, id))`. That is the missing no-undo path: `pickArp` sets the part's picks through `setArp`, so it's one undo step when kept, and the controller's audition restores the snapshot and both stacks when reverted. Picking the best-ranked again removes the pick (the lead's "its own line again removes the edit"). `pickArp` refuses a part not playing as an arp, a walked phrase and an id the phrase doesn't offer.
+- **Time drops the picks (ruled).** Picks are keyed by phrase at a time, so `setArp(part, { time })` with a new time and no picks clears the part's picks. That is one undo step, and one undo restores both.
+- **A re-compose** keeps the picks its phrases still offer (an arp's id is a hash of its notes, so the same seed's Compose keeps them all). After the fold, a pick the arranged phrase reports `missed` is removed from `state.arps` and listed under "Compose dropped" (`dropped.arps: [{ part, phrase, id }]`), and the arps are arranged again without it. Only parts playing as arps are checked. A part in Line keeps its picks until it plays.
+
+**The animation's caption** (`trace-frames.js` `compDetail`): in chords, "the clave .xx. (from layer A · 4 steps): 8 strokes", and in Fill ", in its gaps (x..x)". The notes style keeps "on layer X (v), the best of N layers".
+
+**The window's size.** The comp inspector grows by the clave line and up to 15 rows, and the arp inspector by up to 10 rows a phrase. Both sit in the context section, which scrolls. Scores and costs stay behind Details (C1–C5).
+
+**Tests.**
+- `assert-claves.mjs` (+8): reclave against Compose, determinism, back to its own, the rearrange and worker doors, the refusals, the words, and the 16k timing.
+- `assert-page-clave.mjs` (new, 34): the clave line and Details, the list, Sync | Fill live with the perc and the plot, undo and redo, an alternate auditioned at once and at the bar boundary (Revert and Keep) equal to a Compose given it, a curated clave, a chord swap under a chosen clave, a re-compose keeping and dropping, the glyph's recall, the caption, notes, and the worker.
+- `assert-page-arp.mjs` (+16): the picker, audition at once and at the bar boundary, Revert and Keep, undo and redo, the best-ranked removing a pick, the refusals, Time dropping the picks with undo restoring both, a missed pick marked, a re-compose keeping and dropping picks, and a walked phrase. Its old check that Time kept the picks now checks that they drop.
+
+**Not verifiable in Node (for Avery's pass):** how the monospace pattern and the 15-row list fit at narrow widths; whether auditioning a clave at the bar boundary sounds seamless, given that the perc and the comp change together; and whether Fill on the dense rows' bunched claves (`..xx` → `xx..`) reads as a hocket.
+
+## Bass densities and the lock (phase G core; built 2026-10-28, branch `bass/core`)
+
+`BASS_VOICING_ORDER.md` phase G (G1–G4). Decided 1 (Roots, Sparse, Moving, Walking) and 2 (Free | Kick | Clave) are Avery's. The rest is the builder's, following P10–P15, with the calls below marked. Compose's own output is unchanged: every identity fixture holds, and the default arrangement is Compose's bass byte for byte. There is no window yet (phase H), and nothing here has been heard.
+
+**`core/bass.js`** `arrangeBass(spec, materials, { density, lock, picks })` is a live arrangement over a finished spec, like `arrangeArp`. It rebuilds the bass part from the spec and `materialsOf(spec)` with no re-compose. The chords are `rearrange.js` `chordRecordsOf`, the targets `harmony.js` `targetsOf` over them (Compose's own), and the part's sound, legato and on/off are the spec's. The result is `partOf`'s shape plus `bass: { density, lock, picks, stats, bars, (refused) }`.
+- **Sparse, Free, no picks is Compose's bass (P10).** Each bar is mined as `compose.js` `bassOfBar` mines it: lines.js' bass type over the bar (a chart's split bar over the whole bar, each span's target, opening on the first span's root), two octaves under the lead's range, opening on a tone of the root's class where it can, else the cheapest line, else the chord's root onset. The hz retune is Compose's too (a bar's chord; in a split bar, the slot's span). 12 specs (6 rows, 2 charts, a MIDI target, a spec in notes, seed 2, the full table) and the 16k row match byte for byte.
+- **Roots (P11):** a chord (a span) gets one note. Of the onsets its slots' windows hold, the root-class one (inside the frame) nearest the chord's first anchor, ties to the one before it, then the earlier onset. None: the chord's root onset, Compose's fallback. The register is the lowest octave at or over the root less 2450¢, as Compose's fallback places it. (Builder's call: the windows, not the slots by time, so an onset just before the downbeat counts, as it does for the mined lines.)
+- **Sparse, Moving, Walking (P11):** lines.js' bass bands `sparse`, `mid` and `walking`. Moving and Walking, mining nothing, mine again with `weakTies` (arp.js M6); Sparse is Compose's and never does. A mined density with no line falls back as Compose does: Free, the chord's root onset; locked, Roots at the lock (builder's call).
+- **Walking:** every slot of its clock, the stepwise motion only, the next chord's root as the line's `after` boundary (STEP 4a's rule; the last bar's next is bar 1's). The pitch is the root's in the bass's register (root less 2400¢), as a candidate's cents, the bars' retunes aside, as STEP 4a reads its boundaries (builder's call). The clock is the bar's slots, halved while above 8 and even (16 → 8, 12 → 6), mined on `buildCells` at that many anchors a bar with the spec's anchors mode and phase, as arp.js builds its S × time cells; a note's slot is its clock slot × 2. In a split bar on the halved clock, each clock slot reads the chord of the spec slot its anchor sits on.
+- **The lock (P12; replaced by phase J's covering locks, P23, below):** `lines.js` `rules.allowNodes`. Kick: the onsets within ¼ of a slot (the hit's own slot in `spec.drums`) of a kick hit, in time, around the cycle. With `drums: false`, the drums not enabled, or no kick in the mode, the lock falls back to Free and keeps the reason (`bassLockRefusal(spec, lock)`, for the window to grey Kick; `stats.lock` says what ran). Clave: the onsets of `compose.js` `compSourceOf(spec.clave)`, so it follows Sync | Fill; a spec in notes has no clave and falls back the same way.
+- **Shares of the locked slots (P12).** Locked, a band's share counts only the slots holding a locked onset, to the nearest note and at least 1 (`lines.js` `lockedNotes`). That follows the order's example (Moving on 3 kicks plays 1–2, Walking all 3). `bandNotes`' "at least 2, ceiling and floor" gives Moving on 3 slots 2–1, nothing, and most locked bars would mine nothing (builder's call). Walking locked plays every locked slot, with `maxGap` lifted, since the locked slots needn't be neighbours. Roots locked: of the chord's locked onsets, the root-class one nearest the first, else the chord-tone one nearest it, else the first itself. A chord with no locked onset rests.
+- **Offers and picks (P13):** each bar offers up to 8 lines (`BASS_ALTERNATES`). The lines opening on the root's class come first, then the rest, each in mineLines' order (cost per note, the whole cost, the id), one of an id. The first is Compose's choice. That takes a second mine a bar (the root-opening mine and the plain one), and the lean table's 4 contours give 1–7 lines a bar, about 5 on average (builder's call: Compose stops after the first mine when it finds a line). Roots offers its one line (open question). An alternate is `{ id, band, contour, motion, n, cost, perNote, rooted, notes: [{ slot, node, octave }] }`. `picks: { [bar]: id }` plays another. A pick the bar doesn't offer plays the first and is recorded as `missed`. A line's id hashes its notes and its bar's chord names, not its band, so a pick from another density is offered only if the same notes are; the window drops picks on a change of density or lock (phase H).
+- **Stats (P15):** `{ density, lock (what ran), bars, notes, perBar, rooted, onDown, mined, fallback, rests, (lockedSlots), (weakTies) }`. `rooted` is Compose's `bassRooted` (the bar's first note on its first chord's root class), and `onDown` counts the bars with a note on their first slot. Compose's `spec.stats` is not touched.
+- Each bar's record is `{ bar, how ('mined' | 'roots' | 'root onset' | 'locked roots' | 'rest'), picked, alternates, notes, rooted, onDown, (lockedSlots), (weakTies), (missed) }`.
+
+**`lines.js` (G1).**
+- The bass type gains `extraBands` (`BASS_BANDS`): `mid` (40–60 %, strictness 1.5) and `walking` (100 %, its own `rules: { maxGap: 1 }`, `motions: ['stepwise']`). They are mined only when `mineLines`' new `bands` option names them. A band's own `rules` are laid over its type's and its motion's, and its `motions` limit the passes it runs in. A mine that names no bands is unchanged (`assert-lines.mjs`' run counts hold).
+- `rules.allowNodes` is opt-in. With it, `buildLattice` builds each slot's candidates on the allowed onsets only: each tone the window holds on one of them stands on the one nearest the anchor, keeping its window's count and share. A slot with none has no candidates, and `pickLines` checks the rule too. It is built into the lattice rather than as a filter on the candidates because a window keeps one onset a tone (the nearest the anchor), and a locked onset that isn't that one would otherwise be lost (builder's call; the order says "a lattice slot keeps only candidates on those onsets").
+
+**`rearrange.js` (G3, P14).** A chord swap on a spec whose bass carries a `bass` record re-mines the bar (or the split bar) at the part's density and lock, through the same per-bar function (`bass.js` `bassBarOf`) with the rearrange's own targets. A pick is kept only where the bar's new offer holds it. Otherwise it's removed from the record's picks and listed in the result's `bassDropped: [{ bar, id }]` (phase H's "Compose dropped"). Under Walking the bar before is re-mined too, since its approach targets the new chord (builder's call). The part keeps its `bass` record with the bars and stats updated. A bass with no record is rebuilt with `bassOfBar` as before, and an edit to what is there is byte for byte. The change is in the bass path only.
+
+**Measured (seed 1; notes a bar · bars with a note on the downbeat; fb = bars on the fallback; free / kick / clave):**
+
+| row | Roots | Sparse | Moving | Walking |
+|---|---|---|---|---|
+| 8:7:6:5 (2 × 3) | 1·2/2 / 1·2/2 / 1·0/2 | 1·1/2 2 fb / 1·1/2 / 1·0/2 1 fb | 1·1/2 2 fb / 1·1/2 / 1·0/2 1 fb | 3·2/2 / 1.5·2/2 1 fb / 1·0/2 1 fb |
+| 11:9:7:5 (2 × 4) | 1·1/2 / 1·2/2 / 1·0/2 | 1·1/2 2 fb / 1·1/2 / 1·0/2 1 fb | 2·1/2 / 1·1/2 / 1·0/2 1 fb | 2.5·1/2 1 fb / 1.5·2/2 1 fb / 1·0/2 2 fb |
+| 19:17:16:15 (2 × 8) | 1·2/2 / 1·2/2 / 1·1/2 | 2·2/2 / 1·2/2 / 1·0/2 | 4·2/2 / 1·2/2 / 1.5·1/2 1 fb | 8·2/2 / 1.5·2/2 1 fb / 1·1/2 2 fb |
+| 119:42:15:8 (4 × 8) | 1·4/4 / 1·3/4 / 1·0/4 | 2·0/4 / 1·0/4 / 1·0/4 | 4·1/4 / 1·0/4 / 1·0/4 | 8·4/4 / 2.25·4/4 / 2·0/4 |
+| 768:769 (4 × 8) | 1·1/4 / 1·2/4 / 1·0/4 | 2·1/4 / 1·2/4 / 1·0/4 4 fb | 4·4/4 / 1.25·3/4 / 1·0/4 4 fb | 4.5·2/4 2 fb / 2·4/4 1 fb / 1·0/4 4 fb |
+| 768:784 (4 × 8) | 1·1/4 / 1·3/4 / 1·0/4 | 2·0/4 / 1·0/4 / 1·0/4 | 4·1/4 / 1·0/4 / 1·0/4 | 8·4/4 / 2.25·4/4 / 2·0/4 |
+| 119:42:15:8 chart (8 spans) | 2·4/4 / 1.75·4/4 / 1.5·0/4 | 2·0/4 / 1·1/4 / 1·0/4 | 4·3/4 / 1·1/4 / 1·0/4 | 8·4/4 / 2.25·4/4 / 2·0/4 |
+| 768:784 chart, 16 slots (7 spans) | 1.75·0/4 / 1.5·4/4 / 1.25·0/4 | 4.5·0/4 / 1·0/4 / 1·0/4 | 7·0/4 / 1·0/4 / 1·0/4 | 8·4/4 / 2·4/4 / 2·0/4 |
+| 4099:4093:4091:4079 (8 × 8) | 1·4/8 / 1·7/8 / 1·0/8 | 2·2/8 / 1·2/8 / 1·0/8 3 fb | 4·3/8 / 1.13·2/8 / 1·0/8 3 fb | 8·8/8 / 2.25·8/8 / 1.13·0/8 7 fb |
+
+- **Cost.** Under 3 ms on the small rows. The 16-slot chart's Sparse and Moving take ~7–8 ms (16-slot lattices), and the 16k row ≤ 9 ms for any density and lock (median of 3). The second mine a bar roughly doubles Sparse's time over Compose's bass, which is still small.
+- **What the numbers say.** Walking free fills every bar of the 8-slot rows except where a slot holds only foreign tones on a strong slot or at the end (768:769's bars 1 and 3, 11:9:7:5's bar 1), which fall back to one root onset. The backbeat's two kicks a bar make Kick's Sparse and Moving one note a bar, close to Roots. Clave rarely lands on the downbeat (its strokes are off the one on these rows), and on 768:769 and the 16k row its strokes are mostly fringe tones that no line may end on, so those bars fall back to Roots at the lock, which plays the stroke's own tone.
+
+**Tests.** `assert-bass.mjs` (new, 38 checks) reads every rule from the order with its own slots, windows, kick reach, clave strokes and shares, not bass.js':
+- the default byte for byte (12 specs and the 16k row);
+- every density × lock on 6 rows and 2 charts: real onsets, time, hz, velocity and lengths; each density's notes within its band of the bar's slots (or of the locked slots, to the nearest note); Walking on every slot of its clock (every locked slot locked); Roots and the locked fallback equal to a brute force of the order's rule; the offers' count, order and tiers; the picked line playing; rooted, onDown and the stats;
+- Walking's approach: its last move never farther from the next root than the same mine without it (lines.js directly), and 16 slots walking 8;
+- every locked note on a locked onset; four on the floor; Kick with the drums off, not enabled and striking no kick, and Clave on a spec in notes, all Free with the reason; Clave following Sync | Fill;
+- picks, a missed pick, and another density's pick not offered;
+- a chord swap re-mining one bar at Moving / Kick (the other bars untouched, a pick dropped into `bassDropped`, another kept), the stats, a no-op swap byte for byte, a JSON round trip, a bass with no record as before, and Walking re-mining the bar before;
+- determinism, the spec untouched, the options; the 16k row under 150 ms each; and the report's rows.
+
+**Open (for Avery).**
+- A Walking bar that can't sound every slot falls back to one note. A walk with rests (the arp's "few rests": 60–95 %, `maxGap` 2) could be its second try.
+- Roots offers no runner-ups. The other root-class onsets of the chord could be its runner-ups.
+- Clave on the fringe-heavy rows plays a stroke's own tone where no line fits, even a fringe one. It could rest there instead.
+- Under Kick with the backbeat, Sparse and Moving both play one note a bar.
+
+**For phase H.**
+- `arrangeBass`, `readBassOptions`, `bassLockRefusal(spec, 'kick')` (the disabled Kick's title), `BASS_DENSITIES`, `BASS_LOCKS`, `BASS_DEFAULTS` and `BASS_ALTERNATES`. Each bar's `alternates` and `picked` feed the runner-ups list, and `missed` marks a stale pick.
+- A bass arranged before the edits are folded is carried through a chord swap by rearrange (with `bassDropped`). One arranged after the fold, as the arps are, reports a stale pick as `missed` instead. Either works.
+- arrangeBass reads `materialsOf`, so a big row's would go to the worker as the arps do.
+## Voice-led chords (phase F core; built 2026-10-28, branch `voicing/core`)
+
+`Composer/BASS_VOICING_ORDER.md` phase F, F1–F4. Rulings 3 (nearest octave with a mud limit, inversions allowed) and 4 (on by default, the comp shares it, a Close | Led switch) are Avery's; P1–P9 are the builder's proposals, built as written except where noted below. The window's switch is phase H. Nothing here has been heard.
+
+**The pass** (`core/compose.js`, `voiceLead`, run after every bar's or span's chord voices are chosen):
+- **Only octaves change.** Which onset each class sounds is `chordVoicesOfBar`'s, as before. Every note is still an onset the row plays, at its own time.
+- **The mud limit (P1, `muddyPairs`).** Two neighbouring voices (in pitch order) less than an octave apart are muddy when the lower sounds under 27 Hz × log2(n·d), n/d their interval in lowest terms, capped at 16/15's 213 Hz (the planner, after the build: uncapped, 768:769's 191/152 third, limit 400 Hz, lifted the chords to 722 Hz, over the lead's median of about 539 Hz; capped, they open at 361 Hz) (exact: the row's tones are fractions, reduced with BigInt). Hz is the note as it sounds: baseHz × its tone × 2^octave × its bar's fundamentalRatio. Both notes of a pair share the bar's retune, so the interval is exact.
+- **The first chord (P2).** Its close voicing (root first, each voice the lowest above the one under it, from an octave under the root less 50¢), lifted by whole octaves until no pair is muddy.
+- **Each chord after (P2–P3).** Every assignment of octaves in the window is scored: motion (each tone to its nearest tone of the chord before, in cents as they sound, the retune included) plus 10⁶ a muddy pair. The cheapest wins, ties to the lower centre, then the first in order (voice 0's lowest octave first). The window: no tone under 1/1 − 1250¢ (close's floor, `VOICING_FLOOR`), each tone within ±1800¢ of the first chord's centre (3 octaves a tone, so at most 81 voicings), and the voicing's mean within ±600¢ of the first chord's. If no assignment's mean is inside, those nearest it are scored (none of the rows tested needs it; `stats.voicing.outside` counts them).
+- **baseHz is needed before the chords.** It is read from the lead's median pitch, which is known once the lead is mined, so it is computed there. Its decision stays in its old place among the decisions.
+- **The loop (P4).** Each chord is led from the one before, bar 0 from nothing. The wrap (the last chord to the first) is `stats.voicing.wrap`, not optimized. (Superseded by phase K, below: the loop is closed.)
+- **Idempotent.** The first chord is re-stacked close from its tones and root, and every later choice reads only tones, so running the pass on its own output changes nothing. A rearrange relies on this.
+
+**The comp (P5, `compChordsOfBar`'s new `voiced` argument).** In chords, a strum tone takes the octave nearest its class's chord voice in its bar (or span); a borrowed tone is the voice itself, octave and all. `compStyle: 'notes'` is untouched.
+
+**Lanes (P6).** Chords and comp notes keep `voice` (the class: the highlights, the matrix and `rearrange` read it) and gain `lane`, the note's register order in its chord as led (0 the lowest). A comp note's lane is its class's chord lane in that bar. `partOf`, `rearticulate`, the player's chains (`chainsOf`) and the MIDI zones (`midiNotesOf`) group by `lane` when a note has one, else by `voice`. So legato holds a lane to its next note, and an MPE member channel moves by the voice leading's steps: on 119:42:15:8 a channel's mean step is 168¢ laned, 312¢ by class. `midiNotesOf`'s `voice` field is now the member the note goes on.
+
+**`voicing: 'close' | 'led'` (P7).** An override, `'led'` by default. `'close'` is today's output byte for byte: no `lane`, no `stats.voicing`, no `voicing` decision. A led spec adds `stats.voicing` `{ mode, chords, lifted, muddy, motion, meanMotion, wrap, outside }` (cents rounded) and a `voicing` decision after the chord voices.
+
+**The trace (P9).** The `voicing` decision says the voicing, whether the first chord was lifted, the motion a chord, how many chords the mud limit moved (the first if lifted, and any later one whose least-motion voicing alone was muddy), any left muddy, and the wrap. The trace's chords `part` event carries `voicing` (the stats) and each note's `lane`. Without `spec.trace`, the spec is byte-identical to one composed with the trace off.
+
+**Edits (P8, `core/rearrange.js`).**
+- A spec is led when it has `stats.voicing`. One composed close, or before phase F, rearranges exactly as before.
+- A chord swap rebuilds bar k's chord voices (close), then re-runs the pass over every bar. Tones never change outside the rebuilt bars, only octaves. `revoicedBars` lists the other bars whose octaves moved. In chords, the comp is strummed again over the rebuilt and revoiced bars, from the chords' octaves. `builderNotes` keeps `lane`; `applyRearrange` writes `stats.voicing`. A swap to the chord a bar already has is still the spec byte for byte, and a JSON round trip rearranges the same.
+- `reclave` hands each bar's led chord voices to `compChordsOfBar`, so a clave switch still equals a Compose given the same override.
+- The arp (`arp.js`) reads the chords' records, not their voices, so it is unaffected.
+
+**The probe, before (close) and after (led)** (seed 1; seeds 2 and 3 are the same; muddy by P1's rule, motion summed over the chords):
+
+| row | chords | motion, close → led | muddy, close → led | lowest chord note, close → led | lifted | wrap |
+|---|--:|---|---|---|--:|--:|
+| 8:7:6:5 | 2 | 0¢ → 0¢ | 0 → 0 | 241 → 241 Hz | 0 | 316¢ |
+| 11:9:7:5 | 2 | 1119¢ → 782¢ | 1 → 0 | 127 → 191 Hz | 1 | 680¢ |
+| 19:17:16:15 | 2 | 380¢ → 380¢ | 2 → 0 | 181 → 363 Hz | 1 | 293¢ |
+| 7:5:3:2 | 1 | — | 0 → 0 | 156 → 156 Hz | 0 | — |
+| 119:42:15:8 | 4 | 2387¢ → 702¢ | 1 → 0 | 180 → 180 Hz | 0 | 610¢ |
+| 768:769 | 4 | 2690¢ → 873¢ | 4 → 0 | 181 → 722 Hz | 1 | 372¢ |
+| 768:784 | 4 | 748¢ → 237¢ | 0 → 0 | 253 → 253 Hz | 0 | 125¢ |
+| 4099:4093:4091:4079 | 8 | 8525¢ → 5717¢ | 8 → 0 | | | |
+
+Over the probe's 57 chords (seeds 1–3): motion 21,972¢ → 8,922¢, muddy 24 → 0 by P1. By the probe's own looser count (a third or closer under 180 Hz, a fifth under 110 Hz) 9 → 6. The 6 left are a 5/4 over 1/1 at 156 Hz (7:5:3:2) and at 180 Hz (119:42:15:8's first chord), both clear of P1's 117 Hz for 5/4.
+
+**Cost.** The pass is about 1.8 ms on the 16k row (8 chords of 4 tones), microseconds on the small rows. Compose's lean time is unchanged within noise (868 ms led, 875 ms close on a loaded machine).
+
+**The frozen fixtures, kept.** No fixture or hash was edited. The tests that compare against frozen output compose with `voicing: 'close'` and delete the override from the input before comparing, beside `compStyle: 'notes'`: `assert-refactor-identity.mjs` (and the override list in its bad-override error), `settle-baseline.mjs`'s cases in `assert-compose.mjs`, `assert-trace.mjs` and `assert-progression.mjs`, and `assert-chord-symbols.mjs`'s b69a39e hashes. `assert-comp.mjs` composes with `'close'` throughout, since its brute force stacks the comp close; the led comp's octaves are `assert-voicing.mjs`'s. The audits that read the new rules learned them: `assert-compose.mjs`'s legato audit lanes by `lane`, `assert-rearrange.mjs` lets a revoiced bar's chords and comp move by octaves, and `assert-composer-midi.mjs` and `assert-lab.mjs` check the lane.
+
+**Calls beyond the order (proposed):**
+1. **The floor is 1/1 − 1250¢,** close's own (an octave under the root less 50¢, with the root's cents near 0), not exactly 1/1 − 1200¢, so the first chord's close voicing is always inside the window.
+2. **Motion and the centre are read as the notes sound** (the bar's retune included); the floor on the tone's own pitch, as close's floor is.
+3. **The per-tone reach of ±1800¢** around the first chord's centre makes P2's "about 3 octaves a tone" exact.
+4. **"Lifted" counts** the first chord when lifted, and a later chord when the mud limit changed its choice.
+
+**Open, for Avery:**
+1. **P1 is steep on dense rows.** log2(n·d) grows with the ratio's size, not its width: on 768:769 the first chord (192/191, 24/19, 3/2) has a 191/152 third whose limit is 400 Hz, so the chord is lifted two octaves and its lowest note goes from 181 Hz to 722 Hz, above the lead's median (539 Hz). Every chord after stays near it (the window). Should the limit be capped (say at 16/15's 213 Hz), or read from the interval's width?
+2. **The wrap** (P4) is as large as a bar line's motion on some rows (11:9:7:5 680¢, 119:42:15:8 610¢). A second pass could close it.
+3. **11:9:7:5 moves 782¢, not the nearest-octave 284¢:** the least-motion voicing of its second chord has a muddy 14/11 at 159 Hz (limit 196 Hz), so the chord goes up an octave. That is P1 working as written.
+
+## The loop closed (phase K; built 2026-10-28, branch `voicing/loop`)
+
+`BASS_VOICING_ORDER.md` Amendment 1, phase K (K1–K2): rule 8 (the loop's wrap led like every other change) is Avery's; P25 is the builder's proposal, built as written except where noted below. `'close'` is untouched. Nothing here has been heard.
+
+**The objective** (`core/compose.js`, `voiceLead`). One cost over the whole loop: every chord-to-chord motion (each tone to its nearest tone of the chord before, in cents as they sound), the last chord back to the first included, each the same weight, plus `MUD_COST` (10⁶) a muddy pair. Since 10⁶ outweighs any loop's motion, the cycle is clear of the mud limit wherever each chord can be.
+
+**The anchor and the states.** The first chord's close voicing, lifted by octaves until clear (phase F's first chord), is now only the anchor: its centre is the window's, so the register can't creep. Each chord's states are its octave assignments in the window as before (no tone under `VOICING_FLOOR`, each within ±`VOICING_REACH` of the anchor's centre, the chord's centre within ±`VOICING_CENTRE` of it; none inside: those nearest), and the first chord's states are among them, so it can move to meet the last.
+
+**The solve.** Viterbi over the states, once a first state: the cost-to-go is built back from the last chord (its wrap into that first state its terminal cost), then the cycle is read forward taking, at each chord, the first state whose motion in plus cost-to-go is least. The first states are visited cheapest lower bound first (the same backward pass with each last state's cheapest wrap into any first state), and the visit stops when a bound is dearer than the best cycle found. The cycle on motion alone is solved first: when it is clear of the mud limit it is the answer (the mud can't make a clear cycle dearer), else the cycle is solved again with the mud weighed. Motions are precomputed flat, a tone's distance at each of its octaves found once a state.
+
+**Ties** (equal cost): less mud; then the first chord nearest the anchor (its motion from the anchor's voicing); then the chords' centres nearest the anchor's (summed); then the lower centres (summed); then the first in order (chord by chord from the first, voice 0's lowest octave first).
+
+**Edge cases.** A one-chord loop has no wrap: the least mud, then nearest the anchor, so the anchor itself when it is clear (phase F's voicing). A MIDI target's spec is its cut's bars, so the cut loops its own bars with nothing special. A unit with no voices is skipped; the chords either side of it are neighbours.
+
+**What it changes.**
+- **A swap** re-runs the loop (`rearrange.js`, unchanged code: it already compared every bar), so octaves before the swapped bar can move too. `revoicedBars` lists them: in `assert-voicing.mjs`, 19 bars revoiced over 32 swaps, 5 of them before the swap.
+- **The stats** keep their names. `motion` is still the bar lines' (the N − 1 changes), `wrap` the last chord back to the first (now led), and `meanMotion` is (motion + wrap) / N, the mean over the loop's N changes (it was motion / (N − 1)). `lifted` counts the chords the mud limit moved: the anchor when lifted, and every chord whose octaves differ from the motion-only cycle. `voiceLead` also returns `anchorLifted`, `moves` (N), `cost` and `states` (the most a chord had); `voicingStats` keeps only the old fields.
+- **The words** (`voicingWhy`): "the loop closed (rule 8, Avery): every chord's octaves chosen together, so the loop's motion is least, each change weighed the same, the last chord back to the first included, …; the window centred on the first chord's close voicing, (not) lifted clear of the mud limit …; …¢ of motion a chord; the mud limit moved L of N chords; the loop's wrap W¢ (led, as every change)". A one-chord loop says "one chord, so no wrap and nothing to lead". The window still reads "(the loop's wrap …, not led)" in the chords cell's title (`composer-tab.js`): phase L's.
+- **Idempotent.** Every choice reads only the tones (the anchor is re-stacked from them), so running the pass on its own output changes nothing.
+
+**Greedy (phase F) against the loop closed** (seed 1; motion in cents; the mean over the loop's N changes for both; the greedy's lowest note and first centre against the loop's):
+
+| row | chords | bar lines | wrap | loop total | mean a change | muddy | lifted | lowest note | first chord's centre |
+|---|--:|---|---|---|---|---|---|---|---|
+| 8:7:6:5 | 2 | 0 → 0 | 316 → 316 | 316 → 316 | 158 → 158 | 0 → 0 | 0 → 0 | 241 → 241 Hz | 132 → 132¢ |
+| 11:9:7:5 | 2 | 782 → 284 | 680 → 284 | 1463 → 569 | 731 → 284 | 0 → 0 | 1 → 2 | 191 → 254 Hz | −98 → 302¢ |
+| 19:17:16:15 | 2 | 691 → 380 | 499 → 293 | 1190 → 673 | 595 → 337 | 0 → 0 | 1 → 2 | 192 → 229 Hz | −101 → 299¢ |
+| 7:5:3:2 | 1 | — | — | 0 → 0 | — | 0 → 0 | 0 → 0 | 156 → 156 Hz | −837 → −837¢ |
+| 119:42:15:8 | 4 | 702 → 427 | 610 → 112 | 1312 → 539 | 328 → 135 | 0 → 0 | 0 → 0 | 180 → 225 Hz | −837 → −437¢ |
+| 768:769 | 4 | 873 → 873 | 372 → 372 | 1245 → 1245 | 311 → 311 | 0 → 0 | 1 → 1 | 361 → 361 Hz | 372 → 372¢ |
+| 768:784 | 4 | 237 → 237 | 125 → 125 | 362 → 362 | 91 → 91 | 0 → 0 | 0 → 0 | 253 → 253 Hz | −103 → −103¢ |
+| 11:9:7:5, a 4-bar chart | 5 | 1373 → 1373 | 204 → 204 | 1576 → 1576 | 315 → 315 | 0 → 0 | 0 → 0 | 227 → 227 Hz | −1200 → −1200¢ |
+| 768:784, a 32-bar chart | 40 | 10145 → 10145 | 204 → 204 | 10349 → 10349 | 259 → 259 | 0 → 0 | 0 → 0 | 191 → 191 Hz | −800 → −800¢ |
+| 4099:4093:4091:4079 | 8 | 2233 → 2233 | 706 → 307 | 2939 → 2540 | 367 → 318 | 0 → 0 | 0 → 8 | 224 → 299 Hz | 447 → 747¢ |
+
+- **11:9:7:5's 782¢ (phase F's open question 3) is now 284¢ both ways:** the first chord's 3/2 goes up an octave (to 381 Hz), so the second chord's least-motion voicing is clear of the mud limit and the wrap matches the bar line.
+- **On 119:42:15:8 the wrap drops from 610¢ to 112¢** and the bar lines from 702¢ to 427¢ (the probe's nearest-octave figure).
+- **The 16k row's register rises about 500¢** (the chords' mean centre 325 → 825¢; lowest note 224 → 299 Hz): the motion-only cycle is muddy, and the clear cycle of the same cost lifts each chord's lowest tone an octave, so "lifted 8 of 8". The window still holds (±600¢ of the anchor).
+- Where the greedy pass was already a least cycle (8:7:6:5, 768:769, 768:784, the charts), nothing moves.
+- Over the probe's 57 chords (seeds 1–3), the loop's total (wrap included) is 30,762¢ close → 11,112¢ led, no chord muddy. The loop never costs more than the greedy pass, and less on 9 of the 21 composes.
+
+**Cost** (the pass alone, the median of 7, in `assert-voicing.mjs`): the probe rows 0.01–0.4 ms; 768:784 and 119:42:15:8 as 32-bar charts (every 4th bar split, 39–40 chords) 0.25–0.4 ms; the 16k row 2.6 ms (8 chords of 3–4 tones, 61 states); **the 16k row as a 32-bar chart (40 chords, 61 states) 3.9 ms**, the worst, under the 5 ms budget. The 32-bar chart is `changes` with 32 bars, every 4th split [1, 1] (a chart sets the bars). Compose's lean time on the 16k row is unchanged (813–833 ms led, interleaved runs, against 820–838 ms before). Two levers made the budget: the motions decomposed by tone and octave (≈ 3× fewer distance evaluations) and the lower bound on first states. The 4-tone chords have about 61 states each, not the order's estimated 20 (±600¢ on a 4-tone mean allows octave sums of −2..2), and the first build, unpruned and allocating, took about 13 ms on the 16k row.
+
+**Calls beyond the order (proposed):**
+1. **The tie after the mud is the first chord nearest the anchor, then the centres nearest the anchor's, before the lower centre.** As written ("the lower centre"), motion can't tell a loop from its octave shifts, so ties sank whole loops to the window's floor at no gain: 8:7:6:5 and 768:769 by 400¢ (768:769's lowest note 361 → 181 Hz, undoing the planner's cap) and 768:784 by 325¢; and the first-in-order rule then picked spread voicings (768:784's first chord 1/1 at 168 Hz with 48/43 at 752 Hz). With the anchor tie, where the greedy pass was already least nothing moves.
+2. **A one-chord loop** follows the same ties, so it is the anchor when the anchor is clear (as written, the lower centre would have dropped 7:5:3:2's chord to the lowest clear inversion).
+3. **`meanMotion` is over the loop's N changes, the wrap one of them;** `motion` stays the bar lines'. The window's "…¢ a chord" now means a change of the loop.
+4. **`lifted`** counts the chords whose octaves differ from the motion-only cycle (plus the anchor when lifted), so a loop the mud limit shifted whole reads "8 lifted".
+
+**Tests** (`assert-voicing.mjs`, 32 checks): a brute force over every cycle on loops of up to 4 chords, written from the order (pruned only where a partial cost is already dearer), the octaves exactly its first least and the cost its least; past 4 chords, the cost an independent forward Viterbi's least (charts, 32-bar charts, the 16k row); the wrap counted (never dearer than the greedy pass, cheaper on 9 composes; the stats' wrap the measured); a one-chord loop; MIDI targets (twinkle, ode-to-joy, frère-jacques on 8:7:6:5 and 119:42:15:8: the cut's bars the loop); idempotence; swaps revoicing earlier bars (`revoicedBars` exact); the budget. Phase F's checks kept: the window, mud clear where possible, the comp's octaves and lanes, `'close'` byte for byte, a swap's tones unchanged outside its bar, the clave switch. No other suite pinned a led output; no fixture was touched.
+
+**Open, for Avery:**
+1. The ties (call 1): the first chord nearest the anchor, then the centres nearest it. Or the order's lower centre as written (loops sink up to 600¢)?
+2. The 16k row's chords now sit about 500¢ higher (lowest note 299 Hz). The window allows it; should the anchor's centre pull harder (say, a small cost a cent off the anchor's centre)?
+3. `meanMotion` (call 3): the mean over the loop's changes, or keep the bar lines' mean and show the wrap apart?
+
+## The window: bass and voicing (phase H; built 2026-10-28, branch `ui/bass-voicing`)
+
+`BASS_VOICING_ORDER.md` phase H: the window over phases F and G. Decided 1–4 are Avery's; the rest is the builder's, proposed. Compose's own output is unchanged (every identity fixture holds). Nothing here has been heard or seen in a browser.
+
+**The live voicing step** (`rearrange.js` `revoice(spec, row, cells, { voicing: 'close' | 'led' })`). Close | Led never re-composes.
+- Every bar's (a chart's span's) chord voices are built again with `chordVoicesOfBar` (the same onsets: only octaves can move), then, led, `voiceLead` runs over them. In chords the comp is strummed again bar by bar over its clave's strokes, at the chords' octaves (P5) or stacked from the root (close). The drums are arranged again.
+- The input's override, `stats.voicing` (in Compose's place, after `chordVoices`: `applyRearrange` reorders it) and the voicing decision follow. The decision's words are `compose.js` `voicingWhy`, factored out of Compose, so the two can't drift. Led is Compose's default, so a switch to Led drops the override and says "led by default".
+- **Byte for byte a Compose given `overrides.voicing`:** input, parts, stats, decisions and drums, on 6 rows × 2 seeds, a chart, a comp in notes and a 4 × 8 meter, both ways and Led → Led (checked while building; `assert-page-bass.mjs` checks it through the window on 41:42:43, and a swap under Close against the close Compose's own swap). So it is live, not a re-compose.
+- `rearrange()` dispatches `{ voicing }` to it, so the worker's rearrange message carries it. ~9 ms on the 16k row.
+
+**Voicing in the entry** (`state.voicing`, `store/composition-store.js`; 'led' by default). In the undo snapshots, kept through a re-compose and the recall, carried to a new cycle of the same row (proposed, as the arps).
+- `setVoicing(v)` is one undo step through `edit()`. **The fold's first step** is the revoice, when the entry's voicing differs from the composed spec's, so the chord swaps after it voice as Compose would (rearrange's led path reads `stats.voicing`) and the clave's re-strum reads the chords' octaves as they play.
+- **Compose is sent `voicing: 'close'`** while the entry is close, so the composed spec needs no switch and the trace says the right voicing. `voicingOf()` gives `{ voicing, playing, stats, voicings }`. `editsExport` carries `voicing` when close.
+
+**The bass in the entry** (`state.bass: { density, lock, picks }`, `composedBass()` the default). Kept and carried as the arps are.
+- **Compose's own bass arranges nothing.** At Sparse · Free with no picks `arrangeBass` is Compose's bass byte for byte (phase G), so `state.spec`'s bass is Compose's (or rearrange's, after a swap) and no arrangement runs. `bassOf()` reads that bass's offer (its bars' runner-ups) from `arrangeBass` at the default, memoized per spec (~18–24 ms on the 16k row, once).
+- **Anything else is arranged after the arps and the drums,** over the spec as it plays: `settleState` arranges the drums before the bass (drums.js reads no bass), and the Kick lock lands on those drums (`state.drums`: the window's mode, on or off), the Clave lock on the comp's clave as edited. A chord swap, a clave switch, an undo or a re-compose re-arranges it from the fresh spec; a drum change under Kick does too (`rebass`: the fold again, its steps kept).
+- **One route for stale picks.** The fold's base is always Compose's spec, so rearrange's arranged-bass path (`bassDropped`) is never taken by the window for an arranged bass (it is arranged again whole after the fold). *Phase N: no longer quite so. Compose's own bass now carries its record (Moving · Kick), so a chord swap under it takes that path, re-mining the bar at Moving · Kick; Compose's own has no picks, so `bassDropped` is always empty there.* A pick a bar no longer offers after a chord swap plays the bar's best, marked `missed` (amber in the list), until an undo or a re-compose, as an arp pick does. **A re-compose** keeps the picks its bars still offer (a line's id is a hash of its notes) and drops the rest into `dropped.bass: [{ bar, id }]`, listed under "Compose dropped"; the bass is then arranged again without them.
+- `setBass({ density, lock, picks })` is one undo step. A change of density or lock without picks drops the picks (the arp's Time rule), and one undo restores both. A lock refused now (`bassLockRefusal` over the spec and the drums as they play) is refused with its words; one refused later (the drums turned off under Kick) plays Free and `bassOf().refused` says why. `pickBass(bar, id)` goes through `setBass`; the bar's best again removes the pick; Roots refuses (one line a chord).
+- **Big rows:** past `MAIN_THREAD_ONSETS` the bass (and the default offer) is arranged in the module worker (`runCompose.bass`, `compose-worker.js` `answerBass`, the same kept materials as the edits and arps). Below it, this thread: on the 16k row (16,359 onsets) a density or lock change through the controller is 2–14 ms (full table; roots 3, moving 14, walking 13, kick 10, clave 4).
+
+**The bass inspector** (`page/composer-tab.js` `bassBlock`, under the cell's "follows bar k's chord" row):
+- **Density** (a select: Roots | Sparse | Moving | Walking, each option titled) and **Lands on** (Free | Kick | Clave, the Arp switch's segmented style). A lock refused is disabled, its reason its title, and said in one quiet line under the switch ("Kick: the drums are off: there is no kick to land on"). The lock playing refused says so in amber.
+- **The bar's runner-ups:** "Bass lines · bar k", up to 8 by contour and band ("fall · mid"), ● on the one playing and C on the bar's best. Audition, Keep and Revert as the lead's (`audition(() => pickBass(…))`). Roots says plainly that it has none; a bar that fell back (Walking with only foreign tones, a locked bar with nothing mined) says why; a big row's offer in flight says so.
+- **Details:** the stats ("11 notes · 2.8 a bar · 3 of 4 rooted · 2 on the one · 3 fell back"), each line's cost a note, its notes and motion, and the "re-mined with its chord" line, now saying at this density and lock (the comp keeps its own). The head's tag names an arranged bass's density and lock ("walking · on the kick").
+
+**The chords inspector:** under the first head, "voicing", **Close | Led**, and while led its stats in the clave line's quiet style ("0 lifted · 268¢ a chord"; the title has the chords, the muddy ones and the loop's wrap). Close says "root position".
+
+**The caption** (H3; `trace-frames.js` `bassDetail`, `chordsDetail`): the parts' step says the bass as it plays ("moving, on the comp's strokes: bar by bar against its chord"; a refused lock: "kick refused (…), so landing anywhere") and the chords' voicing ("a voice a chord tone, led: 2 lifted clear of the mud limit, 240¢ of motion a chord" / "…, close: root position from an octave under the root"). They read `highlightsOf`'s new `arrangement` (the spec's voicing, the bass part's record), not the trace, so a live switch shows in a recall's caption too.
+
+**Tests.**
+- `assert-page-bass.mjs` (new, 59): the controls and their defaults, Compose's own bass untouched at the default, live density and lock (exactly `arrangeBass`), the stats, audition / Revert / Keep, the drop rule and its undo, Kick and the drums off, Kick disabled with its reason, Clave following Sync | Fill, Roots, a chord swap, Close | Led byte for byte against Compose, a swap under Close, the override on a re-compose, a re-compose keeping and dropping picks, the caption, the store, and the worker.
+
+**Not verifiable in Node (for Avery's pass):** how the Density select and the three-way switch fit beside each other at narrow widths (they wrap); whether a density change auditioned at the bar line sounds seamless (the whole bass changes, not a bar); and whether Walking's 8-a-bar on 16-slot rows reads as walking.
+
+**Open (for Avery):**
+- A density or lock change applies at once, as the Arp's Time does; only a bar's runner-ups audition from the next bar line. Should a density change audition too?
+- The lane name and the part strip don't name the bass's density (the Arp's "· arp" does). Add "Bass · walking"?
+- A chord swap keeps a now-stale bass pick (marked, the bar's best plays) until a re-compose, as arp picks are kept. Drop it at the swap instead?
+
+## The bass's fills, locks and Roots runner-ups (Amendment 1, phase J core; built 2026-10-28, branch `bass/fills`)
+
+`BASS_VOICING_ORDER.md` Amendment 1, phase J (J1–J3). Rules 5, 7 and 9 are Avery's: Walking fills what it can, a lock covers its hits and the density adds the rest, and Roots offers the root's other in-frame notes. The rest is the builder's, following P22–P24, with the calls below marked. It replaces phase G's "only the locked onsets" and "shares of the locked slots" (P12). The default (Sparse, Free, no picks) is still Compose's bass byte for byte, and every other caller of lines.js is unchanged. The window isn't touched (phase L), and nothing here has been heard.
+
+**`lines.js` (J1).** Two opt-in rules; absent, nothing changes:
+- **`rules.requireNodes: [{ cell, nodes }]`**, one entry a hit: its lattice slot and the onsets it may sound on. That slot keeps only those onsets (each tone on its onset nearest the anchor, as `allowNodes` stands them) and is marked `required`. The picker never opens after a required slot, closes before one or steps over one, so every hit sounds. The other slots are as they were. Entries naming one slot are one hit. A hit's onsets needn't be in that slot's window (a kick's ¼-slot reach on a dense row is wider than a window): its count is the window's for a tone the window holds, else how many of its onsets are that tone (builder's call). With requireNodes, a band counts the whole line, at least the hits (`coveredNotes`: `lockedNotes`' nearest-note rounding over all P slots, so a backbeat's 8 slots give Sparse 2–3 and Moving 3–5, the order's example). `bandNotes`' ceiling and floor would give 2–2 and 4–4.
+- **A band's `most: true`**: the line kept is the one with the most notes of the band's counts (the cheapest at that count), not the cheapest per note. A count's feasibility doesn't depend on the contour, so one mine finds the order's ladder's answer.
+
+**`core/bass.js` (J2).**
+- **The hits (P23).** `bassLockOf` now returns `hits` (and `nodes`, their onsets, as before). Kick: a hit per kick, its onsets those within ¼ of its slot (as phase G), its own onset the one it landed on. Clave: a hit per `compSourceOf` stroke, its onset the stroke's, so phase I's frame strokes come through unchanged. On a clock (the spec's slots, or Walking's halved one), a hit sits in the slot of its own onset: its window's, or else the nearest anchor's within a slot's length (builder's call: off-window strokes and kicks on dense rows would otherwise be unplayable). Hits in one slot are one hit. A hit keeps its onsets in that slot's frame (±`frameCentsEachSide` of a class from the chord's root). With none, it's **missed**: its slot rests (its window's onsets are avoided, so no extra lands there either: builder's call, the literal "rests") and it's counted.
+- **Sparse and Moving** mine with `requireNodes` (each hit on one of its in-frame onsets), the band over the whole bar, at least the hits, the extras on any onset. **A mined hit offers at most `HIT_MOMENTS` (12) of its in-frame onsets, the nearest it** (builder's call, a window's width). Uncapped, a kick on the 16k row reaches ~127 onsets, ~38 in frame. That made the required slots three times a window and the locked mines 22–25 ms, over the 14 ms budget. Capped, they take 8–11 ms. Roots reads every in-frame onset (it's cheap). A locked bar that mines nothing plays Roots at the lock (a root on every hit). A locked bar with no hit to cover falls back as Free does, to the chord's root onset (unless a missed hit rests there).
+- **Walking (P22, P23).** First the full walk: Free, every slot (`maxGap` 1, as phase G); locked, every slot but a missed hit's, the hits on the hits (`maxGap` the longest run of missed slots plus one, exact for a line that sounds every other slot). It's tried under plain ties, then weak ties. **A bar it can't fill walks the most notes it can**, from max(2, hits) up to one short of full, stepwise, `maxGap` lifted, the approach kept. That's one mine of the Walking band at those counts with `most`, under weak ties (builder's call: weak ties only relax the foreign-tone rule, so they find the most notes). It gives the same count as the order's ladder (W − 1, W − 2, … 2, first count wins) in one mine where the ladder takes up to W − 2. Only with no such line does the bar fall back. A filled bar offers only lines at its count and carries `walkFill` (the count). The stats count `walkFill` bars and `walkFillNotes`.
+- **Roots (P23, P24).** Free: a chord's candidates are every root-class onset in frame in its slots' windows, nearest the chord's first anchor first, then the one before it, then the lower node. If there are none, Compose's root onset is its only one. The first is Roots' note as before. Locked: every hit gets a note, its candidates its root-class onsets ranked nearest the hit. If it has none, its one note is its chord-tone onset nearest the hit, else its own (its in-frame onset nearest the hit). A missed hit rests, and so does a chord with no hit. A bar offers up to 8 combinations of its chords' (hits') candidates, by summed distance, then by their ranks in order. Keeping each list's top 8 and the best 8 prefixes at each step is exact. **A list keeps one onset per tone per slot (the nearest)** (builder's call): two onsets of one tone in one window are the same note (slot, tone, octave) and would share an id, as the mined lines' would. Picks work as for the mined densities (a pick not offered plays the first and is marked `missed`). An alternate is `{ id, band: 'roots', n, rooted, distance (summed, in slots), notes }`.
+- **The records (fields added, none renamed).** A locked bar: `hits`, `missedHits`, `missedSlots` (the spec's slots), and `lockedSlots` (now the same as `hits`, kept for the window's title). A filled bar: `walkFill`. Stats: `hits`, `missedHits`, `walkFill`, `walkFillNotes`. `bassBarOf` takes `hits` (`nodes` alone is still read, each onset a hit of its own).
+
+**`rearrange.js`.** A chord swap's bass path passes the lock's `hits` (one line). Under phase I, a swap re-reads the bar's clave, so the planner should check that the swap's `bassLockOf` reads the new strokes.
+
+**Measured (seed 1; notes a bar, then [hits covered/hits, missed, extra notes] over the cycle; Roots: its runner-ups over the cycle):**
+
+| row | lock | Roots | Sparse | Moving | Walking |
+|---|---|---|---|---|---|
+| 8:7:6:5 (2 × 3) | free | 1 (5 alts) | 1 (2 fb) | 1 (2 fb) | 3 |
+| | kick | 1.5 [3/4, 1, 0] | 1.5 [3/4, 1, 0] | 1.5 [3/4, 1, 0] | 2.5 [3/4, 1, 2] |
+| | clave | 0.5 [1/2, 1, 0] | 1 [1/2, 1, 1] | 1 [1/2, 1, 1] | 2.5 [1/2, 1, 4] |
+| 11:9:7:5 (2 × 4) | free | 1 (2 alts) | 1 (2 fb) | 2 | 3.5 (bar 1 fills 3 of 4) |
+| | kick | 1.5 [3/4, 1, 0] | 1.5 [3/4, 1, 0] | 2 [3/4, 1, 1] | 3.5 [3/4, 1, 4] |
+| | clave | 0.5 [1/4, 3, 0] | 1 [1/4, 3, 1] | 2 [1/4, 3, 3] | 2.5 [1/4, 3, 4] |
+| 119:42:15:8 (4 × 8) | free | 1 (30 alts) | 2 | 4 | 8 |
+| | kick | 2.25 [9/9, 0, 0] | 3 [9/9, 0, 3] | 4.25 [9/9, 0, 8] | 8 [9/9, 0, 23] |
+| | clave | 2 [8/8, 0, 0] | 2.75 [8/8, 0, 3] | 4.25 [8/8, 0, 9] | 8 [8/8, 0, 24] |
+| 768:769 (4 × 8) | free | 1 (15 alts) | 2 | 4 | 6.75 (bars 1, 3 fill 5, 6 of 8) |
+| | kick | 2.25 [9/9, 0, 0] | 2.75 [9/9, 0, 2] | 3.5 [9/9, 0, 5] | 7 (bars 1, 3 fill 6 of 8) |
+| | clave | 0.25 [1/8, 7, 0] | 2.25 [1/8, 7, 8] | 2.75 [1/8, 7, 10] | 4.25 [1/8, 7, 16] (2 fills, 1 fb) |
+| 768:784 (4 × 8) | free | 1 (16 alts) | 2 | 4 | 8 |
+| | kick | 2.25 [9/9, 0, 0] | 3 [9/9, 0, 3] | 4.5 [9/9, 0, 9] | 8 [9/9, 0, 23] |
+| | clave | 2 [8/8, 0, 0] | 3 [8/8, 0, 4] | 5 [8/8, 0, 12] | 8 [8/8, 0, 24] |
+
+- **Kick covers every kick** on these rows except one each on 8:7:6:5 and 11:9:7:5, which have no onset in frame. 768:769's Clave misses 7 of 8 strokes: today's strokes are fringe tones (the order's probe), and phase I's frame clave should cover them all.
+- **Walking fills** 11:9:7:5's bar 1 (3 of 4) and 768:769's bars 1 and 3 (5 and 6 of 8), where phase G fell back to one root onset. Over 78 bar walks (6 rows and the 16k row × free/kick/clave), 68 walk full, 7 fill and 3 fall back. The 3 are locked bars where no line sounds every hit, and they play Roots at the lock.
+- **Cost (Node, 16k row, median of 5):** Free as before (Sparse 8.5, Moving 9.2, Walking 6.2 ms). Locked 6–11 ms (phase G's 2.5–5 ms: a locked bar now mines the whole lattice, not a few onsets). The worst is 10.6 ms (Moving · Kick), and the first offer on fresh materials 8–12 ms. All are inside the 14 ms budget on the main thread.
+
+**Tests (J3).** `assert-bass.mjs` (45 checks) reads the order with its own hits, slots, frames, bands and rankings:
+- every hit covered on one of its in-frame onsets (the mined ones on its nearest 12), or counted missed with its slot silent, checked on the clock the bar played;
+- Sparse and Moving within their band of the bar, at least the hits;
+- the backbeat example (2–3, 3–5);
+- the walk's count equal to the most notes a brute force finds over every line (a memoized search over lines.js' lattice and roles: foreign tones only on weak slots, resolved by step, never last; the hits sounding; missed slots resting);
+- Roots' offer equal to a brute force over the full product of its lists, the first its own note, every in-frame root-class onset of a one-chord bar offered (up to 8), a pick playing and a stale one missed;
+- the rest as phase G's.
+
+`assert-page-bass.mjs`' Kick and Clave checks now read P23 (each hit covered or missed). The window itself is unchanged.
+
+**Open (for Avery).**
+- A missed hit's slot rests outright (no extra note lands there). The other reading lets the density put an extra on that slot's other onsets.
+- A mined hit sounds on its 12 nearest in-frame onsets (for the budget). Roots reads all of them.
+- Locked bars with no hit (Sparse, Moving) use the covering band too (2–3 of 8 for Sparse, where Free's is 2–2), so turning on a lock can change a bar with no kick in it.
+- On Walking's halved clock (16-slot rows), two kicks in neighbouring 16ths are one hit.
+
+**For phase L.** A bar's `walkFill` ("walks 6 of 8"), `hits`, `missedHits` and `missedSlots` (amber), and Roots' `alternates` (now up to 8; `pickBass` still refuses Roots, and the window still says "no runner-ups"). Stats: `hits`, `missedHits`, `walkFill`, `walkFillNotes`. `BASS_HOW_WORDS['rest']` ("no locked onset in this bar") now means "no hit to cover in this bar" under Roots.
+
+## The frame clave (phase I; built 2026-10-28, branch `clave/frame`)
+
+`BASS_VOICING_ORDER.md` Amendment 1, phase I (I1–I4): rule 6 is Avery's ("a stroke on a tone outside the chord's frame doesn't count"; the comp, the perc and the bass's Clave lock all play it). P16–P21 are the builder's proposals, built as written except where noted below. Nothing here has been heard. The window (the picker by source, the cell head's bar pattern) is phase L.
+
+**Where it runs.** `compose.js` chooses the clave after the chords, from them (`claveFrom: 'frame'`, the default). Its ties draw from the clave's own generator (`${seed}/clave`), as before, so no other part's seed draw moves: the lead, chords, bass, inner and every sound are the pattern clave's (checked on 8 rows × 2 seeds).
+
+**The candidates (P16, `claves.js` `frameStrikes`, `readFrameLayer`, `rankFrameClaves`).**
+- **Strikes.** Each layer's strikes (`readRhythm`: a tick's first node) in each bar, by place: the strike's slot plus its share of the slot (the drums' `rAt`, inverted). A strike before the downbeat that slot 0's window holds sits at place 0.
+- **Grain.** m is the layer's strikes in the bars over N, rounded (v/N, except in a MIDI target's window). A layer with 3 ≤ m ≤ 16 is read at n = m, one with m > 16 at each n of 3–16, one with m < 3 not at all.
+- **Steps.** Where a bar holds exactly n strikes, step j is its j-th ("each strike a step"). Otherwise (a denser layer, or a bar one strike short or over when v/N isn't whole) step j is the strike nearest place k·S + j·S/n, ties to the earlier. Slots aren't equal in time, so the nearest by place can skip a strike or take one twice. A strike two steps share is one stroke, at the first step. The pattern keeps both steps.
+- **Sets.** 'chord': the strike's tone one of its chord's classes in tune (`chordClass`). 'frame': inside its chord's frame (the record's `frame.inside`). The chord is the one the strike's own slot sounds under, so a chart's split bar reads a strike under its span's chord.
+- **The strokes** are those strikes, at their own place and time, with `snap: 'strike'`. Nothing is landed, so every stroke is the clave layer's and in the set, and `silent` is 0.
+- **Ranking** is COMP_RULES over the bars' patterns: density (the bars' mean, a pulse bar or one under 2 onsets scoring 0), fit by n, and recurrence (the share of the bars whose pattern another bar repeats). It is sorted by score. Ties stay in the reading order (the fastest layer first, then n up, chord before frame), and the seed breaks a tie at the top, as `chooseClave` does.
+- **Left out:** a reading with no bar left in (every bar a pulse or under 2 onsets), as the table leaves such claves out. Also a 'frame' reading that equals the 'chord' reading of the same layer and grain: it's the same strokes, so the chord set's name is kept. Either can still be asked by id.
+- **Ids** are `frame:A/8/chord` (the layer's letter, the grain, the set). `claveOf` reads one back with its source in words as `pattern`, since a frame clave has no single pattern. The controller's "dropped" line prints it.
+
+**Fill (P17).** The partner is the best-ranked other candidate with at least one stroke and none within ¼ slot of a clave stroke. Distance is measured at the onsets' own places, round the loop. A landed step's `place` is its step's, so for a curated clave the ¼ slot is read from where its strokes actually sound. With no such candidate, the complement: each bar's free steps of its own pattern, Euclid-thinned to the clave's mean onsets a bar (its patterns' x's over N, rounded; kept as `per`), each landed in frame. A curated or asked clave's complement is `complementClave`'s, landed in frame.
+
+**Curated and asked claves (P18, `layInFrame`, `landInFrame`).** Son, rumba, bossa and an asked `steps:pattern` keep their fixed pattern. A step lands on the in-frame onset nearest its place within half-way to its neighbours, then one place wider, inside its bar or span. The landing is `landPlace`'s, measured in the cycle's share, but over in-frame onsets only, with `snap` 'slot' or 'wide'. With none, the step is silent. They're scored as fixed patterns with recurrence 0, so they're only chosen unasked when no layer reads a frame clave.
+
+**`claveFrom` (P19).** `'pattern'` is the clave before phase I byte for byte: `fixtures/clave-pattern.mjs` hashes 76 specs made by the core at c009aaa, and `assert-frame-clave.mjs` checks them. No new decision was added. The frame clave's words go in the `clave` decision's `why` ("from the frame by default (rule 6, Avery): …"; asked, it starts "asked"). Suites pinned to `'pattern'` (as `voicing: 'close'` pinned phase F): `assert-claves.mjs` and `assert-rearrange.mjs` (every chords-style Compose), and `assert-page-clave.mjs` (its `runCompose` and its direct Composes). `assert-refactor-identity.mjs` strips the longer override list from its refusal message. Every other suite (comp, drums, bass, voicing, trace, page) passes on the frame default unchanged.
+
+**A chord swap (P20, `rearrange.js`, `rereadClave`).**
+- When a spec's clave was read in frame (`spec.clave.read === 'frame'`), every rebuilt bar's (span's) clave is read again under its new chord: a frame clave at the same layer, grain and set; a curated or asked clave's steps landed in frame again. The partner is read again too: a frame complement from the clave's new bar at the same `per`, a fixed complement landed again.
+- The other bars' strokes stand, and the partner's `shared` marks are taken again. The comp re-strums the bar over the new strokes, the perc follows (the drums arranged over the new `spec.clave`), and an arranged bass re-mines it with its Clave lock read from the new clave.
+- The result carries `reclavedBars` (the rebuilt bars whose strokes moved) and, when any did, `clave` and `stats.clave`, which `applyRearrange` writes in. A swap that moves no stroke leaves `spec.clave` byte for byte.
+- `reclave` (the picker's Sync | Fill and a chosen clave) chooses over the frame candidates under the chords as they play, and stays equal to a Compose given the same `clave` / `compRelation` on rows, a chart and a MIDI target. A clave from the pattern never moves on a swap, as before.
+
+**The words (P21).** `claveSource` gives "layer A · 8 steps · chord tones" (or "tones in frame") for a frame clave, and "son clave 3-2 · in frame" for a curated one read in frame. `claveText(clave)` is each bar's pattern, a bar a group, and `claveText(clave, k)` is bar k's. `claveSetText` knows 'chord' and 'frame'. The decision, the trace's clave, partner and alternates (`claveAlternates`) carry `patterns` and `read`.
+
+**The perc.** It plays `spec.clave.strokes` as before, and its accent is each bar's first onset for a frame clave (`drums.js`, one line: `C.onsets[0]`, the step of a fixed pattern, means nothing when the pattern changes by the bar). A fixed clave's accent is unchanged.
+
+**`spec.clave`'s shape is kept.** `strokes` still hold `{ bar, step, place, node, tick, time, slot, snap }`, and `compSourceOf` and `compNodesOf` are unchanged, so the bass and the drums read it as before. New fields:
+- `read: 'frame'` on every clave read in frame;
+- `source: 'frame'`, `patterns` (a bar each) and `from: { layer, name, grain, set, frame: true }` on a frame clave;
+- `per` and `patterns` on a frame complement;
+- `snap: 'strike'` on a frame stroke.
+
+`pattern` and `onsets` are the clave's most repeated counted bar's (else bar 1's), for views that show one pattern.
+
+**The probe rows** (seed 1, Sync):
+
+| row | bars × slots | candidate | patterns | score | strokes in frame | on chord tones | Fill |
+|---|---|---|---|--:|--:|--:|---|
+| 8:7:6:5 | 2 × 3 | layer A · 4 steps · chord tones | `x.x. ...x` | 0.500 | 3/3 | 3/3 | partner `xx. ...` |
+| 11:9:7:5 | 2 × 4 | layer A · 6 steps · chord tones | `xxx... xx....` | 0.583 | 4/4 | 4/4 | complement |
+| 19:17:16:15 | 2 × 8 | layer C · 8 steps · chord tones | `x..x.x.. .xx...x.` | 0.667 | 6/6 | 6/6 | partner `.x...x.. ........` |
+| 7:5:3:2 | 1 × 3 | layer C · 3 steps · chord tones | `xx.` | 0.472 | 2/2 | 2/2 | complement |
+| 119:42:15:8 | 4 × 8 | layer C · 4 steps · chord tones | `x.x. ..xx ..x. ....` | 0.500 | 5/5 | 5/5 | complement |
+| 768:769 | 4 × 8 | layer B · 6 steps · tones in frame | `xxx... .x..x. ..xx.. xxx...` | 0.750 | 10/10 | 3/10 | complement |
+| 768:784 | 4 × 8 | layer B · 8 steps · chord tones | `x.x.x.x.` each bar | 1.000 | 16/16 | 16/16 | partner `.x.x.x.x` each bar |
+| 16:12:9 | 2 × 4 | layer A · 8 steps · chord tones | `xxxxxxx. xxxxxxxx` | 0.375 | 15/15 | 15/15 | complement |
+
+Before, the strokes in frame were 1/4, 1/4, 5/8, 2/2, 8/8, 1/8 and 8/8 on the first seven rows (the probe's table).
+
+**Cost.** On the 16k row (8 × 8; 112 readings, 105 candidates) the clave is ranked in about 3.5 ms and chosen with its partner in about 1.3 ms, and Compose is no slower (773 ms frame, 828 ms pattern on a loaded machine; the pattern table took longer). A chord swap with the re-read is about 12 ms. On the small rows the clave is under 1 ms.
+
+**Tests.** `assert-frame-clave.mjs` (new, 15 checks) runs against a brute force written from the order:
+- the candidates, their reading and ranking, and every stroke the layer's own strike at its step, in the set, at its own time (8 rows × 3 seeds × Sync and Fill, 3 charts, a MIDI target);
+- Fill's partner or the complement landed in frame;
+- the comp and the perc on the clave, each bar's first accented;
+- 80 asked claves landed in frame;
+- `'pattern'`'s 76 hashes;
+- the default being 'frame', and no other part moving;
+- 216 chord swaps moving only their bar's strokes, the re-read the brute force's (the partner's too), the comp and the perc on them, a JSON round trip;
+- 89 clave switches equal to a Compose's;
+- the words;
+- the probe table, and the 16k row's cost.
+
+**Calls beyond the order (proposed):**
+1. "Each strike a step" holds where the bar holds exactly n strikes. Otherwise the nearest place rules, and a strike two steps share is one stroke.
+2. A reading with no bar left in is no candidate. The frame set's twin of the chord set takes the chord set's name.
+3. A Fill partner needs a stroke, and the ¼ slot is measured at the onsets' own places.
+4. The complement's count is the clave's mean x's a bar, kept (`per`) so a swap moves only its bar.
+5. A split bar reads a strike under the chord of the slot it sounds in, not the one its step's place falls in. They differ only where a strike sits across a span edge from its step.
+6. The curated claves rank with recurrence 0, below any frame candidate in practice.
+7. The perc's accent is each bar's first onset for a frame clave.
+
+**Open (for Avery):**
+1. **Rows whose every tone is in tune read near-pulses.** On 16:12:9 every candidate is mostly pulse, so the best scores only 0.375 and the comp strikes 15 times in 2 bars. Should a frame clave under a floor (say 0.5) give way to the pattern clave, or to a curated one landed in frame?
+2. **A partner can leave a bar empty.** On 19:17:16:15, Fill's partner strikes nothing in bar 2, so the comp plays its root onset there. Should a partner need a stroke in every bar the clave has?
+3. **Ties on dense rows.** The 16k row ties 4 candidates at 0.656, and the seed picks. Prefer the chord set, or the straighter grain?
+
+## The window over Amendment 1 (phase L; built 2026-10-28, branch `ui/amend1`)
+
+`BASS_VOICING_ORDER.md` Amendment 1, phase L (L1–L4): the window over phases I, J and K. Rulings 5–9 are Avery's; the rest is the builder's, proposed. No core file changed (`core/*.js` untouched), and Compose's output is unchanged. Nothing here has been seen in a browser or heard.
+
+**L1, the clave** (`page/composer-tab.js` `claveBlock`, `compHeadClave`; the controller's `claveOf`).
+- **The picker.** A frame candidate (`from.frame`) is listed by its source words (`claveSource`: "layer A · 8 steps · chord tones" / "tones in frame") with its score beside it in the clean view. Each bar's pattern (`claveText`, a bar a group) goes in Details, since it is long on 8-bar rows. The curated claves come after, each by its fixed pattern and its own label ("son clave 3-2", without the "· in frame" `claveSource` adds), tagged "lands in frame only". A clave from the pattern (`claveFrom: 'pattern'`) is listed exactly as phase E listed it, so the pinned suite reads the same window.
+- **Ids.** `setClave` and `claveOf` already took `frame:A/8/chord` (claves.js `claveOf` parses it), so nothing changed there. `claveOf` adds `read`, `frame`, `barTexts` (each bar's pattern: a frame clave's own, a fixed clave's group of its pass, so son alternates its two bars), `partner.barTexts`, and on each alternate `frame`, `inFrame` and `label`.
+- **The Comping cell head** shows the bar's own pattern (`barTexts[k]`, which is `claveText(clave, k)` for a frame clave), and in Fill the partner's beside it, since that is what the comp strikes there. The clave line under it keeps every bar's pattern and the source.
+- **"Compose dropped".** A dropped frame clave is named by its source: "the chosen clave (layer B · 3 steps · chord tones, from the frame) was dropped". claves.js' `claveOf` gives a frame id's source words as its `pattern`, so the controller's record is unchanged.
+- **A chord swap's `reclavedBars`.** The window re-renders whole on every change, and the player and the drums read the spec as it plays, so the comp and the perc already followed a re-read. What was missing is the edit's result: the fold now collects `reclavedBars` from the rearrange steps it runs (not the cached ones) and returns them, also merged into `changedBars`. A re-read can move only the perc (in Fill the comp plays the partner), and `movedBars` compares only the parts. The edit note says "the clave re-read in bar N (its new frame)".
+
+**L2, the bass** (`bassBlock`, `bassHitsLine`, `bassFillLine`).
+- **Roots' runner-ups** (rule 9). `pickBass` no longer refuses Roots, and its alternates are listed, auditioned, kept and reverted like the mined lines. A Roots alternate has no contour or cost, so it is named by what it plays, "287/172, slot 3" a note: its tone and its slot in the bar. A bar's offer can hold one tone at two slots (one onset per tone per slot), so the tone alone repeats names. The tone comes from a new controller method, `ratioOfOnset(node)`, which reads the composed row (the materials the bass is arranged from on this thread). When the row is the worker's (past `MAIN_THREAD_ONSETS`), it gives null and the name is the slot alone. Details: how far it sits off the change ("0.04 off", the summed `distance` in slots). The legend says "the root's other notes in frame, nearest the change first".
+- **A walk's fill** (rule 5). A bar with `walkFill` reads "walks 6 of 8: a rest where no step fits". 8 is Walking's clock (bass.js `walkClock` of the bar's slots, so 8 on a 16-slot row) less the bar's missed hits, which rest anyway. It's in the clean view: it says why the walk has gaps. The stats (Details) add "· 2 walk what they can".
+- **The hits covered** (rule 7). A locked bar reads "covers 2 of 2 kicks" (or "strokes"), and with missed hits " · 1 missed (slot 5): no onset in frame there, so it rests" in amber (`ctab-bass-missed-hits`, the slots from `missedSlots`, bar-relative). A locked bar with no hit reads "no kick in this bar: nothing to cover". The stats add "· 6 of 9 hits covered".
+- **The words.** The lock titles say "covers the kick: every kick gets a note, and the density adds the rest" (the Clave one says the same of the comp's strokes). The switch's title reads "what the bass covers: …". The head's tag is "moving · covers the kick". `BASS_HOW_WORDS`: 'rest' is now "no hit to cover in this bar", and 'locked roots' is "no line could cover every hit, so it plays a root on each hit". The Roots and Walking density titles mention their runner-ups and the fill. No "only on" wording is left.
+
+**L3, the words.**
+- **The voicing** (`voicingRow`, `voicingTitle`). The stats read "1 lifted · 311¢ a change · loop closed" ("a change": phase K's `meanMotion` is over the loop's N changes); a one-chord loop reads "… lifted · one chord". The title says the loop is closed, then gives the bar lines' motion and "the wrap back to the first chord W¢ (led, as every change)"; "(…, not led)" is gone. The Led button's and the switch's titles say the octaves are chosen together round the loop.
+- **The captions** (`trace-frames.js`). The comp: "the clave from the frame, layer B · 6 steps · tones in frame (xxx... .x..x. …): 10 strokes, every one in frame" (a curated clave read in frame: "every one in frame" too; Fill's gaps a bar each). `compDetail` is exported for the suite. The bass: "moving, covering the comp's strokes (10 of 10 hits): …", with the missed counted and "; 2 bars walk what they can, a rest where no step fits" under Walking. For that, `highlightsOf`'s `arrangement.bass` now carries the stats' `hits`, `missedHits` and `walkFill`. The chords: "a voice a chord tone, led round the closed loop: 1 lifted clear of the mud limit, 311¢ of motion a change, the wrap back to the first chord 372¢"; one chord: "led: one chord, nothing to lead".
+- **Cache-bust:** `index.html`'s composer-tab.css and composer-bridge.js `?v=20261028.2`.
+
+**Tests (L4).**
+- `assert-page-bass.mjs`, 59 → 73 checks:
+  - The locks' "covers" titles (nothing says "only"), and the head's tag.
+  - Under Kick on 41:42:43 at 4 × 8: a bar with every kick covered (no amber), and a bar with a missed kick (the amber line's slot and words, and the CSS colour).
+  - The stats counting hits, then fills.
+  - Roots' runner-ups: named by tone and slot from the row, every name different; Details' distance; audition, Revert with no step, Keep as one; `pickBass` taking the first again; `ratioOfOnset`.
+  - Walking's fill line on a filled bar (its notes the count) and none on a full one.
+  - The voicing's stats and title; the closed-loop and covering captions.
+- `assert-page-clave.mjs`, 34 → 53. The pin (`claveFrom: 'pattern'`) is lifted for a last section on 768:769:
+  - the frame candidates by source and score, in the trace's order, the patterns in Details; the curated last, "lands in frame only";
+  - the legend;
+  - the head's pattern bar by bar (equal to `claveText(clave, k)`, not all the same), and the partner's in Fill;
+  - a frame clave kept from the list, equal to a Compose given its id;
+  - a chord swap that re-reads a bar: the note, the head and the perc; the controller's `reclavedBars`, among its `changedBars`, and absent on a later edit whose swap step is cached;
+  - a frame id the list doesn't offer, set, then dropped on a re-compose and named by its source;
+  - the comp's caption.
+
+The README's Files and Tests are updated. No suite was added (83).
+
+**Calls beyond the order (proposed):**
+1. Roots' runner-ups are named "tone, slot k" (the tone alone repeats). When the row is in the worker, the slot alone.
+2. The Comping head shows the partner's bar too in Fill.
+3. A frame candidate's score is in the clean view; the curated ones' only in Details. They're scored as fixed patterns with recurrence 0, and on 41:42:43 they read 0.667, above every frame candidate (the chosen 0.436), though they rank after them. Shown side by side, the numbers would mislead.
+4. "walks N of W": W is the clock less the bar's missed hits.
+5. `reclavedBars` joins `changedBars`, since the perc moved there even when the comp didn't.
+
+**Looked at in the core, not changed (for the planner):**
+- **The picker's frame candidates are the trace's**: ranked and read under Compose's chords. After a chord swap, the list's patterns and scores for that bar are Compose's, not the new chord's. A clave picked from it is read fresh (`reclave` ranks under the chords as they play), so what plays is right; only the list is stale until a re-compose. The fix would be a re-rank in the window (`rankFrameClaves` over the spec as it plays, ~3.5 ms on the 16k row), which needs the part context the controller doesn't keep. Not done.
+- **The comp's caption reads Compose's clave** (the trace's event), not one chosen in the picker, as in phase E. The bass and chords captions read the arrangement as it plays.
+- On 41:42:43 (4 × 8) Roots' own note in bar 2 is at slot 3, its runner-up the same tone at slot 7: no root-class onset sits nearer the downbeat. As P24 reads ("nearest the chord's first anchor"), not a bug.
+
+**Not verifiable in Node (for Avery's pass):**
+- whether the frame candidates' source words read well in a narrow inspector (they wrap);
+- whether a Roots runner-up is audible (the root's ±15¢ cluster, or a slot's shift);
+- whether "walks 6 of 8" matches what is heard.
+
+**Open (for Avery):**
+- Should the picker re-rank the frame candidates after a chord swap (their patterns and scores for the swapped bar), or is the list as composed enough?
+- Name Roots' runner-ups by cents off the root ("+12¢, slot 3") rather than the ratio?
+- Should the comp's caption, like the bass's and the chords', say the clave as it plays (a picked one) rather than Compose's?
+
+## Comp density tiers and the bass's default (Amendment 2, phase M core; built 2026-10-28, branch `amend2/core`)
+
+`BASS_VOICING_ORDER.md` Amendment 2, phase M (M1–M4). Rulings 10, 11, 13 and 14 are Avery's; P26–P28 and P30–P32 are the builder's proposals, built as written except where noted. Pure core: `page/`, `perform/` and `store/` are untouched (phase N). Nothing here has been heard or seen in a browser.
+
+**The narrower sets (P26, `claves.js`).** The frame candidates gain `root+5th`, `guide` and `root`, each in tune as `chord` reads it. The reading order is chord, frame, root+5th, guide, root. A reading equal to an earlier set's at the same layer and grain is dropped and the earlier name kept: for the new sets that is always the wider one (root+5th and guide are disjoint, so a guide or root reading can only twin a wider set's). The phase I twin, frame equal to chord, still keeps `chord`, so no phase I id moves for that reason. Words: "root and fifth", "guide tones", "roots" (`FRAME_SET_WORDS`, `claveSource`, `claveSetText`). Ids: `frame:B/11/root`, `frame:A/8/root+5th`.
+- **The fifth** is the chord's own: its interval of 6–8 semitones (7; a dim chord's 6, an aug chord's 8). The planner's probe used 7 for every chord, so it differs from it on dim and aug chords (builder's call).
+- **One read for all five sets** (`readFrameGrain`): each step's strike is found once and read once under its chord (its class, its frame test), then each set's pattern and strokes are taken from that. `readFrameLayer` is its one-set view, unchanged in output.
+
+**The tiers (P27).** A candidate's `share` is its patterns' x's over n·N (the steps sounding, over the bars; a strike two steps share counts twice, as the probe counted). Its `tier`: sparse 10–25 %, medium 25–50 %, dense 50–85 % (under 10 % or over 85 %: none). `rankFrameClaves(…, { density })` and `chooseFrameClave(…, { density })` take `'sparse-med'` (the default, 10–50 %), `'sparse'`, `'medium'` or `'dense'`:
+- Every counted reading is scored; the ranking is the tier's candidates only, each scored again by COMP_RULES with the density term's `share` set to the tier's band (`ranks.rules`). Ties stay in the reading order, the seed breaking a tie at the top, as before.
+- **The fall-back:** with no candidate in the tier, the nearest tier with one (`DENSITY_FALLBACK`: sparse → medium, dense; medium → sparse, dense (the sparser first: builder's call, Avery's default leans sparse); dense → medium, sparse; sparse–medium → dense). With none in any tier, every candidate under COMP_RULES as phase I ranked them.
+- **Fill's partner** is the best of the same ranking (the tier's) sharing no stroke, else the complement, which keeps the clave's own onsets a bar, so it stays in the tier (builder's call).
+- **An asked frame id** outside the tier is read as asked and scored against the tier's band.
+- `ranks.density` = `{ asked, played, band, fellBack, counts: { sparse, medium, dense, none } }`. The chosen clave carries `share`, `tier` and `compDensity: { asked, played, fellBack }` (spec.clave; so a rearrange reads the tier from the spec). `rereadClave` updates a frame clave's `share` and `tier` from its new patterns; its score stays the one it was chosen by. `claveAlternates` and the trace's alternates carry `share` and `tier`.
+- **`compose.js`:** `compDensity` is an override (chords style, frame only: under `compStyle: 'notes'` or `claveFrom: 'pattern'` it throws, since a pattern clave has no tier). The clave decision names the tier (`densityWhy`, P31): "the comp's density sparse–medium (10–50 %) by default (rule 10, Avery): the frame claves ranked inside it, …", or "…: no frame clave in it (0 sparse, 3 medium, …), so the nearest tier's, medium (25–50 %), …", then "the best of 7 medium frame claves", and the clave's share. The trace's comp event carries `density` and the clave's `compDensity`. No decision was added, so the `'pattern'` hashes hold.
+
+**The default tier, seed 1** (the order's rows; every one medium and none fell back):
+
+| row | bars × slots | clave | share | tier counts (sparse / medium / dense / none) | patterns |
+|---|---|---|--:|---|---|
+| 16:12:9 | 2 × 4 | layer A · 8 steps · guide tones | 25 % | 0 / 3 / 4 / 2 | `...xx... x......x` |
+| 7:5:3:2 | 1 × 3 | layer A · 7 steps · guide tones | 29 % | 0 / 3 / 3 / 1 | `x...x..` |
+| 19:17:16:15 | 2 × 8 | layer C · 8 steps · chord tones | 38 % | 4 / 5 / 3 / 1 | `x..x.x.. .xx...x.` |
+| 119:42:15:8 | 4 × 8 | layer B · 11 steps · roots | 34 % | 1 / 3 / 36 / 12 | `..x..x..x.. ..x..xx.x.. ..x..x..x.. xx..x..x..x` |
+| 8:7:6:5 | 2 × 3 | layer B · 4 steps · roots | 50 % | 0 / 4 / 1 / 1 | `.x.x xx..` |
+| 11:9:7:5 | 2 × 4 | layer A · 6 steps · chord tones | 42 % | 3 / 6 / 2 / 0 | `xxx... xx....` |
+| 768:769 | 4 × 8 | layer B · 6 steps · tones in frame | 42 % | 12 / 27 / 1 / 12 | `xxx... .x..x. ..xx.. xxx...` |
+| 768:784 | 4 × 8 | layer B · 8 steps · chord tones | 50 % | 26 / 44 / 11 / 7 | `x.x.x.x.` each bar |
+
+Phase I's open question 1 is answered by the tiers: 16:12:9 no longer strikes 15 times in 2 bars (it plays 4 guide tones). Asked `sparse`, 16:12:9 and 7:5:3:2 have no sparse candidate and fall back to medium's best; asked `dense`, they play `frame:A/8/root+5th` (69 %) and `frame:C/3/chord` (67 %).
+
+**Compose's bass (P28, `compose.js`, `bass.js`).** Compose's bass is Moving · Kick (`COMPOSE_BASS`):
+- **How:** the spec is built with an empty bass part (its sound, legato and on/off decided as before), the drums are arranged (drums.js reads no bass), then `arrangeBass(spec, { row, cells }, { density: 'moving', lock: 'kick' })` builds the part, which replaces it. So what Compose returns is what plays, the part carries its `bass` record, and a later `arrangeBass` at those options gives it again byte for byte (assert-bass checks 10 specs). The stats' `notes.bass` and `bassRooted` follow. A `bass` decision sits where the bass was decided (after the comp's, before the legato): value "moving · kick", why "Moving · Kick by default (rule 11, Avery): the mid band (40–60 % of the slots), every kick covered on one of its in-frame onsets (9 of 9), the density adding the rest; …". The trace's bass bars are the arranged bars' played lines (`bassLineOf`), and `rec.parts` now runs after the drums and the bass (no trace event is emitted between, so a traced Sparse · Free spec is unchanged).
+- **The drums off** (`drums: false`, or not enabled) **or no kick in the mode:** arrangeBass's own fall-back, Moving · Free, its `refused` the reason; the decision says "…, but the drums are off: there is no kick to land on, so Moving · Free".
+- **The `bass` override** `{ density?, lock? }` (no picks; checked) asks another arrangement ("asked"). **`bass: { density: 'sparse', lock: 'free' }` is the bass before, byte for byte:** Compose mines it bar by bar as it did (no record, no `bass` decision), so with the override taken out of the input the spec is the old one. `assert-refactor-identity.mjs` holds it to the frozen core.
+- `arrangeBass`'s own options still default to `BASS_DEFAULTS` (Sparse · Free), so the store and the window, which read `BASS_DEFAULTS` as "Compose's own", are untouched.
+- `rearrange.js` now meets Compose's bass with a record, so a chord swap re-mines its bar at Moving · Kick (the arranged-bass path), its stats updated.
+- **What it changes, measured (seed 1):** notes a bar and kicks covered: 16:12:9 2.00 (4/4), 7:5:3:2 2.00 (2/2), 19:17:16:15 3.50 (4/4), 119:42:15:8 4.25 (9/9), 8:7:6:5 1.50 (3/4, 1 missed), 11:9:7:5 2.00 (3/4, 1 missed), 768:769 3.50 (9/9), 768:784 4.50 (9/9), the 16k row 4.38 (18/18). A kick note may sit on an onset across its slot's edge (phase J: a hit's onsets are those within ¼ slot of it), so a note's `slot` is the hit's, not always its onset's own window.
+
+**The picker re-ranked (P30, `rearrange.js`).**
+- **A chord change:** when a chord swap, a typed chord (a pin's `{ rootTone, quality }`) or a lead follow changes a chord of a spec whose clave was read in frame, the result carries `claveAlternates`: `claveAlternates(rankFrameClaves(…))` over the chords as they play, in the spec's tier (`spec.clave.compDensity.asked`, else the input's, else the default). What plays is the clave re-read (P20), never switched. A swap to the chord a bar has re-ranks nothing. A chart edit is a re-compose, so the new trace has them.
+- **`reclave` reads the tier:** `{ density }` switches it live. A new density re-chooses the tier's best (or the clave asked with it), its ties by the seed's own generator, so the result is byte for byte a Compose given that `compDensity` (parts, drums, spec.clave, its stats). A density or a clave chosen again returns `claveAlternates` too. Its decision words name the tier. `rearrange()` dispatches `{ density }` to it. A density for a pattern clave throws.
+
+**New chords voiced (P32).** The core already did it; `assert-voicing.mjs` now checks it: on 6 rows, a lead follow (chords following), a chord swap and a typed chord each give, led, the voicing pass's output over the new chords (the brute force's closed loop, and a revoice to Led changes nothing) and, close, root position (a revoice to Close changes nothing). A Close | Led flip before or after each edit gives the other setting's edit, chords and comp byte for byte.
+
+**Cost (Node, the 16k row, medians):** Compose 650–790 ms lean, the same as before phase M within the machine's noise (A/B 653–684 against 558–673 ms at f949cf7); the full table 2.0 s (1.7 s before; a worker's). The ranking (280 readings, 107 candidates) 2.8 ms warm, 6.9 ms on a fresh part context (the layers' strikes read once a context, 2.8 ms of it). A chord swap with the re-read, the re-rank and the Moving · Kick bar 13.6 ms. A density switch 4.7 ms. `arrangeBass`: Moving · Kick 11.1, Sparse · Free 8.5, Moving · Free 9.3, Walking · Kick 10.5, Sparse · Kick 10.1, Roots · Kick 2.9, Moving · Clave 5.3 ms.
+
+**Pins (P27–P28).** No fixture was re-frozen.
+- `bass: { density: 'sparse', lock: 'free' }`, taken back out of the input where specs are hashed or compared to the frozen core: `assert-refactor-identity.mjs` (its override-list message too), `assert-compose.mjs`, `assert-progression.mjs`, `assert-trace.mjs`, `assert-chord-symbols.mjs`, `assert-comp.mjs` and `assert-voicing.mjs` (each's frozen-core cases), `assert-frame-clave.mjs` (P19's 76 pattern hashes), `assert-rearrange.mjs` (every Compose), `assert-bass.mjs` (every section but the new one) and `assert-drums.mjs` ("the drums move nothing else": with Moving · Kick the drums move the bass by design; a new check says they move only it).
+- Page suite: `assert-page-bass.mjs` (its `runCompose` and `composeAs`), because the window still treats Sparse · Free as Compose's own bass (phase N).
+- `compDensity` needed no pin: the phase I suites' frame checks run against the brute force, which now reads the tiers, so `assert-frame-clave.mjs`'s brute force was rewritten from P26–P27 rather than pinned. No other suite froze a frame result.
+
+**Tests (M4).**
+- `assert-frame-clave.mjs` 15 → 22: the sets and tiers against the brute force on 8 rows × 4 densities × 2 seeds (every stroke in frame and in its set, the share and tier, the words); 7:5:3:2's fall-back from sparse to medium; the trace's density and its alternates all in the tier; the throws; no twin readings; the alternates re-ranked after chord swaps, typed chords and lead follows (the brute force's ranking, and equal to a Compose given a progression that pins the same chords where it does); 40 density switches equal to a Compose given that compDensity; the default tier's table.
+- `assert-bass.mjs` +7: Compose's default at Moving · Kick on 10 specs (arrangeBass's byte for byte, every kick covered or missed, the decision and its place); the fall-back with the drums off, disabled, or hats only; the pin byte for byte (no record, no decision, the rest of the spec the default's); an asked bass; the override checked; the trace; a chord swap of the default.
+- `assert-voicing.mjs` +1: P32.
+- `assert-drums.mjs` +1 (above). No suite was added (83).
+
+**Calls beyond the order (proposed):**
+1. The fifth is the chord's own (6–8 semitones), not always 7.
+2. A share counts steps sounding (x's), a strike two steps share twice.
+3. Medium's fall-back tries sparse before dense.
+4. Fill's partner comes from the tier's ranking.
+5. An asked frame id outside the tier is scored against the tier's band.
+6. `compDensity` throws under `claveFrom: 'pattern'` and `compStyle: 'notes'`.
+7. Compose's bass is built by `arrangeBass` itself, after the drums; Sparse · Free asked keeps the old path and adds no decision or record.
+8. Sparse · Free is still `arrangeBass`'s default (`BASS_DEFAULTS`); Compose's is `COMPOSE_BASS`.
+9. `reclave` returns no `input` for a density switch (as for a clave): the window must send `compDensity` on a re-compose.
+
+**For phase N (the window; nothing here changed it):**
+- `store/composition-store.js` `composedBass()` and `isComposedBass()` read `BASS_DEFAULTS` (Sparse · Free) as Compose's own. They should be Moving · Kick (`COMPOSE_BASS`), so `bassOf()` opens at Compose's arrangement and `bassOn` is false for it. A stored entry's Sparse · Free, once "Compose's own", is now an arrangement.
+- `composer-controller.js` `offerOf` arranges the default offer at `composedBass()`; with Compose's bass carrying its record, `bassOf()` can read `part.bass` directly (it already prefers it), so the offer memo matters only for a pinned spec.
+- **The kick:** Compose arranges its bass over its own drums (the default options), while the window plays `st.drumOptions` (and may turn them off). The window must either send its drum options to Compose (so the bass covers the kick that plays), or re-arrange the bass whenever its drums differ from Compose's: `rebass` today runs only when `bassOn(st)` and `lock === 'kick'`. With the window's drums off, Compose's bass still covers Compose's kick, a kick that doesn't play.
+- `setBass({ density: 'sparse', lock: 'free' })` must arrange (it is no longer "nothing arranged"), and the default must not be dropped as "Compose's own" when the entry says Moving · Kick.
+- The fold: rearrange's arranged-bass path (`bassDropped`) is now taken for Compose's own bass; the DESIGN_NOTES phase H line "rearrange's arranged-bass path is never taken by the window" no longer holds.
+- The Comping inspector's Density select calls `reclave({ density })`; keep the latest `claveAlternates` from any rearrange or reclave result (the fold's steps) and list them instead of the trace's; send `compDensity` on a re-compose; the caption names the tier (`spec.clave.compDensity`).
+- `assert-page-bass.mjs` is pinned to Sparse · Free (its `runCompose`, `composeAs`); phase N takes the pin out.
+
+**Open (for Avery):**
+1. Every row's default lands in medium, often at its top: 8:7:6:5 and 768:784 play 50 % (768:784 `x.x.x.x.` every bar, scoring 1.0). Should sparse–medium prefer the sparser of two equal scores, or should 50 % be dense?
+2. On 8:7:6:5 and 11:9:7:5 one kick of 4 has no onset in frame, so it rests; Moving there plays 1.5–2 notes a bar. Is Moving · Kick too thin on the small rows (fall back to Free when a quarter of the kicks miss)?
+3. The window's drums vs Compose's: should the bass cover the kick that plays (the window's drum options sent to Compose), or Compose's?
+
+## The window over Amendment 2 (phase N; built 2026-10-28, branch `amend2/ui`)
+
+`BASS_VOICING_ORDER.md` Amendment 2, phase N (N1–N3), with phase M's list of what the window had to change. Rulings 10–14 are Avery's; the bass covering the kick that plays is the planner's; the rest is the builder's, proposed. One core file changed, additively (`bass.js`, below). Nothing here has been seen in a browser or heard.
+
+**Compose's own bass is Moving · Kick** (rule 11, P28; `store/composition-store.js`).
+- `composedBass()` and `isComposedBass()` read `COMPOSE_BASS`, so `bassOf()` opens at Moving · Kick and `bassOn` is false for it. A stored Sparse · Free is now an arrangement like any other: `setBass({ density: 'sparse', lock: 'free' })` arranges it, the bass before Amendment 2 note for note (checked against a Compose given `bass: { density: 'sparse', lock: 'free' }`).
+- **The offer.** Compose's bass part carries its `bass` record, so `bassOf()` reads its runner-ups from it. `offerOf` (arrangeBass at Compose's own) is only for a spec composed with the bass pinned to the one before, so a big row no longer sends a worker job for its default offer.
+- `bassOf()` adds `own` (the entry's is Compose's own) and `refollowed` (Compose's own arranged again over the drums as they play), and `playing` now means the window arranged the bass, so it is false for Compose's own as composed.
+
+**The kick that plays** (the planner's ruling). Compose covers its own default drums' kick, and the window plays `st.drumOptions`.
+- `kickOf(drums)`: the kick hits' ticks and slots, or 'off'. When the drums as they play strike another kick than Compose's drums (another mode, the drums off, a grid edit), and Compose's own bass covers the kick (its record's lock), `settleState` arranges it again over them at its own options (`bassArranges`). With the drums off or no kick in the mode, that's arrangeBass's Moving · Free, its `refused` the reason. The window says it as it says an asked Kick refused later: "Kick can't land now (the drums are off: …), so the bass lands anywhere".
+- `rebass` runs on every drum change under Compose's own bass, as it did for an asked Kick. Where the kick matches Compose's again (the backbeat back), nothing is arranged and the spec is Compose's object again.
+- A re-compose with the drums off: Compose covers its own drums' kick, so the fold runs after it lands (`kickMoved`) and the bass is arranged again. A big row's goes to the worker as an asked bass does (`bassStep`).
+- On 41:42:43 (4 × 8) the default window drums (backbeat, fills) strike Compose's kick exactly, so nothing is arranged by default. Of the drum modes, halftime, four, funk, soca and bossa move the kick; the layered modes, rock, shuffle, son, rumba and prime don't (seed 1). The lab's "a mode change while playing" now re-arranges the bass (on the lab's 41:42:43, partition without fills moves the kick), and nothing else.
+- In the window the bass cell says "Compose's own, arranged again over the kick as the drums play now" when it follows a moved kick (no amber; the refusal keeps its amber line).
+
+**The fold's base keeps Compose's drums** (item 5). The base was `{ ...composed, drums: undefined }`, so rearrange's bass path read no drums: under Compose's Moving · Kick a chord swap would have re-mined its bar at Moving · Free (the lock refused for want of drums). The base is now Compose's spec as it is. rearrange arranges the drums again at each step (about 0.1 ms; `settleState` still plays the window's own), and a swap re-mines Compose's bar at Moving · Kick over the kick it covers: equal to Compose's own swap (`assert-page-bass.mjs`). `assert-store-edits.mjs` compared against rearrange over a drum-less spec, so it now runs rearrange over the composed spec and compares the specs without their drums.
+
+**The comp's density** (N1; rule 10, P27; `state.compDensity`, 'sparse-med' by default).
+- In the entry like the voicing: in the snapshots, kept through a re-compose, carried to a new cycle, in `entrySnap`, and in JSON export when it isn't the default.
+- **Live:** the fold's step after the voicing's is `{ kind: 'density' }`, rearrange's `reclave` with `{ density }`, when the entry's tier differs from the composed spec's (`tierOf`: its clave's `compDensity.asked`, frame claves only). It runs before the chord and lead edits, so they re-read and re-rank the clave in the new tier (rearrange reads `spec.clave.compDensity.asked`), and before the clave edit, which is chosen in it. With no other edit it is byte for byte a Compose given that `compDensity` (comp, clave and drums; both ways on 768:769). It costs 23 ms on the 16k row; the way back to Compose's tier drops the step (no rearrange).
+- `setCompDensity(d)` is one undo step. **A clave picked from the list goes with it**, since it was the old tier's candidate: the new tier's best plays, Sync | Fill is kept, and one undo restores both (builder's call: a kept pick would make the switch silent).
+- **A re-compose** sends `compDensity` when it isn't the default (not to a composition whose clave has no tier), so the composed spec needs no switch.
+- **The select:** under the clave line, "density [Sparse–Med ▾]", each option titled with its band. Beside it, the tier as it plays: "42 % of its steps (medium)". A clave outside the asked tier adds ", outside the tier" (a pick, or a re-read that moved its share). A tier with no clave reads in amber: "no clave in the sparse tier, so the nearest: medium (25–50 %) · 25 % of its steps (medium)" (16:12:9). The select only shows for a frame clave; a pattern clave has no tier, and `setCompDensity` throws there.
+
+**The picker re-ranked** (rule 14, P30). Each fold step keeps the `claveAlternates` its rearrange returned (`alts`), and `claveOf().alternates` lists the last step's that has them, else the trace's (`reranked` says which).
+- They come back after a chord swap, a typed chord, a Chords Follow, a density, or a clave chosen again. A relation switch or a voicing switch returns none, so the list stays the one before it.
+- Because the alternates live on the fold's steps, an undo truncates them with the edit: an undo of the swap shows the trace's list again, with nothing extra to keep in step. A re-compose drops the fold, so the new trace's list shows.
+- What plays is never switched: after a swap, the clave stays Compose's, re-read (P20). The legend adds "ranked again over the chords as they play".
+- A re-compose's check for a chosen clave still reads the new trace's alternates (phase E).
+
+**The caption** (P31; `trace-frames.js` `compDetail(event, playing)`, `plot-highlights.js` `arrangement.clave`). The comp's caption reads the clave as it plays, not Compose's:
+- a clave picked in the window says ", picked in the window" (`highlightsOf`'s new `picked`, from the tab's `edits.clave.id`);
+- the same clave re-read under a chord edit says ", re-read in bar 2 (a new chord)" (`highlightsOf`'s new `composed`, compared stroke by stroke a bar);
+- every frame clave ends with its tier: "; the sparse–medium (10–50 %) tier", or "; no clave in the sparse tier, so the nearest, medium (25–50 %)" (`tierDetail`).
+- A density switch's clave is said by its source with no "picked".
+
+**Roots' names** (N2, rule 12, P29).
+- A runner-up's note reads "root +3.2¢ · slot 3", or "root · slot 3" for an exact root, its notes joined by "; ". A locked bar's chord tone (a kick with no root-class onset in frame) reads "+498.0¢ off the root · slot 5".
+- The title gives the tone: "287/172 at slot 3, exactly its chord's root; 0.04 slots off the change".
+- **Worker-safe, a core addition:** `bass.js` `rootsOffer` now gives each Roots alternate's note its `ratio`, its `cents` off its own chord's root (a new pure helper, `centsOffRoot`: the offset reduced to the nearest octave of the root, (−600, 600], to a thousandth) and `root` (on the root's class, the frame's test). A big row's bass is arranged in the worker, so the window could not read its row. Ids, choices and every other field are unchanged; `assert-bass.mjs` passes unchanged. `ratioOfOnset` stays, unused by the page.
+- On 41:42:43 (4 × 8) every Roots runner-up is an exact root. On 768:769 under Kick they read up to about +13¢ ("root +12.8¢ · slot 1"), and the 16k row's are within 14¢.
+
+**Measured on the 16k row** (Node, this thread, the lean table):
+- a density switch: 23 ms;
+- a chord swap under Compose's own bass, with the re-read and the re-rank: 18 ms;
+- the drums off, Compose's own arranged again: 10 ms;
+- Roots: 5 ms.
+
+**Tests (N3).** `assert-page-bass.mjs` 73 → 89, unpinned. `assert-page-clave.mjs` 53 → 77. `assert-store-edits.mjs` and `assert-lab.mjs` are adjusted as above. The README's Files and Tests are updated. No suite was added (83). `index.html`'s composer-tab.css and composer-bridge.js are `?v=20261028.3`.
+
+**Calls beyond the order (proposed):**
+1. A density change drops a clave picked from the list (one undo restores both).
+2. The density is the entry's (`state.compDensity`, a fold step, sent to Compose), like the voicing, not a field of `edits.clave`.
+3. The kick compared is the hits' ticks and slots. A drum change that keeps the kick (a kit sound, a mode with the same kick) re-arranges nothing.
+4. Compose's own bass following a moved kick has no amber of its own; only the drums off (a refusal) is amber.
+5. `bassOf().playing` is false for Compose's own as composed, though its part has a record.
+6. Roots' multi-note names are joined by "; ", since a name holds " · ".
+7. A Roots note off the root's class is named "… off the root" rather than "root …".
+
+**Looked at in the core, not changed (for the planner):**
+- Phase M's `rearrange` re-mines Compose's own bass at Moving · Kick against `spec.drums`, so any caller holding a spec without drums gets Moving · Free in the swapped bar silently (the window did until this phase). `bassLockRefusal`'s "the drums are off" is what a drum-less spec reads as. Worth a word in rearrange's header?
+- `reclave` with an asked frame id keeps the spec's tier, so a pick then a density switch would play the pick in the new tier. The window drops the pick instead, but the core allows both.
+
+**Not verifiable in Node (for Avery's pass):** whether the tier line fits beside the select at narrow widths (it wraps); whether Moving · Kick re-arranged under four on the floor sounds right (16 kicks on 41:42:43, 5 missed); whether Dense on 768:784 or 16:12:9 sounds like a comp or a pulse.
+
+**Open (for Avery):**
+- Should a drum mode whose kick moved show Compose's own bass as re-arranged (it says so in the bass cell), or should the window send its drum options to Compose so a re-compose covers them itself?
+- A density change drops a picked clave. Keep the pick instead (it plays, the list re-ranks)?
+
+## The comp's tolerance (phase O; built 2026-10-28, branch `amend3/comp`)
+
+`BASS_VOICING_ORDER.md` Amendment 3, phase O (O1–O4), core then window, one builder. Rulings 15–17 are Avery's; P33–P38 are the planner's proposals as written; the rest is the builder's, proposed. Nothing here has been seen in a browser or heard.
+
+**The tolerance** (rule 15, P33; `compose.js` `compTolerance`, `COMP_TOLERANCES`, `strumOf(…, tolerance)`).
+- 0.125 | 0.25 | 0.5 | 1 slot either side of the stroke, of the stroke's own slot (as STRUM_WINDOW's ¼ was), ±½ by default. Anything else is refused, and so is either override with `compStyle: 'notes'`.
+- The window stays inside the bar or the span: `strumOf` scans outward from the stroke's slot inside [from, to), as it did at ¼.
+- Every tone holds to the next stroke (`holdTo`), so at ±1 a stroke can roll its chord across two slots.
+
+**Nothing borrowed by default** (rule 16, P34; `strokeTonesOf`, `voiceStroke`).
+- A stroke plays its own onset first, whatever its tone. Then, for each class of the chord's first four (root first) other than the stroke's own, the class's onset nearest the stroke in the window (strumOf's choice and ties). It stops at four voices.
+- **The stroke's own onset is forced** for its class (builder's call): at ¼ with borrowing, strumOf's tie rule could in principle pick another onset of the stroke's class at the same instant with more strikes; P34 says "its own onset".
+- **A frame tone that is no chord class** (a "tones in frame" clave's stroke, 7 of 768:769's 21 comp tones) plays as itself, marked `offChord`. It keeps its place over the found classes, so the highest class gives way at four voices.
+- **Its voice** (builder's call) is the class index this stroke leaves free whose interval is nearest its pitch class, so the comp's voices stay 0–3 and a MIDI channel never doubles. Under Led its lane is the free lane whose chord voice sits nearest it.
+- `compBorrow: true` is the old path at the asked tolerance. With `compTolerance: 0.25` it is the comp before Amendment 3: on 9 rows × 3 seeds × led, close, Fill and the pattern clave, the spec equals the core at 1f5282e (with P38 applied to both) byte for byte, apart from the input's two overrides and the stats' two new keys.
+
+**The voicing** (P35). Led: a class's tone at the octave nearest its chord voice, in that voice's lane (P5, as before); an off-chord tone at the octave nearest the chord voices' mean pitch. Close: every tone stacked from an octave under the root in class order, an off-chord tone at its pitch class's place. A single note is either of these, so it sits in the chords' register.
+
+**Stats and words** (P36).
+- `compStrum` keeps its meaning: found ÷ tones, 1 with nothing borrowed (an off-chord stroke tone counts as found: it is the row's).
+- New: `compTones` (tones ÷ strokes) and `compSingles` (single-note strokes ÷ strokes), present whatever the setting (builder's call: so the readout reads one field, not two code paths). They come after `compStrum` in `spec.stats`. The pinned suites set them aside with the overrides.
+- The `compStrum` decision with nothing borrowed: "… each the bar's chord from the row alone (Amendment 3, rules 15–16: ±½ slot and nothing borrowed by default): ±½ slot: 2.1 tones a stroke, 30 % single notes; nothing borrowed (compBorrow fills from the chords)". With borrowing it is the old sentence word for word at the asked tolerance ("within ±0.25 slot, the rest borrowed from the chord voices"). The `compStyle` decision's "then borrowed" becomes "around it, down to a single note (Amendment 3)" when nothing is borrowed.
+
+**restrum** (P37; `rearrange.js` `restrum`, and `rearrange(…, { tolerance, borrow })`).
+- It strums the comp again unit by unit over the clave's strokes (unmoved) and the chords as they play, arranges the drums again, and writes the input's overrides (left out at the defaults, as `revoice` leaves out Led), the stats and the two decisions. 291 restrums equal a Compose given the same overrides byte for byte (input, parts, stats, decisions, drums), from the default and from ±1 with borrowing, led, close, Fill, two charts and a MIDI target.
+- **Where the setting lives** (builder's call): `spec.input.overrides` (`compose.js` `compStrumOf(spec)`). Every rearrange path reads it there, so a chord swap, a clave switch (`reclave`) and a voicing switch (`revoice`) strum at the spec's setting, and a fold step after a restrum sees it.
+- **A chord swap's stats** are recounted over every unit as it plays (`compChordsOfBar` again, the notes thrown away): a stroke's tone count isn't kept on the part, and the comp's `holdTo` can't group tones by stroke reliably (two strokes wrapped before the downbeat both hold to the cycle's end). It adds about 1.3 ms to a 16k-row swap (12.5 → 13.8 ms median).
+- The strokes never move, so the perc and the bass's Clave lock are unchanged; checked in the core and in the window.
+
+**Sparser ties** (rule 17, P38; `claves.js` `frameOrder`). Frame candidates are sorted by score; a tie within 1e-9 goes to the lower share, then the reading order as before. `chooseFrameClave` draws the seed only among the best score's sparsest. Seed 1's default clave moves on one probe row: 19:17:16:15 plays `frame:C/8/guide` (31 %, 5 strokes) where it played `frame:C/8/chord` (38 %, 6 strokes). Of 10 rows × 3 seeds × sparse–medium and dense, five composes changed (16:12:9 s2, 7:5:3:2 s2, 19:17:16:15 s1 and s3, the 16k row s2); the pattern clave and every pin hold.
+
+**The window** (O3).
+- **Entry state**: `compTolerance` (±½) and `compBorrow` (false), in the snapshots, carried to a new cycle, in `entrySnap` and JSON export (when not the defaults), as the density is.
+- **Live**: the fold's step after the voicing's and the density's is `{ kind: 'strum' }`, rearrange's `restrum`, when the entry differs from the composed spec (`strumStep`). It runs before the chord, lead and clave edits, so they strum at it. `setCompStrum({ tolerance, borrow })` is one undo step each. Compose is sent both when they aren't the defaults, so a re-compose needs no switch. A comp in notes has no strum (`compStrumOf()` is null, the setter throws).
+- **The row**: under the density row, "tolerance [±½ slot ▾] [fill from the chords]" and the readout from `spec.stats`: "2.1 tones a stroke · 30 % single" (with borrowing, "· filled from the chords").
+- **The cell's line** says the bar's tones a stroke ("3 strokes · 1.0 tones a stroke") with nothing borrowed, and the share from the row as before with borrowing (`matrix.js` `compLine(part, k, strum)`).
+- **The dots and the MIDI zone** read the part, so they show and send what plays. Checked for code that assumed full chords: the borrowed rings (`plot-highlights`, `tab-controller`) handle none; the player and MIDI lanes take any lane 0–3; the trace's comp notes keep integer voices. The notes table titles an off-chord tone.
+- **The caption** ends with the strum: "; ±½ slot: 2.1 tones a stroke, 30 % single notes" (`trace-frames.js` `strumDetail`, `highlightsOf`'s `arrangement.strum`).
+
+**Seed 1 at ±½ with nothing borrowed** (the probe's rows):
+
+| row | strokes | tones a stroke | single |
+|---|--:|--:|--:|
+| 8:7:6:5 | 3 | 2.0 | 0 % |
+| 11:9:7:5 | 4 | 1.0 | 100 % |
+| 16:12:9 | 4 | 2.3 | 0 % |
+| 7:5:3:2 | 2 | 3.0 | 0 % |
+| 19:17:16:15 | 5 | 1.6 | 40 % |
+| 119:42:15:8 | 14 | 1.1 | 93 % |
+| 768:769 | 10 | 2.1 | 30 % |
+| 768:784 | 16 | 3.8 | 0 % |
+
+The probe's own table matches except 19:17:16:15 (6 strokes, 1.7, 33 % there), whose clave changed with P38. At ±1, 119:42:15:8 reads 2.3 and 7 %, 11:9:7:5 1.8 and 25 %; at ±¼, 768:784 reads 3.0.
+
+**Measured on the 16k row** (Node, this thread, lean): Compose 761–765 ms; a restrum 2.1 ms median (2.6 ms the slowest of 8); a chord swap 13.8 ms median (12.5 ms before phase O).
+
+**Tests (O4).** `assert-strum.mjs` is new (84 suites). `assert-page-clave.mjs` 77 → 89. Pinned with `compBorrow: true, compTolerance: 0.25`: `assert-comp.mjs` (its brute force is the old strum), `assert-page-matrix.mjs`' borrowed tones, `assert-composer-midi.mjs`' borrowed checks, and `assert-frame-clave.mjs`' P19 hashes (stats' two new keys set aside). `assert-compose.mjs`' and `assert-voicing.mjs`' audits learned the off-chord stroke tone; `assert-frame-clave.mjs`' brute force learned the sparser tie; `assert-refactor-identity.mjs` strips the two new override names from the refusal message, as it strips the others. No fixture was re-frozen. `index.html` is `?v=20261028.4`.
+
+**Calls beyond the order (proposed):**
+1. A stroke's own onset is forced for its class with nothing borrowed (strumOf could tie it away).
+2. An off-chord stroke tone takes the free class index nearest its pitch class as its `voice`, and the free lane nearest it under Led.
+3. At four voices an off-chord stroke keeps its place and the highest found class gives way.
+4. `compTones` and `compSingles` are in the stats whatever the setting, so the pin is byte for byte except those two keys.
+5. The setting lives in `spec.input.overrides`, read by every rearrange path.
+6. With borrowing, the decision keeps the old sentence (at ±¼ word for word); without, it says the tolerance and what it found.
+
+**Not verifiable in Node (for Avery's pass):** whether ±½ sounds like a comped chord or a broken one on 768:769 (a third of the strokes single, the rest 2–3 tones spread over half a slot); whether ±1's rolled strums on 119:42:15:8 sound rolled or smeared; whether the off-chord stroke tones on 768:769 sound like comping or like stray notes.
+
+**Open (for Avery):**
+- 11:9:7:5 is single notes at every tolerance up to ±½ (it finds a second chord tone only at ±1). Fine as "small rows are thin", or should a row like it default wider?
+- 119:42:15:8 stays 93 % single at ±½ and jumps to 2.3 tones at ±1. Is ±½ the right default for it, or should the tolerance scale with the row's density?
+- A stroke on a frame tone that is no chord class plays that tone (P34). On 768:769 that is 7 of the comp's 21 tones. Keep, or let such a stroke play only the chord tones it finds (a rest when none)?
+- Should a tolerance or borrow change audition at the bar line, like a clave pick, rather than apply at once like the density?
+
+## Layout (agreed earlier, 2026-10-21)
+
+- The Composer keeps the Partitions window frame:
+  - left half: track lanes, one row per part, one column per section
+  - upper right: the mirrored visualization, with a lit-node layer per part
+  - lower right: an inspector for the selected part (Harmony, Lines, Claves, Tuning)
+- **Scale Selection and Families are left out (decided):** the Composer does its own selection.
+- **Sections first (decided).** Zooming into a section's bars comes later, with the Linear Plot gesture: cmd+scroll horizontal, alt+scroll vertical (`LRCVisuals.handleCanvasWheel` / `zoomLinearAxis`).
+- **Drums come later (decided).** The mining core comes first. Leaning: Partitions keeps its own tab as the drum editor, the Perc lane is Partitions, and Partitions needs a pattern per section.
+
+## Proposed code home (built in the sprint, except `Composer/workers/`: the worker is `Composer/core/compose-worker.js`)
+
+- **`Composer/core/`:** pure ES modules: row, cells and partitioned anchors, frame and classes, lines, harmony from melody, roots and modulation. Ported from chunk-tunes where useful, owned by the LRC from day one.
+- **`Composer/workers/`:** mining off the main thread, if the probe says it's needed.
+- **`Composer/tests/`:** Node scripts. One check from the start: on a single Codex rhythm with matching settings, the first ported row and lattice match chunk-tunes' output. That catches porting mistakes; after that, divergence is expected.
+- **`Composer/lab/`:** a standalone page, not linked from `index.html`, to hear compositions from the current rhythm through `Audio/voices` before the window UI exists.
+
+## Still open (for Avery)
+
+The six questions from 2026-10-21. The sprint built a proposal for each; each still needs a ruling:
+
+1. **Compose's timing goal: a tempo range, or an onset density per slot.** Built as both: a 90–130 BPM range picks N, then a density floor of 3 onsets per slot lowers S, and only then N.
+2. **What happens to fringe tones.** Built as chunk-lines' outside tones: allowed only on a weak slot, resolved by step.
+3. **Whether a modulation jumps or glides, and who chooses it.** Built as a jump at a bar boundary, chosen by Compose, with an off switch. The lab can't trigger one by hand yet. Heard 2026-10-22: works as built.
+4. **Whether chords strictly follow melodies, or parsimony gets a vote.** Built with melody first; parsimony only breaks ties. Heard 2026-10-22: Avery likes the progressions; settle passes now let the chords follow the kept lead.
+5. **The size gate number, after the probe.** Proposed: 1,048,576 onsets, and a minimum of 3 tones.
+6. **How the parts divide one cycle's onsets.** Built as shared: two parts may sound the same onset. The inner voice alone avoids the lead's.
+
+Raised during the sprint:
+
+7. **Default root.** ~~Is "heard max(2, 1% of onsets) times" the right sense of "the root is present"?~~ Ruled 2026-10-22: presence by the ±frame cluster (decided). The rungs and the frame-onsets tie-break on top of it are still proposed.
+8. **Chords follow the first lead, not the kept one.** Avery asked for settle passes (built 2026-10-22, default 3 rounds). The cap, the stopping rule and the oscillation pick are proposed, not ruled.
+9. **Rare colours.** maj7 is the most common chord (25%), and mMaj7 and aug appear on tone-rich rows. Hear them first, then rule.
+10. **Folding modulation offsets** into [−50, +50)¢ as a pure relabel. Do the folded names read right?
+11. **Grids past 2^53** are refused for v1 (four coprime layers near 10,000 already pass it). Lift with BigInt or two-part positions?
+12. **Bass.** Its own sparse type, mined bar by bar and opening on the root. It is two octaves under the lead, with legato off by default. Avery, 2026-10-22: bar by bar is fine; leaps are fine; the root should be clearly stated most of the time.
+13. **Comping** uses one layer's first strike per slot, with the bar's chord tones as the tone set. That's chunk-tunes' tone-set decomposition on the Composer's slot grid, not on the layer's own strikes (which gave 350 comping notes on the 16k row). Proposed: use the native layer-pulse cut when a layer strikes 16 or fewer times a bar. Avery, 2026-10-22: comping will get chords.
+14. **Sounds and legato defaults per part.** The lead and bass sounds follow their legato; chords, comping and inner are chosen by the seed.
+15. **Times count from the downbeat (the phase), looping.** A pickup note just before bar 1 sounds at the end of the cycle.
+16. **Velocities** are fixed per part, with small accents.
+17. **The presence rungs.** On 41:42:43 the 1% rung is only 2, so the frame decides, and the new root (41/22) is alone in its cluster and finds only 2 of 3 downbeats. Should cluster presence outrank the frame on small rows?
+
+## Next (after 2026-10-22)
+
+1. **Drums:** built 2026-10-22 night as a single level (see "Drums"); the listening pass and the two-level prime partition are next.
+2. **Comping as chords.**
+3. **Bass weighted to state the root** on strong slots.
+4. **Several loops of the same row,** each with a different decomposition, for form and development.
+5. **The Composer window** in the LRC: built 2026-10-22 night as a tab of the Partitions window ("Composer tab on the main page"); Avery's browser pass is next.
+6. **v2:** bass-led composition; a full arpeggiator for the inner voice.
+7. **Outside the Composer:** `Core Interface/LRCModule.js:245` spread `Math.max(...spacesPlot)`, which overflowed the stack past ~124k onsets in Node. Fixed 2026-10-22 night, with the same spreads in `generateToneRowData` and in LRCVisuals' plot.
+

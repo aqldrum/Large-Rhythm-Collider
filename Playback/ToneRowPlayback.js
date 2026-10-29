@@ -50,7 +50,7 @@ class ToneRowPlayback {
         
         // Audio routing
         this.layerNodes = [];
-        this.activeOscillators = [];
+        this.activeVoices = new Set(); // voice handles still sounding (shared library, or the bare-oscillator fallback)
         this.scheduledEvents = [];
         this.activeLayerVoices = [null, null, null, null];
         this.legatoEnabled = false;
@@ -109,7 +109,7 @@ class ToneRowPlayback {
     createDefaultLayerState() {
         return {
             volume: -12, // dB
-            waveform: 'sine',
+            sound: 'sine', // a shared voice library sound (Audio/voices); older states carry `waveform` instead
             adsr: {
                 attack: 0.001,
                 decay: 0.2,
@@ -746,31 +746,20 @@ class ToneRowPlayback {
 
         if (!this.audioContext || !this.isPlaying) return;
         const now = this.audioContext.currentTime;
-
-        const glideParam = (param, target) => {
-            const safeTarget = Math.max(0.0001, target);
-            const duration = Math.max(0, Number(glideTime) || 0);
-            if (typeof param.cancelAndHoldAtTime === 'function') param.cancelAndHoldAtTime(now);
-            else {
-                param.cancelScheduledValues(now);
-                param.setValueAtTime(Math.max(0.0001, param.value), now);
-            }
-            if (duration > 0.001) param.exponentialRampToValueAtTime(safeTarget, now + duration);
-            else param.setValueAtTime(safeTarget, now);
-        };
+        const duration = Math.max(0, Number(glideTime) || 0);
 
         for (let i = 0; i < 4; i++) {
             const voice = this.activeLayerVoices[i];
-            if (voice?.oscillator && voice.noteData?.ratio) {
+            if (voice?.handle && voice.noteData?.ratio) {
                 const newFreq = this.fundamentalFreq * voice.noteData.ratio;
                 voice.noteData.frequency = newFreq;
-                glideParam(voice.oscillator.frequency, newFreq);
+                voice.handle.setFrequency(newFreq, now, duration);
             }
 
             const bridge = this.bridgeVoices[i];
-            if (bridge?.osc && bridge.ratio) {
+            if (bridge?.handle && bridge.ratio) {
                 const newFreq = this.fundamentalFreq * bridge.ratio;
-                glideParam(bridge.osc.frequency, newFreq);
+                bridge.handle.setFrequency(newFreq, now, duration);
             }
         }
     }
@@ -780,6 +769,14 @@ class ToneRowPlayback {
     // ====================================
 
     async togglePlayback() {
+        // COMPOSITION LENS (sprint 2): one transport. Under the Composition lens the canvas shows the composition,
+        // so Play/Stop plays and stops it (Composer/page/lens.js); under the row lens nothing here changes.
+        const transport = window.lrcComposer?.transport;
+        if (transport && transport.owns()) {
+            transport.toggle();
+            this.updatePlayButton();
+            return;
+        }
         if (this.isPlaying) {
             this.stopPlayback();
         } else {
@@ -845,15 +842,10 @@ class ToneRowPlayback {
         }
         this.activeLayerVoices = [null, null, null, null];
 
-        // Stop all oscillators
-        this.activeOscillators.forEach(osc => {
-            try {
-                osc.stop();
-            } catch (e) {
-                // Oscillator may already be stopped
-            }
-        });
-        this.activeOscillators = [];
+        // Stop all voices
+        const stopAt = this.audioContext ? this.audioContext.currentTime : 0;
+        this.activeVoices.forEach(voice => voice.stop(stopAt));
+        this.activeVoices.clear();
 
         // Release bridge voices
         this.bridgeVoices.forEach((_, idx) => this.releaseBridgeVoice(idx));
@@ -976,7 +968,7 @@ class ToneRowPlayback {
             this.pendingTempoCleanup = false;
             console.log('[ToneRowPlayback] Tempo cleanup: releasing all voices before next note after tempo change');
             this.releaseAllLayerVoices({ immediate: true });
-            this.stopAllOscillators();
+            this.stopAllVoices();
             // Also clear any bridge voices/flags
             this.pendingBridgeHold = false;
             this.pendingBridgeReleaseTicks = [null, null, null, null];
@@ -1036,41 +1028,46 @@ class ToneRowPlayback {
         return this.mutedLayers.has(layerKey);
     }
 
+    // A layer's sound id. Layer states from before the shared voice library carry `waveform` instead of `sound`.
+    getLayerSound(layerState) {
+        return layerState?.sound || layerState?.waveform || 'sine';
+    }
+
+    // Build one note's voice through the shared voice library (window.lrcVoices, from Audio/lrc-voices-bridge.js), or
+    // the bare oscillator if a note fires before that module has loaded. duration null holds until release (legato).
+    // Returns a handle: release(at, seconds), fadeOut(at, seconds), stop(at), setFrequency(hz, at, glideSec), onComplete(cb).
+    createLayerVoice(layerIndex, layerState, frequency, start, duration) {
+        const options = {
+            ctx: this.audioContext,
+            destination: this.layerNodes[layerIndex].gain,
+            sound: this.getLayerSound(layerState),
+            frequency,
+            when: start,
+            adsr: layerState.adsr,
+            peak: this.getHighFrequencyAttenuation(frequency),
+            duration
+        };
+        if (window.lrcVoices) {
+            try {
+                return window.lrcVoices.createLayerVoice(options);
+            } catch (err) {
+                console.warn('⚠️ Voice library failed; playing a bare oscillator:', err);
+            }
+        }
+        return this.createOscillatorVoice(options);
+    }
+
     startStandardNote(noteData, duration, layerIndex, layerState, startTime = null) {
         const start = Math.max(
             startTime != null ? startTime : this.audioContext.currentTime,
             this.audioContext.currentTime
         );
-        const oscillator = this.audioContext.createOscillator();
-        oscillator.type = layerState.waveform;
-        oscillator.frequency.setValueAtTime(noteData.frequency, start);
+        const handle = this.createLayerVoice(layerIndex, layerState, noteData.frequency, start, duration);
 
-        const envelope = this.audioContext.createGain();
-        envelope.gain.setValueAtTime(0, start);
-
-        oscillator.connect(envelope);
-        envelope.connect(this.layerNodes[layerIndex].gain);
-
-        const { attack, decay, sustain, release } = layerState.adsr;
-        const highFreqAtten = this.getHighFrequencyAttenuation(noteData.frequency);
-        const peakGain = highFreqAtten;
-        const sustainGain = sustain * highFreqAtten;
-        const sustainTime = Math.max(0, duration - attack - decay - release);
+        const { sustain, release } = layerState.adsr;
         const endTime = start + Math.max(0.01, duration);
-
-        envelope.gain.linearRampToValueAtTime(peakGain, start + attack);
-        envelope.gain.linearRampToValueAtTime(sustainGain, start + attack + decay);
-        envelope.gain.setValueAtTime(sustainGain, start + attack + decay + sustainTime);
-        envelope.gain.linearRampToValueAtTime(0, start + duration);
-
-        oscillator.start(start);
-        oscillator.stop(endTime);
-
-        // Track cleanup gain for smooth stopping if needed
-        oscillator.__cleanupGain = envelope;
         this.activeLayerVoices[layerIndex] = {
-            oscillator,
-            envelope,
+            handle,
             release: Math.max(release, 0.01),
             sustain,
             endTime,
@@ -1081,9 +1078,11 @@ class ToneRowPlayback {
                 isMutedByFrequency: noteData.isMutedByFrequency
             }
         };
-        this.trackOscillatorLifecycle(oscillator, layerIndex);
+        this.trackVoiceLifecycle(handle, layerIndex);
     }
 
+    // Legato: one held voice per layer, released when the next note starts. A struck sound can't hold, so it simply
+    // strikes again on each note (its own envelope dies away; the release damps it if it is still sounding).
     startLegatoNote(noteData, layerIndex, layerState, startTime = null) {
         if (!this.audioContext) return;
 
@@ -1092,34 +1091,12 @@ class ToneRowPlayback {
 
         const now = this.audioContext.currentTime;
         const start = Math.max(startTime != null ? startTime : now, now);
-        const oscillator = this.audioContext.createOscillator();
-        oscillator.type = layerState.waveform;
-        oscillator.frequency.setValueAtTime(noteData.frequency, start);
+        const handle = this.createLayerVoice(layerIndex, layerState, noteData.frequency, start, null);
 
-        const envelope = this.audioContext.createGain();
-        envelope.gain.setValueAtTime(0, start);
-
-        oscillator.connect(envelope);
-        envelope.connect(this.layerNodes[layerIndex].gain);
-
-        const { attack, decay, sustain, release } = layerState.adsr;
-
-        const highFreqAtten = this.getHighFrequencyAttenuation(noteData.frequency);
-        const peakGain = highFreqAtten;
-        const sustainGain = sustain * highFreqAtten;
-
-        envelope.gain.linearRampToValueAtTime(peakGain, start + attack);
-        envelope.gain.linearRampToValueAtTime(sustainGain, start + attack + decay);
-        envelope.gain.setValueAtTime(sustainGain, start + attack + decay + 0.01);
-
-        oscillator.start(start);
-
-        // Track cleanup gain for smooth stopping if needed
-        oscillator.__cleanupGain = envelope;
+        const { sustain, release } = layerState.adsr;
         const endTime = null; // legato holds until explicitly released
         this.activeLayerVoices[layerIndex] = {
-            oscillator,
-            envelope,
+            handle,
             release: Math.max(release, 0.01),
             sustain,
             endTime,
@@ -1131,25 +1108,22 @@ class ToneRowPlayback {
             }
         };
 
-        this.trackOscillatorLifecycle(oscillator, layerIndex);
+        this.trackVoiceLifecycle(handle, layerIndex);
     }
 
-    trackOscillatorLifecycle(oscillator, layerIndex = null) {
-        this.activeOscillators.push(oscillator);
+    trackVoiceLifecycle(handle, layerIndex = null) {
+        this.activeVoices.add(handle);
 
-        oscillator.onended = () => {
-            const index = this.activeOscillators.indexOf(oscillator);
-            if (index > -1) {
-                this.activeOscillators.splice(index, 1);
-            }
+        handle.onComplete(() => {
+            this.activeVoices.delete(handle);
 
             if (layerIndex !== null) {
                 const voice = this.activeLayerVoices[layerIndex];
-                if (voice && voice.oscillator === oscillator) {
+                if (voice && voice.handle === handle) {
                     this.activeLayerVoices[layerIndex] = null;
                 }
             }
-        };
+        });
     }
 
     releaseLayerVoice(layerIndex, { immediate = false } = {}) {
@@ -1158,22 +1132,7 @@ class ToneRowPlayback {
 
         const now = this.audioContext.currentTime;
         const releaseTime = immediate ? Math.min(voice.release, 0.05) : voice.release;
-        const stopTime = now + Math.max(releaseTime, 0.01);
-
-        try {
-            voice.envelope.gain.cancelScheduledValues(now);
-            const currentGain = voice.envelope.gain.value;
-            voice.envelope.gain.setValueAtTime(currentGain, now);
-            voice.envelope.gain.linearRampToValueAtTime(0, stopTime);
-            voice.oscillator.stop(stopTime + 0.01);
-        } catch (err) {
-            console.warn('⚠️ Error releasing legato voice:', err);
-            try {
-                voice.oscillator.stop();
-            } catch (stopErr) {
-                // Oscillator already stopped
-            }
-        }
+        voice.handle.release(now, Math.max(releaseTime, 0.01));
 
         this.activeLayerVoices[layerIndex] = null;
     }
@@ -1187,10 +1146,10 @@ class ToneRowPlayback {
     }
 
     /**
-     * Stop all active oscillators immediately (used for hard cleanup).
+     * Fade out and stop every sounding voice right away (used for hard cleanup).
      */
-    stopAllOscillators() {
-        this.audioEngine.stopAllOscillators();
+    stopAllVoices() {
+        this.audioEngine.stopAllVoices();
     }
 
     /**
@@ -1201,23 +1160,34 @@ class ToneRowPlayback {
         const freq = Number(noteData?.frequency) || Number(noteData?.freq) || null;
         if (!Number.isFinite(freq)) return;
 
-        const osc = this.audioContext.createOscillator();
-        const gain = this.audioContext.createGain();
-        gain.gain.setValueAtTime(0, this.audioContext.currentTime);
-
-        osc.type = layerState.waveform;
-        osc.frequency.setValueAtTime(freq, this.audioContext.currentTime);
-        osc.connect(gain);
-        gain.connect(this.layerNodes[layerIndex].gain);
-
-        const attack = 0.01;
         const highFreqAtten = this.getHighFrequencyAttenuation(freq);
-        const target = (Number(layerState.adsr?.sustain) || 1) * highFreqAtten;
-        gain.gain.linearRampToValueAtTime(target, this.audioContext.currentTime + attack);
+        const options = {
+            ctx: this.audioContext,
+            destination: this.layerNodes[layerIndex].gain,
+            sound: this.getLayerSound(layerState),
+            frequency: freq,
+            when: this.audioContext.currentTime,
+            level: (Number(layerState.adsr?.sustain) || 1) * highFreqAtten
+        };
+        let handle;
+        if (window.lrcVoices) {
+            try {
+                handle = window.lrcVoices.createBridgeVoice(options);
+            } catch (err) {
+                console.warn('⚠️ Voice library failed; bridging with a bare oscillator:', err);
+            }
+        }
+        if (handle === undefined) {
+            handle = this.createOscillatorVoice({
+                ...options,
+                adsr: { attack: 0.01, decay: 0, sustain: 1, release: 0.02 },
+                peak: options.level,
+                duration: null
+            });
+        }
+        if (!handle) return; // a struck sound: nothing to sustain
 
-        osc.start(this.audioContext.currentTime);
-
-        this.bridgeVoices[layerIndex] = { osc, gain, ratio: noteData.ratio };
+        this.bridgeVoices[layerIndex] = { handle, ratio: noteData.ratio };
     }
 
     /**
@@ -1226,17 +1196,89 @@ class ToneRowPlayback {
     releaseBridgeVoice(layerIndex) {
         const bridge = this.bridgeVoices[layerIndex];
         if (!bridge || !this.audioContext) return;
-        const now = this.audioContext.currentTime;
-        const tail = 0.02;
-        try {
-            bridge.gain.gain.cancelScheduledValues(now);
-            bridge.gain.gain.setValueAtTime(bridge.gain.gain.value, now);
-            bridge.gain.gain.linearRampToValueAtTime(0, now + tail);
-            bridge.osc.stop(now + tail + 0.01);
-        } catch (err) {
-            try { bridge.osc.stop(); } catch (_) {}
-        }
+        bridge.handle.release(this.audioContext.currentTime, 0.02);
         this.bridgeVoices[layerIndex] = null;
+    }
+
+    /**
+     * The bare-oscillator voice every layer played before the shared voice library, kept for a note that fires
+     * before Audio/lrc-voices-bridge.js has loaded: one oscillator (sine/triangle/sawtooth/square; anything else
+     * plays a sine) into a linear ADSR gain. Same handle shape as the library's.
+     */
+    createOscillatorVoice({ ctx, destination, sound, frequency, when, adsr, peak, duration }) {
+        const oscillator = ctx.createOscillator();
+        oscillator.type = ['sine', 'triangle', 'sawtooth', 'square'].includes(sound) ? sound : 'sine';
+        oscillator.frequency.setValueAtTime(frequency, when);
+
+        const envelope = ctx.createGain();
+        envelope.gain.setValueAtTime(0, when);
+
+        oscillator.connect(envelope);
+        envelope.connect(destination);
+
+        const { attack, decay, sustain, release } = adsr;
+        const sustainGain = sustain * peak;
+        envelope.gain.linearRampToValueAtTime(peak, when + attack);
+        envelope.gain.linearRampToValueAtTime(sustainGain, when + attack + decay);
+        if (duration == null) {
+            envelope.gain.setValueAtTime(sustainGain, when + attack + decay + 0.01);
+        } else {
+            const sustainTime = Math.max(0, duration - attack - decay - release);
+            envelope.gain.setValueAtTime(sustainGain, when + attack + decay + sustainTime);
+            envelope.gain.linearRampToValueAtTime(0, when + duration);
+        }
+
+        oscillator.start(when);
+        if (duration != null) oscillator.stop(when + Math.max(0.01, duration));
+
+        let released = false;
+        let ended = false;
+        let completeCb = null;
+        oscillator.onended = () => {
+            ended = true;
+            if (completeCb) completeCb();
+        };
+        const fade = (at, seconds) => {
+            try {
+                envelope.gain.cancelScheduledValues(at);
+                envelope.gain.setValueAtTime(envelope.gain.value, at);
+                envelope.gain.linearRampToValueAtTime(0, at + seconds);
+                oscillator.stop(at + seconds + 0.01);
+            } catch (err) {
+                try { oscillator.stop(); } catch (_) {}
+            }
+        };
+
+        return {
+            release(at, seconds = Math.max(release, 0.01)) {
+                if (released || ended) return;
+                released = true;
+                fade(at, Math.max(seconds, 0.01));
+            },
+            fadeOut(at, seconds = 0.02) {
+                if (ended) return;
+                released = true;
+                fade(at, seconds);
+            },
+            stop(at) {
+                try { oscillator.stop(at); } catch (_) {}
+            },
+            setFrequency(hz, at, glideSec = 0) {
+                const param = oscillator.frequency;
+                const safeTarget = Math.max(0.0001, hz);
+                if (typeof param.cancelAndHoldAtTime === 'function') param.cancelAndHoldAtTime(at);
+                else {
+                    param.cancelScheduledValues(at);
+                    param.setValueAtTime(Math.max(0.0001, param.value), at);
+                }
+                if (glideSec > 0.001) param.exponentialRampToValueAtTime(safeTarget, at + glideSec);
+                else param.setValueAtTime(safeTarget, at);
+            },
+            onComplete(cb) {
+                completeCb = cb;
+                if (ended) cb();
+            }
+        };
     }
 
     toggleLegatoMode() {
@@ -1262,10 +1304,16 @@ class ToneRowPlayback {
         legatoBtn.classList.toggle('active', this.legatoEnabled);
     }
 
+    // COMPOSITION LENS (sprint 2): is whatever the canvas shows playing? (the row, or under the lens its composition)
+    transportIsPlaying() {
+        const transport = window.lrcComposer?.transport;
+        return transport && transport.owns() ? transport.isPlaying() : this.isPlaying;
+    }
+
     updatePlayButton() {
         const playBtn = document.getElementById('play-stop-btn');
         if (playBtn) {
-            if (this.isPlaying) {
+            if (this.transportIsPlaying()) { // COMPOSITION LENS (sprint 2): was this.isPlaying
                 playBtn.textContent = '⏹ Stop';
                 playBtn.classList.add('playing');
             } else {
@@ -1392,6 +1440,7 @@ class ADSRKnob {
         };
         
         this.isDragging = false;
+        this.disabled = false;
         this.startY = 0;
         this.startValue = 0;
         
@@ -1422,6 +1471,7 @@ class ADSRKnob {
         // Mouse drag
         this.knob.addEventListener('mousedown', (e) => {
             e.preventDefault();
+            if (this.disabled) return;
             this.isDragging = true;
             this.startY = e.clientY;
             this.startValue = this.value;
@@ -1433,8 +1483,18 @@ class ADSRKnob {
         
         // Double-click for direct input
         this.knob.addEventListener('dblclick', () => {
+            if (this.disabled) return;
             this.showDirectInput();
         });
+    }
+
+    // Gray the knob out and ignore drags/typing (its value is kept); `title` says why.
+    setDisabled(disabled, title = '') {
+        this.disabled = !!disabled;
+        this.element.style.opacity = this.disabled ? '0.35' : '';
+        this.element.title = this.disabled ? title : '';
+        this.element.setAttribute('aria-disabled', this.disabled ? 'true' : 'false');
+        this.knob.style.cursor = this.disabled ? 'not-allowed' : '';
     }
     
     handleMouseMove(e) {
