@@ -733,3 +733,11 @@ a slot of it, down to a single note. An item that needs another setting says so.
   is fine; the two he couldn't answer keep the builders' behaviour). Probe and Amendment 3 (P33–P38, phase O) written;
   not yet committed or started. After it, the next thread: arrangement choices and longer forms (layering parts and
   toggling them on and off).
+- 2026-10-28: Amendment 3 committed 1f5282e; phase O merged c198d1e; 84/0 (`assert-strum.mjs` new). AMENDMENT 3 COMPLETE,
+  and with it the order. At the default ±½ with nothing borrowed (seed 1): 7:5:3:2 3.0 tones a stroke, 768:784 3.8,
+  16:12:9 2.3, 768:769 2.1 (30 % single), 119:42:15:8 1.1 (93 % single), 11:9:7:5 single notes. The sparser tie moved
+  19:17:16:15 to guide tones (5 strokes). The checklist above is revised. Open for Avery (from the builder): should the
+  default tolerance scale with the row's density (119:42:15:8 jumps to 2.3 tones at ±1)? Keep a stroke's own off-chord
+  frame tone (7 of 768:769's 21 comp tones), or play only the chord tones it finds? Should a tolerance or borrow change
+  wait for the bar line? The pin is byte for byte except two added stats (`compTones`, `compSingles`). Next thread:
+  arrangement choices and longer forms.
