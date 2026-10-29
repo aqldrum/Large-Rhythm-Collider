@@ -86,7 +86,11 @@ check('disabled: the live note ended at once, not active', ports.lead.sent.lengt
 console.log('\n— the lengths (M12)');
 // the default comp, in chords (COMP_ARP_ORDER.md A3: the Comp bus a zone of four, so the strums no longer stack)
 const T = 8, spec = compose([41, 42, 43, 0], T, { seed: 1, worker: true }), ST = spec.knobs.cycleSeconds;
-check('the composition\'s comp is in chords: voiced, with strokes and borrowed tones', !!spec.parts.find((p) => p.id === 'comp').strokes && spec.parts.find((p) => p.id === 'comp').notes.some((n) => n.borrowed));
+// Amendment 3 (BASS_VOICING_ORDER.md P34): nothing borrowed by default, so a stroke plays 1–4 tones; `compBorrow: true`
+// with `compTolerance: 0.25` (the pin: the comp before Amendment 3) brings the borrowed tones back for the checks below
+const bspec = compose([41, 42, 43, 0], T, { seed: 1, worker: true, overrides: { compBorrow: true, compTolerance: 0.25 } });
+check('the composition\'s comp is in chords: voiced, with strokes, nothing borrowed (Amendment 3); pinned to borrow, borrowed tones', !!spec.parts.find((p) => p.id === 'comp').strokes && !spec.parts.find((p) => p.id === 'comp').notes.some((n) => n.borrowed)
+  && bspec.parts.find((p) => p.id === 'comp').notes.some((n) => n.borrowed));
 const flip = (p) => rearticulate(p, { legato: !p.legato, cycleSeconds: ST });
 check('every part the same with its legato flipped', spec.parts.every((p) => JSON.stringify(midiNotesOf(p, ST)) === JSON.stringify(midiNotesOf(flip(p), ST))));
 const lanesOk = spec.parts.every((p) => {
@@ -99,14 +103,21 @@ check('a held voice\'s note lasts to its next note', (() => { const ns = midiNot
 check('chord voices are 0–3', midiNotesOf(spec.parts.find((p) => p.id === 'chords'), ST).every((n) => n.voice >= 0 && n.voice <= 3));
 const compPart = spec.parts.find((p) => p.id === 'comp'), compMidi = midiNotesOf(compPart, ST);
 check(`comp voices are 0–3, more than one of them (${[...new Set(compMidi.map((n) => n.voice))].join(', ')})`, compMidi.every((n) => n.voice >= 0 && n.voice <= 3) && new Set(compMidi.map((n) => n.voice)).size > 1);
+// Amendment 3 (O3): the comp zone sends what plays — a note a tone the stroke plays (fewer where the row has fewer), no
+// two notes of one stroke on one channel
+{
+  const atOnce = compMidi.every((a) => compMidi.filter((b) => b !== a && b.voice === a.voice && b.time < a.end - 1e-9 && a.time < b.end - 1e-9).length === 0);
+  check(`the comp zone sends what plays: ${compMidi.length} notes for the comp's ${compPart.notes.length} (some strokes fewer than 4 tones), no channel holding two at once`, compMidi.length === compPart.notes.length && atOnce && compPart.notes.length < 4 * compPart.strokes.length);
+}
 // a borrowed tone: on the stroke's onset, with the source voice's tone (its `from`); MIDI sends its own hz
 const row = buildRow(spec.input.layers, { gate: ONSET_GATE }), ratioOfNode = (i) => row.tones[row.tone[i]];
-const borrowed = compPart.notes.filter((n) => n.borrowed), chordNotes = spec.parts.find((p) => p.id === 'chords').notes;
+const bcomp = bspec.parts.find((p) => p.id === 'comp'), bMidi = midiNotesOf(bcomp, ST);
+const borrowed = bcomp.notes.filter((n) => n.borrowed), chordNotes = bspec.parts.find((p) => p.id === 'chords').notes;
 const fromOk = borrowed.every((n) => { const src = chordNotes.find((c) => c.node === n.from); return src && src.ratio === n.ratio && Math.abs(Math.log2(n.hz / src.hz) - Math.round(Math.log2(n.hz / src.hz))) < 1e-9; });
 const offTone = borrowed.filter((n) => ratioOfNode(n.node) !== n.ratio);
 check(`a borrowed tone (${borrowed.length}) has its source voice's ratio and pitch class; ${offTone.length} of them sit on an onset of another tone`, borrowed.length > 0 && fromOk && offTone.length > 0);
 // (on its lane's member: led chords lane the comp by register, BASS_VOICING_ORDER.md P6)
-check('… and MIDI sends the note\'s own hz (the source\'s tone), not its onset\'s', offTone.every((n) => compMidi.some((m) => Math.abs(m.time - n.time) < 1e-12 && m.hz === n.hz && m.voice === (n.lane ?? n.voice))));
+check('… and MIDI sends the note\'s own hz (the source\'s tone), not its onset\'s', offTone.every((n) => bMidi.some((m) => Math.abs(m.time - n.time) < 1e-12 && m.hz === n.hz && m.voice === (n.lane ?? n.voice))));
 const oldComp = compose([41, 42, 43, 0], T, { seed: 1, worker: true, overrides: { compStyle: 'notes' } }).parts.find((p) => p.id === 'comp');
 check('the old one-note comp (compStyle \'notes\'): one lane, on channel 2 of its zone', midiNotesOf(oldComp, ST).every((n) => n.voice === 0 && channelOf('comp', n.voice) === 1));
 

@@ -19,6 +19,13 @@
 //     close or led (compose.js `voiceLead`), the comp in chords strummed again at their octaves (P5), the drums arranged
 //     again: a live voicing switch, equal byte for byte (input, parts, stats, decisions, drums) to a Compose given the
 //     same `overrides.voicing` (Led: none, Compose's default)
+//   rearrange(spec, row, cells, { tolerance, borrow })              the comp's tolerance and borrowing (= restrum, below)
+//   restrum(spec, row, cells, { tolerance, borrow })   (BASS_VOICING_ORDER.md Amendment 3, P37) the comp strummed again
+//     at ±`tolerance` slot (0.125 | 0.25 | 0.5 | 1), borrowing from the chords or not, over its clave's strokes (unmoved:
+//     the perc and the bass's Clave lock read them), the drums arranged again: a live tolerance or borrow switch, equal
+//     byte for byte (input, parts, stats, decisions, drums) to a Compose given the same `compTolerance` / `compBorrow`
+//     (Compose's defaults, ±½ and false: none). A chord swap, a clave switch and a voicing switch strum at the spec's
+//     setting (compose.js `compStrumOf`: its input's overrides), so a bar rebuilt after a restrum strums as it does.
 //   applyRearrange(spec, result) → the spec with the result written in (a new object; the spec is not touched)
 //   materialsOf(spec) → { row, cells }: the row and cells a spec was composed over, rebuilt from its input and knobs
 //   materialsKey(spec) → the key they can be kept under (STEP 4d)
@@ -84,7 +91,8 @@ import { frameOf, classOfCents } from './frame.js';
 import { CHORD_QUALITIES, pickFor, chordRecord, spanRecord, spanMaterial, harmonyOver, targetOfBar, barMaterial, chooseChord, exceptionsOfBar, phrasesOf, isStrongBeat } from './harmony.js';
 import { FALLBACK_QUALITIES } from './progression.js';
 import { arrangeDrums } from './drums.js';
-import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, compNodesOf, compUnitsOf, layCompClave, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, voiceLead, voicingStats, voicingWhy, densityWhy, seededRandom, VOICINGS, PART_IDS } from './compose.js';
+import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, compNodesOf, compUnitsOf, compSourceOf, layCompClave, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, voiceLead, voicingStats, voicingWhy, densityWhy, seededRandom, VOICINGS, PART_IDS,
+  compStrumOf, compStrumStats, compStrumWhy, COMP_TOLERANCES, DEFAULT_COMP_TOLERANCE } from './compose.js';
 import { readRhythm, rankRowClaves, chooseClave, rankFrameClaves, chooseFrameClave, rereadClave, claveText, claveSource, claveAlternates, densityWords, COMP_RELATIONS, COMP_DENSITIES, DEFAULT_COMP_DENSITY } from './claves.js';
 import { bassBarOf, bassLockOf, bassWalkCells, bassBarRecord, bassStatsOf } from './bass.js';
 
@@ -168,7 +176,7 @@ function builderNotes(m, part) {
   return part.notes.map((n) => { const tone = row.tone[n.borrowed ? n.from : n.node]; return { node: n.node, tone, octave: n.octave, pitch: row.toneCents[tone] + 1200 * n.octave, bar: n.bar, slot: n.slot, time: n.time, slotSeconds: n.slotSeconds,
     ...(n.voice != null ? { voice: n.voice } : {}), ...(n.lane != null ? { lane: n.lane } : {}), ...(part.id === 'comp' ? (chords ? { velocity: n.velocity } : { strikes: row.strikes[n.node] }) : {}), ...(part.id === 'lead' ? { strong: isStrongBeat(cells.slots[n.slot].beat, S) } : {}),
     ...(n.endTime != null ? { endTime: n.endTime } : {}), ...(n.clipNote != null ? { clipNote: n.clipNote } : {}),
-    ...(n.holdTo != null ? { holdTo: n.holdTo } : {}), ...(n.borrowed ? { borrowed: true, from: n.from } : {}) }; });
+    ...(n.holdTo != null ? { holdTo: n.holdTo } : {}), ...(n.borrowed ? { borrowed: true, from: n.from } : {}), ...(n.offChord ? { offChord: true } : {}) }; });
 }
 /** a line's notes ({ slot (the cells' slot), node, octave }) as the lead part's builder notes */
 function leadLineNotes(m, notes) {
@@ -228,6 +236,8 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   if (edit && edit.bar == null && edit.span == null && edit.phrase == null && ('clave' in edit || 'relation' in edit || 'density' in edit)) return reclave(spec, row, cells, edit, opts);
   // phase H: the chords' voicing ({ voicing }) is `revoice`, the same way
   if (edit && edit.bar == null && edit.span == null && edit.phrase == null && 'voicing' in edit) return revoice(spec, row, cells, edit, opts);
+  // Amendment 3: the comp's tolerance and borrowing ({ tolerance, borrow }) is `restrum`, the same way
+  if (edit && edit.bar == null && edit.span == null && edit.phrase == null && ('tolerance' in edit || 'borrow' in edit)) return restrum(spec, row, cells, edit, opts);
   const K = spec.knobs, N = K.bars, S = K.slotsPerBar;
   // a chart's split bars: the chords a span's each, and a chord swap names its span
   const spans = spec.chords.some((c) => c.slots != null) ? spec.chords.map((c) => ({ bar: c.bar, from: c.from, slots: c.slots })) : null, U = spans ? spans.length : N;
@@ -251,13 +261,15 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   // the comp's style, as composed: in chords its strokes are on the part (compose.js `compChordsOfBar`), rebuilt with its bars
   const compChords = partById.comp.strokes != null;
   let compStrokes = compChords ? partById.comp.strokes.map((x) => ({ ...x })) : null;
+  // the comp's tolerance and borrowing as the spec plays them (Amendment 3, P37): a rebuilt bar re-strums at the setting
+  const strum = compStrumOf(spec);
   // in chords the bar's strokes are the clave's (spec.clave, unchanged by any edit), re-strummed over the new chord; a spec
   // with no clave (composed before Amendment 1) re-strums the comp's own strokes there
   const compOf = (c, k, range = null, voiced = null) => {
     if (!compChords) return compOfBar(ctx, c, k, compLayer, range);
     const r = range ?? { from: k * S, to: (k + 1) * S };
     const strokes = clave ? compNodesOf(clave, r.from, r.to) : partById.comp.strokes.filter((x) => x.slot >= r.from && x.slot < r.to).map((x) => x.node);
-    const got = compChordsOfBar(ctx, c, k, strokes, range, voiced);
+    const got = compChordsOfBar(ctx, c, k, strokes, range, voiced, strum);
     compStrokes.push(...got.strokes);
     return got.notes;
   };
@@ -491,6 +503,19 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
 
   // ── stats ──
   const counts = Object.fromEntries(newParts.map((p) => [p.id, p.notes.length]));
+  // Amendment 3 (P36): the comp's tones a stroke and its single notes, over every bar as it plays now (counted again over
+  // each unit's strokes, as Compose strums them: a stroke's tones are not kept on the part)
+  const compCounts = () => {
+    let strokes = 0, tones = 0, singles = 0;
+    recs.forEach((c, u) => {
+      const k = barOf(u), r = spans ? { from: spans[u].from, to: spans[u].from + spans[u].slots } : { from: k * S, to: (k + 1) * S };
+      const nodes = clave ? compNodesOf(clave, r.from, r.to) : partById.comp.strokes.filter((x) => x.slot >= r.from && x.slot < r.to).map((x) => x.node);
+      const voiced = led ? notes.chords.filter((n) => n.bar === k && n.slot >= r.from && n.slot < r.to) : null;
+      const got = compChordsOfBar(ctx, c, k, nodes, spans ? r : null, voiced, strum);
+      strokes += got.strokes.length; tones += got.tones; singles += got.singles;
+    });
+    return compStrumStats(strokes, tones, singles);
+  };
   let rooted = 0;
   for (let k = 0; k < N; k++) {
     if (bassRooted[k] !== undefined) { if (bassRooted[k]) rooted++; continue; }
@@ -499,7 +524,7 @@ export function rearrange(spec, row, cells, edit, opts = {}) {
   }
   const leadCells = new Set(notes.lead.map((n) => n.slot));
   const stats = { notes: counts, exceptions: exceptions.reduce((a, b) => a + b, 0), chordVoices: notes.chords.length / N, bassRooted: `${rooted}/${N}`, innerOnLeadSlots: notes.inner.filter((n) => leadCells.has(n.slot)).length,
-    ...(compChords ? { compStrum: notes.comp.length ? notes.comp.filter((n) => !n.borrowed).length / notes.comp.length : 0 } : {}), ...(voicing ? { voicing } : {}),
+    ...(compChords ? { compStrum: notes.comp.length ? notes.comp.filter((n) => !n.borrowed).length / notes.comp.length : 0, ...compCounts() } : {}), ...(voicing ? { voicing } : {}),
     ...(reclaved ? { clave: { id: clave.id, relation: clave.relation, strokes: compStrokes.length, silent: clave.relation === 'fill' ? clave.partner.silent + clave.partner.shared : clave.silent } } : {}) };
 
   const changedBars = [...new Set([...[...rebuilt].map(barOf), ...leadChanged])].sort((a, b) => a - b);
@@ -516,7 +541,7 @@ const compDensityText = (cd) => (!cd ? '' : !cd.fellBack ? `the ${densityWords(c
  *  a reclave's clave, its stats line and its decisions too */
 export function applyRearrange(spec, r) {
   const out = { ...spec, chords: r.chords, modulations: r.modulations, parts: r.parts, stats: { ...spec.stats, notes: r.stats.notes, exceptions: r.stats.exceptions, chordVoices: r.stats.chordVoices, bassRooted: r.stats.bassRooted, innerOnLeadSlots: r.stats.innerOnLeadSlots,
-    ...(r.stats.compStrum != null ? { compStrum: r.stats.compStrum } : {}), ...(r.stats.clave ? { clave: r.stats.clave } : {}), ...(r.stats.voicing ? { voicing: r.stats.voicing } : {}) } };
+    ...(r.stats.compStrum != null ? { compStrum: r.stats.compStrum } : {}), ...(r.stats.compTones != null ? { compTones: r.stats.compTones, compSingles: r.stats.compSingles } : {}), ...(r.stats.clave ? { clave: r.stats.clave } : {}), ...(r.stats.voicing ? { voicing: r.stats.voicing } : {}) } };
   if (r.drums !== undefined) out.drums = r.drums;
   if (r.clave) out.clave = r.clave;
   if (r.decisions) out.decisions = r.decisions;
@@ -599,16 +624,16 @@ export function reclave(spec, row, cells, edit = {}, opts = {}) {
   }
 
   // the comp strummed again bar by bar (a chart's span by span) over the chords as they play, as Compose strums it
-  const voices = [], strokes = [];
-  let found = 0, tones = 0;
+  const voices = [], strokes = [], setting = compStrumOf(spec);
+  let found = 0, tones = 0, singles = 0;
   // led chords (P5): each bar's (span's) chord voices as they play, for the strum's octaves
   const chordNotes = spec.stats?.voicing != null ? builderNotes(m, partById.chords) : null;
   const strum = (c, k, range = null) => {
     const r = range ?? { from: k * S, to: (k + 1) * S };
     const voiced = chordNotes ? chordNotes.filter((n) => n.bar === k && n.slot >= r.from && n.slot < r.to) : null;
-    const got = compChordsOfBar(ctx, c, k, compNodesOf(clave, r.from, r.to), range, voiced);
+    const got = compChordsOfBar(ctx, c, k, compNodesOf(clave, r.from, r.to), range, voiced, setting);
     for (const n of got.notes) (voices[n.voice] ||= []).push(n);
-    strokes.push(...got.strokes); found += got.found; tones += got.tones;
+    strokes.push(...got.strokes); found += got.found; tones += got.tones; singles += got.singles;
   };
   if (spans) recs.forEach((c, u) => strum(c, spans[u].bar, { from: spans[u].from, to: spans[u].from + spans[u].slots }));
   else recs.forEach((c, k) => strum(c, k));
@@ -628,13 +653,14 @@ export function reclave(spec, row, cells, edit = {}, opts = {}) {
   const tier = clave.compDensity ? `; ${choice ? densityWhy(choice.ranks.density, true) : compDensityText(clave.compDensity)}` : '';
   const said = { clave: [clave.id, `${asked ? 'chosen in the window' : newDensity ? 'the best of the density chosen in the window' : 'as composed'}: ${claveText(clave)} (${claveSource(clave) || 'the row'}), score ${clave.score.toFixed(3)}${tier}; ${laid}`],
     compRelation: [relation, `${edit.relation != null ? 'chosen in the window' : 'as composed'}: ${relation === 'sync' ? 'the comp strikes the clave\'s own landed steps, with the perc' : `the comp strikes the clave's gaps (${clave.partner.source === 'partner' ? 'its partner' : 'the complement'} ${clave.partner.pattern})`}`],
-    compStrum: [compStrum, `the clave's ${strokes.length} stroke${strokes.length === 1 ? '' : 's'} (${relation}), each the bar's chord: ${found} of ${tones} tones (${(100 * compStrum).toFixed(0)} %) from the row, the rest borrowed from the chord voices`] };
+    compStrum: [compStrum, setting.borrow ? `the clave's ${strokes.length} stroke${strokes.length === 1 ? '' : 's'} (${relation}), each the bar's chord: ${found} of ${tones} tones (${(100 * compStrum).toFixed(0)} %) from the row, the rest borrowed from the chord voices`
+      : compStrumWhy(setting, { strokes: strokes.length, relation, rooted: strokes.length > compSourceOf(clave).length, found, tones, singles }, { asked: strumAsked(spec) })] };
   const decisions = spec.decisions?.map((d) => (said[d.what] ? { what: d.what, value: said[d.what][0], why: said[d.what][1] } : d));
   const notes = { ...spec.stats.notes, comp: comp.notes.length };
   const changed = changedByBar(parts, newParts);
   return { version: COMPOSER_REARRANGE_VERSION, parts: newParts, drums, chords: spec.chords, modulations: spec.modulations, changedBars: changed.comp, retunedBars: [], changed, exceptions: spec.stats.exceptions,
     stats: { notes, exceptions: spec.stats.exceptions, chordVoices: spec.stats.chordVoices, bassRooted: spec.stats.bassRooted, innerOnLeadSlots: spec.stats.innerOnLeadSlots, compStrum,
-      clave: { id: clave.id, relation, strokes: strokes.length, silent } },
+      ...compStrumStats(strokes.length, tones, singles), clave: { id: clave.id, relation, strokes: strokes.length, silent } },
     clave, ...(decisions ? { decisions } : {}), ...(alternates ? { claveAlternates: alternates } : {}) };
 }
 
@@ -678,18 +704,19 @@ export function revoice(spec, row, cells, edit = {}, opts = {}) {
   const chords = partOf(ctx, 'chords', voices, { ...art('chords'), voice: true });
 
   // the comp in chords: each unit strummed again over its clave's strokes, at the chords' octaves (led) or close
-  let comp = was('comp'), compStrum = null;
+  let comp = was('comp'), compStrum = null, compStats = null;
   if (spec.clave) {
-    const cv = [], strokes = [];
-    let found = 0, tones = 0;
+    const cv = [], strokes = [], setting = compStrumOf(spec);
+    let found = 0, tones = 0, singles = 0;
     for (const u of units) {
       const r = u.range ?? { from: u.bar * S, to: (u.bar + 1) * S };
-      const got = compChordsOfBar(ctx, u.chord, u.bar, compNodesOf(spec.clave, r.from, r.to), u.range, led ? u.notes : null);
+      const got = compChordsOfBar(ctx, u.chord, u.bar, compNodesOf(spec.clave, r.from, r.to), u.range, led ? u.notes : null, setting);
       for (const n of got.notes) (cv[n.voice] ||= []).push(n);
-      strokes.push(...got.strokes); found += got.found; tones += got.tones;
+      strokes.push(...got.strokes); found += got.found; tones += got.tones; singles += got.singles;
     }
     comp = partOf(ctx, 'comp', cv, { ...art('comp'), voice: true, strokes });
     compStrum = tones ? found / tones : 0;
+    compStats = compStrumStats(strokes.length, tones, singles);
   }
   const newParts = PART_IDS.map((id) => (id === 'chords' ? chords : id === 'comp' ? comp : partById[id]));
   const next = { ...spec, parts: newParts };
@@ -699,7 +726,7 @@ export function revoice(spec, row, cells, edit = {}, opts = {}) {
   const { voicing: _was, ...rest } = spec.input.overrides ?? {};
   const input = { ...spec.input, overrides: led ? rest : { ...rest, voicing } };
   const stats = { notes: { ...spec.stats.notes, chords: chords.notes.length, comp: comp.notes.length }, exceptions: spec.stats.exceptions, chordVoices: spec.stats.chordVoices, bassRooted: spec.stats.bassRooted, innerOnLeadSlots: spec.stats.innerOnLeadSlots,
-    ...(compStrum != null ? { compStrum } : {}), ...(led ? { voicing: voicingStats(voiced) } : {}) };
+    ...(compStrum != null ? { compStrum, ...compStats } : {}), ...(led ? { voicing: voicingStats(voiced) } : {}) };
   let decisions = spec.decisions?.filter((d) => d.what !== 'voicing');
   if (decisions && led) {
     // Compose decides it right after the chords' voices, before the comp's style (in chords) or its layer (in notes)
@@ -709,6 +736,72 @@ export function revoice(spec, row, cells, edit = {}, opts = {}) {
   const changed = changedByBar(parts, newParts);
   return { version: COMPOSER_REARRANGE_VERSION, parts: newParts, drums, chords: spec.chords, modulations: spec.modulations, changedBars: [...new Set([...changed.chords, ...changed.comp])].sort((a, b) => a - b), retunedBars: [], changed,
     exceptions: spec.stats.exceptions, stats, voicing, input, ...(decisions ? { decisions } : {}) };
+}
+
+/** was the comp's tolerance or borrowing asked (an override in the spec's input, Amendment 3)? */
+const strumAsked = (spec) => spec.input?.overrides?.compTolerance != null || spec.input?.overrides?.compBorrow != null;
+
+/**
+ * Switch the comp's tolerance and borrowing with no re-compose (BASS_VOICING_ORDER.md Amendment 3, rules 15–16, P37):
+ * every bar's (a chart's span's) comp strummed again over its clave's strokes as Compose strums it (`compChordsOfBar` at
+ * the new setting, its octaves from the chords as they play: led, P5; close, stacked), the drums arranged again. Nothing
+ * else moves: the clave and its strokes (so the perc and the bass's Clave lock, which read them), the chords, the lead,
+ * the bass, the inner, every part's sound, legato and on/off, baseHz. The input's overrides (`compTolerance`,
+ * `compBorrow`: left out at Compose's defaults, ±½ and false), the comp's stats (`compStrum`, `compTones`,
+ * `compSingles`) and its decisions (the strum's, and the style's words) follow, so the result is, byte for byte, a
+ * Compose given the same overrides (the defaults: none). A spec strummed so already comes back the same.
+ *   spec   a composed spec in chords (`compStyle: 'notes'` has no strum: refused); row, cells: its materials
+ *   edit   { tolerance (0.125 | 0.25 | 0.5 | 1; absent: as it plays), borrow (true | false; absent: as it plays) }
+ *   opts   { parts (the parts as they play now; default spec.parts), drumOptions (default the spec's own) }
+ * → rearrange's shape plus `strum` ({ tolerance, borrow }: as it plays now), `input` and `decisions`: applyRearrange
+ *   writes them in
+ */
+export function restrum(spec, row, cells, edit = {}, opts = {}) {
+  if (!spec || spec.refused) fail('nothing to restrum in a refused spec');
+  if (!spec.clave) fail('this composition comps in notes (compStyle \'notes\'): it has no strum to set');
+  const was = compStrumOf(spec), tolerance = edit.tolerance ?? was.tolerance, borrow = edit.borrow ?? was.borrow;
+  if (!COMP_TOLERANCES.includes(tolerance)) fail(`a comp tolerance is one of ${COMP_TOLERANCES.join(', ')} (slots either side of a stroke), not ${JSON.stringify(edit.tolerance)}`);
+  if (typeof borrow !== 'boolean') fail(`borrow is true or false, not ${JSON.stringify(edit.borrow)}`);
+  const K = spec.knobs, N = K.bars, S = K.slotsPerBar;
+  if (cells.bars !== N || cells.slotsPerBar !== S) fail(`the cells are ${cells.bars} × ${cells.slotsPerBar}, the spec ${N} × ${S}`);
+  const m = materialCache(row, cells, spec), { ctx } = m;
+  const parts = opts.parts ?? spec.parts, partById = Object.fromEntries(parts.map((p) => [p.id, p]));
+  for (const id of PART_IDS) if (!partById[id]) fail(`no ${id} part`);
+  const spans = spec.chords.some((c) => c.slots != null) ? spec.chords.map((c) => ({ bar: c.bar, from: c.from, slots: c.slots })) : null;
+  const recs = walkChords(m, givenOf(m, spec.chords), { e: K.frameCentsEachSide, gridBase: frameOf(row, toneOf(m, K.root), K.frameCentsEachSide).rootCents, modulation: K.modulation, foldOffsets: spec.input.overrides?.foldOffsets ?? true }, spans);
+  const unitOf = spans ? spans.flatMap((sp, i) => Array.from({ length: sp.slots }, () => i)) : null;
+  const ratioOf = spans ? (bar, slot) => (recs[unitOf[slot]] ?? recs[spans.findIndex((sp) => sp.bar === bar)]).fundamentalRatio : (bar) => recs[bar].fundamentalRatio;
+
+  // the comp strummed again unit by unit at the setting, over the clave's strokes (unmoved) and the chords as they play
+  const setting = { tolerance, borrow }, voices = [], strokes = [];
+  let found = 0, tones = 0, singles = 0;
+  const chordNotes = spec.stats?.voicing != null ? builderNotes(m, partById.chords) : null;
+  recs.forEach((c, u) => {
+    const k = spans ? spans[u].bar : u, range = spans ? { from: spans[u].from, to: spans[u].from + spans[u].slots } : null, r = range ?? { from: k * S, to: (k + 1) * S };
+    const voiced = chordNotes ? chordNotes.filter((n) => n.bar === k && n.slot >= r.from && n.slot < r.to) : null;
+    const got = compChordsOfBar(ctx, c, k, compNodesOf(spec.clave, r.from, r.to), range, voiced, setting);
+    for (const n of got.notes) (voices[n.voice] ||= []).push(n);
+    strokes.push(...got.strokes); found += got.found; tones += got.tones; singles += got.singles;
+  });
+  const w = partById.comp;
+  const comp = partOf(ctx, 'comp', voices, { sound: w.sound, legato: w.legato, enabled: w.enabled, baseHz: K.baseHz, ratioOf, voice: true, strokes });
+  const newParts = PART_IDS.map((id) => (id === 'comp' ? comp : partById[id]));
+  const next = { ...spec, parts: newParts };
+  const drums = spec.drums === undefined && opts.drumOptions === undefined ? undefined : arrangeDrums(next, opts.drumOptions ?? spec.drums?.options ?? {});
+
+  // the input's overrides (Compose's defaults left out), the stats, the strum's and the style's decisions
+  const { compTolerance: _t, compBorrow: _b, ...rest } = spec.input.overrides ?? {};
+  const input = { ...spec.input, overrides: { ...rest, ...(tolerance !== DEFAULT_COMP_TOLERANCE ? { compTolerance: tolerance } : {}), ...(borrow ? { compBorrow: true } : {}) } };
+  const asked = tolerance !== DEFAULT_COMP_TOLERANCE || borrow;
+  const compStrum = tones ? found / tones : 0;
+  const strumWhy = compStrumWhy(setting, { strokes: strokes.length, relation: spec.clave.relation, rooted: strokes.length > compSourceOf(spec.clave).length, found, tones, singles }, { asked });
+  const styleWhy = `chords by default (decided, Avery): the clave's strokes (Amendment 1), each the chord strummed from the row${borrow ? ', then borrowed' : ' around it, down to a single note (Amendment 3)'}`;
+  const decisions = spec.decisions?.map((d) => (d.what === 'compStrum' ? { what: d.what, value: compStrum, why: strumWhy } : d.what === 'compStyle' && d.why !== 'asked' ? { ...d, why: styleWhy } : d));
+  const stats = { notes: { ...spec.stats.notes, comp: comp.notes.length }, exceptions: spec.stats.exceptions, chordVoices: spec.stats.chordVoices, bassRooted: spec.stats.bassRooted, innerOnLeadSlots: spec.stats.innerOnLeadSlots,
+    compStrum, ...compStrumStats(strokes.length, tones, singles) };
+  const changed = changedByBar(parts, newParts);
+  return { version: COMPOSER_REARRANGE_VERSION, parts: newParts, drums, chords: spec.chords, modulations: spec.modulations, changedBars: changed.comp, retunedBars: [], changed,
+    exceptions: spec.stats.exceptions, stats, strum: setting, input, ...(decisions ? { decisions } : {}) };
 }
 
 /**

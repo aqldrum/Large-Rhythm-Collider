@@ -666,6 +666,10 @@ function nodeAtTick(row, tick) {
 //              With none in the tier, the nearest tier's (DENSITY_FALLBACK) plays, and `density.fellBack` says so; with
 //              none in any, every candidate under COMP_RULES as phase I ranked them. Fill's partner is the best of the
 //              same ranking sharing no stroke (else the complement, which keeps the clave's own onsets a bar).
+//
+// Amendment 3 (BASS_VOICING_ORDER.md, Avery's rule 17, P38; DESIGN_NOTES "The comp's tolerance (phase O)"):
+//   ties       candidates whose scores tie (within EPS) are ordered by share, the lower (the sparser) first, then as
+//              before (the reading order); the seed breaks a tie only among the sparsest of the best (`frameOrder`).
 
 const FRAME_ID = /^frame:([A-D])\/(\d+)\/(chord|frame|root\+5th|guide|root)$/;
 /** a frame clave's id: 'frame:<layer letter>/<grain>/<set>' */
@@ -830,6 +834,8 @@ function frameCandidate(L, n, set, got, rules) {
   return { id: frameClaveId(L.name, n, set), source: 'frame', steps: n, span: 1, pattern, onsets: onsetsOf(pattern), patterns: got.patterns,
     score: s.score, terms: s.terms, bars: s.bars, counted: s.counted, share, tier: densityTierOf(share), from: { layer: L.value, name: L.name, grain: n, set, frame: true }, strokes: got.strokes };
 }
+/** the frame candidates' order (P38): score down; a tie (within EPS) by share, the lower (the sparser) first */
+export const frameOrder = (a, b) => (Math.abs(a.score - b.score) > EPS ? b.score - a.score : Math.abs((a.share ?? 0) - (b.share ?? 0)) > EPS ? (a.share ?? 0) - (b.share ?? 0) : 0);
 /** COMP_RULES with a tier's band as its density term's share (P27) */
 const rulesOf = (rules, band) => (band ? { ...rules, share: band } : rules);
 
@@ -860,7 +866,9 @@ export function rankFrameClaves(row, ctx, chordAt, { rules = COMP_RULES, rhythm 
   const band = played ? DENSITY_BANDS[played] : null, R = rulesOf(rules, band);
   // the tier's candidates scored again, their density term read against its band
   const list = played ? read.filter((c) => tierIn(c.tier, played)).map((c) => frameCandidate(strikes.find((L) => L.name === c.from.name), c.steps, c.from.set, c, R)) : read;
-  const candidates = list.sort((a, b) => b.score - a.score);   // stable: ties stay in the reading order
+  // Amendment 3 (rule 17, P38): a tie in score (within EPS) goes to the sparser, the lower share first; then stable: ties
+  // stay in the reading order (the seed breaks a tie left at the top, chooseFrameClave)
+  const candidates = list.sort(frameOrder);
   const curated = curatedClaves().map((c) => ({ ...c, bars: 0, ...scoreClave({ ...c, bars: 0 }, 0, rules, { held: 'bars' }), from: { pattern: c.name }, read: 'frame' }));
   return { source: 'frame', tier: 'frame', density: { asked: density, played, band: band ? [...band] : [...rules.share], fellBack: played !== density, counts },
     ranked: { tried, read: read.length, candidates }, curated, byId: new Map(candidates.map((c) => [c.id, c])), rules: R, strikes };
@@ -993,8 +1001,10 @@ export function chooseFrameClave(row, ctx, chordAt, { asked = null, rng = Math.r
       chosen = fixed(cur ?? { ...want, bars: 0, ...scoreClave({ ...want, bars: 0 }, 0, rules, { held: 'bars' }), from: { asked: true } });
     }
   } else if (R.ranked.candidates.length) {
-    ties = R.ranked.candidates.filter((c) => c.score >= R.ranked.candidates[0].score - EPS).length;
-    chosen = { ...pick(R.ranked.candidates), read: 'frame', silent: 0 };
+    // P38: the seed breaks a tie only among the sparsest of the top score (the candidates come sparser first)
+    const top = R.ranked.candidates.filter((c) => frameOrder(c, R.ranked.candidates[0]) === 0);
+    ties = top.length;
+    chosen = { ...pick(top), read: 'frame', silent: 0 };
   } else {
     const list = [...R.curated].sort((a, b) => b.score - a.score || cmp(a.id, b.id));
     ties = list.filter((c) => c.score >= list[0].score - EPS).length;

@@ -193,6 +193,14 @@ function audit(spec, close = null) {
     const S = spec.knobs.slotsPerBar;
     for (const n of comp.notes) {
       const U = all.find((x, u) => { const c = x.chord, from = c.slots != null ? c.from : u * S, to = c.slots != null ? c.from + c.slots : (u + 1) * S; return n.bar === (c.slots != null ? c.bar : u) && n.slot >= from && n.slot < to; });
+      // Amendment 3 (P34–P35): a stroke on a frame tone that is no chord class (`offChord`) plays its own onset at the
+      // octave nearest the chord voices' mean pitch, in a lane of its own (0–3)
+      if (n.offChord) {
+        const m = U && U.notes.length ? U.notes.reduce((a, x) => a + pitch(toneOf(spec, x), x.octave), 0) / U.notes.length : null, p = pitch(toneOf(spec, n), n.octave);
+        if (m != null && Math.abs(p - m) > 600 + 1e-6) bad.push(`comp at ${n.node} (off-chord): ${p.toFixed(0)}¢ against the chord's mean ${m.toFixed(0)}¢`);
+        if (!(Number.isInteger(n.lane) && n.lane >= 0 && n.lane <= 3)) bad.push(`comp at ${n.node} (off-chord): lane ${n.lane}`);
+        continue;
+      }
       const v = U?.notes.find((x) => x.voice === n.voice);
       if (!v) { bad.push(`comp at ${n.node}: no chord voice of class ${n.voice}`); continue; }
       const p = pitch(toneOf(spec, n), n.octave), vp = pitch(toneOf(spec, v), v.octave);

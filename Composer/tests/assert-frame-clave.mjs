@@ -141,7 +141,8 @@ function bruteRank(G, density = 'sparse-med') {
   const kept = read.filter((c) => c.kept), played = [density, ...NEAREST[density]].find((d) => kept.some((c) => inDensity(c.tier, d))) ?? null;
   const band = played ? BANDS[played] : [RULES.lo, RULES.hi];
   const all = read.map((c, x) => ({ ...c, x, score: score(c, band) }));
-  const list = all.filter((c) => c.kept && (!played || inDensity(c.tier, played))).sort((a, b) => b.score - a.score || a.x - b.x);
+  // Amendment 3 (rule 17, P38): a tie in score goes to the sparser (the lower share), then the reading order
+  const list = all.filter((c) => c.kept && (!played || inDensity(c.tier, played))).sort((a, b) => (Math.abs(a.score - b.score) > EPS ? b.score - a.score : Math.abs(a.share - b.share) > EPS ? a.share - b.share : a.x - b.x));
   return { list, all, played, fellBack: played !== density };
 }
 /** the ranking's candidates (P16 by brute force: `all` every reading) */
@@ -180,7 +181,8 @@ function audit(spec) {
   // the density it was chosen in (P27): asked, the tier the brute force plays, a fall-back
   if (J(C.compDensity) !== J({ asked: density, played: B.played, fellBack: B.fellBack })) bad.push(`compDensity ${J(C.compDensity)}, the brute force's ${density} → ${B.played}`);
   if (!C.from?.frame) return C.read === 'frame' ? [...bad, ...auditFixed(G, C, 'clave')] : ['not a frame clave'];
-  const top = list.filter((c) => c.score >= list[0].score - EPS), mine = spec.input.overrides?.clave ? B.all.find((c) => c.id === C.id) : list.find((c) => c.id === C.id);
+  // P38: the seed breaks a tie only among the sparsest of the best score
+  const top = list.filter((c) => c.score >= list[0].score - EPS && c.share <= list[0].share + EPS), mine = spec.input.overrides?.clave ? B.all.find((c) => c.id === C.id) : list.find((c) => c.id === C.id);
   if (!mine) return [`${C.id} is no candidate of the brute force's`];
   if (!spec.input.overrides?.clave && !top.includes(mine)) bad.push(`${C.id} (${mine.score.toFixed(4)}) is not among the best (${top.map((c) => c.id).join(', ')}, ${list[0].score.toFixed(4)})`);
   if (Math.abs(mine.score - C.score) > 1e-9) bad.push(`${C.id}'s score ${C.score} is not ${mine.score}`);
@@ -295,9 +297,10 @@ console.log('\n— P19: claveFrom \'pattern\', byte for byte the clave before ph
 {
   const hash = (x) => crypto.createHash('sha256').update(J(x)).digest('hex').slice(0, 24), bad = [];
   CASES.forEach((c, x) => {
-    // the bass pinned to the one Compose mined at c009aaa (Amendment 2, P28: Compose's own is now Moving · Kick)
-    const s = compose(c.L, c.T, { seed: c.seed, overrides: { ...c.overrides, claveFrom: 'pattern', bass: { density: 'sparse', lock: 'free' } }, ...(c.changes ? { changes: c.changes } : {}), ...(c.trace ? { trace: true } : {}), ...(c.target ? { target: ODE() } : {}) });
-    delete s.input.overrides.claveFrom; delete s.input.overrides.bass;
+    // the bass pinned to the one Compose mined at c009aaa (Amendment 2, P28: Compose's own is now Moving · Kick), and the
+    // strum to the one before Amendment 3 (P34's pin: ±¼ slot, borrowing; its two new stats, compTones and compSingles, set aside)
+    const s = compose(c.L, c.T, { seed: c.seed, overrides: { ...c.overrides, claveFrom: 'pattern', bass: { density: 'sparse', lock: 'free' }, compBorrow: true, compTolerance: 0.25 }, ...(c.changes ? { changes: c.changes } : {}), ...(c.trace ? { trace: true } : {}), ...(c.target ? { target: ODE() } : {}) });
+    delete s.input.overrides.claveFrom; delete s.input.overrides.bass; delete s.input.overrides.compBorrow; delete s.input.overrides.compTolerance; delete s.stats.compTones; delete s.stats.compSingles;
     if (s.target) delete s.target.search.ms;   // the placement search's own timing
     const h = c.whole ? hash(s) : hash([s.clave, s.drums, s.parts.find((p) => p.id === 'comp').strokes]);
     if (h !== HASHES[x]) bad.push(`${c.L.join(':')} ${J(c.overrides)}${c.changes ? ' (chart)' : ''}${c.target ? ' (target)' : ''}`);
@@ -385,7 +388,8 @@ console.log('\n— P21: the words');
 {
   const spec = compose([19, 17, 16, 15], 4, { seed: 1, trace: true }), C = spec.clave, why = spec.decisions.find((d) => d.what === 'clave').why;
   const ev = spec.trace.events.find((e) => e.kind === 'part' && e.part === 'comp' && e.clave);
-  const src = `layer ${C.from.name} · ${C.steps} steps · ${C.from.set === 'chord' ? 'chord tones' : 'tones in frame'}`;
+  // the sets' words (P21, P26); since Amendment 3 (rule 17) 19:17:16:15's tie goes to the sparser, a guide-tone clave
+  const src = `layer ${C.from.name} · ${C.steps} steps · ${({ chord: 'chord tones', frame: 'tones in frame', 'root+5th': 'root and fifth', guide: 'guide tones', root: 'roots' })[C.from.set]}`;
   check(`the source "${claveSource(C)}" and each bar's pattern "${claveText(C)}" (bar 2: "${claveText(C, 1)}") in the decision, and in the trace with every alternate's`, claveSource(C) === src && claveText(C) === C.patterns.join(' ') && claveText(C, 1) === C.patterns[1]
     && why.includes(src) && why.includes(claveText(C)) && J(ev.clave.patterns) === J(C.patterns) && ev.alternates.filter((a) => a.from.frame).every((a) => Array.isArray(a.patterns) && a.patterns.length === spec.knobs.bars));
   const son = compose([8, 7, 6, 5], 4, { seed: 1, overrides: { clave: 'son' } });
