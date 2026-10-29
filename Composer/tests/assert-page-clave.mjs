@@ -31,7 +31,7 @@ import { claveText, claveSource, parseFrameId } from '../core/claves.js';
 import { materialsOf, rearrange, applyRearrange, reclave } from '../core/rearrange.js';
 import { arrangeDrums } from '../core/drums.js';
 import { plotOf, indexOfTick, highlightsOf } from '../page/plot-highlights.js';
-import { buildScene, frameAt, compDetail, tierDetail } from '../page/trace-frames.js';
+import { buildScene, frameAt, compDetail, tierDetail, strumDetail } from '../page/trace-frames.js';
 import { densityWords } from '../core/claves.js';
 import { createComposerController } from '../perform/composer-controller.js';
 import { newCompositionState } from '../store/composition-store.js';
@@ -336,7 +336,7 @@ console.log('\n— phase L: the frame clave in the window (768:769, unpinned)');
   // the caption
   const plot = plotOf({ compositeRhythm: win.lrcVisuals.compositeRhythm, grid: win.lrcVisuals.grid });
   const scene = buildScene({ trace: S().trace, plot, final: tab.highlights(plotted()) }), said = scene.steps.find((x) => x.event.kind === 'part' && x.event.part === 'comp')?.data.detail;
-  check(`the comp's caption reads the frame ("${said}")`, said === compDetail(scene.steps.find((x) => x.event.kind === 'part' && x.event.part === 'comp').event)
+  check(`the comp's caption reads the frame ("${said}")`, said === compDetail(scene.steps.find((x) => x.event.kind === 'part' && x.event.part === 'comp').event, null, tab.highlights(plotted()).arrangement.strum)
     && said.startsWith(`the clave from the frame, ${claveSource(S().composed.clave)} (${claveText(S().composed.clave)})`) && /every one in frame/.test(said));
 }
 
@@ -366,8 +366,8 @@ console.log('\n— phase N: the picker re-ranked, the comp\'s density (768:769; 
       && J(scores()) === J(want.map((a) => a.score.toFixed(3))) && /ranked again over the chords as they play/.test(q(inspector, '.ctab-legend')?.textContent ?? ''));
     check('… what plays is the clave re-read, never switched (P30)', S().spec.clave.id === own.id && J(S().spec.clave) === J(applyRearrange(S().composed, sw.r).clave) && q(rowOf(own.id), '.ctab-alt-mark').textContent === '●C');
     const said = caption();
-    check(`the comp's caption says the clave as it plays: re-read where the swap moved it, and the tier ("${said}")`, said === compDetail(ev(), tab.highlights(plotted()).arrangement.clave)
-      && (sw.r.reclavedBars?.length ? said.includes(`re-read in bar${sw.r.reclavedBars.length === 1 ? '' : 's'} ${sw.r.reclavedBars.map((b) => b + 1).join(', ')}`) : !/re-read/.test(said)) && said.endsWith('; the sparse–medium (10–50 %) tier'));
+    check(`the comp's caption says the clave as it plays: re-read where the swap moved it, and the tier ("${said}")`, said === compDetail(ev(), tab.highlights(plotted()).arrangement.clave, tab.highlights(plotted()).arrangement.strum)
+      && (sw.r.reclavedBars?.length ? said.includes(`re-read in bar${sw.r.reclavedBars.length === 1 ? '' : 's'} ${sw.r.reclavedBars.map((b) => b + 1).join(', ')}`) : !/re-read/.test(said)) && said.endsWith(`; the sparse–medium (10–50 %) tier; ${strumDetail(tab.highlights(plotted()).arrangement.strum)}`));
     await click('.ctab-undo', left);
     check('undo the swap: the trace\'s list again', !core.claveOf().reranked && J(frameIds()) === J(fr(ev().alternates).map((a) => a.id)));
   }
@@ -403,7 +403,7 @@ console.log('\n— phase N: the picker re-ranked, the comp\'s density (768:769; 
     && S().spec.clave.compDensity.asked === 'dense' && J(partOf('comp')) === J(partOf('comp', dense)) && J(S().spec.clave) === J(dense.clave) && J(S().drums.hits) === J(arrangeDrums(dense, S().drumOptions).hits));
   check(`… the picker lists the dense tier's (${fr(rc.claveAlternates).length}: reclave's claveAlternates), each dense; the select and the tier say it ("${tierEl()?.textContent}")`, core.claveOf().reranked && J(frameIds()) === J(fr(rc.claveAlternates).map((a) => a.id))
     && fr(rc.claveAlternates).every((a) => a.tier === 'dense') && sel().value === 'dense' && tierEl()?.textContent.startsWith(`${Math.round(100 * S().spec.clave.share)} % of its steps (dense)`));
-  check(`the caption says the clave as it plays and names the tier, not a pick ("${caption()}")`, caption().endsWith(`; ${tierDetail(S().spec.clave.compDensity)}`) && tierDetail(S().spec.clave.compDensity) === 'the dense (50–85 %) tier'
+  check(`the caption says the clave as it plays and names the tier, not a pick ("${caption()}")`, caption().endsWith(`; ${tierDetail(S().spec.clave.compDensity)}; ${strumDetail(tab.highlights(plotted()).arrangement.strum)}`) && tierDetail(S().spec.clave.compDensity) === 'the dense (50–85 %) tier'
     && caption().startsWith(`the clave from the frame, ${claveSource(S().spec.clave)} (${claveText(S().spec.clave)})`) && !/picked/.test(caption()));
   await click('.ctab-undo', left);
   check('undo: Sparse–Med, Compose\'s clave and list again', S().compDensity === 'sparse-med' && sel().value === 'sparse-med' && J(S().spec.clave) === J(S().composed.clave) && !core.claveOf().reranked);
@@ -437,10 +437,71 @@ console.log('\n— phase N: the picker re-ranked, the comp\'s density (768:769; 
   const cd = S().spec.clave.compDensity, said = caption();
   check(`16:12:9 asked Sparse: none in the tier, so medium's best plays, said in amber ("${tierEl()?.textContent}")`, S().status === 'ready' && cd.asked === 'sparse' && cd.fellBack && cd.played === 'medium' && tierEl()?.classList.contains('amber')
     && tierEl()?.textContent.startsWith(`no clave in the sparse tier, so the nearest: ${densityWords('medium')}`) && S().compDensity === 'sparse' && sel().value === 'sparse');
-  check(`… and the caption ("${said}")`, said.endsWith('; no clave in the sparse tier, so the nearest, medium (25–50 %)'));
+  check(`… and the caption ("${said}")`, said.endsWith(`; no clave in the sparse tier, so the nearest, medium (25–50 %); ${strumDetail(tab.highlights(plotted()).arrangement.strum)}`));
   await core.setCompDensity('dense'); tab.selectCell('comp', 0);
   check(`… asked Dense: a dense clave plays (${S().spec.clave.id}, ${Math.round(100 * S().spec.clave.share)} %)`, !S().spec.clave.compDensity.fellBack && S().spec.clave.tier === 'dense' && !tierEl()?.classList.contains('amber'));
   await core.setCompDensity('sparse-med');
+}
+
+console.log('\n— phase O: the comp\'s tolerance and "fill from the chords" (768:769; 11:9:7:5)');
+{
+  const FL = [768, 769], lane = (id) => qa(left, '.ctab-lane').find((l) => l.dataset.part === id);
+  setRhythm(FL, T);
+  await core.setCompDensity('sparse-med');
+  core.setSeed(S().input.seed);   // a fresh Compose at the default density
+  q(left, '.ctab-go').click(); await settle();
+  tab.selectCell('comp', 0);
+  const tol = () => q(inspector, '.ctab-comp-tolerance'), fill = () => q(inspector, '.ctab-comp-borrow'), said = () => q(inspector, '.ctab-comp-strum')?.textContent;
+  const readout = (s) => `${s.stats.compTones.toFixed(1)} tones a stroke · ${Math.round(100 * s.stats.compSingles)} % single`;
+  const asked = (o) => compose(FL, T, { seed: S().input.seed, worker: S().table === 'full', overrides: { ...S().composed.input.overrides, ...o } });
+  const sameComp = (want) => J(partOf('comp')) === J(partOf('comp', want)) && J(S().spec.stats.compTones) === J(want.stats.compTones) && J(S().spec.stats.compSingles) === J(want.stats.compSingles)
+    && J(S().drums.hits) === J(arrangeDrums(want, S().drumOptions).hits);
+  check(`the comp cell: Tolerance ±⅛ | ±¼ | ±½ | ±1 slot (±½ chosen), "fill from the chords" off, and what the strokes found ("${said()}")`, !!tol() && qa(tol(), 'option').map((o) => o.textContent).join('|') === '±⅛ slot|±¼ slot|±½ slot|±1 slot'
+    && tol().value === '0.5' && !!fill() && !fill().classList.contains('on') && said() === readout(S().spec) && said() === '2.1 tones a stroke · 30 % single');
+  // the bass on the Clave lock: it reads the strokes, which a tolerance change doesn't move
+  await core.setBass({ lock: 'clave' }); tab.selectCell('comp', 0);
+  const bass0 = J(partOf('bass')), strokes0 = J(partOf('comp').strokes), perc0 = J(S().drums.hits.filter((h) => h.voice === 'perc')), n0 = composes, u0 = S().undo.length;
+  tol().value = '1'; dom.fire(tol(), 'change'); await settle();
+  const wide = asked({ compTolerance: 1 });
+  check(`Tolerance → ±1 slot: live (no Compose), one undo step; the comp, its stats and the drums byte for byte a Compose given compTolerance 1 ("${said()}")`, composes === n0 && S().undo.length === u0 + 1 && S().compTolerance === 1 && S().spec.input.overrides.compTolerance === 1
+    && sameComp(wide) && said() === readout(wide) && tol().value === '1');
+  check('… the strokes, the perc and the bass on the Clave lock unmoved', J(partOf('comp').strokes) === strokes0 && J(S().drums.hits.filter((h) => h.voice === 'perc')) === perc0 && J(partOf('bass')) === bass0);
+  await click('.ctab-comp-borrow');
+  const full = asked({ compTolerance: 1, compBorrow: true });
+  check(`"fill from the chords": live, one more undo step, borrowed tones hollow in the cell, a Compose given compBorrow too ("${said()}")`, composes === n0 && S().undo.length === u0 + 2 && S().compBorrow === true && sameComp(full) && fill().classList.contains('on')
+    && /filled from the chords$/.test(said()) && partOf('comp').notes.some((x) => x.borrowed) && qa(lane('comp'), '.ctab-dot.borrowed').length === partOf('comp').notes.filter((x) => x.borrowed).length);
+  await click('.ctab-undo', left);
+  check('undo: borrowing off, ±1 still', S().compBorrow === false && S().compTolerance === 1 && sameComp(wide) && !fill().classList.contains('on'));
+  await click('.ctab-undo', left);
+  check('undo: ±½, Compose\'s comp again', S().compTolerance === 0.5 && J(partOf('comp')) === J(partOf('comp', S().composed)) && tol().value === '0.5');
+  await click('.ctab-redo', left); await click('.ctab-redo', left);
+  check('redo twice: ±1, filled', S().compTolerance === 1 && S().compBorrow === true && sameComp(full));
+  check('JSON export carries them while they aren\'t the defaults', core.editsExport()?.compTolerance === 1 && core.editsExport()?.compBorrow === true);
+  core.setSeed(S().input.seed);
+  q(left, '.ctab-go').click(); await settle();
+  tab.selectCell('comp', 0);
+  check('Compose again: both kept (sent as compTolerance and compBorrow), nothing to switch after it', composes === n0 + 1 && S().composed.input.overrides.compTolerance === 1 && S().composed.input.overrides.compBorrow === true
+    && S().compTolerance === 1 && S().compBorrow && tol().value === '1' && fill().classList.contains('on') && J(partOf('comp')) === J(partOf('comp', S().composed)));
+  check('setCompStrum refuses a tolerance it doesn\'t know', (() => { try { core.setCompStrum({ tolerance: 0.3 }); return false; } catch (e) { return /one of 0\.125, 0\.25, 0\.5, 1/.test(e.message); } })());
+  // a chord swap after the switch re-strums its bar at the setting (the fold: restrum before the edits)
+  await core.setCompStrum({ tolerance: 0.125, borrow: false });
+  const k = 1, cand = core.alternatesOf(k, 'chords')?.candidates?.find((x) => !x.current);
+  if (cand) {
+    await core.swapChord(k, cand);
+    const m = materialsOf(S().composed), r1 = applyRearrange(S().composed, rearrange(S().composed, m.row, m.cells, { tolerance: 0.125, borrow: false }));
+    const want = applyRearrange(r1, rearrange(r1, m.row, m.cells, { bar: k, chord: { rootTone: S().edits.chords[k].rootTone, quality: S().edits.chords[k].quality } }));
+    check(`a chord swap after ±⅛: its bar re-strummed at ±⅛ (the comp the core's restrum then swap)`, J(partOf('comp').notes.map(({ duration, retrigger, ...x }) => x)) === J(partOf('comp', want).notes.map(({ duration, retrigger, ...x }) => x)));
+    await core.undo();
+  }
+  await core.undo(); await core.setBass({ lock: 'kick' });
+  // 11:9:7:5: every stroke a single note at ±½
+  setRhythm([11, 9, 7, 5], 4);
+  await core.setCompStrum({ tolerance: 0.5, borrow: false });
+  q(left, '.ctab-go').click(); await settle();
+  tab.selectCell('comp', 0);
+  const line = q(inspector, '.ctab-comp-line');
+  check(`11:9:7:5: "${said()}", the cell's line "${line?.textContent}" (the dots what plays: one a stroke)`, said() === '1.0 tones a stroke · 100 % single' && /1\.0 tones a stroke/.test(line?.textContent ?? '')
+    && qa(lane('comp').querySelectorAll('.ctab-cell').find((c) => c.dataset.bar === '0'), '.ctab-dot').length === partOf('comp').notes.filter((x) => x.bar === 0).length);
 }
 
 bridge.hideTab();

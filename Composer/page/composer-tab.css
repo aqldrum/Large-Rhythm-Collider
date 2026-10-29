@@ -287,6 +287,9 @@
 /* phase N (Amendment 2): the comp's density row, a fall-back in amber; Compose's own bass following the drums */
 .ctab-comp-density-row { gap: 6px; flex-wrap: wrap; }
 .ctab-comp-density-row select { font-size: 10px; }
+/* phase O (Amendment 3): the comp's tolerance select, its "fill from the chords" toggle and what the strokes found */
+.ctab-comp-strum-row { gap: 6px; flex-wrap: wrap; }
+.ctab-comp-strum-row select { font-size: 10px; }
 .ctab-comp-tier, .ctab-bass-refollowed { font-size: 10px; }
 .ctab-comp-tier.amber { color: #ffb347; }
 .ctab-clip-notes tr.fringe .ctab-clip-kind, .ctab-clip-notes tr.shift .ctab-clip-kind, .ctab-clip-notes tr.late td:last-child { color: #ffb347; }

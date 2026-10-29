@@ -22,7 +22,7 @@
 // knobs.rowCycleSeconds the row's cycle; target.js' window share W = loop / row cycle), from the phase. Its playhead
 // walks the window on the full-cycle plot: phase + p × W (p the share of the loop). `share` is 1 for every other spec.
 
-import { PART_IDS } from '../core/compose.js';
+import { PART_IDS, compStrumOf } from '../core/compose.js';
 
 /** every part the plot lights, the drums last */
 export const HIGHLIGHT_PARTS = Object.freeze([...PART_IDS, 'drums']);
@@ -81,7 +81,8 @@ export const litTickOf = (n, sources) => (n.borrowed ? sources.get(n.from) ?? nu
  *       the bars a walk can't fill; phase L) }, clave (phase N, P31: the comp's clave as it plays, a reference: { id, from,
  *       read, steps, span, pattern, patterns?, relation, strokes (how many), partner: { pattern, patterns?, strokes, shared },
  *       compDensity?, share?, tier?, reread (the bars a chord edit re-read the same clave in: `composed`, Compose's own
- *       spec, given; else none), picked (`picked`: a clave chosen in the window) }; absent in notes) } (BASS_VOICING_ORDER.md phase H: what the trace's caption says the
+ *       spec, given; else none), picked (`picked`: a clave chosen in the window) }; absent in notes), strum (phase O: the
+ *       comp's { tolerance, borrow, tones (a stroke's, mean), singles (the single-note strokes' share) }; absent in notes) } (BASS_VOICING_ORDER.md phase H: what the trace's caption says the
  *       chords, the bass and (phase N) the comp play as) }
  *   `missed` counts notes or strokes whose tick is not a plotted onset (never, for a matching spec).
  */
@@ -131,7 +132,9 @@ export function highlightsOf({ spec, parts = null, drums = undefined, composed =
       ...(arr.stats?.hits != null ? { hits: arr.stats.hits, missedHits: arr.stats.missedHits } : {}), ...(arr.stats?.walkFill ? { walkFill: arr.stats.walkFill } : {}) }
       : { density: 'sparse', lock: 'free', asked: 'free', refused: null },
     // phase N (P31): the comp's clave as it plays (a clave picked in the window, its tier, the bars re-read under new chords)
-    ...(spec.clave ? { clave: claveRefOf(spec.clave, composed?.clave ?? null, picked) } : {}) };
+    ...(spec.clave ? { clave: claveRefOf(spec.clave, composed?.clave ?? null, picked) } : {}),
+    // phase O (Amendment 3, P36): the comp's tolerance and borrowing as it plays, and what the strokes found
+    ...(spec.clave ? { strum: { ...compStrumOf(spec), tones: spec.stats?.compTones ?? null, singles: spec.stats?.compSingles ?? null } } : {}) };
   return { grid: plot.grid, n: plot.n, cycleSeconds: T, phaseX: phase[0] / phase[1], share: loopShare(spec), plot, parts: out, missed, total, arrangement };
 }
 

@@ -24,24 +24,33 @@
 //   parts      each part's notes cascade in, in its colour (the chords' caption says their voicing, the bass's its
 //              density and lock: BASS_VOICING_ORDER.md H3; phase L: the comp's clave read from the frame, the bass's
 //              lock covering its hits and a walk's fill, the voicing's loop closed; phase N: the comp's clave as it plays,
-//              a picked one, the bars re-read and its density tier)
+//              a picked one, the bars re-read and its density tier; phase O: its tolerance and what the strokes found)
 //   drums      strokes drop in, bar by bar
 
 import { traceTimeline, capTrace, TRACE_CAPS } from '../core/trace.js';
 import { classOfCents } from '../core/frame.js';
 import { indexOfTick, PART_COLORS, PART_LABELS } from './plot-highlights.js';
 import { claveText, claveSource, densityWords } from '../core/claves.js';
+import { toleranceWords } from '../core/compose.js';
 /** phase N (Amendment 2, P31): a frame clave's density tier in the caption's words (a fall-back said), or '' */
 export function tierDetail(cd) {
   if (!cd) return '';
   if (!cd.fellBack) return `the ${densityWords(cd.asked)} tier`;
   return cd.played ? `no clave in the ${densityWords(cd.asked, { band: false })} tier, so the nearest, ${densityWords(cd.played)}` : `no clave in any tier, so every one ranked`;
 }
+/** phase O (Amendment 3, P36): the comp's tolerance and what its strokes found, in the caption's words ("±½ slot: 2.1 tones
+ *  a stroke, 30 % single notes"; borrowing: "±¼ slot, filled from the chords"), or '' */
+export function strumDetail(strum) {
+  if (!strum) return '';
+  if (strum.borrow) return `${toleranceWords(strum.tolerance)}, filled from the chords`;
+  return `${toleranceWords(strum.tolerance)}: ${strum.tones != null ? `${strum.tones.toFixed(1)} tones a stroke, ${Math.round(100 * (strum.singles ?? 0))} % single notes` : 'what the row sounds there'}`;
+}
 /** the comp part's caption: in chords its clave by pattern and source (Amendment 1; claves.js' words), in notes its layer;
  *  phase L: a clave read from the frame (phase I) says so, a frame clave's patterns a bar each (they change with the chord);
  *  phase N (P31): `playing`, the clave as it plays (highlightsOf's arrangement.clave), is said in Compose's place: a clave
- *  picked in the window, the bars a chord edit re-read, and its density tier */
-export function compDetail(event, playing = null) {
+ *  picked in the window, the bars a chord edit re-read, and its density tier; phase O: `strum` (highlightsOf's
+ *  arrangement.strum), the tolerance and what the strokes found */
+export function compDetail(event, playing = null, strum = null) {
   const own = event.clave;
   if (!own) return `on layer ${event.layer} (${event.value}), the best of ${event.candidates.length} layers`;
   // a clave picked in the window, or (no pick, another id) the tier's best after a density switch: said by its tier below
@@ -51,9 +60,9 @@ export function compDetail(event, playing = null) {
   // the same clave, re-read under a chord edit's new frame (phase I, P20): the bars its strokes moved in (highlightsOf's)
   const reread = !picked ? (playing?.reread ?? []).map((k) => k + 1) : [];
   const said = frame ? `the clave from the frame, ${claveSource(c)} (${claveText(c)}${asked ? `, ${picked ? 'picked in the window' : 'asked'}` : ''})` : `the clave ${claveText(c)} (${claveSource(c) || 'asked'}${asked && c.from?.asked !== true ? `, ${picked ? 'picked in the window' : 'asked'}` : ''})`;
-  const tier = tierDetail(c.compDensity);
+  const tier = tierDetail(c.compDensity), st = strumDetail(strum);
   return `${said}: ${n} stroke${n === 1 ? '' : 's'}${inFrame ? ', every one in frame' : ''}${fill ? `, in its gaps (${partner.patterns ? claveText(partner) : partner.pattern})` : ''}`
-    + `${reread.length ? `, re-read in bar${reread.length === 1 ? '' : 's'} ${reread.join(', ')} (a new chord)` : ''}${tier ? `; ${tier}` : ''}`;
+    + `${reread.length ? `, re-read in bar${reread.length === 1 ? '' : 's'} ${reread.join(', ')} (a new chord)` : ''}${tier ? `; ${tier}` : ''}${st ? `; ${st}` : ''}`;
 }
 
 /** phase H: the bass's densities and locks in the caption's words (phase L, rule 7: a lock covers its hits) */
@@ -245,7 +254,7 @@ export function buildScene({ trace: given, plot, final, timeline = null } = {}) 
         const h = final.parts[event.part];
         data.part = event.part; data.notes = h ? h.notes : [];
         // phase H: the bass's density and lock and the chords' voicing as they play (final's arrangement), not as Compose made them
-        data.detail = event.part === 'comp' ? compDetail(event, final.arrangement?.clave ?? null) : event.part === 'bass' ? bassDetail(final.arrangement?.bass)
+        data.detail = event.part === 'comp' ? compDetail(event, final.arrangement?.clave ?? null, final.arrangement?.strum ?? null) : event.part === 'bass' ? bassDetail(final.arrangement?.bass)
           : event.part === 'inner' ? 'in the lead\'s gaps' : event.part === 'chords' ? chordsDetail(final.arrangement) : `the kept line${(event.phrases || []).length === 1 ? '' : 's'}`;
         if (h) state.landed[event.part] = true;
         if (event.part === 'lead') state.leads = {};
