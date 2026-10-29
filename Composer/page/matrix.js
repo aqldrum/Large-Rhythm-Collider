@@ -178,17 +178,24 @@ export function matrixModel(state, { grid = null, composedGrid = null, alternate
   return { version: MATRIX_VERSION, bars: N, cycleSeconds: T, cols, starts, lens, spans, rows, retuneRanges: ranges };
 }
 
+/** phase O: a tolerance in the window's words ('±½ slot'; compose.js toleranceWords) */
+const tolWords = (t) => `±${({ 0.125: '⅛', 0.25: '¼', 0.5: '½', 1: '1' })[t] ?? t} slot`;
 /**
  * A4 (P12): the comp cell's line in the inspector, for bar k of the comp as it plays (a comp in chords: it has
  * `strokes`) → { strokes, tones, fromRow (tones the row sounds near the stroke, not borrowed), share (0..1 | null),
- * text ("7 strokes"), detail ("82% from the row": Details), title } | null (the one-note comp, or no part)
+ * text ("7 strokes"), detail ("82% from the row": Details), title } | null (the one-note comp, or no part).
+ * Phase O (Amendment 3): `strum` ({ tolerance, borrow }: the comp's as it plays; absent: ±¼ with borrowing, as before).
+ * With nothing borrowed every tone is the row's, so the detail says the tones a stroke ("1.7 tones a stroke") instead.
  */
-export function compLine(part, k) {
+export function compLine(part, k, strum = null) {
   if (!part?.strokes) return null;
+  const st = strum ?? { tolerance: 0.25, borrow: true };
   const strokes = part.strokes.filter((x) => x.bar === k).length, notes = part.notes.filter((n) => n.bar === k), fromRow = notes.filter((n) => !n.borrowed).length;
-  const share = notes.length ? fromRow / notes.length : null;
-  return { strokes, tones: notes.length, fromRow, share, text: `${strokes} stroke${strokes === 1 ? '' : 's'}`, detail: share == null ? '' : `${Math.round(100 * share)}% from the row`,
-    title: `bar ${k + 1}: ${strokes} stroke${strokes === 1 ? '' : 's'} of the clave, each the bar's chord; ${fromRow} of ${notes.length} tones strummed from the row within ±¼ slot, ${notes.length - fromRow} borrowed from the chord voices (ringed on the plot)` };
+  const share = notes.length ? fromRow / notes.length : null, each = strokes ? notes.length / strokes : null;
+  const detail = st.borrow ? (share == null ? '' : `${Math.round(100 * share)}% from the row`) : each == null ? '' : `${each.toFixed(1)} tones a stroke`;
+  return { strokes, tones: notes.length, fromRow, share, text: `${strokes} stroke${strokes === 1 ? '' : 's'}`, detail,
+    title: st.borrow ? `bar ${k + 1}: ${strokes} stroke${strokes === 1 ? '' : 's'} of the clave, each the bar's chord; ${fromRow} of ${notes.length} tones strummed from the row within ${tolWords(st.tolerance)}, ${notes.length - fromRow} borrowed from the chord voices (ringed on the plot)`
+      : `bar ${k + 1}: ${strokes} stroke${strokes === 1 ? '' : 's'} of the clave, each playing only what the row sounds within ${tolWords(st.tolerance)} of it: ${notes.length} tone${notes.length === 1 ? '' : 's'} in all, nothing borrowed (a stroke with no other chord tone near it is a single note)` };
 }
 
 /** a target lead cell's dots counted by kind (target-lines.js clipCounts' shape) */

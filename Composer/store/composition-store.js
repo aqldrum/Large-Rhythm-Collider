@@ -89,8 +89,14 @@
 //            sparse–medium, is Compose's default): the tier a frame clave is chosen in. Live (rearrange.js `reclave` with
 //            `{ density }`, the fold's step after the voicing's, so the chord edits after it re-read and re-rank in it),
 //            in the snapshots, kept and carried like the voicing; Compose is sent it when it isn't the default.
+//
+// The comp's tolerance (BASS_VOICING_ORDER.md Amendment 3, phase O; DESIGN_NOTES "The comp's tolerance (phase O)"):
+//   compTolerance  0.125 | 0.25 | 0.5 | 1 (compose.js' override, slots either side of a clave stroke; ±½ is Compose's
+//            default), compBorrow  true | false ("fill from the chords"; false by default). Live (rearrange.js `restrum`,
+//            the fold's step after the density's), in the snapshots, kept and carried like the density; Compose is sent
+//            them when they aren't the defaults.
 
-import { PART_IDS } from '../core/compose.js';
+import { PART_IDS, DEFAULT_COMP_TOLERANCE } from '../core/compose.js';
 import { DEFAULT_KIT } from '../core/drums.js';
 import { ARP_PARTS, ARP_DEFAULTS } from '../core/arp.js';
 import { COMPOSE_BASS } from '../core/bass.js';
@@ -142,6 +148,8 @@ export function newCompositionState({ layers = [0, 0, 0, 0], cycleSeconds = 10, 
     bass: composedBass(), voicing: 'led',
     // phase N (Amendment 2): the comp's density tier
     compDensity: DEFAULT_COMP_DENSITY,
+    // phase O (Amendment 3): the comp's tolerance (slots either side of a stroke) and borrowing from the chords
+    compTolerance: DEFAULT_COMP_TOLERANCE, compBorrow: false,
   };
 }
 
@@ -171,6 +179,9 @@ function inheritEdits(to, from) {
   to.voicing = from.voicing ?? 'led';
   // phase N: the comp's density (proposed: as the voicing)
   to.compDensity = from.compDensity ?? DEFAULT_COMP_DENSITY;
+  // phase O: the comp's tolerance and borrowing (proposed: as the density)
+  to.compTolerance = from.compTolerance ?? DEFAULT_COMP_TOLERANCE;
+  to.compBorrow = !!from.compBorrow;
   return to;
 }
 

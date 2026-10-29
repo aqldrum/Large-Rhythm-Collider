@@ -480,13 +480,15 @@ gather 2–3. The script is in the planner's scratchpad (`comp-tolerance-probe.m
   - The README, DESIGN_NOTES and the checklist: the tolerance on 119:42:15:8 and 768:784, single notes on 11:9:7:5, and
     borrowing on and off.
 
-## Browser and rig checklist (for Avery; finished in H4, rewritten in L4 for the whole order and Amendment 1, revised in N3 for Amendment 2)
+## Browser and rig checklist (for Avery; finished in H4, rewritten in L4 for the whole order and Amendment 1, revised in N3 for Amendment 2 and in O4 for Amendment 3)
 
 Open the Partitions window's **Composer** tab, generate the rhythm on the main page, press **Compose**, then **Perform**.
 Everything below is live: no button should go back to Compose, and the header's **↶** (⌘Z) undoes each change. Turn on
 the header's **details** toggle where an item says "Details". Seed 1 unless an item says otherwise; the exact patterns
 and counts depend on the cycle, so read them as what to look for, not as the only right answer. Since Amendment 2 the
-bass opens at **Moving · Kick** (Compose's own) and the comp at **Sparse–Med**; an item that needs another setting says so.
+bass opens at **Moving · Kick** (Compose's own) and the comp at **Sparse–Med**; since Amendment 3 the comp opens at
+**tolerance ±½ slot** with **fill from the chords** off, so a stroke plays only the chord tones the row sounds within half
+a slot of it, down to a single note. An item that needs another setting says so.
 
 - **Voicing, the loop closed.** Click a cell in the **Chords** row. Under the cell's head: "voicing", **Close | Led**
   (Led on), and its stats beside it, ending "· loop closed" ("1 lifted · 311¢ a change · loop closed" on 768:769).
@@ -500,7 +502,8 @@ bass opens at **Moving · Kick** (Compose's own) and the comp at **Sparse–Med*
   - On 7:5:3:2 and 11:9:7:5, Led's lowest chord should no longer be a low, close third (Close brings it back).
   - ⌘Z after a flip goes back; the flip is one undo step. Compose again while Close: still Close (it sticks).
 - **Comp with chords.** Under Led, select the **Comping** row: its strum should sit in the chords' register and move with
-  them; flip Close | Led and the comp should follow the chords.
+  them; flip Close | Led and the comp should follow the chords. Since Amendment 3 a stroke can be one, two or three tones
+  rather than the full chord: a single-note stroke should sit in the chords' register too, not jump an octave.
 - **The frame clave, 768:769.** Compose 768:769 and click a **Comping** cell.
   - The clave line reads a source like "layer B · 6 steps · tones in frame", with every bar's pattern beside it in
     monospace (four groups, each different: "xxx... .x..x. ..xx.. xxx..."). Before Amendment 1 it was one fixed pattern
@@ -511,8 +514,10 @@ bass opens at **Moving · Kick** (Compose's own) and the comp at **Sparse–Med*
     gaps while the perc keeps the clave. **Sync** brings it back.
   - With **details** on, the line under it reads "score … · under the tones in frame · Fill strikes …".
 - **The frame clave, 19:17:16:15.** Compose 19:17:16:15 and click a **Comping** cell. Here nearly every tone is in tune, so
-  the chosen clave should read "… · chord tones" (a "tones in frame" reading would be close to a pulse). Its strokes
-  should sound like a clave, with gaps, not a strum on every step. Compare 768:769, whose clave reads "tones in frame".
+  the chosen clave should not read "tones in frame" (that reading would be close to a pulse). Since Amendment 3 (rule 17)
+  it reads "layer C · 8 steps · guide tones" (`x..x.x.. .xx.....`, 5 strokes): it tied with "… · chord tones" (6
+  strokes) and the sparser now wins. Its strokes should sound like a clave, with gaps, not a strum on every step.
+  Compare 768:769, whose clave reads "tones in frame".
 - **The clave picker.** On the same Comping cell, under the clave line:
   - The claves to choose from are the frame's, those in the density's tier (Sparse–Med by default): each named by its source ("layer A · 16 steps · tones in frame") with its
     score beside it in green, best first; ● on the one playing, C on Compose's. With **details** on, each shows its bars'
@@ -540,6 +545,36 @@ bass opens at **Moving · Kick** (Compose's own) and the comp at **Sparse–Med*
     One ⌘Z brings back both the density and the pick.
   - With **Show the work** on, Compose: the comp's caption ends with the tier ("…; the dense (50–85 %) tier"). A clave
     picked in the list says ", picked in the window".
+- **The comp's tolerance, 119:42:15:8** (Amendment 3, rule 15). Compose 119:42:15:8 and click a **Comping** cell. Under
+  the density row: "tolerance **[±½ slot ▾]**", the toggle **fill from the chords** (off), and "1.1 tones a stroke · 93 %
+  single". You should hear the comp as nearly all single notes: this row rarely sounds two chord tones within half a slot.
+  - While performing, pick **±1 slot**: the readout reads about "2.3 tones a stroke · 7 % single", and most strokes
+    should become two- or three-note chords, rolled across up to two slots (each tone holds to the next stroke). The
+    clave, the perc and the head's pattern don't change; nothing composes.
+  - Pick **±¼ slot** and then **±⅛ slot**: "1.0 tones a stroke · 100 % single", every stroke one note. ⌘Z steps back
+    through ±¼, ±1 and ±½, one change at a time.
+  - Click a **Comping** cell: its line reads "N strokes · 1.0 tones a stroke" (the bar's own; one bar reads a little
+    more), and with **details** on the notes table lists each stroke's tones. The cell's dots are what plays (one a single-note stroke).
+- **The comp's tolerance, 768:784.** Compose 768:784 and click a **Comping** cell. The default reads "3.8 tones a stroke ·
+  0 % single": a dense row finds nearly every chord tone within half a slot, so the strokes sound full.
+  - Pick **±¼ slot**: "3.0 tones a stroke · 0 % single". You should hear thinner, tighter chords (a tone fewer on most
+    strokes). **±⅛** reads the same here; **±1** the same as ±½.
+  - Leave it on **±¼**, change the seed and back, then **Compose**: the select still reads ±¼ and the readout the same (the
+    tolerance is kept across a re-compose).
+- **Single notes, 11:9:7:5** (rule 16). Compose 11:9:7:5 and click a **Comping** cell. The readout reads "1.0 tones a stroke ·
+  100 % single", and each **Comping** cell's line "N strokes · 1.0 tones a stroke" with one dot a stroke: every stroke
+  should sound as one note, as the comp began (before Amendment 3 each was a borrowed three-note chord). **±1 slot** gives
+  about "1.8 tones a stroke · 25 % single".
+- **Fill from the chords, on and off** (rule 16; P34). On 768:769 the default reads "2.1 tones a stroke · 30 % single".
+  - Click **fill from the chords**: it lights, the readout reads "3.0 tones a stroke · 0 % single · filled from the
+    chords", hollow dots appear in the **Comping** cells (borrowed tones, ringed on the plot where their chord voice
+    sounds), and every stroke should sound the full chord again. ⌘Z turns it off (one step).
+  - With **±¼ slot** and fill on, the comp is the comp before Amendment 3, note for note.
+  - With the bass on **Lands on Clave**, flip the tolerance and the toggle: the bass and the perc should not change (they
+    follow the clave's strokes, which don't move).
+  - Turn it on, change the seed and back, **Compose**: still on. With **Show the work** on, the comp's caption ends with the
+    tolerance and what it found: "…; ±½ slot: 2.1 tones a stroke, 30 % single notes" (or "…; ±¼ slot, filled from the
+    chords").
 - **The picker after a Chords Follow** (rule 14). On 768:769, click a **Lead** cell, turn on **chords follow**, and click one of
   the phrase's other lines (while performing it lands at the next bar line; then **Keep**). Click a **Comping** cell.
   - The frame claves' order and scores should differ from before (⌘Z and compare). With **details** on, the legend adds
@@ -611,12 +646,15 @@ bass opens at **Moving · Kick** (Compose's own) and the comp at **Sparse–Med*
   (bar N) was dropped"). A chosen frame clave the new composition doesn't list is named there by its source: "the chosen
   clave (layer B · 3 steps · chord tones, from the frame) was dropped".
 - **Show the work.** With it on, Compose: the caption for the comp reads "the clave from the frame, layer … (its bars'
-  patterns): N strokes, every one in frame; the sparse–medium (10–50 %) tier". The bass's says its density and lock, by
+  patterns): N strokes, every one in frame; the sparse–medium (10–50 %) tier; ±½ slot: … tones a stroke, … % single
+  notes". The bass's says its density and lock, by
   default "moving, covering the kick (N of M hits …): …" (under Clave, "moving, covering the comp's strokes (10 of 10
   hits): …"; "… bars walk what they can" under Walking). The chords' says "led round the closed loop: …
   the wrap back to the first chord …¢" (or "close: root position …").
 - **MIDI.** On the rig, each chords and comp channel should glide by small steps under Led, and jump under Close, the
-  loop's end included. Under the Clave lock, the bass channel's notes should land with the comp channel's strokes.
+  loop's end included. Under the Clave lock, the bass channel's notes should land with the comp channel's strokes. Since
+  Amendment 3 the comp zone sends what plays: on 11:9:7:5 one comp channel note a stroke, on 768:769 one to three; turn
+  on **fill from the chords** and every stroke sends the full chord again (no channel holding two notes at once).
 
 ## Later (recorded, not ruled)
 

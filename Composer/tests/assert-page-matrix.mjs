@@ -351,6 +351,8 @@ console.log('\n— a silent drum step (a sparse row)');
 setRhythm([8, 7, 6, 5]);
 win.dispatchEvent(new win.Event('rhythmGenerated'));
 core.setKnob('bars', 8); core.setKnob('slotsPerBar', 8);   // 64 places over 22 onsets
+// the strum before Amendment 3 (P34's pin: ±¼ slot, borrowing), so the borrowed tones below are there to draw
+await core.setCompStrum({ borrow: true, tolerance: 0.25 });
 q(left, '.ctab-go').click(); await settle();
 const g8 = core.drumGrid(), full = Object.fromEntries(Object.entries(g8.grid).map(([v, rows]) => [v, rows.map((r) => (v === 'perc' ? 'x'.repeat(r.length) : r))]));
 await core.setDrumGrid(full); await settle();

@@ -2400,6 +2400,80 @@ Phase I's open question 1 is answered by the tiers: 16:12:9 no longer strikes 15
 - Should a drum mode whose kick moved show Compose's own bass as re-arranged (it says so in the bass cell), or should the window send its drum options to Compose so a re-compose covers them itself?
 - A density change drops a picked clave. Keep the pick instead (it plays, the list re-ranks)?
 
+## The comp's tolerance (phase O; built 2026-10-28, branch `amend3/comp`)
+
+`BASS_VOICING_ORDER.md` Amendment 3, phase O (O1–O4), core then window, one builder. Rulings 15–17 are Avery's; P33–P38 are the planner's proposals as written; the rest is the builder's, proposed. Nothing here has been seen in a browser or heard.
+
+**The tolerance** (rule 15, P33; `compose.js` `compTolerance`, `COMP_TOLERANCES`, `strumOf(…, tolerance)`).
+- 0.125 | 0.25 | 0.5 | 1 slot either side of the stroke, of the stroke's own slot (as STRUM_WINDOW's ¼ was), ±½ by default. Anything else is refused, and so is either override with `compStyle: 'notes'`.
+- The window stays inside the bar or the span: `strumOf` scans outward from the stroke's slot inside [from, to), as it did at ¼.
+- Every tone holds to the next stroke (`holdTo`), so at ±1 a stroke can roll its chord across two slots.
+
+**Nothing borrowed by default** (rule 16, P34; `strokeTonesOf`, `voiceStroke`).
+- A stroke plays its own onset first, whatever its tone. Then, for each class of the chord's first four (root first) other than the stroke's own, the class's onset nearest the stroke in the window (strumOf's choice and ties). It stops at four voices.
+- **The stroke's own onset is forced** for its class (builder's call): at ¼ with borrowing, strumOf's tie rule could in principle pick another onset of the stroke's class at the same instant with more strikes; P34 says "its own onset".
+- **A frame tone that is no chord class** (a "tones in frame" clave's stroke, 7 of 768:769's 21 comp tones) plays as itself, marked `offChord`. It keeps its place over the found classes, so the highest class gives way at four voices.
+- **Its voice** (builder's call) is the class index this stroke leaves free whose interval is nearest its pitch class, so the comp's voices stay 0–3 and a MIDI channel never doubles. Under Led its lane is the free lane whose chord voice sits nearest it.
+- `compBorrow: true` is the old path at the asked tolerance. With `compTolerance: 0.25` it is the comp before Amendment 3: on 9 rows × 3 seeds × led, close, Fill and the pattern clave, the spec equals the core at 1f5282e (with P38 applied to both) byte for byte, apart from the input's two overrides and the stats' two new keys.
+
+**The voicing** (P35). Led: a class's tone at the octave nearest its chord voice, in that voice's lane (P5, as before); an off-chord tone at the octave nearest the chord voices' mean pitch. Close: every tone stacked from an octave under the root in class order, an off-chord tone at its pitch class's place. A single note is either of these, so it sits in the chords' register.
+
+**Stats and words** (P36).
+- `compStrum` keeps its meaning: found ÷ tones, 1 with nothing borrowed (an off-chord stroke tone counts as found: it is the row's).
+- New: `compTones` (tones ÷ strokes) and `compSingles` (single-note strokes ÷ strokes), present whatever the setting (builder's call: so the readout reads one field, not two code paths). They come after `compStrum` in `spec.stats`. The pinned suites set them aside with the overrides.
+- The `compStrum` decision with nothing borrowed: "… each the bar's chord from the row alone (Amendment 3, rules 15–16: ±½ slot and nothing borrowed by default): ±½ slot: 2.1 tones a stroke, 30 % single notes; nothing borrowed (compBorrow fills from the chords)". With borrowing it is the old sentence word for word at the asked tolerance ("within ±0.25 slot, the rest borrowed from the chord voices"). The `compStyle` decision's "then borrowed" becomes "around it, down to a single note (Amendment 3)" when nothing is borrowed.
+
+**restrum** (P37; `rearrange.js` `restrum`, and `rearrange(…, { tolerance, borrow })`).
+- It strums the comp again unit by unit over the clave's strokes (unmoved) and the chords as they play, arranges the drums again, and writes the input's overrides (left out at the defaults, as `revoice` leaves out Led), the stats and the two decisions. 291 restrums equal a Compose given the same overrides byte for byte (input, parts, stats, decisions, drums), from the default and from ±1 with borrowing, led, close, Fill, two charts and a MIDI target.
+- **Where the setting lives** (builder's call): `spec.input.overrides` (`compose.js` `compStrumOf(spec)`). Every rearrange path reads it there, so a chord swap, a clave switch (`reclave`) and a voicing switch (`revoice`) strum at the spec's setting, and a fold step after a restrum sees it.
+- **A chord swap's stats** are recounted over every unit as it plays (`compChordsOfBar` again, the notes thrown away): a stroke's tone count isn't kept on the part, and the comp's `holdTo` can't group tones by stroke reliably (two strokes wrapped before the downbeat both hold to the cycle's end). It adds about 1.3 ms to a 16k-row swap (12.5 → 13.8 ms median).
+- The strokes never move, so the perc and the bass's Clave lock are unchanged; checked in the core and in the window.
+
+**Sparser ties** (rule 17, P38; `claves.js` `frameOrder`). Frame candidates are sorted by score; a tie within 1e-9 goes to the lower share, then the reading order as before. `chooseFrameClave` draws the seed only among the best score's sparsest. Seed 1's default clave moves on one probe row: 19:17:16:15 plays `frame:C/8/guide` (31 %, 5 strokes) where it played `frame:C/8/chord` (38 %, 6 strokes). Of 10 rows × 3 seeds × sparse–medium and dense, five composes changed (16:12:9 s2, 7:5:3:2 s2, 19:17:16:15 s1 and s3, the 16k row s2); the pattern clave and every pin hold.
+
+**The window** (O3).
+- **Entry state**: `compTolerance` (±½) and `compBorrow` (false), in the snapshots, carried to a new cycle, in `entrySnap` and JSON export (when not the defaults), as the density is.
+- **Live**: the fold's step after the voicing's and the density's is `{ kind: 'strum' }`, rearrange's `restrum`, when the entry differs from the composed spec (`strumStep`). It runs before the chord, lead and clave edits, so they strum at it. `setCompStrum({ tolerance, borrow })` is one undo step each. Compose is sent both when they aren't the defaults, so a re-compose needs no switch. A comp in notes has no strum (`compStrumOf()` is null, the setter throws).
+- **The row**: under the density row, "tolerance [±½ slot ▾] [fill from the chords]" and the readout from `spec.stats`: "2.1 tones a stroke · 30 % single" (with borrowing, "· filled from the chords").
+- **The cell's line** says the bar's tones a stroke ("3 strokes · 1.0 tones a stroke") with nothing borrowed, and the share from the row as before with borrowing (`matrix.js` `compLine(part, k, strum)`).
+- **The dots and the MIDI zone** read the part, so they show and send what plays. Checked for code that assumed full chords: the borrowed rings (`plot-highlights`, `tab-controller`) handle none; the player and MIDI lanes take any lane 0–3; the trace's comp notes keep integer voices. The notes table titles an off-chord tone.
+- **The caption** ends with the strum: "; ±½ slot: 2.1 tones a stroke, 30 % single notes" (`trace-frames.js` `strumDetail`, `highlightsOf`'s `arrangement.strum`).
+
+**Seed 1 at ±½ with nothing borrowed** (the probe's rows):
+
+| row | strokes | tones a stroke | single |
+|---|--:|--:|--:|
+| 8:7:6:5 | 3 | 2.0 | 0 % |
+| 11:9:7:5 | 4 | 1.0 | 100 % |
+| 16:12:9 | 4 | 2.3 | 0 % |
+| 7:5:3:2 | 2 | 3.0 | 0 % |
+| 19:17:16:15 | 5 | 1.6 | 40 % |
+| 119:42:15:8 | 14 | 1.1 | 93 % |
+| 768:769 | 10 | 2.1 | 30 % |
+| 768:784 | 16 | 3.8 | 0 % |
+
+The probe's own table matches except 19:17:16:15 (6 strokes, 1.7, 33 % there), whose clave changed with P38. At ±1, 119:42:15:8 reads 2.3 and 7 %, 11:9:7:5 1.8 and 25 %; at ±¼, 768:784 reads 3.0.
+
+**Measured on the 16k row** (Node, this thread, lean): Compose 761–765 ms; a restrum 2.1 ms median (2.6 ms the slowest of 8); a chord swap 13.8 ms median (12.5 ms before phase O).
+
+**Tests (O4).** `assert-strum.mjs` is new (84 suites). `assert-page-clave.mjs` 77 → 89. Pinned with `compBorrow: true, compTolerance: 0.25`: `assert-comp.mjs` (its brute force is the old strum), `assert-page-matrix.mjs`' borrowed tones, `assert-composer-midi.mjs`' borrowed checks, and `assert-frame-clave.mjs`' P19 hashes (stats' two new keys set aside). `assert-compose.mjs`' and `assert-voicing.mjs`' audits learned the off-chord stroke tone; `assert-frame-clave.mjs`' brute force learned the sparser tie; `assert-refactor-identity.mjs` strips the two new override names from the refusal message, as it strips the others. No fixture was re-frozen. `index.html` is `?v=20261028.4`.
+
+**Calls beyond the order (proposed):**
+1. A stroke's own onset is forced for its class with nothing borrowed (strumOf could tie it away).
+2. An off-chord stroke tone takes the free class index nearest its pitch class as its `voice`, and the free lane nearest it under Led.
+3. At four voices an off-chord stroke keeps its place and the highest found class gives way.
+4. `compTones` and `compSingles` are in the stats whatever the setting, so the pin is byte for byte except those two keys.
+5. The setting lives in `spec.input.overrides`, read by every rearrange path.
+6. With borrowing, the decision keeps the old sentence (at ±¼ word for word); without, it says the tolerance and what it found.
+
+**Not verifiable in Node (for Avery's pass):** whether ±½ sounds like a comped chord or a broken one on 768:769 (a third of the strokes single, the rest 2–3 tones spread over half a slot); whether ±1's rolled strums on 119:42:15:8 sound rolled or smeared; whether the off-chord stroke tones on 768:769 sound like comping or like stray notes.
+
+**Open (for Avery):**
+- 11:9:7:5 is single notes at every tolerance up to ±½ (it finds a second chord tone only at ±1). Fine as "small rows are thin", or should a row like it default wider?
+- 119:42:15:8 stays 93 % single at ±½ and jumps to 2.3 tones at ±1. Is ±½ the right default for it, or should the tolerance scale with the row's density?
+- A stroke on a frame tone that is no chord class plays that tone (P34). On 768:769 that is 7 of the comp's 21 tones. Keep, or let such a stroke play only the chord tones it finds (a rest when none)?
+- Should a tolerance or borrow change audition at the bar line, like a clave pick, rather than apply at once like the density?
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

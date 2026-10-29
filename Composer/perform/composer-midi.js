@@ -24,6 +24,9 @@
 //             Led chords (BASS_VOICING_ORDER.md P6): a chords or comp note's `lane` (its register order in the chord as
 //             led, 0 the lowest) picks the member instead of its class, so each channel moves by the voice leading's
 //             small steps; a note with no `lane` (close, or a spec from before) is laned by `voice` as above.
+//             Amendment 3 (BASS_VOICING_ORDER.md phase O): a comp stroke plays only what the row sounds near it, 1–4
+//             tones (nothing borrowed by default), so the zone sends what plays, fewer notes where the row has fewer;
+//             a stroke's tones keep distinct lanes 0–3 (an off-chord stroke tone a free one), so no channel doubles.
 //   pitch     a note's own `hz`, always: a comp tone BORROWED from the chord voices (`borrowed`, `from`) sits on the
 //             stroke's onset with the source voice's tone, and its hz is that tone's (compose.js), not the onset's.
 //   notes     decision 3: a new note for each note, the synth doing any glide. A note on a channel that still holds

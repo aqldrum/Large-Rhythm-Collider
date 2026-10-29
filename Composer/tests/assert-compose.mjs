@@ -54,9 +54,11 @@ function audit(spec) {
       }
     }
   }
-  // the chords' voices and comping strokes sound the bar's chord tones (comping may fall back to the root onset)
-  const e = k.frameCentsEachSide;
+  // the chords' voices and comping strokes sound the bar's chord tones (comping may fall back to the root onset); a comp
+  // stroke on a frame tone that is no chord class plays its own onset (BASS_VOICING_ORDER.md Amendment 3, P34: `offChord`)
+  const e = k.frameCentsEachSide, strokeNodes = new Set((spec.parts.find((p) => p.id === 'comp').strokes ?? []).map((x) => x.node));
   for (const part of spec.parts.filter((p) => p.id === 'chords' || p.id === 'comp')) for (const n of part.notes) {
+    if (n.offChord) { if (part.id !== 'comp' || !strokeNodes.has(n.node)) return `${part.id}: an off-chord tone ${n.ratio} in bar ${n.bar} is not a stroke's own onset`; continue; }
     const c = spec.chords[n.bar], rc = row.toneCents[row.tones.indexOf(c.rootTone)], cl = classOfCents(row.toneCents[row.tone[n.borrowed ? n.from : n.node]] - rc);
     if (!(Math.abs(cl.dev) <= e + 1e-9 && c.intervals.includes(cl.pc))) return `${part.id}: ${n.ratio} in bar ${n.bar} is not a tone of ${c.name}`;
   }

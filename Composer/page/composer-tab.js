@@ -106,6 +106,13 @@
 //   bass cell   opens at Compose's own Moving · Kick; Roots' runner-ups named by their cents off the chord's root ("root
 //               +3.2¢ · slot 3"; an exact root "root · slot 3"), the tone in the title; Compose's own over drums whose kick
 //               it didn't cover says it covers the kick as they play
+//
+// The comp's tolerance (BASS_VOICING_ORDER.md Amendment 3, phase O; DESIGN_NOTES "The comp's tolerance (phase O)"):
+//   comp cell   under the density row, a Tolerance select (±⅛ | ±¼ | ±½ | ±1 slot: how far either side of a stroke an
+//               onset still counts as its chord) and a "fill from the chords" toggle (borrowing, off by default), both
+//               the controller's setCompStrum (live, one undo step each), and beside them what the strokes found ("2.1
+//               tones a stroke · 30 % single"); the cell's line says the bar's tones a stroke (with borrowing, the share
+//               from the row, as before); the dots and the MIDI comp zone are what plays
 
 import { soundChoices, drumModeChoices, DRUM_LAB_VOICES, TEMPO_LIMITS, ARP_CHOICES } from '../perform/composer-controller.js';
 import { KNOB_FIELDS, TABLE_FIELD, fieldValue, refusalText, readoutItems, knobChosen, decisionRows, rootGroups, strayRootOption, chordGot, progressionNote,
@@ -161,6 +168,12 @@ const BASS_HOW_WORDS = Object.freeze({ 'root onset': 'nothing could be mined her
 export const COMP_DENSITY_LABELS = Object.freeze({ 'sparse-med': 'Sparse–Med', sparse: 'Sparse', medium: 'Medium', dense: 'Dense' });
 const COMP_DENSITY_TITLES = Object.freeze({ 'sparse-med': 'Compose\'s own: a clave striking 10–50% of its steps (rule 10, Avery)', sparse: 'a clave striking 10–25% of its steps',
   medium: 'a clave striking 25–50% of its steps', dense: 'a clave striking 50–85% of its steps' });
+/** phase O (Amendment 3, P33): the comp's tolerances in the window's words, and their titles */
+export const COMP_TOLERANCE_LABELS = Object.freeze({ 0.125: '±⅛ slot', 0.25: '±¼ slot', 0.5: '±½ slot', 1: '±1 slot' });
+const COMP_TOLERANCE_TITLES = Object.freeze({ 0.125: 'tight: only onsets almost with the stroke join its chord (mostly single notes)', 0.25: 'the window before Amendment 3',
+  0.5: 'Compose\'s own (Amendment 3): onsets within half a slot of the stroke join its chord', 1: 'wide: a slot either side, so a stroke can roll its chord across two slots' });
+/** phase O (P36): what the comp's strokes found, in the window's words ("2.1 tones a stroke · 30 % single") */
+export const strumReadout = (tones, singles) => (tones == null ? '' : `${tones.toFixed(1)} tones a stroke · ${Math.round(100 * (singles ?? 0))} % single`);
 /** phase N (P29): a tone's cents off its chord's root, signed and to a tenth ("+3.2¢"; an exact root: "") */
 export const rootCentsText = (cents) => { const v = Math.round(cents * 10) / 10; return v ? `${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}¢` : ''; };
 /** phase N (P29): a Roots runner-up's note by its cents off its chord's root, then its slot ("root +3.2¢ · slot 3", "root ·
@@ -1217,7 +1230,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     });
     const legend = c.read === 'frame' ? `● plays now · C Compose's · the frame's claves by score, in the density's tier (a layer's strikes in frame, each bar its own pattern${c.reranked ? '; ranked again over the chords as they play' : ''}), then the curated, landed in frame only · score: recurrence, density, fit`
       : '● plays now · C Compose\'s · the mined claves ranked, then the curated · score: recurrence, density, fit';
-    return [line, density, detail, rows.length ? el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: legend }) : null,
+    return [line, density, strumRow(), detail, rows.length ? el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: legend }) : null,
       rows.length ? el('div', { className: 'ctab-alts ctab-clave-alts' }, ...rows) : null, rows.length ? auditionBar() : null].filter(Boolean);
   }
   /**
@@ -1236,6 +1249,27 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const said = tierWords(d);
     return el('div', { className: 'ctab-row ctab-comp-density-row' }, el('span', { className: 'ctab-muted', textContent: 'density' }), sel,
       el('span', { className: `ctab-muted ctab-comp-tier${said.amber ? ' amber' : ''}`, textContent: said.text, title: said.title }));
+  }
+  /**
+   * Phase O (Amendment 3, rules 15–16, P33–P37): the comp's tolerance — a select (±⅛ | ±¼ | ±½ | ±1 slot: how far
+   * either side of a clave stroke an onset still counts as its chord) and a "fill from the chords" toggle (borrowing the
+   * classes the row doesn't sound there from the chord voices, as before Amendment 3), both live (setCompStrum, one undo
+   * step each), and beside them what the strokes found ("2.1 tones a stroke · 30 % single"). → an element | null (a comp
+   * in notes)
+   */
+  function strumRow() {
+    const st = core.compStrumOf();
+    if (!st) return null;
+    const sel = el('select', { className: 'ctab-comp-tolerance', title: 'the comp\'s tolerance: how far either side of a clave stroke an onset may sound and still be part of its chord (live, no re-compose)' },
+      ...st.tolerances.map((x) => el('option', { value: String(x), textContent: COMP_TOLERANCE_LABELS[x] ?? `±${x} slot`, title: COMP_TOLERANCE_TITLES[x] ?? '' })));
+    sel.value = String(st.tolerance);
+    sel.addEventListener('change', () => doEdit(() => core.setCompStrum({ tolerance: Number(sel.value) })));
+    const fill = toggle('fill from the chords', st.borrow, st.borrow ? 'on: a class the row doesn\'t sound near the stroke is borrowed from the chord voices, so every stroke sounds the full chord (the comp before Amendment 3); click for only what the row sounds (live, no re-compose)'
+      : 'off (Compose\'s own, Amendment 3): a stroke plays only what the row sounds near it, down to a single note; click to borrow the missing classes from the chord voices (live, no re-compose)', () => doEdit(() => core.setCompStrum({ borrow: !st.borrow })));
+    fill.classList.add('ctab-comp-borrow');
+    const said = strumReadout(st.tones, st.singles);
+    return el('div', { className: 'ctab-row ctab-comp-strum-row' }, el('span', { className: 'ctab-muted', textContent: 'tolerance' }), sel, fill,
+      said ? el('span', { className: 'ctab-muted ctab-comp-strum', textContent: `${said}${st.borrow ? ' · filled from the chords' : ''}`, title: `the comp's ${st.strokes ?? 0} stroke${st.strokes === 1 ? '' : 's'}: on average ${st.tones.toFixed(2)} tones each, ${Math.round(100 * (st.singles ?? 0))} % of them a single note${st.borrow ? ' (the borrowed tones counted)' : ' (only what the row sounds within the tolerance)'}` }) : null);
   }
   /** phase N (P31): the tier as the clave plays it, in words → { text, title, amber } */
   function tierWords(d) {
@@ -1300,7 +1334,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const out = [head, ...(id === 'inner' ? [arpControls('inner'), ...(arp ? arpPicker('inner', bar) : [])] : []), follows, ...(id === 'bass' ? bassBlock(bar) : [])];
     if (id === 'comp') {
       // A4 (P12): the strokes, and (Details) the share of the bar's tones the row sounds near them
-      const cl = compLine(part, bar);
+      const cl = compLine(part, bar, core.compStrumOf()?.playing ?? null);
       if (cl) out.push(el('div', { className: 'ctab-row ctab-comp-line', title: cl.title }, el('span', { textContent: cl.text }), cl.detail ? el('span', { className: `ctab-muted ${DETAIL}`, textContent: ` · ${cl.detail}` }) : null));
       const L = s.stats?.compLayer;
       if (L) out.push(el('div', { className: `ctab-muted ctab-pin ${DETAIL}`, textContent: `comp layer: ${L.layer} (${L.value}), pinned through edits (read-only; Compose's layer choice scores every bar)` }));
@@ -1313,7 +1347,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     }
     if (id === 'comp') out.push(el('div', { className: `ctab-muted ${DETAIL}`, textContent: `re-mined with its chord: swap bar ${bar + 1}'s chord to move it` }));
     out.push(notes.length ? el('table', { className: `ctab-decisions-table ctab-notes ${DETAIL}` }, el('tr', {}, ...['slot', 'ratio', 'oct', 'Hz'].map((h) => el('td', { textContent: h }))),
-      ...notes.map((n) => el('tr', { title: `${noteTitle(n)}${n.borrowed ? ' — borrowed: the chord voice\'s tone, at the stroke' : ''}`, ...(n.borrowed ? { className: 'borrowed' } : {}) }, el('td', { textContent: String(n.slot) }), el('td', { textContent: n.ratio }), el('td', { textContent: String(n.octave) }), el('td', { textContent: n.hz.toFixed(1) }))))
+      ...notes.map((n) => el('tr', { title: `${noteTitle(n)}${n.borrowed ? ' — borrowed: the chord voice\'s tone, at the stroke' : n.offChord ? ' — the stroke\'s own onset: a tone in frame that is no chord class (Amendment 3)' : ''}`, ...(n.borrowed ? { className: 'borrowed' } : {}) }, el('td', { textContent: String(n.slot) }), el('td', { textContent: n.ratio }), el('td', { textContent: String(n.octave) }), el('td', { textContent: n.hz.toFixed(1) }))))
       : el('div', { className: 'ctab-muted', textContent: 'no notes in this bar' }));
     if (id === 'comp' || id === 'bass' || arp) out.push(editNote());   // phase E: what a clave switch or an arp pick changed; phase H: a bass change
     return out;

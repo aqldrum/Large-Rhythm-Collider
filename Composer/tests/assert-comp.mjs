@@ -24,8 +24,12 @@ import { arrangeDrums } from '../core/drums.js';
 import { classOfCents } from '../core/frame.js';
 
 // pinned to the close voicing (BASS_VOICING_ORDER.md P7): this suite's brute force stacks the comp close from the root, as
-// the comp did before phase F; the comp's octaves under the led voicing (P5) are assert-voicing.mjs'
-const compose = (L, T, o = {}) => composeLive(L, T, { ...o, overrides: { voicing: 'close', ...o.overrides } });
+// the comp did before phase F; the comp's octaves under the led voicing (P5) are assert-voicing.mjs'. Pinned to the strum
+// before Amendment 3 too (P34: `compBorrow: true` with `compTolerance: 0.25`, its pin): this suite's brute force borrows
+// every class the row doesn't sound within ±¼ slot; the tolerance and the comp with nothing borrowed are assert-strum.mjs'
+const PIN = Object.freeze({ compBorrow: true, compTolerance: 0.25 }), PIN_STRUM = Object.freeze({ tolerance: 0.25, borrow: true });
+const compose = (L, T, o = {}) => (o.overrides?.compStyle === 'notes' ? composeLive(L, T, { ...o, overrides: { voicing: 'close', ...o.overrides } })
+  : composeLive(L, T, { ...o, overrides: { voicing: 'close', ...PIN, ...o.overrides } }));
 
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };
@@ -265,7 +269,7 @@ console.log('\n— the 16,359-onset row');
   const toneOf = new Map(row.tones.map((t, i) => [t, i])), recs = lean.chords.map((c) => ({ rootCents: row.toneCents[toneOf.get(c.rootTone)], intervals: c.intervals, rootNode: c.rootNode }));
   void ctx.inSlot;
   t0 = performance.now();
-  const S = K.slotsPerBar, built = recs.map((c, k) => compChordsOfBar(ctx, c, k, compNodesOf(lean.clave, k * S, (k + 1) * S)));
+  const S = K.slotsPerBar, built = recs.map((c, k) => compChordsOfBar(ctx, c, k, compNodesOf(lean.clave, k * S, (k + 1) * S), null, null, PIN_STRUM));
   const tComp = performance.now() - t0;
   const same = built.reduce((n, x) => n + x.notes.length, 0) === lean.parts.find((p) => p.id === 'comp').notes.length;
   check(`16k: the comp's own cost (the bars built on the clave's strokes) ${tComp.toFixed(1)} ms (under 50 ms), the same comp`, tComp < 50 && same);
