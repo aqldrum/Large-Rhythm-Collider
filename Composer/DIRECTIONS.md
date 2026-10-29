@@ -1,5 +1,75 @@
 # Composer: directions recorded for later (not scheduled)
 
+## NEXT THREAD: arrangement choices and longer forms (Avery, 2026-10-28)
+
+Avery, closing `BASS_VOICING_ORDER.md`: "I think this is about all of the functionality I want for the Composer. The
+next step would be for it to make more sophisticated arrangement choices and longer form compositions, mostly by
+deciding on different ways to layer parts and toggle them on and off."
+
+**Where things stand.**
+- Branch `composer-sprint-2`, worktree `.claude/worktrees/composer-sprint-2`; serve the site from there.
+- `BASS_VOICING_ORDER.md` is complete with Amendments 1–3, last merge c198d1e, log 69122c8; 84 suites, all passing.
+- Avery's browser and rig pass of that order is still owed. Its checklist is in the order; its Log lists the open
+  questions.
+- Nothing is on `main`, and nothing is pushed.
+
+**What arrangement can already build on (the seams):**
+- **Six parts:** lead, chords, comp, bass, inner, drums.
+  - Each has an on/off that plays live (`setPart(id, { enabled })` in `perform/composer-controller.js`; the drums'
+    `setDrums({ enabled })`). Today it is for the whole cycle, not per bar or per section.
+  - Each has its own MIDI bus or zone (`CLEAN_MIDI_ORDER.md`).
+- **Density knobs per part:**
+  - bass: Roots, Sparse, Moving, Walking, and Lands on Free, Kick or Clave;
+  - comp: tiers Sparse–Med, Sparse, Medium, Dense, plus a tolerance and borrowing;
+  - lead and inner: Line or Arp;
+  - drums: modes and the step grid;
+  - chords: Close or Led.
+  - Each is a live arrangement step over a finished spec (`arrangeBass`, `arrangeArp`, `reclave`, `restrum`, `revoice`,
+    `arrangeDrums`), byte for byte a Compose given the same overrides, one undo step each.
+- **Form:** chord charts already have sections, repeats (`×n`, `|: :|`) and form lines (`form: A A B A+2`), in
+  `core/chart.js` and `CHART_ORDER.md`. Phrases come from `phrasesOf`, and each phrase has ranked lead runner-ups (the
+  trace).
+- **Recorded, not scheduled** (below, "Improvise"): an anchor part with the others walking to their next-best option on
+  each loop, possibly degrading over time. It may belong in this thread.
+
+**Questions to put to Avery first**, before writing an order:
+1. **The unit of arrangement:** the chart's sections (A, B, …), the phrases, or a new "section" laid over N loops of the
+   cycle? And how long is "longer form": several passes of the cycle, or a chart grown from it?
+2. **Who decides the layering:**
+   - rules (an intro thins to one part, a build adds parts, a breakdown drops the drums), or
+   - a scored search over part on/off and density masks per section (contrast between neighbours, a peak, a return), or
+   - curated templates (verse/chorus, AABA, build-drop)?
+3. **Toggling only, or density too?** For example a verse at bass Sparse and comp Sparse, and a chorus at Moving and
+   Medium. Per-section variation of the same material (new runner-ups, the arp on) against literally the same bars?
+4. **Transitions:** fills or turnarounds at section ends (a drum fill, a walking bar into the next section), and do parts
+   enter on the downbeat only?
+5. **The window and MIDI:**
+   - How is the arrangement shown: a section × part grid of on/off, an arrangement lane over the matrix?
+   - Is it editable by hand like the other choices (live, undo)?
+   - MIDI export of the whole form.
+6. **Cosmos fit:** does Cosmos Compose play the long form, or stay one cycle?
+
+**Workflow (as every Composer order so far):**
+- **The order:** probe the real rows first (the planner's scratchpad), then write an order (`Composer/ARRANGEMENT_ORDER.md`)
+  with the probe, Avery's rulings and the builder's proposals marked as overrulable. Avery says "commit and build".
+- **The builds:** phases in worktrees under `.claude/worktrees/`, built by agents on Opus (always pass `model: "opus"`).
+  The planner reviews, runs the suites and merges `--no-ff` into `composer-sprint-2`. Never `main`, never pushed.
+- **The suites, in parallel**, with superrow alone (it can hang under load). The wall-clock budgets in assert-comp,
+  assert-claves, assert-compose, assert-rearrange and assert-voicing flake under load, so rerun one alone before calling
+  it a failure:
+  `ls Composer/tests/assert-*.mjs Cosmos/tests/assert-*.mjs Audio/tests/assert-*.mjs Playback/MIDIOut.test.mjs | grep -v superrow | xargs -P 4 -I{} sh -c 'node "{}" >/dev/null 2>&1 || echo FAIL {}'`,
+  then `node Composer/tests/assert-superrow.mjs`.
+- **Avery does the browser and rig passes.** Don't open a browser: hand him a checklist that names the control, the row,
+  and what to hear or see.
+- **Avery** is a drummer and theorist. Don't simplify the music theory; do explain audio-protocol jargon.
+- **Frozen outputs:** pin them with an override that reproduces the old output, never re-freeze a fixture.
+
+**A prompt to start the thread with:**
+> Read `Composer/DIRECTIONS.md` ("NEXT THREAD: arrangement choices and longer forms"), `Composer/README.md` and the
+> last sections of `Composer/DESIGN_NOTES.md`, in `.claude/worktrees/composer-sprint-2`. Probe what the current parts,
+> densities and chart forms give for arrangement on a few rows (8:7:6:5, 11:9:7:5, 119:42:15:8, 768:784). Then ask me
+> the questions in that section, with your recommendation for each, before writing `Composer/ARRANGEMENT_ORDER.md`.
+
 ## The Composer as a solver: typed progressions next (Avery, 2026-10-26)
 
 MIDI targets (`TARGET_ORDER.md`) made the Composer solve for a given melody, not only generate one. Avery called it "a good step making the Composer not just generative but a solver as well". The next thread works on **targeting typed progressions**.
