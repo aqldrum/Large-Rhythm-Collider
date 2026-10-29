@@ -389,6 +389,97 @@ rule 13 asks for a check, not new code (P32).
   revised: the comp's tiers on 16:12:9 and 768:784, the bass's default with drums on and off, Roots' cents, the picker
   after a Chords Follow.
 
+## Amendment 3 (Avery, 2026-10-28): the comp's tolerance, single notes back, sparser ties
+
+Avery's rulings:
+
+15. **The comp has a tolerance.** It sets how far around a clave stroke (the rhythm anchor) an onset may sound and still
+    count as part of that stroke's chord. Finding onsets close enough together to sound like a comped chord takes a very
+    dense row, so the allowance is a setting.
+16. **Single-note comping comes back naturally.** When the row can't source enough tuned onsets inside a stroke's window,
+    the stroke plays what the row has there, down to a single note, as the comp began.
+17. **A sparser clave wins a tie.** Among frame claves that score the same, the one with fewer strokes plays.
+
+Also ruled: Moving · Kick being thin on small rows is fine ("small rows are thin"). The two questions Avery couldn't
+answer keep the builders' behaviour (the planner's call):
+- the window re-arranges the bass over its own drums, rather than a re-compose taking the window's drum options (the
+  sound is the same);
+- a density change drops a clave picked from the list, and one undo restores both.
+
+### The probe (2026-10-28): real tones a stroke, with no borrowing
+
+Today a stroke takes each chord class's nearest in-tune onset within ±¼ slot, and borrows any class it doesn't find from
+the chord voices, so every stroke sounds full. Without borrowing (seed 1, the default clave): a stroke's tones are its
+own onset plus each chord class found in its window, and "full" means every class of the chord, up to 4.
+
+| row | strokes | ±⅛ slot | ±¼ (today's window) | ±½ | ±1 |
+|---|--:|---|---|---|---|
+| 8:7:6:5 | 3 | 1.0 tones, 100 % single | 1.7, 33 % single | 2.0, 0 % single | 2.7, 67 % full |
+| 11:9:7:5 | 4 | 1.0, 100 % single | 1.0, 100 % single | 1.0, 100 % single | 1.8, 25 % single |
+| 16:12:9 | 4 | 1.0, 100 % single | 1.5, 50 % single | 2.3, 25 % full | 2.5, 50 % full |
+| 7:5:3:2 | 2 | 1.0, 100 % single | 1.5, 50 % single | 3.0, 100 % full | 3.0, 100 % full |
+| 19:17:16:15 | 6 | 1.5, 50 % single | 1.5, 50 % single | 1.7, 33 % single | 2.3, 50 % full |
+| 119:42:15:8 | 14 | 1.0, 100 % single | 1.0, 100 % single | 1.1, 93 % single | 2.3, 29 % full |
+| 768:769 | 10 | 1.3, 70 % single | 1.6, 50 % single | 2.1, 10 % full | 2.4, 30 % full |
+| 768:784 | 16 | 3.0, 25 % full | 3.0, 25 % full | 3.8, 100 % full | 3.8, 100 % full |
+
+At today's ±¼, most rows find 1–1.7 real tones a stroke, and borrowed tones make up the rest. At ±½ to ±1, most rows
+gather 2–3. The script is in the planner's scratchpad (`comp-tolerance-probe.mjs`).
+
+### Proposed (the builder's calls; Avery may overrule)
+
+- **P33. The tolerance.** A new override, `compTolerance`, in slots either side of the stroke: `0.125 | 0.25 | 0.5 | 1`,
+  **0.5 by default** (proposed: the probe's knee). It replaces STRUM_WINDOW's fixed ¼.
+  - The window stays inside the bar (a split bar's span), as now.
+  - Each tone sounds at its own time and holds to the next stroke, as now.
+  - At ±1 slot a strum can spread across two slots: a rolled chord, not an arpeggio, since every tone holds to the next
+    stroke.
+- **P34. No borrowing by default (rule 16).** A stroke plays only the chord tones the row sounds inside its window: its
+  own onset, plus each other chord class's onset nearest it (ties as now), up to 4 voices.
+  - If it finds nothing else, the stroke is a single note.
+  - A stroke on a frame-set tone that is no chord class still plays its own onset, alone or with what it finds.
+  - Borrowing stays as an option, `compBorrow: true` ("fill from the chords"): today's full-chord comp.
+  - **Pins:** `compBorrow: true` with `compTolerance: 0.25` is today's output byte for byte, and the suites that freeze
+    the comp are pinned with it.
+- **P35. The voicing.**
+  - Under Led, a found tone takes the octave nearest its class's chord voice (P5, as now).
+  - Under Close, it is stacked from an octave under the root (as now).
+  - A single note sits in the chords' register.
+- **P36. The stats and words.**
+  - The comp's decision and caption say the tolerance and what it found: "±½ slot: 2.1 tones a stroke, 30 % single
+    notes".
+  - `compStrum` keeps its meaning (the share of chord tones from the row), which is 1 by construction with no borrowing.
+  - New: `compTones` (mean tones a stroke) and `compSingles` (the share of single-note strokes).
+- **P37. Live.** A tolerance or borrow change re-strums only the comp, through a `restrum` door in rearrange.js like
+  `reclave`.
+  - Byte for byte a Compose given the same overrides; one undo step; kept across a re-compose.
+  - A chord swap re-strums its bar at the setting.
+  - The bass's Clave lock and the perc read the strokes, which don't move.
+- **P38. Sparser ties (rule 17).** In `rankFrameClaves`, candidates whose scores tie (within EPS) order by share, the
+  lower first, then as now (the seed). Only the tie order changes; the pins hold where the seed broke no tie.
+
+### Phase O: the comp's tolerance (core, then the window; one builder)
+
+- **O1.** `compose.js`: `compTolerance` and `compBorrow` (P33–P34), the voicing (P35), the stats and words (P36).
+  `claves.js`: the tie order (P38).
+- **O2.** `rearrange.js`: `restrum` (P37); a chord swap re-strums its bar at the setting.
+- **O3.** The window:
+  - In the Comping inspector, a Tolerance select (±⅛ | ±¼ | ±½ | ±1 slot) and a "fill from the chords" toggle, both
+    live, each one undo step, kept across a re-compose.
+  - Beside them, "2.1 tones a stroke · 30 % single".
+  - The comp cell's dots show what plays.
+  - The MIDI comp zone sends what plays (fewer notes when the row has fewer).
+- **O4.** Tests:
+  - A new or extended suite, checked against a brute force written from this order:
+    - every comp tone a row onset inside its stroke's window (no borrowed tone unless asked);
+    - a stroke with no other chord tone in its window a single note;
+    - the stats;
+    - `restrum` equal to a Compose;
+    - the pin byte for byte.
+  - The tie order and the page suites.
+  - The README, DESIGN_NOTES and the checklist: the tolerance on 119:42:15:8 and 768:784, single notes on 11:9:7:5, and
+    borrowing on and off.
+
 ## Browser and rig checklist (for Avery; finished in H4, rewritten in L4 for the whole order and Amendment 1, revised in N3 for Amendment 2)
 
 Open the Partitions window's **Composer** tab, generate the rhythm on the main page, press **Compose**, then **Perform**.
@@ -599,3 +690,8 @@ bass opens at **Moving · Kick** (Compose's own) and the comp at **Sparse–Med*
   - The fifth of a dim or aug chord is its own (6 or 8 semitones) in the root+5th set. Right?
   - Should a re-compose take the window's drum options, so Compose covers that kick itself?
   - A density change drops a clave picked from the list (one undo restores both). Keep it instead?
+- 2026-10-28: Avery's rulings 15–17 (the comp's tolerance around a clave stroke; single-note comping back where the row
+  can't source enough; a sparser clave wins a tie) and his closing of the open questions (thin Moving · Kick on small rows
+  is fine; the two he couldn't answer keep the builders' behaviour). Probe and Amendment 3 (P33–P38, phase O) written;
+  not yet committed or started. After it, the next thread: arrangement choices and longer forms (layering parts and
+  toggling them on and off).
