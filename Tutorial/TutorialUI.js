@@ -2,10 +2,16 @@
 // slide tutorial's flow. The slides stay as "the guide": the menu's "Read the guide" (#tutorial-slides-btn) and the
 // tour's own "Read the guide" open them (window.LRCTutorialSlidesUI.show). They no longer open by themselves on load,
 // and their "Do not show again" box is gone (the tour keeps its own first-visit flag, `lrc.tour.seen`).
+//
+// The tour is behind a flag for now (tour-flag.js, `?tour=1`). Flag off, this is the old slide tutorial as it was
+// before the tour: it opens on load until "Do not show again" is ticked (`lrcTutorialDismissed`), and the menu's
+// single button is "Show Tutorial". The tour's "Read the guide" button stays hidden then.
 (() => {
+    const STORAGE_KEY = 'lrcTutorialDismissed';
+    const tourOn = window.LRC_TOUR_ENABLED === true;
     const overlay = document.getElementById('tutorial-overlay');
     const closeFooterButton = document.querySelector('.tutorial-close-btn');
-    const showButton = document.getElementById('tutorial-slides-btn');
+    const showButton = document.getElementById(tourOn ? 'tutorial-slides-btn' : 'tutorial-show-btn');
     const slideContainer = document.getElementById('tutorial-slide-content');
     const prevButton = document.getElementById('tutorial-prev');
     const nextButton = document.getElementById('tutorial-next');
@@ -102,7 +108,36 @@
         overlay.setAttribute('aria-hidden', 'true');
     };
 
+    let dismissCheckbox = null;
+    if (!tourOn) {
+        const footer = overlay.querySelector('.tutorial-footer');
+        if (footer) {
+            const label = document.createElement('label');
+            label.className = 'tutorial-dismiss';
+            dismissCheckbox = document.createElement('input');
+            dismissCheckbox.type = 'checkbox';
+            dismissCheckbox.id = 'tutorial-dismiss-checkbox';
+            const text = document.createElement('span');
+            text.textContent = 'Do not show again';
+            label.append(dismissCheckbox, text);
+            footer.appendChild(label);
+        }
+        const slidesBtn = document.getElementById('tutorial-slides-btn');
+        if (slidesBtn) slidesBtn.hidden = true;
+        if (showButton) showButton.textContent = 'Show Tutorial';
+        const sub = document.querySelector('[data-section="tutorial"] .dropdown-section-header p');
+        if (sub) sub.textContent = 'Quick-start walkthrough';
+    }
+
+    const shouldShowOnLoad = () => {
+        if (tourOn) return false;
+        try { return localStorage.getItem(STORAGE_KEY) !== 'true'; } catch { return true; }
+    };
+
     const handleDismiss = () => {
+        if (dismissCheckbox && dismissCheckbox.checked) {
+            try { localStorage.setItem(STORAGE_KEY, 'true'); } catch { /* unremembered */ }
+        }
         hideTutorial();
     };
 
@@ -121,6 +156,7 @@
     });
 
     const openGuide = () => {
+        if (dismissCheckbox) dismissCheckbox.checked = false;
         if (window.lrcTour && window.lrcTour.active) window.lrcTour.end('guide');
         goToSlide(0);
         showTutorial();
@@ -139,6 +175,10 @@
     });
 
     goToSlide(0);
+
+    if (shouldShowOnLoad()) {
+        showTutorial();
+    }
 
     window.LRCTutorialSlidesUI = { show: openGuide, hide: hideTutorial, isOpen: () => overlay.style.display !== 'none' };
 })();

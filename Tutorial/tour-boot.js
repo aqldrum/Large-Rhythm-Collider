@@ -35,4 +35,5 @@ export function bootTour(win, { storage, timers = win, tour = null } = {}) {
   return t;
 }
 
-if (typeof window !== 'undefined' && window.document && !globalThis.__LRC_TOUR_NO_BOOT__) bootTour(window);
+// behind a flag (tour-flag.js: ?tour=1) while the tour is refined; off, the page only has the old slides
+if (typeof window !== 'undefined' && window.document && !globalThis.__LRC_TOUR_NO_BOOT__ && window.LRC_TOUR_ENABLED === true) bootTour(window);

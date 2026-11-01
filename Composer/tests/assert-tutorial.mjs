@@ -16,6 +16,7 @@
 //   node Composer/tests/assert-tutorial.mjs
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 import { makeDom, installGlobals } from './dom-stub.mjs';
 import { loadClass, ROOT } from './site-scripts.mjs';
 import { compose } from '../core/compose.js';
@@ -248,6 +249,7 @@ const LRCModule = loadClass('Core Interface/LRCModule.js', 'LRCModule', dom);
 const LRCVisuals = loadClass('Core Interface/LRCVisuals.js', 'LRCVisuals', dom);
 const HUD = loadClass('Core Interface/LRCHudController.js', 'LRCHUDController', dom);
 loadClass('Tutorial/TutorialContent.js', 'undefined', dom);
+win.LRC_TOUR_ENABLED = true; // the tour is behind a flag (tour-flag.js); these are the flag-on slides
 loadClass('Tutorial/TutorialUI.js', 'undefined', dom);
 const pb = Object.create(TRP.prototype);
 Object.assign(pb, {
@@ -317,6 +319,48 @@ check('TutorialUI.js no longer opens the slides on load', slideOverlay.style.dis
 slidesBtn.click();
 check('"Read the guide" in the menu opens them (window.LRCTutorialSlidesUI)', slideOverlay.style.display === 'flex' && win.LRCTutorialSlidesUI.isOpen());
 win.LRCTutorialSlidesUI.hide();
+
+console.log('\n— the flag: the tour is off by default, the old slides are the main page\'s tutorial');
+{
+  const flagSrc = fs.readFileSync(path.join(ROOT, 'Tutorial', 'tour-flag.js'), 'utf8');
+  const runFlag = (search, stored, { throws = false } = {}) => {
+    const store = new Map(stored ? [['lrc.tour.enabled', '1']] : []);
+    const localStorage = throws ? { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() { throw new Error('denied'); } }
+      : { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+    const sandbox = { window: { location: { search }, localStorage }, URLSearchParams };
+    vm.createContext(sandbox); vm.runInContext(flagSrc, sandbox);
+    return { on: sandbox.window.LRC_TOUR_ENABLED, store };
+  };
+  check('tour-flag.js: off by default; ?tour=1 on and remembered; the next visit stays on; ?tour=0 off and forgotten',
+    runFlag('', false).on === false && runFlag('?tour=1', false).on === true && runFlag('?tour=1', false).store.get('lrc.tour.enabled') === '1'
+    && runFlag('', true).on === true && runFlag('?tour=0', true).on === false && !runFlag('?tour=0', true).store.has('lrc.tour.enabled'));
+  check('… storage that throws: off, unless the URL says on', runFlag('', false, { throws: true }).on === false && runFlag('?tour=1', false, { throws: true }).on === true);
+  const tagAt = (f) => html.search(new RegExp(`<script[^>]*src="Tutorial/${f}[^"]*"`));
+  check('index.html loads tour-flag.js before TutorialUI.js and tour-boot.js', tagAt('tour-flag.js') > -1 && tagAt('tour-flag.js') < tagAt('TutorialUI.js') && tagAt('tour-flag.js') < tagAt('tour-boot.js'));
+  check('tour-boot.js boots the page only when the flag is on', /__LRC_TOUR_NO_BOOT__[^\n]*LRC_TOUR_ENABLED === true\) bootTour\(window\)/.test(fs.readFileSync(path.join(ROOT, 'Tutorial', 'tour-boot.js'), 'utf8')));
+  // flag off: the slides as they were before the tour
+  const legacy = (stored) => {
+    const d = makeDom(), D = d.document;
+    const mk = (tag, props = {}) => Object.assign(D.createElement(tag), props);
+    const footer = mk('div', { className: 'tutorial-footer' }); footer.append(mk('button', { className: 'tutorial-close-btn' }));
+    const overlay = mk('div', { id: 'tutorial-overlay' }); overlay.style.display = 'none';
+    overlay.append(mk('div', { id: 'tutorial-slide-content' }), mk('button', { id: 'tutorial-prev' }), mk('span', { id: 'tutorial-nav-status' }), mk('button', { id: 'tutorial-next' }), footer);
+    const showBtn = mk('button', { id: 'tutorial-show-btn', textContent: 'Take the tour' }), slides = mk('button', { id: 'tutorial-slides-btn', textContent: 'Read the guide' });
+    D.body.append(overlay, showBtn, slides);
+    const store = new Map(stored ? [['lrcTutorialDismissed', 'true']] : []);
+    d.window.LRC_TOUR_ENABLED = false;
+    loadClass('Tutorial/TutorialContent.js', 'undefined', d);
+    loadClass('Tutorial/TutorialUI.js', 'undefined', d, { extra: { localStorage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) } } });
+    return { d, overlay, showBtn, slides, store, box: () => D.getElementById('tutorial-dismiss-checkbox'), close: () => footer.querySelector('.tutorial-close-btn') };
+  };
+  const L = legacy(false);
+  check('flag off: the slides open on load, as before the tour', L.overlay.style.display === 'flex' && !L.d.window.lrcTour);
+  check('… "Do not show again" is back in the footer; the menu has one button, "Show Tutorial"; "Read the guide" is hidden', !!L.box() && L.showBtn.textContent === 'Show Tutorial' && L.slides.hidden === true);
+  L.box().checked = true; L.close().click();
+  check('… ticking it and closing remembers (lrcTutorialDismissed) and closes', L.store.get('lrcTutorialDismissed') === 'true' && L.overlay.style.display === 'none');
+  const L2 = legacy(true);
+  check('… once dismissed, the slides stay shut on load; "Show Tutorial" opens them again', L2.overlay.style.display === 'none' && (L2.showBtn.click(), L2.overlay.style.display === 'flex'));
+}
 
 console.log('\n— the welcome');
 const before = { values: inputs.map((i) => i.value), submitMin: submitDiv.classList.contains('minimized'), playMin: playbackDiv.classList.contains('minimized') };
