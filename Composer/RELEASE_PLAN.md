@@ -106,6 +106,8 @@ What it shows:
       Hi Cut 76.
     - Which parameters each macro drives is in the XML.
 - **M6, ruled (Avery, 2026-11-03):** MIDI velocity is kept apart from the mix.
+- **The order is `MIX_MASTER_ORDER.md`** (M1–M5 built on `mix/master`, with the meter's numbers; it corrects the rack
+  summary above: the Saturator is in the outer chain, the nested rack holds an EQ Three, and there's a Beat Repeat).
 - **M6. MIDI stays clean.** The mix and master are audio only. MIDI velocity comes from the composition and Avery's own
   level faders, not from M2's staging. **Avery rules.**
 
