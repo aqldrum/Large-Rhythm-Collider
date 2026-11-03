@@ -2474,6 +2474,74 @@ The probe's own table matches except 19:17:16:15 (6 strokes, 1.7, 33 % there), w
 - A stroke on a frame tone that is no chord class plays that tone (P34). On 768:769 that is 7 of the comp's 21 tones. Keep, or let such a stroke play only the chord tones it finds (a rest when none)?
 - Should a tolerance or borrow change audition at the bar line, like a clave pick, rather than apply at once like the density?
 
+## The comp's gate and Snap (phase P; built 2026-11-03, branch `comp/gate`)
+
+`COMP_GATE_ORDER.md` phase P (P1–P4), core then window, one builder. Decided 1–3 are Avery's (2026-11-03: a 25 ms gate by default, Snap as an option, G1–G9 approved as written); the rest is the builder's, proposed. Nothing here has been seen in a browser or heard.
+
+**The gate** (G1–G2; `compose.js` `compGate`, `COMP_GATES`, `DEFAULT_COMP_GATE`, `strumOf(…, tolerance, seconds)`).
+- 15 | 25 | 40 ms either side of the stroke, 25 by default. A stroke plays its own onset plus each other chord class's onset nearest it inside the gate (`strokeTonesOf`, as at a slot window: ties, the four-voice cap, `offChord`, inside the bar or span). Each tone sounds at its own onset; nothing is borrowed unless `compBorrow`.
+- **The clock** (G2): heard time at the tempo the spec is seeded with. `strumOf` takes the window as spec seconds, `g/1000 × scale`, where `scale = seedTempo / specTempo` (`heardScaleOf(spec)`): 1 for a spec at its natural tempo; a MIDI target's clip tempo (clamped 30–300 BPM, as the controller seeds it) over the spec's (ode-to-joy on 41:42:43: 108 BPM over 150, so 25 ms heard is 18 ms of spec time). A live tempo change doesn't re-strum; the window's caption says the gate as heard at the playing tempo ("15 ms gate: … · heard as 30 ms at 60 BPM": `heardGateMs`).
+- With borrowing, the gate's found tones and the rest borrowed from the chord voices, as the old path does at a slot window.
+
+**Snap and Roll** (G3; `compSnap`, `compRoll`, `SNAP_WINDOW`, `COMP_ROLLS`).
+- Snap gathers each class's onset nearest the stroke within ±¼ slot (STRUM_WINDOW), then strikes every found tone at the stroke's time. A snapped note keeps its own tone and pitch; its `node`, `tick`, `slot` and `time` are the stroke's, with `from` (its own onset), `fromTick` and `snapped: true`. Velocities as before: the stroke 0.55 (+0.1 a layer more), a snapped tone 0.5, a borrowed one 0.45.
+- `compRoll` 0 | 8 | 15 ms (0 by default) rolls the snapped chord: the stroke's own tone first, the rest low to high by pitch (ties by voice), each `roll` ms heard after the one before. **Builder's call:** the roll's span is held under half the stroke's hold (`step = min(roll × scale, hold / (2 × (n − 1)))`), so a rolled tone never reaches the next stroke on a dense row.
+- Snap ignores the gate. With `compBorrow` it is the old borrowing path at ±¼ with every found tone snapped: every stroke the full chord the bar's voices hold, on the beat (the stab). **Builder's call:** Snap with borrowing reads tones as the old borrowing path does (chord classes only; an off-chord stroke tone isn't played), so "every stroke a full chord" holds literally; Snap without borrowing keeps the stroke's own onset whatever its tone, as the gate does.
+
+**Precedence and pins** (G4; `strumSetting`, `strumOfOverrides`).
+- Nothing asked: the gate at 25. `compTolerance` asked: the old slot window, byte for byte (`compTolerance: 0.5` is the default from Amendment 3 to phase P; with `compBorrow: true` at 0.25 the comp before Amendment 3). `compSnap` takes the place of both.
+- Refused with words: `compGate` with `compTolerance` ("two windows for one stroke"), `compSnap` with either ("takes the place of both windows"), `compRoll` without `compSnap`, any value not in its list, any of the five with `compStyle: 'notes'`.
+- `DEFAULT_COMP_TOLERANCE` (0.5) stays exported as the old window's default and the old-spec read's window. `COMP_STRUM_DEFAULTS` is now the gate's; `SLOT_STRUM` and `LEGACY_STRUM` name the two pins. A strum of the old shape (`{ tolerance, borrow }`, as `assert-comp.mjs` passes) is still the old window.
+
+**Old specs** (G5). `COMPOSER_SPEC_VERSION` is `composer-spec-v2`. `compStrumOf(spec)` reads a spec of another version with no `compGate` or `compSnap` as `compTolerance: 0.5` (and its `compBorrow`), so a chord swap, a clave switch or a voicing switch re-strums it as it was made. **Builder's call:** a `restrum` writes its setting as this version reads it and returns `specVersion`, which `applyRearrange` writes in: an old spec restrummed becomes a v2 spec (a restrum to the same setting keeps its comp and writes `compTolerance: 0.5`). Exports carry the strum overrides only when they aren't the defaults (`strumOverrides`); the old window is always written, since it is no longer the default.
+
+**Stats and words** (G6; `compStrumStats(…, moved)`, `compStrumWhy`, `strumWindowWords`).
+- `compTones`, `compSingles` and `compStrum` as before (a snapped tone counts as the row's). With Snap, `compMovedMs` `{ mean, max }`: how far the snapped tones moved onto their strokes, in heard ms at the seed tempo (the stroke's own tone and a borrowed one don't count; a different onset at the stroke's very time counts 0). It sits right after `compSingles`; `applyRearrange` keeps it there or takes it out (`statsMoved`).
+- The decision: "… from the row alone (COMP_GATE_ORDER.md, decided 1 (Avery): a 25 ms gate and nothing borrowed by default): 25 ms gate: 1.0 tones a stroke, 100 % single notes; nothing borrowed …"; Snap: "… its tones gathered and struck on the stroke (asked): Snap (±¼ slot): 1.7 tones a stroke, tones moved up to 114 ms (105 ms on average), struck together; nothing borrowed …". A target's gate adds "(heard at the clip's 108 BPM)". The old window's words are unchanged, so a `compTolerance` spec says "(asked)" where the default before phase P said "by default".
+
+**restrum** (G7; `rearrange.js` `restrum`, `rearrange(…, { gate, snap, roll, tolerance, borrow })`, `compose.js` `nextStrum`).
+- The door takes `{ gate, snap, roll }` with `{ tolerance, borrow }`. A window asked takes the place of the others (a gate or a tolerance turns Snap off; `snap: true` clears both); `tolerance: null` or `snap: false` leaves that mode for the gate it played before (none: 25); a roll alone keeps Snap; a non-zero roll with no Snap is refused; borrowing alone keeps the window. Two windows in one edit are refused as Compose refuses them.
+- Each change equals a Compose given the same overrides byte for byte (656 restrums in `assert-strum.mjs`), is one undo step in the window, and is kept across a re-compose. A chord swap re-strums its bar at the setting (Snap, its roll and `compMovedMs` recounted). The clave's strokes never move.
+- `builderNotes` reads a snapped note's tone from `from`, and `partOf` passes `snapped`, `from`, `fromTick` through, so a chord swap keeps the other bars' snapped and rolled notes as they were.
+
+**The window** (G8).
+- **Entry state** (`composition-store.js`, `composition-edits.js`): `compGate`, `compSnap`, `compRoll` beside `compTolerance` (now null unless the old window plays) and `compBorrow`. The five are one setting: the controller reads Snap, else the old window when one is kept, else the gate (`strumOfEntry`), and writes all five on every change (`keepStrum`), so a snapshot restores it whole. **Builder's call:** these store lines are the comp's own fields, edited here so undo and a fresh entry read the new default; nothing else in the store moved.
+- **Live**: `setCompStrum({ gate, snap, roll, tolerance, borrow })` (`nextStrum`), one undo step; the fold's strum step compares whole settings (`sameStrum`); Compose is sent `strumOverrides`. `compStrumOf()` adds `moved`, `heard` ({ gate, seedTempo, tempo }), `gates` and `rolls`.
+- **The Comping cell**: "tight [25 ms ▾] [snap to stroke] ([block ▾] while Snap is on) [fill from the chords]" and the caption (`strumCaption`: G6's words, plus "· heard as … at … BPM" when the tempo isn't the seed's). Tight is dimmed while Snap or the old window plays; choosing a gate plays it instead. Details adds "Old window (slots) [off ▾]" (off | ±⅛ | ±¼ | ±½ | ±1).
+- **The plot**: a snapped tone lights its own onset (`litTickOf` reads `fromTick`) and a thin tick from there to its stroke (`highlightsOf`'s `snaps: [{ from, to }]`, drawn under the dots by `drawLitPart`, 1 px in the part's colour). A borrowed tone stays ringed. The cell's focus lights the snapped tones' own onsets too.
+- **The cell's line** (`compLine`) names the window ("within a 25 ms gate", "within ±¼ slot") and, with Snap, how many tones were snapped and the roll. The trace's caption (`strumDetail`) says the gate or Snap in the decision's words.
+
+**MIDI** (G9). No change: `composer-midi.js` `midiNotesOf` sends each note at its own `time` in its own lane, so gated tones arrive at their own times and snapped tones together on the stroke (rolled by the roll). The player reads `time` too. Neither file was touched.
+
+**Seed 1 on the probe's rows** (tones a stroke; the share of single notes; Snap's largest move):
+
+| row | BPM | strokes | 15 ms | 25 ms (default) | 40 ms | Snap · moved up to | ±½ slot (pin) |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| 8:7:6:5 | 120 | 3 | 1.00 (100 %) | 1.00 (100 %) | 1.00 (100 %) | 1.67 · 114 ms | 2.00 |
+| 11:9:7:5 | 120 | 4 | 1.00 (100 %) | 1.00 (100 %) | 1.00 (100 %) | 1.00 · 0 | 1.00 |
+| 16:12:9 | 120 | 4 | 1.00 (100 %) | 1.00 (100 %) | 1.00 (100 %) | 1.50 · 83 ms | 2.25 |
+| 7:5:3:2 | 60 | 2 | 1.00 (100 %) | 1.00 (100 %) | 1.00 (100 %) | 1.50 · 286 ms | 3.00 |
+| 19:17:16:15 | 120 | 5 | 1.40 (60 %) | 1.40 (60 %) | 1.60 (40 %) | 1.60 · 29 ms | 1.60 |
+| 119:42:15:8 | 120 | 14 | 1.00 (100 %) | 1.00 (100 %) | 1.00 (100 %) | 1.00 · 0 | 1.07 |
+| 768:769 | 120 | 10 | 1.20 (80 %) | 1.30 (70 %) | 1.30 (70 %) | 1.60 · 50 ms | 2.10 |
+| 768:784 | 120 | 16 | 2.75 (0 %) | 3.00 (0 %) | 3.00 (0 %) | 3.00 · 20 ms | 3.75 |
+
+The order's probe table, to the hundredth.
+
+**Measured on the 16k row** (this cloud container, which runs Compose about 3.3× slower than phase O's machine: the clean `composer-release` composes it in 2.5 s lean here, where phase O measured 761 ms): Compose at the default gate within the same 2.4–2.7 s; a restrum 8.7 ms median over the four old windows × borrowing, the three gates and Snap's three rolls (7.9 ms at baseline over the old windows alone).
+
+**Tests (P4).** See the order's Log for the suite count on this container. `assert-strum.mjs`: the brute force (`settingOf`, `windowOf`, `expected`) is written from the order. It checks every gated tone is a row onset within g ms heard of its stroke; every snapped tone sits on its stroke with its own tone; the roll's order and offsets; `compMovedMs`; the probe's table; a MIDI target's heard gate; the precedence failures; the old-spec read (24 v1 specs: read as ±½, a chord swap at ±½, a restrum to the same setting, to the gate a Compose's); 656 restrums byte for byte a Compose, the door's refusals, and 75 chord swaps at the gate and Snap. Its phase O sections are pinned with `compTolerance` (±½ where they meant the old default). `assert-page-clave.mjs`: the phase O block is pinned at ±½ (through the Old window), and a phase P block covers Tight, Snap and Roll live, the caption, the heard gate, the plot's ticks, the export and a re-compose. `assert-page-matrix.mjs` adds the snapped tones' focus and ticks. Suites that hash or compare a whole frozen spec set `version` back to `composer-spec-v1` first (G5's bump is the only thing that moves them): `settle-baseline.mjs` `normSpec` (compose, progression, trace), `assert-chord-symbols`, `assert-comp` and `assert-voicing` (against `compose-before.js`), `assert-refactor-identity` and `assert-frame-clave`'s P19. Suites whose frozen comp moved are pinned with `compTolerance: 0.5`. Every frozen case was hashed on both trees and is identical (the order's Log has the count and this container's 13 environmental failures, the same at baseline).
+
+**Calls beyond the order (proposed):**
+1. The roll's span is held under half the stroke's hold.
+2. Snap with borrowing reads tones as the old borrowing path does (chord classes only), so every stroke is the full chord.
+3. `compRoll` without `compSnap` is refused in Compose. The door ignores a roll of 0 with no Snap and refuses any other roll.
+4. A gate or a tolerance asked while Snap plays turns Snap off; `snap: false` returns to the gate played before Snap, else 25.
+5. A restrum writes the current spec version (`specVersion`), so an old spec restrummed reads as this version.
+6. A snapped note carries `fromTick` (beside `from`) so the plot finds its own onset without trusting node = dot index.
+7. `compMovedMs` counts a different onset found at the stroke's very time as 0 ms moved. It doesn't count the stroke's own tone or a borrowed one.
+8. The comp's five store fields are edited in `store/` (outside the files listed for T1) so undo and a fresh entry read the gate.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
