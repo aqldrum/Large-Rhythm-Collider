@@ -290,6 +290,10 @@
 /* phase O (Amendment 3): the comp's tolerance select, its "fill from the chords" toggle and what the strokes found */
 .ctab-comp-strum-row { gap: 6px; flex-wrap: wrap; }
 .ctab-comp-strum-row select { font-size: 10px; }
+/* phase P (COMP_GATE_ORDER.md G8): the gate dimmed while Snap or the old window plays; the old window under Details */
+.ctab-comp-gate.off { opacity: 0.55; }
+.ctab-comp-old-row { gap: 6px; }
+.ctab-comp-old-row select { font-size: 10px; }
 .ctab-comp-tier, .ctab-bass-refollowed { font-size: 10px; }
 .ctab-comp-tier.amber { color: #ffb347; }
 .ctab-clip-notes tr.fringe .ctab-clip-kind, .ctab-clip-notes tr.shift .ctab-clip-kind, .ctab-clip-notes tr.late td:last-child { color: #ffb347; }

@@ -24,14 +24,15 @@
 //   parts      each part's notes cascade in, in its colour (the chords' caption says their voicing, the bass's its
 //              density and lock: BASS_VOICING_ORDER.md H3; phase L: the comp's clave read from the frame, the bass's
 //              lock covering its hits and a walk's fill, the voicing's loop closed; phase N: the comp's clave as it plays,
-//              a picked one, the bars re-read and its density tier; phase O: its tolerance and what the strokes found)
+//              a picked one, the bars re-read and its density tier; phase O: its tolerance and what the strokes found;
+//              phase P: its gate or Snap, in the decision's words)
 //   drums      strokes drop in, bar by bar
 
 import { traceTimeline, capTrace, TRACE_CAPS } from '../core/trace.js';
 import { classOfCents } from '../core/frame.js';
 import { indexOfTick, PART_COLORS, PART_LABELS } from './plot-highlights.js';
 import { claveText, claveSource, densityWords } from '../core/claves.js';
-import { toleranceWords } from '../core/compose.js';
+import { toleranceWords, strumWindowWords } from '../core/compose.js';
 /** phase N (Amendment 2, P31): a frame clave's density tier in the caption's words (a fall-back said), or '' */
 export function tierDetail(cd) {
   if (!cd) return '';
@@ -39,11 +40,18 @@ export function tierDetail(cd) {
   return cd.played ? `no clave in the ${densityWords(cd.asked, { band: false })} tier, so the nearest, ${densityWords(cd.played)}` : `no clave in any tier, so every one ranked`;
 }
 /** phase O (Amendment 3, P36): the comp's tolerance and what its strokes found, in the caption's words ("±½ slot: 2.1 tones
- *  a stroke, 30 % single notes"; borrowing: "±¼ slot, filled from the chords"), or '' */
+ *  a stroke, 30 % single notes"; borrowing: "±¼ slot, filled from the chords"), or ''. Phase P (COMP_GATE_ORDER.md G6):
+ *  the gate ("25 ms gate: 1.0 tones a stroke, 100 % single notes") and Snap ("Snap (±¼ slot): 1.7 tones a stroke, tones
+ *  moved up to 114 ms", its roll; `moved` the spec's compMovedMs) in the decision's words */
 export function strumDetail(strum) {
   if (!strum) return '';
-  if (strum.borrow) return `${toleranceWords(strum.tolerance)}, filled from the chords`;
-  return `${toleranceWords(strum.tolerance)}: ${strum.tones != null ? `${strum.tones.toFixed(1)} tones a stroke, ${Math.round(100 * (strum.singles ?? 0))} % single notes` : 'what the row sounds there'}`;
+  if (strum.snap) {
+    const moved = strum.moved ? `, tones moved up to ${Math.round(strum.moved.max)} ms` : '';
+    return `${strumWindowWords(strum)}${strum.tones != null ? `: ${strum.tones.toFixed(1)} tones a stroke${moved}` : ''}${strum.roll > 0 ? `, rolled ${strum.roll} ms` : ''}${strum.borrow ? ', filled from the chords' : ''}`;
+  }
+  const words = strum.gate != null ? strumWindowWords(strum) : toleranceWords(strum.tolerance);
+  if (strum.borrow) return `${words}, filled from the chords`;
+  return `${words}: ${strum.tones != null ? `${strum.tones.toFixed(1)} tones a stroke, ${Math.round(100 * (strum.singles ?? 0))} % single notes` : 'what the row sounds there'}`;
 }
 /** the comp part's caption: in chords its clave by pattern and source (Amendment 1; claves.js' words), in notes its layer;
  *  phase L: a clave read from the frame (phase I) says so, a frame clave's patterns a bar each (they change with the chord);

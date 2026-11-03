@@ -180,12 +180,16 @@ export function matrixModel(state, { grid = null, composedGrid = null, alternate
 
 /** phase O: a tolerance in the window's words ('±½ slot'; compose.js toleranceWords) */
 const tolWords = (t) => `±${({ 0.125: '⅛', 0.25: '¼', 0.5: '½', 1: '1' })[t] ?? t} slot`;
+/** phase P (COMP_GATE_ORDER.md G6): a strum's window in the line's words ('a 25 ms gate', '±¼ slot (snapped)', '±½ slot') */
+const windowWords = (st) => (st.snap ? '±¼ slot' : st.gate != null ? `a ${st.gate} ms gate` : tolWords(st.tolerance));
 /**
  * A4 (P12): the comp cell's line in the inspector, for bar k of the comp as it plays (a comp in chords: it has
  * `strokes`) → { strokes, tones, fromRow (tones the row sounds near the stroke, not borrowed), share (0..1 | null),
  * text ("7 strokes"), detail ("82% from the row": Details), title } | null (the one-note comp, or no part).
  * Phase O (Amendment 3): `strum` ({ tolerance, borrow }: the comp's as it plays; absent: ±¼ with borrowing, as before).
  * With nothing borrowed every tone is the row's, so the detail says the tones a stroke ("1.7 tones a stroke") instead.
+ * Phase P (G6): `strum` in compose.js strumSetting's shape too ({ gate, tolerance, snap, roll, borrow }): the title names
+ * the gate, or Snap (its tones struck on the stroke, `snapped`, each ticked to it on the plot) and its roll.
  */
 export function compLine(part, k, strum = null) {
   if (!part?.strokes) return null;
@@ -193,9 +197,11 @@ export function compLine(part, k, strum = null) {
   const strokes = part.strokes.filter((x) => x.bar === k).length, notes = part.notes.filter((n) => n.bar === k), fromRow = notes.filter((n) => !n.borrowed).length;
   const share = notes.length ? fromRow / notes.length : null, each = strokes ? notes.length / strokes : null;
   const detail = st.borrow ? (share == null ? '' : `${Math.round(100 * share)}% from the row`) : each == null ? '' : `${each.toFixed(1)} tones a stroke`;
+  const snapped = notes.filter((n) => n.snapped).length;
+  const snapWords = st.snap ? `; ${snapped} tone${snapped === 1 ? '' : 's'} snapped onto ${snapped === 1 ? 'its' : 'their'} stroke (ticked to it on the plot)${st.roll > 0 ? `, rolled ${st.roll} ms low to high` : ', struck together'}` : '';
   return { strokes, tones: notes.length, fromRow, share, text: `${strokes} stroke${strokes === 1 ? '' : 's'}`, detail,
-    title: st.borrow ? `bar ${k + 1}: ${strokes} stroke${strokes === 1 ? '' : 's'} of the clave, each the bar's chord; ${fromRow} of ${notes.length} tones strummed from the row within ${tolWords(st.tolerance)}, ${notes.length - fromRow} borrowed from the chord voices (ringed on the plot)`
-      : `bar ${k + 1}: ${strokes} stroke${strokes === 1 ? '' : 's'} of the clave, each playing only what the row sounds within ${tolWords(st.tolerance)} of it: ${notes.length} tone${notes.length === 1 ? '' : 's'} in all, nothing borrowed (a stroke with no other chord tone near it is a single note)` };
+    title: st.borrow ? `bar ${k + 1}: ${strokes} stroke${strokes === 1 ? '' : 's'} of the clave, each the bar's chord; ${fromRow} of ${notes.length} tones ${st.snap ? 'gathered' : 'strummed'} from the row within ${windowWords(st)}, ${notes.length - fromRow} borrowed from the chord voices (ringed on the plot)${snapWords}`
+      : `bar ${k + 1}: ${strokes} stroke${strokes === 1 ? '' : 's'} of the clave, each playing only what the row sounds within ${windowWords(st)} of it: ${notes.length} tone${notes.length === 1 ? '' : 's'} in all, nothing borrowed (a stroke with no other chord tone near it is a single note)${snapWords}` };
 }
 
 /** a target lead cell's dots counted by kind (target-lines.js clipCounts' shape) */
