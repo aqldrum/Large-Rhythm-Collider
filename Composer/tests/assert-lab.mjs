@@ -81,8 +81,11 @@ console.log('\n— one full cycle, scheduled');
 lab.perform();
 const player = lab.player, T = spec.knobs.cycleSeconds;
 check('Perform makes the context and plays; the button says Stop', lab.context === ctx && player.playing && lab.button() === 'Stop');
-const limiter = ctx.nodes.find((n) => n.kind === 'compressor'), master = player.master;
-check('the graph: a bus per part → master → limiter → destination', PART_IDS.every((id) => player.buses[id] && player.buses[id].outs.includes(master)) && master.outs.includes(limiter) && limiter.outs.includes(ctx.destination));
+const limiter = player.limiter, master = player.master;
+/** a node reaches `to` along first connections (a bus through its mix staging: trim, high-pass, duck; MIX_MASTER_ORDER.md) */
+const reaches = (n, to) => { for (let i = 0; n && i < 8; i++) { if (n === to) return true; n = n.outs[0]; } return false; };
+check('the graph (the controller\'s mix): a bus per part → its staging → master → the master chain → destination', PART_IDS.every((id) => player.buses[id] && reaches(player.buses[id], master))
+  && master.outs.includes(player.chain.input) && limiter === player.chain.output && limiter.outs.includes(ctx.destination));
 while (ctx.currentTime < player.loopStart + T + 0.3) { ctx.currentTime += 0.025; player.tick(); }
 const oscs = ctx.nodes.filter((n) => n.kind === 'osc');
 const L0 = player.loopStart;
@@ -409,7 +412,7 @@ console.log('\n— drums');
     drumModeChoices().some((m) => m.id === 'partition') && drumModeChoices().some((m) => m.id === 'son') && kitChoices('kick').some((c) => c.value === 'made:kick') && kitChoices('kick')[0].value === '' && kitChoices('snare').some((c) => c.value.endsWith('/assets/audio/snare1.wav')));
   dlab.perform();
   const dp = dlab.player, D0 = dp.loopStart, DT = dspec.knobs.cycleSeconds;
-  check('the drums play on a bus of their own, into the master', dp.buses.drums && dp.buses.drums.outs.includes(dp.master));
+  check('the drums play on a bus of their own, into the master (through its trim)', dp.buses.drums && reaches(dp.buses.drums, dp.master) && dp.stages.drums.trim.outs.includes(dp.master));
   dlab.setDrums({ mode: 'partition', fills: false });
   const live = dlab.state.drums;
   // BASS_VOICING_ORDER.md Amendment 2, phase N: Compose's own bass (Moving · Kick) covers the kick that plays, so a mode
