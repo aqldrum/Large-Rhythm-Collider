@@ -192,6 +192,7 @@ console.log('\n— compStyle');
     // the frozen core's bass is Sparse · Free (BASS_VOICING_ORDER.md Amendment 2, P28: Compose's own is now Moving · Kick)
     const live = compose(L, T, { seed, overrides: { ...ov, compStyle: 'notes', bass: { density: 'sparse', lock: 'free' } } });
     delete live.input.overrides.compStyle; delete live.input.overrides.voicing; delete live.input.overrides.bass;   // the fields the frozen core can't have: the overrides themselves
+    live.version = 'composer-spec-v1';   // COMP_GATE_ORDER.md G5 bumped the version; a comp in notes moved nothing else
     if (J(live) === J(composeBefore(L, T, { seed, overrides: ov }))) same++;
   }
   check(`compStyle 'notes': ${same}/${cases.length * 2} byte for byte the frozen pre-refactor Compose (fixtures/compose-before.js)`, same === cases.length * 2);
