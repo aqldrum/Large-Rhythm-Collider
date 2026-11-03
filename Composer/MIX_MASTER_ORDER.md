@@ -286,5 +286,13 @@ Serve the repo root and open `/Composer/lab/mix-meter.html` (the A/B), then the 
 - 2026-11-03: written and built in one cloud session (Avery away; every call above that isn't "Decided" is the builder's).
   - The probe ran headless (Playwright's Chromium), so the numbers are real, not owed.
   - Phases A–C committed on `mix/master`.
-  - The suites: 85 (84 + `assert-mix-master`). See the PR for the run.
+  - The suites: 85 (84 + `assert-mix-master`). **76 pass; 9 fail in this container, the same on `composer-release`
+    itself.** In parallel 10 failed. Rerun alone, `assert-claves` passed (twice), and superrow passed alone (55 checks).
+    The other 9 also fail alone on a clean checkout of `origin/composer-release` (0b2d12a), on the same checks:
+    - wall-clock budgets: `assert-comp`, `assert-strum`, `assert-rearrange` and `assert-voicing` (Compose on the 16k
+      row takes ~1.2 s against a 1 s budget here; a chord swap 22 ms against 20; a voicing pass 6 ms against 5);
+    - frozen byte-identity hashes: `assert-compose`, `assert-chord-symbols`, `assert-progression`, `assert-trace` and
+      `assert-frame-clave` (e3909e1's, b69a39e's and c0's specs, the same hash on both branches).
+    This branch touches no `core/` file, so the 84-of-84 baseline doesn't hold in this container (Node 22.23.4): a
+    slower CPU, and likely floating-point drift under a different V8. Rerun them on the planner's machine.
   - A draft PR into `composer-release`.
