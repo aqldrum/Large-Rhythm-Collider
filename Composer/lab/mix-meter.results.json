@@ -1,0 +1,2710 @@
+{
+ "date": "2026-11-03",
+ "how": "Composer/lab/mix-meter.html?run=1 in headless Chromium (Playwright), 48 kHz, seed 1, the defaults; see MIX_MASTER_ORDER.md",
+ "rows": [
+  {
+   "row": "8:7:6:5",
+   "tempoBpm": 120,
+   "cycleSeconds": 4,
+   "stems": {
+    "today": {
+     "drums": {
+      "peakDb": -6.26,
+      "truePeakDb": -6.26,
+      "rmsDb": -29.03,
+      "mMaxLufs": -22.52,
+      "sMaxLufs": -26.13,
+      "integratedLufs": -25.67,
+      "crestDb": 22.77
+     },
+     "bass": {
+      "peakDb": -3.63,
+      "truePeakDb": -3.63,
+      "rmsDb": -19.69,
+      "mMaxLufs": -12.29,
+      "sMaxLufs": -16.16,
+      "integratedLufs": -15.03,
+      "crestDb": 16.06
+     },
+     "lead": {
+      "peakDb": -2.98,
+      "truePeakDb": -2.97,
+      "rmsDb": -7.76,
+      "mMaxLufs": -5.04,
+      "sMaxLufs": -5.14,
+      "integratedLufs": -5.28,
+      "crestDb": 4.79
+     },
+     "chords": {
+      "peakDb": -2.39,
+      "truePeakDb": -2.39,
+      "rmsDb": -9.45,
+      "mMaxLufs": -6.28,
+      "sMaxLufs": -6.99,
+      "integratedLufs": -7.23,
+      "crestDb": 7.07
+     },
+     "comp": {
+      "peakDb": -3,
+      "truePeakDb": -3,
+      "rmsDb": -20.35,
+      "mMaxLufs": -12.36,
+      "sMaxLufs": -16.42,
+      "integratedLufs": -14.45,
+      "crestDb": 17.35
+     },
+     "inner": {
+      "peakDb": -8.1,
+      "truePeakDb": -8.1,
+      "rmsDb": -27.17,
+      "mMaxLufs": -17.39,
+      "sMaxLufs": -23.14,
+      "integratedLufs": -19.54,
+      "crestDb": 19.06
+     },
+     "mix": {
+      "peakDb": 0.13,
+      "truePeakDb": 0.14,
+      "rmsDb": -8.96,
+      "mMaxLufs": -6.04,
+      "sMaxLufs": -6.38,
+      "integratedLufs": -6.6,
+      "crestDb": 9.1,
+      "grMedianDb": -6.95,
+      "grP95Db": -8.79
+     }
+    },
+    "raw": {
+     "drums": {
+      "peakDb": -10.13,
+      "truePeakDb": -10.13,
+      "rmsDb": -32.57,
+      "mMaxLufs": -26.33,
+      "sMaxLufs": -29.95,
+      "integratedLufs": -29.42,
+      "crestDb": 22.43
+     },
+     "bass": {
+      "peakDb": -6.49,
+      "truePeakDb": -6.49,
+      "rmsDb": -23.04,
+      "mMaxLufs": -15.77,
+      "sMaxLufs": -19.66,
+      "integratedLufs": -18.49,
+      "crestDb": 16.55
+     },
+     "lead": {
+      "peakDb": -4.26,
+      "truePeakDb": -4.26,
+      "rmsDb": -9.04,
+      "mMaxLufs": -6.24,
+      "sMaxLufs": -6.39,
+      "integratedLufs": -6.55,
+      "crestDb": 4.77
+     },
+     "chords": {
+      "peakDb": -2.81,
+      "truePeakDb": -2.81,
+      "rmsDb": -11.23,
+      "mMaxLufs": -6.77,
+      "sMaxLufs": -8.49,
+      "integratedLufs": -9,
+      "crestDb": 8.42
+     },
+     "comp": {
+      "peakDb": -4.94,
+      "truePeakDb": -4.93,
+      "rmsDb": -23.6,
+      "mMaxLufs": -15.59,
+      "sMaxLufs": -19.68,
+      "integratedLufs": -17.71,
+      "crestDb": 18.67
+     },
+     "inner": {
+      "peakDb": -11.62,
+      "truePeakDb": -11.62,
+      "rmsDb": -30.97,
+      "mMaxLufs": -21.19,
+      "sMaxLufs": -26.94,
+      "integratedLufs": -23.34,
+      "crestDb": 19.34
+     },
+     "mix": {
+      "peakDb": 5.06,
+      "truePeakDb": 5.06,
+      "rmsDb": -6.37,
+      "mMaxLufs": -2.3,
+      "sMaxLufs": -3.61,
+      "integratedLufs": -4,
+      "crestDb": 11.44
+     }
+    },
+    "staged": {
+     "drums": {
+      "peakDb": -4.24,
+      "truePeakDb": -4.2,
+      "rmsDb": -26.57,
+      "mMaxLufs": -20.33,
+      "sMaxLufs": -23.95,
+      "integratedLufs": -23.41,
+      "crestDb": 22.37
+     },
+     "bass": {
+      "peakDb": -15.49,
+      "truePeakDb": -15.49,
+      "rmsDb": -32.04,
+      "mMaxLufs": -24.77,
+      "sMaxLufs": -28.66,
+      "integratedLufs": -27.49,
+      "crestDb": 16.55
+     },
+     "lead": {
+      "peakDb": -21.77,
+      "truePeakDb": -21.76,
+      "rmsDb": -26.54,
+      "mMaxLufs": -23.74,
+      "sMaxLufs": -23.89,
+      "integratedLufs": -24.05,
+      "crestDb": 4.77
+     },
+     "chords": {
+      "peakDb": -24.95,
+      "truePeakDb": -24.95,
+      "rmsDb": -33.53,
+      "mMaxLufs": -28.95,
+      "sMaxLufs": -30.82,
+      "integratedLufs": -31.31,
+      "crestDb": 8.58
+     },
+     "comp": {
+      "peakDb": -17.98,
+      "truePeakDb": -17.98,
+      "rmsDb": -36.06,
+      "mMaxLufs": -27.98,
+      "sMaxLufs": -32.15,
+      "integratedLufs": -30.18,
+      "crestDb": 18.08
+     },
+     "inner": {
+      "peakDb": -18.01,
+      "truePeakDb": -18.01,
+      "rmsDb": -39.92,
+      "mMaxLufs": -30.13,
+      "sMaxLufs": -35.91,
+      "integratedLufs": -32.31,
+      "crestDb": 21.91
+     },
+     "mix": {
+      "peakDb": -3.08,
+      "truePeakDb": -3.07,
+      "rmsDb": -21.95,
+      "mMaxLufs": -15.62,
+      "sMaxLufs": -19.14,
+      "integratedLufs": -19.84,
+      "crestDb": 18.87
+     }
+    },
+    "knock": {
+     "drums": {
+      "peakDb": -4.49,
+      "truePeakDb": -4.42,
+      "rmsDb": -25.47,
+      "mMaxLufs": -19.1,
+      "sMaxLufs": -22.64,
+      "integratedLufs": -22.11,
+      "crestDb": 21.05
+     },
+     "bass": {
+      "peakDb": -11.52,
+      "truePeakDb": -11.52,
+      "rmsDb": -28.09,
+      "mMaxLufs": -20.79,
+      "sMaxLufs": -24.66,
+      "integratedLufs": -23.49,
+      "crestDb": 16.57
+     },
+     "lead": {
+      "peakDb": -17.78,
+      "truePeakDb": -17.78,
+      "rmsDb": -22.55,
+      "mMaxLufs": -19.74,
+      "sMaxLufs": -19.9,
+      "integratedLufs": -20.05,
+      "crestDb": 4.77
+     },
+     "chords": {
+      "peakDb": -20.96,
+      "truePeakDb": -20.96,
+      "rmsDb": -29.54,
+      "mMaxLufs": -24.96,
+      "sMaxLufs": -26.83,
+      "integratedLufs": -27.31,
+      "crestDb": 8.58
+     },
+     "comp": {
+      "peakDb": -14.06,
+      "truePeakDb": -14.06,
+      "rmsDb": -32.07,
+      "mMaxLufs": -23.98,
+      "sMaxLufs": -28.15,
+      "integratedLufs": -26.18,
+      "crestDb": 18.01
+     },
+     "inner": {
+      "peakDb": -14.04,
+      "truePeakDb": -14.03,
+      "rmsDb": -35.92,
+      "mMaxLufs": -26.16,
+      "sMaxLufs": -31.92,
+      "integratedLufs": -28.33,
+      "crestDb": 21.89
+     },
+     "mix": {
+      "peakDb": -4.01,
+      "truePeakDb": -4.01,
+      "rmsDb": -19.28,
+      "mMaxLufs": -14.12,
+      "sMaxLufs": -16.48,
+      "integratedLufs": -17.06,
+      "crestDb": 15.27,
+      "grMedianDb": -1.7,
+      "grP95Db": -4.8
+     }
+    },
+    "classicStaged": {
+     "drums": {
+      "peakDb": -2.54,
+      "truePeakDb": -2.54,
+      "rmsDb": -24.48,
+      "mMaxLufs": -17.83,
+      "sMaxLufs": -21.59,
+      "integratedLufs": -21.06,
+      "crestDb": 21.93
+     },
+     "bass": {
+      "peakDb": -11.68,
+      "truePeakDb": -11.68,
+      "rmsDb": -28.38,
+      "mMaxLufs": -20.97,
+      "sMaxLufs": -24.85,
+      "integratedLufs": -23.72,
+      "crestDb": 16.7
+     },
+     "lead": {
+      "peakDb": -17.96,
+      "truePeakDb": -17.96,
+      "rmsDb": -22.73,
+      "mMaxLufs": -19.93,
+      "sMaxLufs": -20.08,
+      "integratedLufs": -20.24,
+      "crestDb": 4.77
+     },
+     "chords": {
+      "peakDb": -21.14,
+      "truePeakDb": -21.14,
+      "rmsDb": -29.73,
+      "mMaxLufs": -25.15,
+      "sMaxLufs": -27.02,
+      "integratedLufs": -27.5,
+      "crestDb": 8.59
+     },
+     "comp": {
+      "peakDb": -14.2,
+      "truePeakDb": -14.2,
+      "rmsDb": -32.26,
+      "mMaxLufs": -24.17,
+      "sMaxLufs": -28.34,
+      "integratedLufs": -26.37,
+      "crestDb": 18.06
+     },
+     "inner": {
+      "peakDb": -14.21,
+      "truePeakDb": -14.2,
+      "rmsDb": -36.11,
+      "mMaxLufs": -26.33,
+      "sMaxLufs": -32.1,
+      "integratedLufs": -28.51,
+      "crestDb": 21.91
+     },
+     "mix": {
+      "peakDb": -2.42,
+      "truePeakDb": -2.41,
+      "rmsDb": -18.94,
+      "mMaxLufs": -13.2,
+      "sMaxLufs": -16.06,
+      "integratedLufs": -16.72,
+      "crestDb": 16.53,
+      "grMedianDb": -0.85,
+      "grP95Db": -3.34
+     }
+    }
+   }
+  },
+  {
+   "row": "11:9:7:5",
+   "tempoBpm": 120,
+   "cycleSeconds": 4,
+   "stems": {
+    "today": {
+     "drums": {
+      "peakDb": -5.75,
+      "truePeakDb": -5.75,
+      "rmsDb": -29.2,
+      "mMaxLufs": -21.68,
+      "sMaxLufs": -25.58,
+      "integratedLufs": -26.31,
+      "crestDb": 23.46
+     },
+     "bass": {
+      "peakDb": -3.4,
+      "truePeakDb": -3.4,
+      "rmsDb": -18.52,
+      "mMaxLufs": -10.31,
+      "sMaxLufs": -15.09,
+      "integratedLufs": -14.06,
+      "crestDb": 15.11
+     },
+     "lead": {
+      "peakDb": -3.01,
+      "truePeakDb": -3.01,
+      "rmsDb": -17.72,
+      "mMaxLufs": -7.86,
+      "sMaxLufs": -13.56,
+      "integratedLufs": -11.11,
+      "crestDb": 14.71
+     },
+     "chords": {
+      "peakDb": -1.73,
+      "truePeakDb": -1.73,
+      "rmsDb": -9.72,
+      "mMaxLufs": -6.7,
+      "sMaxLufs": -7.05,
+      "integratedLufs": -7.38,
+      "crestDb": 7.99
+     },
+     "comp": {
+      "peakDb": -2.06,
+      "truePeakDb": -2.05,
+      "rmsDb": -21.2,
+      "mMaxLufs": -12.52,
+      "sMaxLufs": -17.1,
+      "integratedLufs": -14.89,
+      "crestDb": 19.15
+     },
+     "inner": {
+      "peakDb": -5.32,
+      "truePeakDb": -5.31,
+      "rmsDb": -24.74,
+      "mMaxLufs": -14.77,
+      "sMaxLufs": -20.46,
+      "integratedLufs": -17.18,
+      "crestDb": 19.43
+     },
+     "mix": {
+      "peakDb": -0.9,
+      "truePeakDb": -0.9,
+      "rmsDb": -9.29,
+      "mMaxLufs": -6.09,
+      "sMaxLufs": -6.78,
+      "integratedLufs": -7.06,
+      "crestDb": 8.39,
+      "grMedianDb": -5.42,
+      "grP95Db": -7.33
+     }
+    },
+    "raw": {
+     "drums": {
+      "peakDb": -9.55,
+      "truePeakDb": -9.51,
+      "rmsDb": -32.68,
+      "mMaxLufs": -25.39,
+      "sMaxLufs": -29.33,
+      "integratedLufs": -30,
+      "crestDb": 23.17
+     },
+     "bass": {
+      "peakDb": -6.21,
+      "truePeakDb": -6.21,
+      "rmsDb": -21.88,
+      "mMaxLufs": -13.7,
+      "sMaxLufs": -18.57,
+      "integratedLufs": -17.32,
+      "crestDb": 15.67
+     },
+     "lead": {
+      "peakDb": -4.49,
+      "truePeakDb": -4.48,
+      "rmsDb": -20.94,
+      "mMaxLufs": -10.98,
+      "sMaxLufs": -16.79,
+      "integratedLufs": -14.33,
+      "crestDb": 16.46
+     },
+     "chords": {
+      "peakDb": -0.95,
+      "truePeakDb": -0.95,
+      "rmsDb": -10,
+      "mMaxLufs": -6.68,
+      "sMaxLufs": -6.73,
+      "integratedLufs": -7.62,
+      "crestDb": 9.05
+     },
+     "comp": {
+      "peakDb": -2.9,
+      "truePeakDb": -2.89,
+      "rmsDb": -23.85,
+      "mMaxLufs": -14.71,
+      "sMaxLufs": -19.9,
+      "integratedLufs": -17.36,
+      "crestDb": 20.96
+     },
+     "inner": {
+      "peakDb": -8.88,
+      "truePeakDb": -8.87,
+      "rmsDb": -28.54,
+      "mMaxLufs": -18.64,
+      "sMaxLufs": -24.26,
+      "integratedLufs": -20.99,
+      "crestDb": 19.67
+     },
+     "mix": {
+      "peakDb": 2.58,
+      "truePeakDb": 2.58,
+      "rmsDb": -8.82,
+      "mMaxLufs": -4.55,
+      "sMaxLufs": -5.95,
+      "integratedLufs": -6.57,
+      "crestDb": 11.41
+     }
+    },
+    "staged": {
+     "drums": {
+      "peakDb": -3.55,
+      "truePeakDb": -3.54,
+      "rmsDb": -26.69,
+      "mMaxLufs": -19.42,
+      "sMaxLufs": -23.34,
+      "integratedLufs": -24.01,
+      "crestDb": 23.14
+     },
+     "bass": {
+      "peakDb": -15.21,
+      "truePeakDb": -15.21,
+      "rmsDb": -30.88,
+      "mMaxLufs": -22.7,
+      "sMaxLufs": -27.57,
+      "integratedLufs": -26.32,
+      "crestDb": 15.67
+     },
+     "lead": {
+      "peakDb": -22.01,
+      "truePeakDb": -22,
+      "rmsDb": -38.44,
+      "mMaxLufs": -28.48,
+      "sMaxLufs": -34.29,
+      "integratedLufs": -31.83,
+      "crestDb": 16.44
+     },
+     "chords": {
+      "peakDb": -23.5,
+      "truePeakDb": -23.5,
+      "rmsDb": -32.53,
+      "mMaxLufs": -29.07,
+      "sMaxLufs": -29.28,
+      "integratedLufs": -30.15,
+      "crestDb": 9.03
+     },
+     "comp": {
+      "peakDb": -15.17,
+      "truePeakDb": -15.17,
+      "rmsDb": -36.72,
+      "mMaxLufs": -27.22,
+      "sMaxLufs": -32.77,
+      "integratedLufs": -30.12,
+      "crestDb": 21.55
+     },
+     "inner": {
+      "peakDb": -16.5,
+      "truePeakDb": -16.5,
+      "rmsDb": -37.96,
+      "mMaxLufs": -28.03,
+      "sMaxLufs": -33.7,
+      "integratedLufs": -30.43,
+      "crestDb": 21.46
+     },
+     "mix": {
+      "peakDb": -2.69,
+      "truePeakDb": -2.69,
+      "rmsDb": -23.58,
+      "mMaxLufs": -16.97,
+      "sMaxLufs": -20.67,
+      "integratedLufs": -21.89,
+      "crestDb": 20.89
+     }
+    },
+    "knock": {
+     "drums": {
+      "peakDb": -4.03,
+      "truePeakDb": -4,
+      "rmsDb": -25.61,
+      "mMaxLufs": -18.98,
+      "sMaxLufs": -22.5,
+      "integratedLufs": -22.83,
+      "crestDb": 21.6
+     },
+     "bass": {
+      "peakDb": -11.25,
+      "truePeakDb": -11.25,
+      "rmsDb": -26.92,
+      "mMaxLufs": -18.8,
+      "sMaxLufs": -23.58,
+      "integratedLufs": -22.52,
+      "crestDb": 15.67
+     },
+     "lead": {
+      "peakDb": -18.04,
+      "truePeakDb": -18.04,
+      "rmsDb": -34.44,
+      "mMaxLufs": -24.22,
+      "sMaxLufs": -30.29,
+      "integratedLufs": -27.57,
+      "crestDb": 16.41
+     },
+     "chords": {
+      "peakDb": -19.51,
+      "truePeakDb": -19.51,
+      "rmsDb": -28.54,
+      "mMaxLufs": -25.11,
+      "sMaxLufs": -25.28,
+      "integratedLufs": -26.07,
+      "crestDb": 9.02
+     },
+     "comp": {
+      "peakDb": -11.2,
+      "truePeakDb": -11.2,
+      "rmsDb": -32.75,
+      "mMaxLufs": -23.22,
+      "sMaxLufs": -28.77,
+      "integratedLufs": -26.11,
+      "crestDb": 21.55
+     },
+     "inner": {
+      "peakDb": -12.53,
+      "truePeakDb": -12.53,
+      "rmsDb": -33.96,
+      "mMaxLufs": -24.07,
+      "sMaxLufs": -29.71,
+      "integratedLufs": -26.43,
+      "crestDb": 21.43
+     },
+     "mix": {
+      "peakDb": -4.13,
+      "truePeakDb": -4.13,
+      "rmsDb": -21.22,
+      "mMaxLufs": -15.49,
+      "sMaxLufs": -18.33,
+      "integratedLufs": -19.32,
+      "crestDb": 17.09,
+      "grMedianDb": -1.17,
+      "grP95Db": -4.86
+     }
+    },
+    "classicStaged": {
+     "drums": {
+      "peakDb": -2.42,
+      "truePeakDb": -2.4,
+      "rmsDb": -24.57,
+      "mMaxLufs": -17.64,
+      "sMaxLufs": -21.13,
+      "integratedLufs": -21.61,
+      "crestDb": 22.17
+     },
+     "bass": {
+      "peakDb": -11.41,
+      "truePeakDb": -11.41,
+      "rmsDb": -27.19,
+      "mMaxLufs": -18.91,
+      "sMaxLufs": -23.77,
+      "integratedLufs": -22.74,
+      "crestDb": 15.78
+     },
+     "lead": {
+      "peakDb": -18.22,
+      "truePeakDb": -18.21,
+      "rmsDb": -34.64,
+      "mMaxLufs": -24.7,
+      "sMaxLufs": -30.48,
+      "integratedLufs": -28.03,
+      "crestDb": 16.42
+     },
+     "chords": {
+      "peakDb": -19.69,
+      "truePeakDb": -19.69,
+      "rmsDb": -28.72,
+      "mMaxLufs": -25.3,
+      "sMaxLufs": -25.47,
+      "integratedLufs": -26.35,
+      "crestDb": 9.03
+     },
+     "comp": {
+      "peakDb": -11.45,
+      "truePeakDb": -11.45,
+      "rmsDb": -32.99,
+      "mMaxLufs": -23.41,
+      "sMaxLufs": -28.96,
+      "integratedLufs": -26.59,
+      "crestDb": 21.55
+     },
+     "inner": {
+      "peakDb": -12.7,
+      "truePeakDb": -12.7,
+      "rmsDb": -34.15,
+      "mMaxLufs": -24.23,
+      "sMaxLufs": -29.9,
+      "integratedLufs": -26.62,
+      "crestDb": 21.46
+     },
+     "mix": {
+      "peakDb": -2.45,
+      "truePeakDb": -2.44,
+      "rmsDb": -20.77,
+      "mMaxLufs": -14.92,
+      "sMaxLufs": -17.88,
+      "integratedLufs": -18.87,
+      "crestDb": 18.33,
+      "grMedianDb": -0.46,
+      "grP95Db": -3.45
+     }
+    }
+   }
+  },
+  {
+   "row": "16:12:9",
+   "tempoBpm": 120,
+   "cycleSeconds": 4,
+   "stems": {
+    "today": {
+     "drums": {
+      "peakDb": -5.49,
+      "truePeakDb": -5.49,
+      "rmsDb": -28.91,
+      "mMaxLufs": -22.07,
+      "sMaxLufs": -25.95,
+      "integratedLufs": -25.88,
+      "crestDb": 23.42
+     },
+     "bass": {
+      "peakDb": -3.57,
+      "truePeakDb": -3.57,
+      "rmsDb": -18.7,
+      "mMaxLufs": -12.27,
+      "sMaxLufs": -16.19,
+      "integratedLufs": -14.8,
+      "crestDb": 15.13
+     },
+     "lead": {
+      "peakDb": -3.12,
+      "truePeakDb": -3.12,
+      "rmsDb": -8.74,
+      "mMaxLufs": -5.49,
+      "sMaxLufs": -5.64,
+      "integratedLufs": -6.03,
+      "crestDb": 5.62
+     },
+     "chords": {
+      "peakDb": -2.31,
+      "truePeakDb": -2.31,
+      "rmsDb": -9.12,
+      "mMaxLufs": -6.57,
+      "sMaxLufs": -6.88,
+      "integratedLufs": -6.95,
+      "crestDb": 6.81
+     },
+     "comp": {
+      "peakDb": -3.08,
+      "truePeakDb": -3.08,
+      "rmsDb": -17.39,
+      "mMaxLufs": -10.1,
+      "sMaxLufs": -13.51,
+      "integratedLufs": -13.22,
+      "crestDb": 14.31
+     },
+     "inner": {
+      "peakDb": -7.02,
+      "truePeakDb": -7.01,
+      "rmsDb": -12.82,
+      "mMaxLufs": -10.04,
+      "sMaxLufs": -10.07,
+      "integratedLufs": -10.13,
+      "crestDb": 5.81
+     },
+     "mix": {
+      "peakDb": -0.18,
+      "truePeakDb": -0.16,
+      "rmsDb": -9.04,
+      "mMaxLufs": -5.44,
+      "sMaxLufs": -6.58,
+      "integratedLufs": -6.75,
+      "crestDb": 8.87,
+      "grMedianDb": -7.76,
+      "grP95Db": -9.19
+     }
+    },
+    "raw": {
+     "drums": {
+      "peakDb": -9.21,
+      "truePeakDb": -9.17,
+      "rmsDb": -32.42,
+      "mMaxLufs": -25.86,
+      "sMaxLufs": -29.74,
+      "integratedLufs": -29.59,
+      "crestDb": 23.25
+     },
+     "bass": {
+      "peakDb": -6.42,
+      "truePeakDb": -6.42,
+      "rmsDb": -22.07,
+      "mMaxLufs": -15.75,
+      "sMaxLufs": -19.65,
+      "integratedLufs": -18.26,
+      "crestDb": 15.64
+     },
+     "lead": {
+      "peakDb": -4.71,
+      "truePeakDb": -4.71,
+      "rmsDb": -10.4,
+      "mMaxLufs": -7.02,
+      "sMaxLufs": -7.23,
+      "integratedLufs": -7.64,
+      "crestDb": 5.7
+     },
+     "chords": {
+      "peakDb": -2.02,
+      "truePeakDb": -2.02,
+      "rmsDb": -9.42,
+      "mMaxLufs": -6.76,
+      "sMaxLufs": -6.83,
+      "integratedLufs": -7.24,
+      "crestDb": 7.41
+     },
+     "comp": {
+      "peakDb": -5.44,
+      "truePeakDb": -5.44,
+      "rmsDb": -20.8,
+      "mMaxLufs": -13.18,
+      "sMaxLufs": -16.92,
+      "integratedLufs": -16.16,
+      "crestDb": 15.35
+     },
+     "inner": {
+      "peakDb": -10.74,
+      "truePeakDb": -10.73,
+      "rmsDb": -16.61,
+      "mMaxLufs": -13.85,
+      "sMaxLufs": -13.88,
+      "integratedLufs": -13.93,
+      "crestDb": 5.88
+     },
+     "mix": {
+      "peakDb": 5.63,
+      "truePeakDb": 5.63,
+      "rmsDb": -5.95,
+      "mMaxLufs": -2.15,
+      "sMaxLufs": -3.26,
+      "integratedLufs": -3.6,
+      "crestDb": 11.58
+     }
+    },
+    "staged": {
+     "drums": {
+      "peakDb": -3.14,
+      "truePeakDb": -3.14,
+      "rmsDb": -26.42,
+      "mMaxLufs": -19.86,
+      "sMaxLufs": -23.73,
+      "integratedLufs": -23.58,
+      "crestDb": 23.28
+     },
+     "bass": {
+      "peakDb": -15.41,
+      "truePeakDb": -15.41,
+      "rmsDb": -31.07,
+      "mMaxLufs": -24.75,
+      "sMaxLufs": -28.65,
+      "integratedLufs": -27.26,
+      "crestDb": 15.65
+     },
+     "lead": {
+      "peakDb": -22.21,
+      "truePeakDb": -22.21,
+      "rmsDb": -27.9,
+      "mMaxLufs": -24.52,
+      "sMaxLufs": -24.73,
+      "integratedLufs": -25.14,
+      "crestDb": 5.7
+     },
+     "chords": {
+      "peakDb": -23.67,
+      "truePeakDb": -23.67,
+      "rmsDb": -31.63,
+      "mMaxLufs": -28.83,
+      "sMaxLufs": -29.01,
+      "integratedLufs": -29.45,
+      "crestDb": 7.96
+     },
+     "comp": {
+      "peakDb": -17.98,
+      "truePeakDb": -17.98,
+      "rmsDb": -33.59,
+      "mMaxLufs": -26.1,
+      "sMaxLufs": -29.72,
+      "integratedLufs": -29.35,
+      "crestDb": 15.6
+     },
+     "inner": {
+      "peakDb": -19.68,
+      "truePeakDb": -19.68,
+      "rmsDb": -26.06,
+      "mMaxLufs": -23.21,
+      "sMaxLufs": -23.4,
+      "integratedLufs": -23.44,
+      "crestDb": 6.39
+     },
+     "mix": {
+      "peakDb": -1.59,
+      "truePeakDb": -1.56,
+      "rmsDb": -20.3,
+      "mMaxLufs": -15.09,
+      "sMaxLufs": -17.61,
+      "integratedLufs": -18.15,
+      "crestDb": 18.74
+     }
+    },
+    "knock": {
+     "drums": {
+      "peakDb": -3.93,
+      "truePeakDb": -3.92,
+      "rmsDb": -25.62,
+      "mMaxLufs": -19.07,
+      "sMaxLufs": -22.84,
+      "integratedLufs": -22.61,
+      "crestDb": 21.7
+     },
+     "bass": {
+      "peakDb": -11.45,
+      "truePeakDb": -11.45,
+      "rmsDb": -27.1,
+      "mMaxLufs": -20.77,
+      "sMaxLufs": -24.64,
+      "integratedLufs": -23.26,
+      "crestDb": 15.65
+     },
+     "lead": {
+      "peakDb": -18.22,
+      "truePeakDb": -18.22,
+      "rmsDb": -23.92,
+      "mMaxLufs": -20.53,
+      "sMaxLufs": -20.74,
+      "integratedLufs": -21.2,
+      "crestDb": 5.7
+     },
+     "chords": {
+      "peakDb": -19.68,
+      "truePeakDb": -19.68,
+      "rmsDb": -27.63,
+      "mMaxLufs": -24.83,
+      "sMaxLufs": -25.01,
+      "integratedLufs": -25.45,
+      "crestDb": 7.95
+     },
+     "comp": {
+      "peakDb": -14.01,
+      "truePeakDb": -14.01,
+      "rmsDb": -29.59,
+      "mMaxLufs": -22.16,
+      "sMaxLufs": -25.72,
+      "integratedLufs": -25.43,
+      "crestDb": 15.58
+     },
+     "inner": {
+      "peakDb": -15.7,
+      "truePeakDb": -15.7,
+      "rmsDb": -22.07,
+      "mMaxLufs": -19.21,
+      "sMaxLufs": -19.4,
+      "integratedLufs": -19.44,
+      "crestDb": 6.38
+     },
+     "mix": {
+      "peakDb": -3.37,
+      "truePeakDb": -3.37,
+      "rmsDb": -17.62,
+      "mMaxLufs": -13.76,
+      "sMaxLufs": -15.01,
+      "integratedLufs": -15.33,
+      "crestDb": 14.26,
+      "grMedianDb": -1.57,
+      "grP95Db": -4.97
+     }
+    },
+    "classicStaged": {
+     "drums": {
+      "peakDb": -1.77,
+      "truePeakDb": -1.77,
+      "rmsDb": -24.74,
+      "mMaxLufs": -18.07,
+      "sMaxLufs": -21.91,
+      "integratedLufs": -21.69,
+      "crestDb": 22.97
+     },
+     "bass": {
+      "peakDb": -11.62,
+      "truePeakDb": -11.62,
+      "rmsDb": -27.38,
+      "mMaxLufs": -20.95,
+      "sMaxLufs": -24.86,
+      "integratedLufs": -23.48,
+      "crestDb": 15.76
+     },
+     "lead": {
+      "peakDb": -18.4,
+      "truePeakDb": -18.4,
+      "rmsDb": -24.1,
+      "mMaxLufs": -20.71,
+      "sMaxLufs": -20.93,
+      "integratedLufs": -21.34,
+      "crestDb": 5.7
+     },
+     "chords": {
+      "peakDb": -19.86,
+      "truePeakDb": -19.86,
+      "rmsDb": -27.82,
+      "mMaxLufs": -25.02,
+      "sMaxLufs": -25.2,
+      "integratedLufs": -25.64,
+      "crestDb": 7.96
+     },
+     "comp": {
+      "peakDb": -14.18,
+      "truePeakDb": -14.18,
+      "rmsDb": -29.78,
+      "mMaxLufs": -22.31,
+      "sMaxLufs": -25.91,
+      "integratedLufs": -25.62,
+      "crestDb": 15.6
+     },
+     "inner": {
+      "peakDb": -15.87,
+      "truePeakDb": -15.87,
+      "rmsDb": -22.27,
+      "mMaxLufs": -19.4,
+      "sMaxLufs": -19.59,
+      "integratedLufs": -19.63,
+      "crestDb": 6.4
+     },
+     "mix": {
+      "peakDb": -2.04,
+      "truePeakDb": -2.03,
+      "rmsDb": -17.47,
+      "mMaxLufs": -13.19,
+      "sMaxLufs": -14.8,
+      "integratedLufs": -15.17,
+      "crestDb": 15.45,
+      "grMedianDb": -1,
+      "grP95Db": -4.27
+     }
+    }
+   }
+  },
+  {
+   "row": "7:5:3:2",
+   "tempoBpm": 60,
+   "cycleSeconds": 4,
+   "stems": {
+    "today": {
+     "drums": {
+      "peakDb": -6.34,
+      "truePeakDb": -6.33,
+      "rmsDb": -32.09,
+      "mMaxLufs": -22.35,
+      "sMaxLufs": -27.93,
+      "integratedLufs": -27.41,
+      "crestDb": 25.77
+     },
+     "bass": {
+      "peakDb": -3.75,
+      "truePeakDb": -3.75,
+      "rmsDb": -20.9,
+      "mMaxLufs": -12.76,
+      "sMaxLufs": -18.3,
+      "integratedLufs": -15.88,
+      "crestDb": 17.15
+     },
+     "lead": {
+      "peakDb": -2.86,
+      "truePeakDb": -2.86,
+      "rmsDb": -8.02,
+      "mMaxLufs": -5.53,
+      "sMaxLufs": -5.53,
+      "integratedLufs": -5.56,
+      "crestDb": 5.16
+     },
+     "chords": {
+      "peakDb": -1.91,
+      "truePeakDb": -1.91,
+      "rmsDb": -10.33,
+      "mMaxLufs": -6.96,
+      "sMaxLufs": -7.3,
+      "integratedLufs": -7.77,
+      "crestDb": 8.42
+     },
+     "comp": {
+      "peakDb": -3.7,
+      "truePeakDb": -3.7,
+      "rmsDb": -19.46,
+      "mMaxLufs": -11.81,
+      "sMaxLufs": -15.69,
+      "integratedLufs": -15.46,
+      "crestDb": 15.76
+     },
+     "inner": {
+      "peakDb": null,
+      "truePeakDb": null,
+      "rmsDb": null,
+      "mMaxLufs": null,
+      "sMaxLufs": null,
+      "integratedLufs": null,
+      "crestDb": null
+     },
+     "mix": {
+      "peakDb": -0.1,
+      "truePeakDb": -0.1,
+      "rmsDb": -9.12,
+      "mMaxLufs": -5.53,
+      "sMaxLufs": -6.52,
+      "integratedLufs": -6.9,
+      "crestDb": 9.02,
+      "grMedianDb": -7.77,
+      "grP95Db": -8.9
+     }
+    },
+    "raw": {
+     "drums": {
+      "peakDb": -10.15,
+      "truePeakDb": -10.04,
+      "rmsDb": -35.36,
+      "mMaxLufs": -26.16,
+      "sMaxLufs": -31.74,
+      "integratedLufs": -31.08,
+      "crestDb": 25.31
+     },
+     "bass": {
+      "peakDb": -6.62,
+      "truePeakDb": -6.62,
+      "rmsDb": -24.24,
+      "mMaxLufs": -16.26,
+      "sMaxLufs": -21.83,
+      "integratedLufs": -19.37,
+      "crestDb": 17.61
+     },
+     "lead": {
+      "peakDb": -3.85,
+      "truePeakDb": -3.85,
+      "rmsDb": -8.9,
+      "mMaxLufs": -6.41,
+      "sMaxLufs": -6.42,
+      "integratedLufs": -6.44,
+      "crestDb": 5.06
+     },
+     "chords": {
+      "peakDb": -1.34,
+      "truePeakDb": -1.34,
+      "rmsDb": -10.97,
+      "mMaxLufs": -7,
+      "sMaxLufs": -7.69,
+      "integratedLufs": -8.32,
+      "crestDb": 9.63
+     },
+     "comp": {
+      "peakDb": -6.54,
+      "truePeakDb": -6.54,
+      "rmsDb": -22.93,
+      "mMaxLufs": -15.38,
+      "sMaxLufs": -19.27,
+      "integratedLufs": -19.02,
+      "crestDb": 16.39
+     },
+     "inner": {
+      "peakDb": null,
+      "truePeakDb": null,
+      "rmsDb": null,
+      "mMaxLufs": null,
+      "sMaxLufs": null,
+      "integratedLufs": null,
+      "crestDb": null
+     },
+     "mix": {
+      "peakDb": 4.93,
+      "truePeakDb": 4.93,
+      "rmsDb": -6.39,
+      "mMaxLufs": -2.64,
+      "sMaxLufs": -3.7,
+      "integratedLufs": -4.13,
+      "crestDb": 11.32
+     }
+    },
+    "staged": {
+     "drums": {
+      "peakDb": -4.21,
+      "truePeakDb": -4.2,
+      "rmsDb": -29.36,
+      "mMaxLufs": -20.16,
+      "sMaxLufs": -25.75,
+      "integratedLufs": -25.08,
+      "crestDb": 25.16
+     },
+     "bass": {
+      "peakDb": -15.62,
+      "truePeakDb": -15.62,
+      "rmsDb": -33.24,
+      "mMaxLufs": -25.26,
+      "sMaxLufs": -30.83,
+      "integratedLufs": -28.37,
+      "crestDb": 17.61
+     },
+     "lead": {
+      "peakDb": -21.34,
+      "truePeakDb": -21.34,
+      "rmsDb": -26.4,
+      "mMaxLufs": -23.91,
+      "sMaxLufs": -23.92,
+      "integratedLufs": -23.94,
+      "crestDb": 5.06
+     },
+     "chords": {
+      "peakDb": -24.32,
+      "truePeakDb": -24.32,
+      "rmsDb": -33.32,
+      "mMaxLufs": -29.48,
+      "sMaxLufs": -30.04,
+      "integratedLufs": -30.65,
+      "crestDb": 9
+     },
+     "comp": {
+      "peakDb": -19.12,
+      "truePeakDb": -19.12,
+      "rmsDb": -35.42,
+      "mMaxLufs": -28.1,
+      "sMaxLufs": -31.75,
+      "integratedLufs": -31.41,
+      "crestDb": 16.31
+     },
+     "inner": {
+      "peakDb": null,
+      "truePeakDb": null,
+      "rmsDb": null,
+      "mMaxLufs": null,
+      "sMaxLufs": null,
+      "integratedLufs": null,
+      "crestDb": null
+     },
+     "mix": {
+      "peakDb": -3.61,
+      "truePeakDb": -3.6,
+      "rmsDb": -23.03,
+      "mMaxLufs": -17.12,
+      "sMaxLufs": -20.19,
+      "integratedLufs": -21.12,
+      "crestDb": 19.43
+     }
+    },
+    "knock": {
+     "drums": {
+      "peakDb": -4.52,
+      "truePeakDb": -4.49,
+      "rmsDb": -28.25,
+      "mMaxLufs": -19.02,
+      "sMaxLufs": -24.49,
+      "integratedLufs": -23.87,
+      "crestDb": 23.76
+     },
+     "bass": {
+      "peakDb": -11.66,
+      "truePeakDb": -11.66,
+      "rmsDb": -29.3,
+      "mMaxLufs": -21.29,
+      "sMaxLufs": -26.83,
+      "integratedLufs": -24.36,
+      "crestDb": 17.64
+     },
+     "lead": {
+      "peakDb": -17.36,
+      "truePeakDb": -17.36,
+      "rmsDb": -22.42,
+      "mMaxLufs": -19.92,
+      "sMaxLufs": -19.92,
+      "integratedLufs": -19.95,
+      "crestDb": 5.05
+     },
+     "chords": {
+      "peakDb": -20.31,
+      "truePeakDb": -20.31,
+      "rmsDb": -29.32,
+      "mMaxLufs": -25.48,
+      "sMaxLufs": -26.05,
+      "integratedLufs": -26.65,
+      "crestDb": 9.01
+     },
+     "comp": {
+      "peakDb": -15.13,
+      "truePeakDb": -15.13,
+      "rmsDb": -31.44,
+      "mMaxLufs": -24.25,
+      "sMaxLufs": -27.75,
+      "integratedLufs": -27.4,
+      "crestDb": 16.31
+     },
+     "inner": {
+      "peakDb": null,
+      "truePeakDb": null,
+      "rmsDb": null,
+      "mMaxLufs": null,
+      "sMaxLufs": null,
+      "integratedLufs": null,
+      "crestDb": null
+     },
+     "mix": {
+      "peakDb": -4.36,
+      "truePeakDb": -4.36,
+      "rmsDb": -19.81,
+      "mMaxLufs": -14.94,
+      "sMaxLufs": -17.08,
+      "integratedLufs": -17.74,
+      "crestDb": 15.45,
+      "grMedianDb": -0.56,
+      "grP95Db": -4.69
+     }
+    },
+    "classicStaged": {
+     "drums": {
+      "peakDb": -2.55,
+      "truePeakDb": -2.52,
+      "rmsDb": -27.5,
+      "mMaxLufs": -17.96,
+      "sMaxLufs": -23.44,
+      "integratedLufs": -22.99,
+      "crestDb": 24.97
+     },
+     "bass": {
+      "peakDb": -11.82,
+      "truePeakDb": -11.82,
+      "rmsDb": -29.62,
+      "mMaxLufs": -21.47,
+      "sMaxLufs": -27.02,
+      "integratedLufs": -24.61,
+      "crestDb": 17.81
+     },
+     "lead": {
+      "peakDb": -17.54,
+      "truePeakDb": -17.54,
+      "rmsDb": -22.6,
+      "mMaxLufs": -20.11,
+      "sMaxLufs": -20.11,
+      "integratedLufs": -20.14,
+      "crestDb": 5.06
+     },
+     "chords": {
+      "peakDb": -20.52,
+      "truePeakDb": -20.52,
+      "rmsDb": -29.52,
+      "mMaxLufs": -25.67,
+      "sMaxLufs": -26.24,
+      "integratedLufs": -26.84,
+      "crestDb": 9
+     },
+     "comp": {
+      "peakDb": -15.32,
+      "truePeakDb": -15.32,
+      "rmsDb": -31.68,
+      "mMaxLufs": -24.35,
+      "sMaxLufs": -27.94,
+      "integratedLufs": -27.61,
+      "crestDb": 16.37
+     },
+     "inner": {
+      "peakDb": null,
+      "truePeakDb": null,
+      "rmsDb": null,
+      "mMaxLufs": null,
+      "sMaxLufs": null,
+      "integratedLufs": null,
+      "crestDb": null
+     },
+     "mix": {
+      "peakDb": -2.79,
+      "truePeakDb": -2.79,
+      "rmsDb": -19.79,
+      "mMaxLufs": -14.46,
+      "sMaxLufs": -16.94,
+      "integratedLufs": -17.71,
+      "crestDb": 17,
+      "grMedianDb": -0.2,
+      "grP95Db": -3.34
+     }
+    }
+   }
+  },
+  {
+   "row": "19:17:16:15",
+   "tempoBpm": 120,
+   "cycleSeconds": 4,
+   "stems": {
+    "today": {
+     "drums": {
+      "peakDb": -5.72,
+      "truePeakDb": -5.69,
+      "rmsDb": -29.12,
+      "mMaxLufs": -22.35,
+      "sMaxLufs": -26.11,
+      "integratedLufs": -26.11,
+      "crestDb": 23.43
+     },
+     "bass": {
+      "peakDb": -2.79,
+      "truePeakDb": -2.79,
+      "rmsDb": -15,
+      "mMaxLufs": -10.39,
+      "sMaxLufs": -12.02,
+      "integratedLufs": -12.48,
+      "crestDb": 12.21
+     },
+     "lead": {
+      "peakDb": -3.3,
+      "truePeakDb": -3.29,
+      "rmsDb": -6.91,
+      "mMaxLufs": -4.04,
+      "sMaxLufs": -4.19,
+      "integratedLufs": -4.33,
+      "crestDb": 3.62
+     },
+     "chords": {
+      "peakDb": -1.78,
+      "truePeakDb": -1.78,
+      "rmsDb": -9.32,
+      "mMaxLufs": -6.67,
+      "sMaxLufs": -6.83,
+      "integratedLufs": -6.93,
+      "crestDb": 7.54
+     },
+     "comp": {
+      "peakDb": -2.43,
+      "truePeakDb": -2.42,
+      "rmsDb": -19.04,
+      "mMaxLufs": -11.88,
+      "sMaxLufs": -15.5,
+      "integratedLufs": -14.87,
+      "crestDb": 16.61
+     },
+     "inner": {
+      "peakDb": -7.5,
+      "truePeakDb": -7.5,
+      "rmsDb": -24.47,
+      "mMaxLufs": -15.39,
+      "sMaxLufs": -20.35,
+      "integratedLufs": -18.61,
+      "crestDb": 16.97
+     },
+     "mix": {
+      "peakDb": 0.15,
+      "truePeakDb": 0.15,
+      "rmsDb": -8.92,
+      "mMaxLufs": -4.9,
+      "sMaxLufs": -6.18,
+      "integratedLufs": -6.5,
+      "crestDb": 9.07,
+      "grMedianDb": -7.75,
+      "grP95Db": -8.97
+     }
+    },
+    "raw": {
+     "drums": {
+      "peakDb": -8.99,
+      "truePeakDb": -8.99,
+      "rmsDb": -32.6,
+      "mMaxLufs": -26.15,
+      "sMaxLufs": -29.89,
+      "integratedLufs": -29.82,
+      "crestDb": 23.61
+     },
+     "bass": {
+      "peakDb": -3.84,
+      "truePeakDb": -3.84,
+      "rmsDb": -18.28,
+      "mMaxLufs": -13.18,
+      "sMaxLufs": -15.32,
+      "integratedLufs": -15.79,
+      "crestDb": 14.44
+     },
+     "lead": {
+      "peakDb": -5.18,
+      "truePeakDb": -5.18,
+      "rmsDb": -8.93,
+      "mMaxLufs": -5.89,
+      "sMaxLufs": -6.15,
+      "integratedLufs": -6.34,
+      "crestDb": 3.75
+     },
+     "chords": {
+      "peakDb": -1.04,
+      "truePeakDb": -1.04,
+      "rmsDb": -9.11,
+      "mMaxLufs": -6.49,
+      "sMaxLufs": -6.53,
+      "integratedLufs": -6.7,
+      "crestDb": 8.07
+     },
+     "comp": {
+      "peakDb": -3.48,
+      "truePeakDb": -3.48,
+      "rmsDb": -22.08,
+      "mMaxLufs": -14.28,
+      "sMaxLufs": -18.68,
+      "integratedLufs": -17.81,
+      "crestDb": 18.6
+     },
+     "inner": {
+      "peakDb": -11.1,
+      "truePeakDb": -11.1,
+      "rmsDb": -28.27,
+      "mMaxLufs": -19.35,
+      "sMaxLufs": -24.15,
+      "integratedLufs": -22.41,
+      "crestDb": 17.17
+     },
+     "mix": {
+      "peakDb": 5.25,
+      "truePeakDb": 5.25,
+      "rmsDb": -6.17,
+      "mMaxLufs": -2,
+      "sMaxLufs": -3.01,
+      "integratedLufs": -3.72,
+      "crestDb": 11.42
+     }
+    },
+    "staged": {
+     "drums": {
+      "peakDb": -3.27,
+      "truePeakDb": -3.27,
+      "rmsDb": -26.61,
+      "mMaxLufs": -20.15,
+      "sMaxLufs": -23.89,
+      "integratedLufs": -23.82,
+      "crestDb": 23.34
+     },
+     "bass": {
+      "peakDb": -12.84,
+      "truePeakDb": -12.84,
+      "rmsDb": -27.28,
+      "mMaxLufs": -22.18,
+      "sMaxLufs": -24.32,
+      "integratedLufs": -24.79,
+      "crestDb": 14.44
+     },
+     "lead": {
+      "peakDb": -22.68,
+      "truePeakDb": -22.68,
+      "rmsDb": -26.43,
+      "mMaxLufs": -23.39,
+      "sMaxLufs": -23.65,
+      "integratedLufs": -23.84,
+      "crestDb": 3.75
+     },
+     "chords": {
+      "peakDb": -24.19,
+      "truePeakDb": -24.19,
+      "rmsDb": -32.26,
+      "mMaxLufs": -29.51,
+      "sMaxLufs": -29.69,
+      "integratedLufs": -29.86,
+      "crestDb": 8.07
+     },
+     "comp": {
+      "peakDb": -16.96,
+      "truePeakDb": -16.96,
+      "rmsDb": -35.67,
+      "mMaxLufs": -27.54,
+      "sMaxLufs": -32.15,
+      "integratedLufs": -31.34,
+      "crestDb": 18.71
+     },
+     "inner": {
+      "peakDb": -18.54,
+      "truePeakDb": -18.54,
+      "rmsDb": -37.64,
+      "mMaxLufs": -28.51,
+      "sMaxLufs": -33.54,
+      "integratedLufs": -31.8,
+      "crestDb": 19.09
+     },
+     "mix": {
+      "peakDb": -2.69,
+      "truePeakDb": -2.69,
+      "rmsDb": -21.42,
+      "mMaxLufs": -16.58,
+      "sMaxLufs": -18.66,
+      "integratedLufs": -19.38,
+      "crestDb": 18.73
+     }
+    },
+    "knock": {
+     "drums": {
+      "peakDb": -4.02,
+      "truePeakDb": -3.97,
+      "rmsDb": -25.5,
+      "mMaxLufs": -19.01,
+      "sMaxLufs": -22.69,
+      "integratedLufs": -22.49,
+      "crestDb": 21.54
+     },
+     "bass": {
+      "peakDb": -9.12,
+      "truePeakDb": -9.12,
+      "rmsDb": -23.3,
+      "mMaxLufs": -18.22,
+      "sMaxLufs": -20.34,
+      "integratedLufs": -20.8,
+      "crestDb": 14.18
+     },
+     "lead": {
+      "peakDb": -18.7,
+      "truePeakDb": -18.7,
+      "rmsDb": -22.44,
+      "mMaxLufs": -19.39,
+      "sMaxLufs": -19.65,
+      "integratedLufs": -19.85,
+      "crestDb": 3.75
+     },
+     "chords": {
+      "peakDb": -20.2,
+      "truePeakDb": -20.2,
+      "rmsDb": -28.27,
+      "mMaxLufs": -25.5,
+      "sMaxLufs": -25.68,
+      "integratedLufs": -25.86,
+      "crestDb": 8.07
+     },
+     "comp": {
+      "peakDb": -13,
+      "truePeakDb": -13,
+      "rmsDb": -31.69,
+      "mMaxLufs": -23.62,
+      "sMaxLufs": -28.16,
+      "integratedLufs": -27.33,
+      "crestDb": 18.69
+     },
+     "inner": {
+      "peakDb": -14.57,
+      "truePeakDb": -14.57,
+      "rmsDb": -33.64,
+      "mMaxLufs": -24.1,
+      "sMaxLufs": -29.55,
+      "integratedLufs": -27.81,
+      "crestDb": 19.08
+     },
+     "mix": {
+      "peakDb": -4.04,
+      "truePeakDb": -4.03,
+      "rmsDb": -18.68,
+      "mMaxLufs": -14.8,
+      "sMaxLufs": -15.9,
+      "integratedLufs": -16.5,
+      "crestDb": 14.65,
+      "grMedianDb": -1.94,
+      "grP95Db": -4.9
+     }
+    },
+    "classicStaged": {
+     "drums": {
+      "peakDb": -2.44,
+      "truePeakDb": -2.4,
+      "rmsDb": -24.49,
+      "mMaxLufs": -17.94,
+      "sMaxLufs": -21.66,
+      "integratedLufs": -21.42,
+      "crestDb": 22.09
+     },
+     "bass": {
+      "peakDb": -9.03,
+      "truePeakDb": -9.03,
+      "rmsDb": -23.52,
+      "mMaxLufs": -18.38,
+      "sMaxLufs": -20.51,
+      "integratedLufs": -20.99,
+      "crestDb": 14.49
+     },
+     "lead": {
+      "peakDb": -18.88,
+      "truePeakDb": -18.88,
+      "rmsDb": -22.63,
+      "mMaxLufs": -19.58,
+      "sMaxLufs": -19.84,
+      "integratedLufs": -20.04,
+      "crestDb": 3.75
+     },
+     "chords": {
+      "peakDb": -20.38,
+      "truePeakDb": -20.38,
+      "rmsDb": -28.45,
+      "mMaxLufs": -25.72,
+      "sMaxLufs": -25.88,
+      "integratedLufs": -26.05,
+      "crestDb": 8.07
+     },
+     "comp": {
+      "peakDb": -13.14,
+      "truePeakDb": -13.14,
+      "rmsDb": -31.91,
+      "mMaxLufs": -23.76,
+      "sMaxLufs": -28.35,
+      "integratedLufs": -27.55,
+      "crestDb": 18.77
+     },
+     "inner": {
+      "peakDb": -14.74,
+      "truePeakDb": -14.74,
+      "rmsDb": -33.83,
+      "mMaxLufs": -24.55,
+      "sMaxLufs": -29.74,
+      "integratedLufs": -27.99,
+      "crestDb": 19.09
+     },
+     "mix": {
+      "peakDb": -2.07,
+      "truePeakDb": -2.07,
+      "rmsDb": -18.43,
+      "mMaxLufs": -14.31,
+      "sMaxLufs": -15.6,
+      "integratedLufs": -16.24,
+      "crestDb": 16.36,
+      "grMedianDb": -0.82,
+      "grP95Db": -3.67
+     }
+    }
+   }
+  },
+  {
+   "row": "119:42:15:8",
+   "tempoBpm": 120,
+   "cycleSeconds": 8,
+   "stems": {
+    "today": {
+     "drums": {
+      "peakDb": -4.22,
+      "truePeakDb": -4.19,
+      "rmsDb": -28.68,
+      "mMaxLufs": -22.4,
+      "sMaxLufs": -25.62,
+      "integratedLufs": -26.05,
+      "crestDb": 24.49
+     },
+     "bass": {
+      "peakDb": -2.44,
+      "truePeakDb": -2.44,
+      "rmsDb": -15.81,
+      "mMaxLufs": -10.07,
+      "sMaxLufs": -13.21,
+      "integratedLufs": -12.92,
+      "crestDb": 13.37
+     },
+     "lead": {
+      "peakDb": -3.48,
+      "truePeakDb": -2.82,
+      "rmsDb": -7.8,
+      "mMaxLufs": -4.86,
+      "sMaxLufs": -4.91,
+      "integratedLufs": -5.11,
+      "crestDb": 4.99
+     },
+     "chords": {
+      "peakDb": -1.13,
+      "truePeakDb": -1.13,
+      "rmsDb": -8.89,
+      "mMaxLufs": -6.21,
+      "sMaxLufs": -6.28,
+      "integratedLufs": -6.62,
+      "crestDb": 7.76
+     },
+     "comp": {
+      "peakDb": -2.13,
+      "truePeakDb": -2.13,
+      "rmsDb": -19,
+      "mMaxLufs": -12.28,
+      "sMaxLufs": -14.11,
+      "integratedLufs": -14.84,
+      "crestDb": 16.87
+     },
+     "inner": {
+      "peakDb": -6.19,
+      "truePeakDb": -6.18,
+      "rmsDb": -21.94,
+      "mMaxLufs": -14.73,
+      "sMaxLufs": -17.91,
+      "integratedLufs": -18.29,
+      "crestDb": 15.75
+     },
+     "mix": {
+      "peakDb": 0.12,
+      "truePeakDb": 0.12,
+      "rmsDb": -8.62,
+      "mMaxLufs": -4.93,
+      "sMaxLufs": -5.88,
+      "integratedLufs": -6.3,
+      "crestDb": 8.74,
+      "grMedianDb": -8.17,
+      "grP95Db": -9.16
+     }
+    },
+    "raw": {
+     "drums": {
+      "peakDb": -8.12,
+      "truePeakDb": -8.12,
+      "rmsDb": -32.15,
+      "mMaxLufs": -25.42,
+      "sMaxLufs": -29.33,
+      "integratedLufs": -29.81,
+      "crestDb": 24.04
+     },
+     "bass": {
+      "peakDb": -3.96,
+      "truePeakDb": -3.96,
+      "rmsDb": -19.12,
+      "mMaxLufs": -13.23,
+      "sMaxLufs": -16.39,
+      "integratedLufs": -16.23,
+      "crestDb": 15.16
+     },
+     "lead": {
+      "peakDb": -5.75,
+      "truePeakDb": -5.75,
+      "rmsDb": -10.18,
+      "mMaxLufs": -7.12,
+      "sMaxLufs": -7.2,
+      "integratedLufs": -7.48,
+      "crestDb": 4.43
+     },
+     "chords": {
+      "peakDb": 1.37,
+      "truePeakDb": 1.37,
+      "rmsDb": -7.38,
+      "mMaxLufs": -4.16,
+      "sMaxLufs": -4.54,
+      "integratedLufs": -5.08,
+      "crestDb": 8.75
+     },
+     "comp": {
+      "peakDb": -2.71,
+      "truePeakDb": -2.71,
+      "rmsDb": -21.9,
+      "mMaxLufs": -14.79,
+      "sMaxLufs": -16.98,
+      "integratedLufs": -17.8,
+      "crestDb": 19.19
+     },
+     "inner": {
+      "peakDb": -9.77,
+      "truePeakDb": -9.76,
+      "rmsDb": -25.71,
+      "mMaxLufs": -18.52,
+      "sMaxLufs": -21.71,
+      "integratedLufs": -22.15,
+      "crestDb": 15.95
+     },
+     "mix": {
+      "peakDb": 5.93,
+      "truePeakDb": 5.93,
+      "rmsDb": -5.06,
+      "mMaxLufs": -1.31,
+      "sMaxLufs": -2.15,
+      "integratedLufs": -2.7,
+      "crestDb": 11
+     }
+    },
+    "staged": {
+     "drums": {
+      "peakDb": -2.71,
+      "truePeakDb": -2.67,
+      "rmsDb": -26.18,
+      "mMaxLufs": -19.42,
+      "sMaxLufs": -23.37,
+      "integratedLufs": -23.81,
+      "crestDb": 23.5
+     },
+     "bass": {
+      "peakDb": -12.96,
+      "truePeakDb": -12.96,
+      "rmsDb": -28.12,
+      "mMaxLufs": -22.23,
+      "sMaxLufs": -25.39,
+      "integratedLufs": -25.23,
+      "crestDb": 15.16
+     },
+     "lead": {
+      "peakDb": -23.25,
+      "truePeakDb": -23.25,
+      "rmsDb": -27.68,
+      "mMaxLufs": -24.62,
+      "sMaxLufs": -24.7,
+      "integratedLufs": -24.98,
+      "crestDb": 4.43
+     },
+     "chords": {
+      "peakDb": -21.13,
+      "truePeakDb": -21.13,
+      "rmsDb": -29.98,
+      "mMaxLufs": -26.68,
+      "sMaxLufs": -27.27,
+      "integratedLufs": -27.69,
+      "crestDb": 8.86
+     },
+     "comp": {
+      "peakDb": -15.94,
+      "truePeakDb": -15.94,
+      "rmsDb": -34.93,
+      "mMaxLufs": -27.73,
+      "sMaxLufs": -30.01,
+      "integratedLufs": -30.76,
+      "crestDb": 18.99
+     },
+     "inner": {
+      "peakDb": -17.04,
+      "truePeakDb": -17.04,
+      "rmsDb": -34.95,
+      "mMaxLufs": -27.55,
+      "sMaxLufs": -30.97,
+      "integratedLufs": -31.35,
+      "crestDb": 17.91
+     },
+     "mix": {
+      "peakDb": -1.84,
+      "truePeakDb": -1.79,
+      "rmsDb": -21.24,
+      "mMaxLufs": -16.12,
+      "sMaxLufs": -18.57,
+      "integratedLufs": -19.17,
+      "crestDb": 19.45
+     }
+    },
+    "knock": {
+     "drums": {
+      "peakDb": -4.06,
+      "truePeakDb": -3.84,
+      "rmsDb": -25,
+      "mMaxLufs": -18.99,
+      "sMaxLufs": -22.08,
+      "integratedLufs": -22.35,
+      "crestDb": 21.16
+     },
+     "bass": {
+      "peakDb": -9.11,
+      "truePeakDb": -9.11,
+      "rmsDb": -24.13,
+      "mMaxLufs": -18.24,
+      "sMaxLufs": -21.4,
+      "integratedLufs": -21.23,
+      "crestDb": 15.02
+     },
+     "lead": {
+      "peakDb": -19.26,
+      "truePeakDb": -19.26,
+      "rmsDb": -23.69,
+      "mMaxLufs": -20.62,
+      "sMaxLufs": -20.7,
+      "integratedLufs": -20.99,
+      "crestDb": 4.43
+     },
+     "chords": {
+      "peakDb": -17.14,
+      "truePeakDb": -17.14,
+      "rmsDb": -25.99,
+      "mMaxLufs": -22.67,
+      "sMaxLufs": -23.26,
+      "integratedLufs": -23.7,
+      "crestDb": 8.85
+     },
+     "comp": {
+      "peakDb": -12.04,
+      "truePeakDb": -12.03,
+      "rmsDb": -30.93,
+      "mMaxLufs": -23.73,
+      "sMaxLufs": -26.05,
+      "integratedLufs": -26.69,
+      "crestDb": 18.9
+     },
+     "inner": {
+      "peakDb": -13.06,
+      "truePeakDb": -13.06,
+      "rmsDb": -30.95,
+      "mMaxLufs": -23.68,
+      "sMaxLufs": -26.99,
+      "integratedLufs": -27.41,
+      "crestDb": 17.89
+     },
+     "mix": {
+      "peakDb": -3.79,
+      "truePeakDb": -3.79,
+      "rmsDb": -18.46,
+      "mMaxLufs": -14.04,
+      "sMaxLufs": -15.7,
+      "integratedLufs": -16.27,
+      "crestDb": 14.67,
+      "grMedianDb": -1.79,
+      "grP95Db": -4.95
+     }
+    },
+    "classicStaged": {
+     "drums": {
+      "peakDb": -1.78,
+      "truePeakDb": -1.72,
+      "rmsDb": -24.14,
+      "mMaxLufs": -18.02,
+      "sMaxLufs": -21.16,
+      "integratedLufs": -21.44,
+      "crestDb": 22.42
+     },
+     "bass": {
+      "peakDb": -9.15,
+      "truePeakDb": -9.15,
+      "rmsDb": -24.34,
+      "mMaxLufs": -18.43,
+      "sMaxLufs": -21.58,
+      "integratedLufs": -21.43,
+      "crestDb": 15.18
+     },
+     "lead": {
+      "peakDb": -19.44,
+      "truePeakDb": -18.87,
+      "rmsDb": -23.88,
+      "mMaxLufs": -20.81,
+      "sMaxLufs": -20.89,
+      "integratedLufs": -21.17,
+      "crestDb": 5
+     },
+     "chords": {
+      "peakDb": -17.32,
+      "truePeakDb": -17.32,
+      "rmsDb": -26.18,
+      "mMaxLufs": -22.85,
+      "sMaxLufs": -23.46,
+      "integratedLufs": -23.89,
+      "crestDb": 8.86
+     },
+     "comp": {
+      "peakDb": -12.2,
+      "truePeakDb": -12.2,
+      "rmsDb": -31.13,
+      "mMaxLufs": -23.93,
+      "sMaxLufs": -26.22,
+      "integratedLufs": -26.89,
+      "crestDb": 18.93
+     },
+     "inner": {
+      "peakDb": -13.23,
+      "truePeakDb": -13.23,
+      "rmsDb": -31.16,
+      "mMaxLufs": -23.78,
+      "sMaxLufs": -27.17,
+      "integratedLufs": -27.55,
+      "crestDb": 17.93
+     },
+     "mix": {
+      "peakDb": -1.83,
+      "truePeakDb": -1.75,
+      "rmsDb": -18.18,
+      "mMaxLufs": -13.06,
+      "sMaxLufs": -15.24,
+      "integratedLufs": -15.98,
+      "crestDb": 16.43,
+      "grMedianDb": -0.87,
+      "grP95Db": -3.51
+     }
+    }
+   }
+  },
+  {
+   "row": "768:769",
+   "tempoBpm": 120,
+   "cycleSeconds": 8,
+   "stems": {
+    "today": {
+     "drums": {
+      "peakDb": -5.33,
+      "truePeakDb": -5.26,
+      "rmsDb": -28.73,
+      "mMaxLufs": -21.99,
+      "sMaxLufs": -25.54,
+      "integratedLufs": -26.03,
+      "crestDb": 23.47
+     },
+     "bass": {
+      "peakDb": -2.97,
+      "truePeakDb": -2.97,
+      "rmsDb": -15.97,
+      "mMaxLufs": -9.94,
+      "sMaxLufs": -12.81,
+      "integratedLufs": -13.03,
+      "crestDb": 13
+     },
+     "lead": {
+      "peakDb": -2.11,
+      "truePeakDb": -2.09,
+      "rmsDb": -15.27,
+      "mMaxLufs": -6.86,
+      "sMaxLufs": -10.49,
+      "integratedLufs": -9.92,
+      "crestDb": 13.17
+     },
+     "chords": {
+      "peakDb": -1.56,
+      "truePeakDb": -1.56,
+      "rmsDb": -9.52,
+      "mMaxLufs": -7.01,
+      "sMaxLufs": -7.14,
+      "integratedLufs": -7.18,
+      "crestDb": 7.97
+     },
+     "comp": {
+      "peakDb": -2.36,
+      "truePeakDb": -2.36,
+      "rmsDb": -18.78,
+      "mMaxLufs": -10.06,
+      "sMaxLufs": -14.86,
+      "integratedLufs": -13.17,
+      "crestDb": 16.42
+     },
+     "inner": {
+      "peakDb": -7.85,
+      "truePeakDb": -7.83,
+      "rmsDb": -24.45,
+      "mMaxLufs": -15.19,
+      "sMaxLufs": -20.28,
+      "integratedLufs": -19.19,
+      "crestDb": 16.62
+     },
+     "mix": {
+      "peakDb": 0.3,
+      "truePeakDb": 0.31,
+      "rmsDb": -9.37,
+      "mMaxLufs": -6.59,
+      "sMaxLufs": -6.98,
+      "integratedLufs": -7.06,
+      "crestDb": 9.68,
+      "grMedianDb": -6.59,
+      "grP95Db": -8.54
+     }
+    },
+    "raw": {
+     "drums": {
+      "peakDb": -8.5,
+      "truePeakDb": -8.3,
+      "rmsDb": -32.23,
+      "mMaxLufs": -25.27,
+      "sMaxLufs": -29.32,
+      "integratedLufs": -29.73,
+      "crestDb": 23.93
+     },
+     "bass": {
+      "peakDb": -5.12,
+      "truePeakDb": -5.12,
+      "rmsDb": -19.32,
+      "mMaxLufs": -13.34,
+      "sMaxLufs": -16.19,
+      "integratedLufs": -16.42,
+      "crestDb": 14.2
+     },
+     "lead": {
+      "peakDb": -2.55,
+      "truePeakDb": -2.54,
+      "rmsDb": -18.21,
+      "mMaxLufs": -9,
+      "sMaxLufs": -13.57,
+      "integratedLufs": -12.86,
+      "crestDb": 15.67
+     },
+     "chords": {
+      "peakDb": -0.48,
+      "truePeakDb": -0.47,
+      "rmsDb": -9.01,
+      "mMaxLufs": -6.52,
+      "sMaxLufs": -6.56,
+      "integratedLufs": -6.64,
+      "crestDb": 8.54
+     },
+     "comp": {
+      "peakDb": -3.68,
+      "truePeakDb": -3.67,
+      "rmsDb": -21.68,
+      "mMaxLufs": -12.52,
+      "sMaxLufs": -17.47,
+      "integratedLufs": -16.18,
+      "crestDb": 18.01
+     },
+     "inner": {
+      "peakDb": -11.51,
+      "truePeakDb": -11.51,
+      "rmsDb": -28.12,
+      "mMaxLufs": -18.92,
+      "sMaxLufs": -24.08,
+      "integratedLufs": -22.96,
+      "crestDb": 16.61
+     },
+     "mix": {
+      "peakDb": 4.89,
+      "truePeakDb": 4.89,
+      "rmsDb": -7.74,
+      "mMaxLufs": -3.52,
+      "sMaxLufs": -4.98,
+      "integratedLufs": -5.44,
+      "crestDb": 12.63
+     }
+    },
+    "staged": {
+     "drums": {
+      "peakDb": -2.83,
+      "truePeakDb": -2.73,
+      "rmsDb": -26.24,
+      "mMaxLufs": -19.28,
+      "sMaxLufs": -23.34,
+      "integratedLufs": -23.75,
+      "crestDb": 23.51
+     },
+     "bass": {
+      "peakDb": -14.12,
+      "truePeakDb": -14.12,
+      "rmsDb": -28.32,
+      "mMaxLufs": -22.34,
+      "sMaxLufs": -25.19,
+      "integratedLufs": -25.42,
+      "crestDb": 14.2
+     },
+     "lead": {
+      "peakDb": -20.05,
+      "truePeakDb": -20.04,
+      "rmsDb": -35.71,
+      "mMaxLufs": -26.5,
+      "sMaxLufs": -31.07,
+      "integratedLufs": -30.36,
+      "crestDb": 15.67
+     },
+     "chords": {
+      "peakDb": -23.49,
+      "truePeakDb": -23.49,
+      "rmsDb": -32.11,
+      "mMaxLufs": -29.45,
+      "sMaxLufs": -29.67,
+      "integratedLufs": -29.74,
+      "crestDb": 8.62
+     },
+     "comp": {
+      "peakDb": -16.87,
+      "truePeakDb": -16.87,
+      "rmsDb": -35.21,
+      "mMaxLufs": -25.88,
+      "sMaxLufs": -30.9,
+      "integratedLufs": -29.62,
+      "crestDb": 18.34
+     },
+     "inner": {
+      "peakDb": -17.82,
+      "truePeakDb": -17.81,
+      "rmsDb": -37.61,
+      "mMaxLufs": -28.69,
+      "sMaxLufs": -33.53,
+      "integratedLufs": -32.36,
+      "crestDb": 19.79
+     },
+     "mix": {
+      "peakDb": -1.77,
+      "truePeakDb": -1.73,
+      "rmsDb": -22.69,
+      "mMaxLufs": -16.93,
+      "sMaxLufs": -19.82,
+      "integratedLufs": -20.85,
+      "crestDb": 20.96
+     }
+    },
+    "knock": {
+     "drums": {
+      "peakDb": -3.88,
+      "truePeakDb": -3.46,
+      "rmsDb": -25.27,
+      "mMaxLufs": -18.84,
+      "sMaxLufs": -22.44,
+      "integratedLufs": -22.58,
+      "crestDb": 21.81
+     },
+     "bass": {
+      "peakDb": -10.09,
+      "truePeakDb": -10.09,
+      "rmsDb": -24.34,
+      "mMaxLufs": -18.39,
+      "sMaxLufs": -21.16,
+      "integratedLufs": -21.43,
+      "crestDb": 14.25
+     },
+     "lead": {
+      "peakDb": -16.03,
+      "truePeakDb": -16.02,
+      "rmsDb": -31.71,
+      "mMaxLufs": -22.54,
+      "sMaxLufs": -27.03,
+      "integratedLufs": -26.28,
+      "crestDb": 15.69
+     },
+     "chords": {
+      "peakDb": -19.5,
+      "truePeakDb": -19.5,
+      "rmsDb": -28.12,
+      "mMaxLufs": -25.45,
+      "sMaxLufs": -25.67,
+      "integratedLufs": -25.74,
+      "crestDb": 8.62
+     },
+     "comp": {
+      "peakDb": -12.9,
+      "truePeakDb": -12.9,
+      "rmsDb": -31.24,
+      "mMaxLufs": -21.87,
+      "sMaxLufs": -26.96,
+      "integratedLufs": -25.62,
+      "crestDb": 18.35
+     },
+     "inner": {
+      "peakDb": -13.84,
+      "truePeakDb": -13.84,
+      "rmsDb": -33.64,
+      "mMaxLufs": -24.86,
+      "sMaxLufs": -29.54,
+      "integratedLufs": -28.36,
+      "crestDb": 19.8
+     },
+     "mix": {
+      "peakDb": -3.83,
+      "truePeakDb": -3.75,
+      "rmsDb": -20.22,
+      "mMaxLufs": -14.88,
+      "sMaxLufs": -17.51,
+      "integratedLufs": -18.21,
+      "crestDb": 16.47,
+      "grMedianDb": -1.6,
+      "grP95Db": -4.96
+     }
+    },
+    "classicStaged": {
+     "drums": {
+      "peakDb": -2.2,
+      "truePeakDb": -2.2,
+      "rmsDb": -24.28,
+      "mMaxLufs": -17.92,
+      "sMaxLufs": -21.39,
+      "integratedLufs": -21.54,
+      "crestDb": 22.08
+     },
+     "bass": {
+      "peakDb": -10.31,
+      "truePeakDb": -10.31,
+      "rmsDb": -24.57,
+      "mMaxLufs": -18.51,
+      "sMaxLufs": -21.39,
+      "integratedLufs": -21.63,
+      "crestDb": 14.26
+     },
+     "lead": {
+      "peakDb": -16.24,
+      "truePeakDb": -16.23,
+      "rmsDb": -31.91,
+      "mMaxLufs": -22.71,
+      "sMaxLufs": -27.27,
+      "integratedLufs": -26.56,
+      "crestDb": 15.67
+     },
+     "chords": {
+      "peakDb": -19.68,
+      "truePeakDb": -19.68,
+      "rmsDb": -28.31,
+      "mMaxLufs": -25.65,
+      "sMaxLufs": -25.86,
+      "integratedLufs": -25.94,
+      "crestDb": 8.63
+     },
+     "comp": {
+      "peakDb": -13.06,
+      "truePeakDb": -13.06,
+      "rmsDb": -31.49,
+      "mMaxLufs": -21.93,
+      "sMaxLufs": -27.26,
+      "integratedLufs": -25.83,
+      "crestDb": 18.44
+     },
+     "inner": {
+      "peakDb": -14.01,
+      "truePeakDb": -14.01,
+      "rmsDb": -33.88,
+      "mMaxLufs": -24.96,
+      "sMaxLufs": -29.73,
+      "integratedLufs": -28.57,
+      "crestDb": 19.87
+     },
+     "mix": {
+      "peakDb": -1.97,
+      "truePeakDb": -1.94,
+      "rmsDb": -19.91,
+      "mMaxLufs": -14.2,
+      "sMaxLufs": -17.13,
+      "integratedLufs": -17.9,
+      "crestDb": 17.98,
+      "grMedianDb": -0.73,
+      "grP95Db": -3.58
+     }
+    }
+   }
+  },
+  {
+   "row": "768:784",
+   "tempoBpm": 120,
+   "cycleSeconds": 8,
+   "stems": {
+    "today": {
+     "drums": {
+      "peakDb": -5.22,
+      "truePeakDb": -5.19,
+      "rmsDb": -28.59,
+      "mMaxLufs": -22.36,
+      "sMaxLufs": -25.36,
+      "integratedLufs": -25.34,
+      "crestDb": 23.39
+     },
+     "bass": {
+      "peakDb": -3.02,
+      "truePeakDb": -3.02,
+      "rmsDb": -16.31,
+      "mMaxLufs": -10.06,
+      "sMaxLufs": -12.98,
+      "integratedLufs": -13.07,
+      "crestDb": 13.29
+     },
+     "lead": {
+      "peakDb": -2.87,
+      "truePeakDb": -2.87,
+      "rmsDb": -8.01,
+      "mMaxLufs": -4.57,
+      "sMaxLufs": -5.01,
+      "integratedLufs": -5.27,
+      "crestDb": 5.14
+     },
+     "chords": {
+      "peakDb": -1.11,
+      "truePeakDb": -1.11,
+      "rmsDb": -9.44,
+      "mMaxLufs": -5.22,
+      "sMaxLufs": -6.92,
+      "integratedLufs": -7.19,
+      "crestDb": 8.32
+     },
+     "comp": {
+      "peakDb": -1.6,
+      "truePeakDb": -1.6,
+      "rmsDb": -15.11,
+      "mMaxLufs": -10.79,
+      "sMaxLufs": -11.86,
+      "integratedLufs": -12.39,
+      "crestDb": 13.51
+     },
+     "inner": {
+      "peakDb": -7.23,
+      "truePeakDb": -7.23,
+      "rmsDb": -23.87,
+      "mMaxLufs": -15.05,
+      "sMaxLufs": -18.83,
+      "integratedLufs": -18.17,
+      "crestDb": 16.64
+     },
+     "mix": {
+      "peakDb": 0.52,
+      "truePeakDb": 0.52,
+      "rmsDb": -8.88,
+      "mMaxLufs": -5.44,
+      "sMaxLufs": -6.3,
+      "integratedLufs": -6.41,
+      "crestDb": 9.41,
+      "grMedianDb": -8.62,
+      "grP95Db": -10.14
+     }
+    },
+    "raw": {
+     "drums": {
+      "peakDb": -7.67,
+      "truePeakDb": -7.67,
+      "rmsDb": -32.09,
+      "mMaxLufs": -25.57,
+      "sMaxLufs": -29.15,
+      "integratedLufs": -29.06,
+      "crestDb": 24.42
+     },
+     "bass": {
+      "peakDb": -5.24,
+      "truePeakDb": -5.24,
+      "rmsDb": -19.6,
+      "mMaxLufs": -13.6,
+      "sMaxLufs": -16.29,
+      "integratedLufs": -16.35,
+      "crestDb": 14.36
+     },
+     "lead": {
+      "peakDb": -3.5,
+      "truePeakDb": -2.92,
+      "rmsDb": -8.77,
+      "mMaxLufs": -5.11,
+      "sMaxLufs": -5.66,
+      "integratedLufs": -6.02,
+      "crestDb": 5.84
+     },
+     "chords": {
+      "peakDb": 1.28,
+      "truePeakDb": 1.28,
+      "rmsDb": -8.77,
+      "mMaxLufs": -5.35,
+      "sMaxLufs": -5.46,
+      "integratedLufs": -6.47,
+      "crestDb": 10.06
+     },
+     "comp": {
+      "peakDb": -0.52,
+      "truePeakDb": -0.52,
+      "rmsDb": -16.77,
+      "mMaxLufs": -12.64,
+      "sMaxLufs": -13.69,
+      "integratedLufs": -14.01,
+      "crestDb": 16.25
+     },
+     "inner": {
+      "peakDb": -10.89,
+      "truePeakDb": -10.89,
+      "rmsDb": -27.67,
+      "mMaxLufs": -18.83,
+      "sMaxLufs": -22.63,
+      "integratedLufs": -22.07,
+      "crestDb": 16.78
+     },
+     "mix": {
+      "peakDb": 6.85,
+      "truePeakDb": 6.85,
+      "rmsDb": -5.14,
+      "mMaxLufs": -1.33,
+      "sMaxLufs": -2.26,
+      "integratedLufs": -2.67,
+      "crestDb": 11.99
+     }
+    },
+    "staged": {
+     "drums": {
+      "peakDb": -2.44,
+      "truePeakDb": -2.36,
+      "rmsDb": -26.09,
+      "mMaxLufs": -19.56,
+      "sMaxLufs": -23.16,
+      "integratedLufs": -23,
+      "crestDb": 23.73
+     },
+     "bass": {
+      "peakDb": -14.24,
+      "truePeakDb": -14.24,
+      "rmsDb": -28.6,
+      "mMaxLufs": -22.6,
+      "sMaxLufs": -25.29,
+      "integratedLufs": -25.35,
+      "crestDb": 14.36
+     },
+     "lead": {
+      "peakDb": -21,
+      "truePeakDb": -20.42,
+      "rmsDb": -26.27,
+      "mMaxLufs": -22.61,
+      "sMaxLufs": -23.16,
+      "integratedLufs": -23.52,
+      "crestDb": 5.84
+     },
+     "chords": {
+      "peakDb": -21.43,
+      "truePeakDb": -21.43,
+      "rmsDb": -31.36,
+      "mMaxLufs": -27.79,
+      "sMaxLufs": -28.07,
+      "integratedLufs": -29.07,
+      "crestDb": 9.94
+     },
+     "comp": {
+      "peakDb": -13.83,
+      "truePeakDb": -13.83,
+      "rmsDb": -30.09,
+      "mMaxLufs": -25.39,
+      "sMaxLufs": -26.97,
+      "integratedLufs": -27.3,
+      "crestDb": 16.26
+     },
+     "inner": {
+      "peakDb": -18.32,
+      "truePeakDb": -18.32,
+      "rmsDb": -37.31,
+      "mMaxLufs": -28.58,
+      "sMaxLufs": -32.49,
+      "integratedLufs": -31.84,
+      "crestDb": 18.99
+     },
+     "mix": {
+      "peakDb": -1.54,
+      "truePeakDb": -1.53,
+      "rmsDb": -20.69,
+      "mMaxLufs": -15.67,
+      "sMaxLufs": -17.96,
+      "integratedLufs": -18.52,
+      "crestDb": 19.16
+     }
+    },
+    "knock": {
+     "drums": {
+      "peakDb": -3.87,
+      "truePeakDb": -3.51,
+      "rmsDb": -25.36,
+      "mMaxLufs": -19.5,
+      "sMaxLufs": -22.31,
+      "integratedLufs": -22.18,
+      "crestDb": 21.85
+     },
+     "bass": {
+      "peakDb": -10.21,
+      "truePeakDb": -10.21,
+      "rmsDb": -24.62,
+      "mMaxLufs": -18.52,
+      "sMaxLufs": -21.3,
+      "integratedLufs": -21.41,
+      "crestDb": 14.41
+     },
+     "lead": {
+      "peakDb": -17.01,
+      "truePeakDb": -17.01,
+      "rmsDb": -22.28,
+      "mMaxLufs": -18.61,
+      "sMaxLufs": -19.17,
+      "integratedLufs": -19.53,
+      "crestDb": 5.27
+     },
+     "chords": {
+      "peakDb": -17.44,
+      "truePeakDb": -17.44,
+      "rmsDb": -27.37,
+      "mMaxLufs": -23.84,
+      "sMaxLufs": -24.07,
+      "integratedLufs": -25.07,
+      "crestDb": 9.93
+     },
+     "comp": {
+      "peakDb": -9.79,
+      "truePeakDb": -9.79,
+      "rmsDb": -26.1,
+      "mMaxLufs": -21.35,
+      "sMaxLufs": -22.99,
+      "integratedLufs": -23.35,
+      "crestDb": 16.31
+     },
+     "inner": {
+      "peakDb": -14.35,
+      "truePeakDb": -14.34,
+      "rmsDb": -33.32,
+      "mMaxLufs": -24.66,
+      "sMaxLufs": -28.5,
+      "integratedLufs": -27.65,
+      "crestDb": 18.97
+     },
+     "mix": {
+      "peakDb": -3.87,
+      "truePeakDb": -3.83,
+      "rmsDb": -18.14,
+      "mMaxLufs": -14.29,
+      "sMaxLufs": -15.37,
+      "integratedLufs": -15.8,
+      "crestDb": 14.31,
+      "grMedianDb": -2.02,
+      "grP95Db": -5.01
+     }
+    },
+    "classicStaged": {
+     "drums": {
+      "peakDb": -0.8,
+      "truePeakDb": -0.8,
+      "rmsDb": -24.44,
+      "mMaxLufs": -18.8,
+      "sMaxLufs": -21.3,
+      "integratedLufs": -21.17,
+      "crestDb": 23.65
+     },
+     "bass": {
+      "peakDb": -10.43,
+      "truePeakDb": -10.43,
+      "rmsDb": -24.86,
+      "mMaxLufs": -18.66,
+      "sMaxLufs": -21.49,
+      "integratedLufs": -21.62,
+      "crestDb": 14.43
+     },
+     "lead": {
+      "peakDb": -17.19,
+      "truePeakDb": -17.19,
+      "rmsDb": -22.47,
+      "mMaxLufs": -18.8,
+      "sMaxLufs": -19.36,
+      "integratedLufs": -19.71,
+      "crestDb": 5.28
+     },
+     "chords": {
+      "peakDb": -17.62,
+      "truePeakDb": -17.62,
+      "rmsDb": -27.56,
+      "mMaxLufs": -24.03,
+      "sMaxLufs": -24.26,
+      "integratedLufs": -25.26,
+      "crestDb": 9.94
+     },
+     "comp": {
+      "peakDb": -10.02,
+      "truePeakDb": -10.02,
+      "rmsDb": -26.32,
+      "mMaxLufs": -21.59,
+      "sMaxLufs": -23.18,
+      "integratedLufs": -23.55,
+      "crestDb": 16.3
+     },
+     "inner": {
+      "peakDb": -14.52,
+      "truePeakDb": -14.52,
+      "rmsDb": -33.51,
+      "mMaxLufs": -24.79,
+      "sMaxLufs": -28.69,
+      "integratedLufs": -27.85,
+      "crestDb": 18.99
+     },
+     "mix": {
+      "peakDb": -1.58,
+      "truePeakDb": -1.58,
+      "rmsDb": -17.91,
+      "mMaxLufs": -13.91,
+      "sMaxLufs": -15.07,
+      "integratedLufs": -15.57,
+      "crestDb": 16.33,
+      "grMedianDb": -1.14,
+      "grP95Db": -3.97
+     }
+    }
+   }
+  }
+ ]
+}
