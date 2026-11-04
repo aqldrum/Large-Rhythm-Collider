@@ -37,6 +37,9 @@
 //              'notes') plays exactly as before.
 //   fills      the last bar of each phrase of 4 bars or more (harmony.js `phrasesOf`) plays the fill over its second
 //              half (from beat 3), and a crash opens the bar after it — the loop's first bar when the fill is the last.
+//              `fillBars: [bar…]` (ARRANGEMENT_ORDER.md S8: a song's pass into a peak or a drop) asks for more: each bar
+//              listed fills the same way, and the bar after it crashes, whether or not `fills` is on (it switches the
+//              phrase ends only). Unset, nothing here moves (drums-baseline.mjs); set, the options echo it.
 //   seed       only `against` draws (a seeded generator of its own per bar, `${seed}/drums/${bar}`: STEP 4d), so the
 //              drums never move a draw Compose makes for the other parts, and an edit to one bar never re-draws another.
 //
@@ -95,7 +98,7 @@ export const ACCENT = 0.12;
 /** a stroke on an onset more layers strike is that much louder a layer (the row's own accents) */
 export const STRIKE_ACCENT = 0.04;
 export const FILL_MIN_PHRASE_BARS = 4;
-export const DRUM_OPTIONS = Object.freeze(['enabled', 'mode', 'fills', 'kit', 'seed', 'layer', 'hitsPerBar', 'perBar', 'grid', 'p', 'perc']);
+export const DRUM_OPTIONS = Object.freeze(['enabled', 'mode', 'fills', 'kit', 'seed', 'layer', 'hitsPerBar', 'perBar', 'grid', 'p', 'perc', 'fillBars']);
 /** the perc in the layered modes (COMP_ARP_ORDER.md Amendment 1, R4): 'clave' (the default) adds the composition's clave
  *  on its landed strokes (spec.clave, compose.js); 'pattern' is the mode's own perc line alone, as before */
 export const PERC_SOURCES = Object.freeze(['clave', 'pattern']);
@@ -392,11 +395,13 @@ export function readDrumOptions(options = {}) {
   if (o.hitsPerBar != null && !(Number(o.hitsPerBar) > 0)) fail(`bad hitsPerBar ${o.hitsPerBar}`);
   if (o.p != null && !isPrime(o.p)) fail(`p must be a prime (the two-level prime partition's level 1), not ${JSON.stringify(o.p)}`);
   if (o.perc != null && !PERC_SOURCES.includes(o.perc)) fail(`perc must be one of ${PERC_SOURCES.join(', ')}, not ${JSON.stringify(o.perc)}`);
+  if (o.fillBars != null && !(Array.isArray(o.fillBars) && o.fillBars.every((k) => Number.isInteger(k) && k >= 0))) fail(`fillBars must be a list of bar indices (0 is the first bar), not ${JSON.stringify(o.fillBars)}`);
   const out = { enabled: o.enabled ?? true, mode, fills: o.fills ?? true, kit, seed: o.seed ?? null, layer: o.layer ?? null, hitsPerBar: o.hitsPerBar == null ? null : Number(o.hitsPerBar), perBar };
   // only when given, so options without them resolve (and echo in `spec.drums.options`) exactly as before step 4c
   if (grid) out.grid = grid;
   if (o.p != null) out.p = o.p;
   if (o.perc != null) out.perc = o.perc;
+  if (o.fillBars != null) out.fillBars = [...new Set(o.fillBars)].sort((a, b) => a - b);
   return out;
 }
 
@@ -456,7 +461,8 @@ export function gridOf(d) {
  *              the downbeat, by name or value), hitsPerBar (partition, prime), perBar: { bar: mode } (a bar's own mode),
  *              grid: { voice: [one string a bar] } (read by bars in mode 'grid', and as the lit cells of 'prime'),
  *              p (prime: level 1's light count, a prime above the cells; by default a seeded random one, `drawPrime`),
- *              perc ('clave' (default) | 'pattern': the clave on the perc in backbeat / with / against, R4) }
+ *              perc ('clave' (default) | 'pattern': the clave on the perc in backbeat / with / against, R4),
+ *              fillBars ([bar…]: bars that play the fill from beat 3, the bar after each crashing; S8) }
  * → null for a refusal, else { version, enabled, mode, options, kit, beats, partition, bars: [{ bar, mode, fill, crash,
  *   why }], hits: [{ voice, bar, pos, slot, tick, time, velocity, strikes, snap }], decisions, stats }, and only when a
  *   bar is in mode 'grid' or 'prime': silentCells: [{ bar, voice, place }] (grid cells, and prime cells, no onset
@@ -503,9 +509,14 @@ export function arrangeDrums(spec, options = {}) {
   const phrases = phrasesOf({ bars: N, slotsPerBar: S });
   const fillBars = new Set();
   if (opt.fills) for (const ph of phrases) if (ph.bars >= FILL_MIN_PHRASE_BARS) fillBars.add(ph.from + ph.bars - 1);
-  decide('drums.fills', [...fillBars], !opt.fills ? 'asked off' : fillBars.size
+  const phraseWhy = !opt.fills ? 'asked off' : fillBars.size
     ? `the last bar of each phrase of ${FILL_MIN_PHRASE_BARS} bars or more fills its second half (from beat 3), and a crash opens the bar after it`
-    : `no phrase is ${FILL_MIN_PHRASE_BARS} bars or more (${phrases.map((x) => x.bars).join(' + ')} bar${N === 1 ? '' : 's'}): no fills`);
+    : `no phrase is ${FILL_MIN_PHRASE_BARS} bars or more (${phrases.map((x) => x.bars).join(' + ')} bar${N === 1 ? '' : 's'}): no fills`;
+  // S8: the bars asked to fill (a song's pass into a peak), beside the phrase ends; said only when asked
+  const phraseFills = new Set(fillBars), asked = opt.fillBars ?? [];
+  for (const k of asked) { if (k >= N) fail(`fillBars: bar ${k} is past the composition's ${N} bar${N === 1 ? '' : 's'}`); fillBars.add(k); }
+  decide('drums.fills', [...fillBars], opt.fillBars == null ? phraseWhy
+    : `${phraseWhy}; bar${asked.length === 1 ? '' : 's'} ${asked.map((k) => k + 1).join(', ')} asked to fill (fillBars: a song's pass into a peak), the bar after each crashing`);
   const bars = [], W = S * m;
   const modes = Array.from({ length: N }, (_, k) => opt.perBar[k] ?? opt.mode);
   const usesGrid = modes.includes('grid'), usesPrime = modes.includes('prime');
@@ -530,7 +541,8 @@ export function arrangeDrums(spec, options = {}) {
     const pat = DRUM_PATTERNS[mode], patBar = pat ? (k - ph.from) % pat.bars : 0;
     const what = pat ? `${pat.label}${pat.bars > 1 ? ` (bar ${patBar + 1} of ${pat.bars})` : ''}` : mode === 'backbeat' ? 'backbeat'
       : mode === 'grid' ? 'the step grid' : mode === 'prime' ? `${opt.grid ? 'the step grid' : 'backbeat'} + the prime partition` : `backbeat + ${mode}`;
-    bars.push({ bar: k, mode, fill, crash, why: `${what}${opt.perBar[k] ? ' (asked for this bar)' : ''}${fill ? `; fills from beat 3: the last bar of a ${ph.bars}-bar phrase` : ''}${crash ? '; a crash on the downbeat: the phrase opens after a fill' : ''}` });
+    const fillWhy = phraseFills.has(k) ? `the last bar of a ${ph.bars}-bar phrase` : 'asked (fillBars)';
+    bars.push({ bar: k, mode, fill, crash, why: `${what}${opt.perBar[k] ? ' (asked for this bar)' : ''}${fill ? `; fills from beat 3: ${fillWhy}` : ''}${crash ? '; a crash on the downbeat: the phrase opens after a fill' : ''}` });
 
     // the bar's groove: the backbeat, or the pattern's strokes through the beats
     const strokes = [];
