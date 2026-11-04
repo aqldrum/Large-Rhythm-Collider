@@ -1,11 +1,13 @@
 // assert-form.mjs — Song v0 (Composer/ARRANGEMENT_ORDER.md, phase A: A3): core/form.js' planSong, songPasses and
 // energyOf, and drums.js' `fillBars`. The rules are written here from the order, not read from form.js:
 //   • determinism by seed (and by a fresh copy of the loop: no state kept between calls), the record's shape (S1)
-//   • every section within its kind (S4): the intro without the lead on at most the order's first ⌈L/2⌉ layers at the low
-//     or loop densities; a build's layers holding the section before's; a peak or drop every part, layer and the high
-//     preset; a break no drums, every layer, the bass off or Roots; home the loop; each a mask of S3's seven
-//   • the neighbour rule (S5): into an intro, a build or a break at most 2 changes (a layer, a part, a density rung), and
-//     where a boundary takes more, no candidate of its kind (enumerated here) could take fewer
+//   • every section within its kind (S4): the intro without the lead on at most the order's first ⌈L/2⌉ layers (Build–
+//     drop's exactly one, the planner's ruling of 11-04) at the low or loop densities; a build's layers holding the
+//     section before's; a peak or drop every part, layer and the high preset; a break no drums, every layer, the bass
+//     off or Roots; home the loop; each a mask of S3's seven or the planner's eighth (every part but drums and bass)
+//   • the neighbour rule (S5): into an intro or a build at most 2 changes (a layer, a part, a density rung), into a
+//     peak, a drop, a break (the planner's ruling, 11-04) or home anything; where a boundary takes more, no candidate of
+//     its kind (enumerated here) could take fewer
 //   • the curve: the sections' Σ |E − target| within TIE_BAND a section of the best path over the candidates (brute force)
 //   • home equal to the loop byte for byte, parts and drums; a part off plays `enabled: false`
 //   • the layer filter touching only the drums, the comp and the inner, and exactly the notes M's layers strike
@@ -37,12 +39,15 @@ console.log('═══ COMPOSER — Song v0 (ARRANGEMENT_ORDER.md, phase A) ═�
 
 // ── the order's words, written out ──
 const PARTS = ['lead', 'chords', 'comp', 'bass', 'inner', 'drums'];
-const MASKS = [['chords'], ['chords', 'inner'], ['drums', 'bass'], ['drums', 'bass', 'chords'], PARTS.filter((x) => x !== 'lead'), PARTS.filter((x) => x !== 'drums'), PARTS];
+// S3's seven, and the planner's eighth (11-04): every part but the drums and the bass
+const MASKS = [['chords'], ['chords', 'inner'], ['drums', 'bass'], ['drums', 'bass', 'chords'], PARTS.filter((x) => x !== 'lead'), PARTS.filter((x) => x !== 'drums'), ['lead', 'chords', 'comp', 'inner'], PARTS];
 const LADDER = { bass: ['roots', 'sparse', 'moving', 'walking'], comp: ['sparse', 'sparse-med', 'medium', 'dense'], lead: ['line', 'arp'], inner: ['line', 'arp'] };
 const DENS = ['bass', 'comp', 'lead', 'inner'];
-const LIMIT = 2, FREE = ['peak', 'drop', 'home'];
+const LIMIT = 2, FREE = ['peak', 'drop', 'break', 'home'];
 const KINDS = { arch: ['intro', 'build', 'peak', 'break', 'peak', 'home'], 'build-drop': ['intro', 'build', 'build', 'drop', 'break', 'home'] };
-const TARGETS = { arch: [0.3, 0.6, 1.15, 0.4, 1.15, 1], 'build-drop': [0.15, 0.35, 0.65, 1.15, 0.35, 1] };
+// the planner's rulings (11-04): the peaks and drops at 1.08; Build–drop's intro one layer
+const TARGETS = { arch: [0.3, 0.6, 1.08, 0.4, 1.08, 1], 'build-drop': [0.15, 0.35, 0.65, 1.08, 0.35, 1] };
+const INTRO_LAYERS = { arch: null, 'build-drop': 1 };
 const NAMES = { arch: ['Intro', 'Build', 'Peak 1', 'Break', 'Peak 2', 'Home'], 'build-drop': ['Intro', 'Build 1', 'Build 2', 'Drop', 'Break', 'Home'] };
 const onOf = (ids) => Object.fromEntries(PARTS.map((id) => [id, ids.includes(id)]));
 const maskKey = (on) => PARTS.filter((id) => on[id]).join(',');
@@ -73,10 +78,10 @@ function changes(own, a, b) {
 }
 const prefix = (order, k) => order.slice(0, k).reduce((m, b) => m | (1 << b), 0);
 /** S3–S4's candidates of a kind, enumerated here */
-function candidates(C, kind, order) {
+function candidates(C, kind, order, template) {
   const L = order.length, own = C.own, sounds = C.sounds, out = [], seen = new Set();
   const no = (id) => MASKS.filter((m) => !m.includes(id));
-  const [masks, ks, presets] = kind === 'intro' ? [no('lead'), Array.from({ length: Math.ceil(L / 2) }, (_, i) => i + 1), ['low', 'loop']]
+  const [masks, ks, presets] = kind === 'intro' ? [no('lead'), Array.from({ length: INTRO_LAYERS[template] ?? Math.ceil(L / 2) }, (_, i) => i + 1), ['low', 'loop']]
     : kind === 'build' ? [MASKS, Array.from({ length: L }, (_, i) => i + 1), ['low', 'loop', 'high']]
       : kind === 'peak' || kind === 'drop' ? [[PARTS], [L], ['high']] : kind === 'break' ? [no('drums'), [L], ['low', 'loop', 'high']] : [[PARTS], [L], ['loop']];
   for (const m of masks) for (const k of ks) for (const p of presets) {
@@ -166,7 +171,7 @@ console.log('\n— every section within its kind');
     song.sections.forEach((s, i) => {
       const prev = song.sections[i - 1], k = popcount(s.layers), isPrefix = s.layers === prefix(song.order, k), d = J(s.density), all = PARTS.every((id) => s.parts[id]);
       let ok = MASK_KEYS.has(maskKey(s.parts)) && isPrefix;
-      if (s.kind === 'intro') ok &&= !s.parts.lead && k >= 1 && k <= Math.ceil(L / 2) && [rec('low', s.parts), rec('loop', s.parts)].includes(d);
+      if (s.kind === 'intro') ok &&= !s.parts.lead && k >= 1 && (INTRO_LAYERS[template] != null ? k === INTRO_LAYERS[template] : k <= Math.ceil(L / 2)) && [rec('low', s.parts), rec('loop', s.parts)].includes(d);
       if (s.kind === 'build') ok &&= k >= 1 && (!prev || (s.layers & prev.layers) === prev.layers) && ['low', 'loop', 'high'].some((p) => rec(p, s.parts) === d);
       if (s.kind === 'peak' || s.kind === 'drop') ok &&= all && s.layers === C.full && d === rec('high', s.parts);
       if (s.kind === 'break') ok &&= !s.parts.drums && s.layers === C.full && (!s.parts.bass || resolve(own, s.density).bass === 'roots') && ['low', 'loop', 'high'].some((p) => rec(p, s.parts, true) === d);
@@ -174,7 +179,7 @@ console.log('\n— every section within its kind');
       if (!ok) bad ||= `${at} section ${i + 1} (${s.kind}): ${J({ layers: s.layers, parts: maskKey(s.parts), density: s.density })}`;
     });
   }
-  check('S4: an intro without the lead, on the order\'s first ⌈L/2⌉ layers or fewer, low or loop; a build holding the layers before; a peak or drop every part and layer, high; a break no drums, every layer, the bass off or Roots; home the loop (E 1); every section one of S3\'s seven masks on a prefix of the order', !bad, bad);
+  check('S4: an intro without the lead, on the order\'s first ⌈L/2⌉ layers or fewer (Build–drop\'s on exactly its first, the slowest), low or loop; a build holding the layers before; a peak or drop every part and layer, high; a break no drums, every layer, the bass off or Roots; home the loop (E 1); every section one of the eight masks on a prefix of the order', !bad, bad);
   let en = '';
   for (const { C, song } of songs) for (const s of song.sections) if (Math.abs(energyOf(s, C.loop, C.m) - s.energy) > EPS) en ||= `${C.label} ${s.name}`;
   check('each section\'s energy is energyOf of its own data (an edited section reads it again)', !en, en);
@@ -187,7 +192,7 @@ console.log('\n— the neighbour rule and the curve');
 {
   let bad = '', relaxed = 0, kept = 0, mism = '';
   const candOf = new Map();
-  const cands = (C, kind, order) => { const key = `${C.label}|${kind}|${order}`; if (!candOf.has(key)) candOf.set(key, candidates(C, kind, order)); return candOf.get(key); };
+  const cands = (C, kind, order, template) => { const key = `${C.label}|${kind}|${order}|${template}`; if (!candOf.has(key)) candOf.set(key, candidates(C, kind, order, template)); return candOf.get(key); };
   for (const { C, template, seed, song } of songs) {
     song.sections.forEach((s, i) => {
       if (!i) return;
@@ -196,17 +201,21 @@ console.log('\n— the neighbour rule and the curve');
       if (FREE.includes(s.kind)) return;
       if (n <= LIMIT) { kept++; return; }
       relaxed++;
-      const held = cands(C, s.kind, song.order).filter((c) => s.kind !== 'build' || (c.layers & prev.layers) === prev.layers);
+      const held = cands(C, s.kind, song.order, template).filter((c) => s.kind !== 'build' || (c.layers & prev.layers) === prev.layers);
       const least = Math.min(...held.map((c) => changes(C.own, prev, c)));
       if (least <= LIMIT || n !== least) bad ||= `${C.label} ${template} seed ${seed} ${s.name}: ${n} changes, a candidate takes ${least}`;
     });
   }
-  check(`S5: into an intro, a build or a break at most ${LIMIT} changes (${kept} boundaries); the ${relaxed} that take more (a break after a peak) take the fewest any candidate of the kind could`, !bad, bad);
+  check(`S5: into an intro or a build at most ${LIMIT} changes (${kept} boundaries); any that take more (${relaxed}) take the fewest any candidate of the kind could`, !bad, bad);
+  const breaks = songs.flatMap(({ C, song }) => song.sections.map((s, i) => (s.kind === 'break' ? changes(C.own, song.sections[i - 1], s) : null)).filter((n) => n != null));
+  check(`… and into a break anything (the planner's ruling, 11-04: a contrast, not a drift): ${breaks.filter((n) => n > LIMIT).length} of ${breaks.length} breaks take more than ${LIMIT}, up to ${Math.max(...breaks)}`, breaks.some((n) => n > LIMIT));
+  const nb = songs.flatMap(({ song }) => song.sections.filter((s) => s.kind === 'break' && maskKey(s.parts) === 'lead,chords,comp,inner')).length;
+  check(`the eighth mask (every part but the drums and the bass) is a break's candidate: ${nb} breaks play it`, nb > 0);
   check('the boundaries\' changes counted here (a layer, a part, a density rung both sections sound) are boundaryChanges\'', !mism, mism);
   // the curve: the best path by brute force (every path the kinds' edges allow), Σ |E − target|
   let worse = '', paths = 0;
   for (const { C, template, seed, song } of songs.filter((x) => x.seed === 1 || x.seed === 3)) {
-    const kinds = KINDS[template], T = TARGETS[template], C0 = kinds.map((k) => cands(C, k, song.order));
+    const kinds = KINDS[template], T = TARGETS[template], C0 = kinds.map((k) => cands(C, k, song.order, template));
     let best = Infinity;
     const walk = (i, prev, sum) => {
       if (sum >= best) return;
@@ -470,7 +479,7 @@ console.log('\n— the 16,359-onset row');
 
 // ── the table (for the order's log) ──
 console.log('\n— the songs, seed 1 (layers in the order they enter; E against the target)');
-const short = { 'chords': 'chords', 'chords,inner': 'chords+inner', 'bass,drums': 'drums+bass', 'chords,bass,drums': 'drums+bass+chords', 'chords,comp,bass,inner,drums': 'all−lead', 'lead,chords,comp,bass,inner': 'all−drums', 'lead,chords,comp,bass,inner,drums': 'all' };
+const short = { 'lead,chords,comp,inner': 'all−drums−bass', 'chords': 'chords', 'chords,inner': 'chords+inner', 'bass,drums': 'drums+bass', 'chords,bass,drums': 'drums+bass+chords', 'chords,comp,bass,inner,drums': 'all−lead', 'lead,chords,comp,bass,inner': 'all−drums', 'lead,chords,comp,bass,inner,drums': 'all' };
 const LN = 'ABCD';
 for (const C of LOOPS.filter((x) => x.label.indexOf(' · ') < 0)) {
   const pair = C.table ?? ['arch', 'build-drop'].map((t) => songs.find((x) => x.C === C && x.template === t && x.seed === 1).song);

@@ -35,23 +35,27 @@
 //              (the cycle is the same in every section, so a second's starts are proportional) over that part's most
 //              across the row's candidates — the most of the low, loop and high presets on every layer — capped at 1 (an
 //              edited density past high); the chords' u the share of bars with a chord note. A proxy, not taste.
-//   candidates (S3) layer prefixes of the order (k = 1…L) × part masks (PART_MASKS, a fixed seven) × three presets: low
+//   candidates (S3) layer prefixes of the order (k = 1…L) × part masks (PART_MASKS, a fixed eight: S3's seven and, by the
+//              planner's ruling of 11-04, every part but the drums and the bass) × three presets: low
 //              (every density one rung down: bass roots < sparse < moving < walking; the comp's tier on COMP_LADDER,
 //              sparse < sparse–medium < medium < dense, so the default sparse–medium goes to sparse; Arp → Line), loop,
 //              high (one rung up; Line stays Line). Masks and layers are filters: only low, high and the break's Roots
 //              cost an arrangement, each once a song.
-//   kinds      (S4) intro: no lead, at most the order's first ⌈L/2⌉ layers, low or loop. build: layers non-decreasing
-//              from the section before. peak, drop: every part, every layer, high. break: no drums, every layer, the bass
-//              off or Roots (a mask with the bass plays it at Roots, the preset's other densities kept). home: the loop.
+//   kinds      (S4) intro: no lead, at most the order's first ⌈L/2⌉ layers (Build–drop's: ONE, the first of its
+//              slowest-first order, the near-silent start: the planner's ruling, 11-04), low or loop. build: layers
+//              non-decreasing from the section before. peak, drop: every part, every layer, high (one rung: two, a dense
+//              comp, clutters; the targets are 1.08, planner's ruling 11-04). break: no drums, every layer, the bass off
+//              or Roots (a mask with the bass plays it at Roots, the preset's other densities kept). home: the loop.
 //   choice     (S5) each section takes a candidate of its kind near its target. The neighbour rule: a boundary into an
-//              intro, a build or a break changes at most 2 things (a layer in or out, a part toggled, a rung of a density
-//              the two sections both sound each count one); into a peak, a drop or home anything. Builder's calls:
+//              intro or a build changes at most 2 things (a layer in or out, a part toggled, a rung of a density the two
+//              sections both sound each count one); into a peak, a drop, a break or home anything (a break is a contrast
+//              section, not a drift: the planner's ruling, 11-04). Builder's calls:
 //              (1) the sections are chosen TOGETHER, the path through their candidates nearest the targets (least
 //              Σ |E − target|, the neighbour rule and a build's layers its edges: `choosePath`), not one by one, which
 //              fell into dead ends; (2) the song's first section has no boundary (it opens the song, and the repeat
 //              after home is the top again), so an intro first is free; (3) where no candidate of the kind keeps the
-//              rule (a break after a peak: the drums off is one, and the bass off or down to Roots two or more), the
-//              ones with the fewest changes stand, said in the section's why; (4) "ties break by the seed" reads a tie
+//              rule (none does on the templates since the break is free; an edited order could), the ones with the
+//              fewest changes stand, said in the section's why; (4) "ties break by the seed" reads a tie
 //              as within TIE_BAND (0.05): each candidate's cost adds TIE_BAND × a key the seed's own generator
 //              (`${seed}/form/${section}`) draws, so Re-plan (a new seed) gives another song where energies are close.
 //   order      (S6, ruling 2) of the permutations of the active layers (at most 24), the one whose prefix energies
@@ -93,7 +97,7 @@ export const SONG_PARTS = Object.freeze([...PART_IDS, 'drums']);
 export const FILTERED_PARTS = Object.freeze(['drums', 'comp', 'inner']);
 /** S2's weights */
 export const PART_WEIGHTS = Object.freeze({ drums: 0.3, bass: 0.15, comp: 0.15, lead: 0.15, chords: 0.15, inner: 0.1 });
-/** S3's part masks, in the order the planner reads them */
+/** S3's part masks (and the planner's eighth, 11-04), in the order the planner reads them */
 export const PART_MASKS = Object.freeze([
   Object.freeze({ id: 'chords', label: 'the chords', parts: Object.freeze(['chords']) }),
   Object.freeze({ id: 'chords+inner', label: 'the chords and the inner', parts: Object.freeze(['chords', 'inner']) }),
@@ -101,6 +105,8 @@ export const PART_MASKS = Object.freeze([
   Object.freeze({ id: 'drums+bass+chords', label: 'the drums, the bass and the chords', parts: Object.freeze(['drums', 'bass', 'chords']) }),
   Object.freeze({ id: 'no-lead', label: 'every part but the lead', parts: Object.freeze(SONG_PARTS.filter((id) => id !== 'lead')) }),
   Object.freeze({ id: 'no-drums', label: 'every part but the drums', parts: Object.freeze(SONG_PARTS.filter((id) => id !== 'drums')) }),
+  // the planner's ruling, 11-04: a break that keeps the lead, the chords, the comp and the inner
+  Object.freeze({ id: 'no-drums-bass', label: 'every part but the drums and the bass', parts: Object.freeze(SONG_PARTS.filter((id) => id !== 'drums' && id !== 'bass')) }),
   Object.freeze({ id: 'all', label: 'every part', parts: SONG_PARTS }),
 ]);
 export const DENSITY_PRESETS = Object.freeze(['low', 'loop', 'high']);
@@ -109,18 +115,20 @@ export const DENSITY_PARTS = Object.freeze(['bass', 'comp', 'lead', 'inner']);
 export const COMP_LADDER = Object.freeze(['sparse', 'sparse-med', 'medium', 'dense']);
 export const ARP_MODES = Object.freeze(['line', 'arp']);
 export const DENSITY_LADDERS = Object.freeze({ bass: BASS_DENSITIES, comp: COMP_LADDER, lead: ARP_MODES, inner: ARP_MODES });
-/** S5's templates: each section's kind and target energy (home units); `order` 'even' (S6) or 'slowest' */
+/** S5's templates: each section's kind and target energy (home units); `order` 'even' (S6) or 'slowest'; `introLayers`
+ *  the intro's most layers (⌈L/2⌉ unless given). The planner's rulings (11-04): peaks and drops at 1.08, Build–drop's
+ *  intro one layer */
 export const TEMPLATES = Object.freeze({
-  arch: Object.freeze({ id: 'arch', label: 'Arch', order: 'even', sections: Object.freeze([['intro', 0.3], ['build', 0.6], ['peak', 1.15], ['break', 0.4], ['peak', 1.15], ['home', 1]]) }),
-  'build-drop': Object.freeze({ id: 'build-drop', label: 'Build–drop', order: 'slowest', sections: Object.freeze([['intro', 0.15], ['build', 0.35], ['build', 0.65], ['drop', 1.15], ['break', 0.35], ['home', 1]]) }),
+  arch: Object.freeze({ id: 'arch', label: 'Arch', order: 'even', sections: Object.freeze([['intro', 0.3], ['build', 0.6], ['peak', 1.08], ['break', 0.4], ['peak', 1.08], ['home', 1]]) }),
+  'build-drop': Object.freeze({ id: 'build-drop', label: 'Build–drop', order: 'slowest', introLayers: 1, sections: Object.freeze([['intro', 0.15], ['build', 0.35], ['build', 0.65], ['drop', 1.08], ['break', 0.35], ['home', 1]]) }),
 });
 export const TARGET_SECONDS = 20;
 export const MAX_PASSES = 16;
 /** an edited section's passes may go past the planner's 16, to this */
 export const MAX_SECTION_PASSES = 64;
-/** the neighbour rule's limit, and the kinds a boundary into is free (S5) */
+/** the neighbour rule's limit, and the kinds a boundary into is free (S5; the break by the planner's ruling, 11-04) */
 export const NEIGHBOUR_LIMIT = 2;
-export const FREE_INTO = Object.freeze(['peak', 'drop', 'home']);
+export const FREE_INTO = Object.freeze(['peak', 'drop', 'break', 'home']);
 /** builder's call (S5's ties): candidates within this of the nearest to the target are tied, and the seed picks */
 export const TIE_BAND = 0.05;
 /** the inner arp's own sound (perform/composer-controller.js INNER_ARP_SOUND: core can't import the controller) */
@@ -338,10 +346,10 @@ const changesOf = (cx, a, b) => changesBy(a, b, settingOf(cx, a.density), settin
 export function boundaryChanges(a, b, loopSpec, materials) { return changesOf(contextOf(loopSpec, materials), a, b); }
 
 /** a kind's candidates (S3 filtered by S4; a build's "layers non-decreasing" is an edge of the path, not a filter) */
-function candidatesOf(cx, kind, order) {
+function candidatesOf(cx, kind, order, tpl) {
   const L = order.length, ks = [], masks = [], presets = [];
   const no = (id) => PART_MASKS.filter((x) => !x.parts.includes(id)), all = PART_MASKS.find((x) => x.id === 'all');
-  if (kind === 'intro') { for (let k = 1; k <= Math.ceil(L / 2); k++) ks.push(k); masks.push(...no('lead')); presets.push('low', 'loop'); }
+  if (kind === 'intro') { for (let k = 1; k <= Math.min(L, tpl.introLayers ?? Math.ceil(L / 2)); k++) ks.push(k); masks.push(...no('lead')); presets.push('low', 'loop'); }
   else if (kind === 'build') { for (let k = 1; k <= L; k++) ks.push(k); masks.push(...PART_MASKS); presets.push(...DENSITY_PRESETS); }
   else if (kind === 'peak' || kind === 'drop') { ks.push(L); masks.push(all); presets.push('high'); }
   else if (kind === 'break') { ks.push(L); masks.push(...no('drums')); presets.push(...DENSITY_PRESETS); }
@@ -368,8 +376,8 @@ const PRESET_WORDS = Object.freeze({ low: 'the low preset', loop: 'the loop\'s o
 /**
  * The sections chosen together (S5): a shortest path through each section's candidates, a step's cost its distance to
  * the section's target plus TIE_BAND × the seed's key for it (so candidates within the band tie, and the seed breaks
- * them), its edges the boundaries the kinds allow — a build's layers holding the section before's, and into an intro, a
- * build or a break at most NEIGHBOUR_LIMIT changes (where no candidate keeps within it of the one before, the fewest
+ * them), its edges the boundaries the kinds allow — a build's layers holding the section before's, and into an intro or
+ * a build at most NEIGHBOUR_LIMIT changes (where no candidate keeps within it of the one before, the fewest
  * changes it can make). Builder's call: one by one (each section the nearest given the one before) fell into dead ends:
  * 7:5:3:2's Build–drop, from an intro of the chords and the inner, could reach nothing within two changes above 0.18
  * for builds targeting 0.35 and 0.65. → [{ pick (a candidate), cands, changes, relaxed }]
@@ -377,7 +385,7 @@ const PRESET_WORDS = Object.freeze({ low: 'the low preset', loop: 'the loop\'s o
 function choosePath(cx, tpl, order, seed) {
   const n = tpl.sections.length;
   const C = tpl.sections.map(([kind, target], i) => {
-    const cands = candidatesOf(cx, kind, order), rng = seededRandom(`${seed}/form/${i}`);
+    const cands = candidatesOf(cx, kind, order, tpl), rng = seededRandom(`${seed}/form/${i}`);
     for (const c of cands) c.cost = Math.abs(c.energy - target) + TIE_BAND * rng();
     return cands;
   });
@@ -437,7 +445,7 @@ export function planSong(loopSpec, materials, { template = 'arch', seed = 1, tar
 
   // the sections (S4–S5), chosen together
   const path = choosePath(cx, tpl, order, seed), off = path.reduce((a, x, i) => a + Math.abs(x.pick.energy - tpl.sections[i][1]), 0);
-  decide('curve', +off.toFixed(6), `the sections chosen together: the path through their candidates nearest the targets (Σ |E − target| = ${off.toFixed(2)}), into an intro, a build or a break at most ${NEIGHBOUR_LIMIT} changes, candidates within ${TIE_BAND} of each other tied and broken by the seed (${seed})`);
+  decide('curve', +off.toFixed(6), `the sections chosen together: the path through their candidates nearest the targets (Σ |E − target| = ${off.toFixed(2)}), into an intro or a build at most ${NEIGHBOUR_LIMIT} changes, candidates within ${TIE_BAND} of each other tied and broken by the seed (${seed})`);
   const counts = {}, seen = {};
   for (const [kind] of tpl.sections) counts[kind] = (counts[kind] ?? 0) + 1;
   const sections = [];

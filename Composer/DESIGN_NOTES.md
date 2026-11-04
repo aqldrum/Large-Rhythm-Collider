@@ -2580,14 +2580,17 @@ The order's probe table, to the hundredth.
   - **The chords' u:** the share of bars with a chord note.
 
   The counts come from a 16-bin histogram of the notes' owner masks per arrangement, so any layer mask costs nothing.
-- **Candidates** (S3): the order's prefixes × S3's seven masks × three presets.
+- **Candidates** (S3): the order's prefixes × eight masks × three presets. The eight are S3's seven plus "every part but the drums and the bass" (the planner's ruling, 11-04, for the breaks).
   - **The rungs:** bass roots < sparse < moving < walking; the comp's tier sparse < sparse–medium < medium < dense, so the default sparse–medium steps to sparse and to medium as S3 says; Line < Arp.
   - **The presets:** low steps everything down one rung (Arp → Line); high steps up one (Line stays Line).
   - **The record:** only a part the section sounds records a density, so two candidates that sound alike are one.
-- **Kinds** (S4) as the order has them. A break's mask with the bass plays it at Roots, the preset's other densities kept.
+- **Kinds** (S4) as the order has them. A break's mask with the bass plays it at Roots, the preset's other densities kept. By the planner's rulings of 11-04:
+  - Build–drop's intro is one layer, its slowest (`introLayers: 1` on the template);
+  - the peak and drop targets are 1.08, with high staying one rung.
 - **The choice** (S5): the sections are chosen **together**.
   - It's a shortest path through the sections' candidates: least Σ |E − target|, plus TIE_BAND (0.05) × a seeded key a candidate.
-  - **Its edges:** a build's layers hold the section before's, and a boundary into an intro, a build or a break changes at most 2 things (layers, toggles, density rungs both sections sound). Where no candidate keeps that, the fewest changes stand.
+  - **Its edges:** a build's layers hold the section before's, and a boundary into an intro or a build changes at most 2 things (layers, toggles, density rungs both sections sound). Where no candidate keeps that, the fewest changes stand.
+  - **The break is free**, like a peak, a drop and home: a contrast section, not a drift (the planner's ruling, 11-04).
 - **The order** (S6):
   - **Arch:** of the active layers' permutations, the one whose prefix energies (every part, the loop's densities) step most evenly. The steps run E_0 (no layer) → E_L, by population variance; ties go fastest-first.
   - **Build–drop:** slowest-first.
@@ -2597,18 +2600,20 @@ The order's probe table, to the hundredth.
 
 **`fillBars`** (`drums.js`, `DRUM_OPTIONS`, `readDrumOptions`): the listed bars fill from beat 3 as a phrase end does, and the bar after each crashes (wrapping), whether or not `fills` is on. The options echo it, and the `drums.fills` decision and the bar's why say "asked (fillBars)". Unset, nothing moves: `drums-baseline.mjs` (527 cases × variants), `assert-drums.mjs`, `assert-drum-grid.mjs` and `assert-drum-prime.mjs` hold untouched.
 
-**The songs, seed 1** (layers in the order they enter; E / target; → a fill into the next): the table is in the order's Log. The shape on every probe row:
-- intros at 0.13–0.36;
-- builds land within about 0.05 of 0.35, 0.60 and 0.65;
-- peaks and drops at 1.05–1.08: high is one rung up, Walking bass and the medium comp;
-- every break "chords + inner" at 0.18–0.27;
-- home 1.
+**The songs, seed 1** (layers in the order they enter; E / target; → a fill into the next): the tables are in the order's Log, as built and after the rulings. The shape on every probe row, after the rulings:
+- Arch's intros sit at 0.27–0.36. Build–drop's open on one layer at 0.13–0.22.
+- Builds mostly land within about 0.05 of 0.35, 0.60 and 0.65.
+- Peaks and drops sit at 1.05–1.08 for 1.08: Walking bass and the medium comp.
+- Arch's breaks mostly play every part but the drums and the bass, with the comp a rung down, at 0.48–0.55 for 0.40. Otherwise they play "chords + inner" at 0.27.
+- Build–drop's breaks play "chords + inner" (0.18–0.27 for 0.35).
+- Home is 1.
 
 **Measured:** `planSong` 77 ms on the 16,359-onset row from a fresh loop (the low and high arrangements included), about 1 ms after; `songPasses` under 1 ms. The small rows take 1–20 ms.
 
-**Tests** (`assert-form.mjs`, 37 checks; brute forces written from the order). It runs 13 loops: the 8 probe rows as Compose makes them, and 5 played as the window would (Arp lead and inner with Walking; Arp inner, Roots and drums *with*; the lead off with Sparse · Clave; the comp in notes; the drums off). Each runs × 2 templates × 3 seeds. It checks:
+**Tests** (`assert-form.mjs`, 39 checks; brute forces written from the order). It runs 13 loops: the 8 probe rows as Compose makes them, and 5 played as the window would (Arp lead and inner with Walking; Arp inner, Roots and drums *with*; the lead off with Sparse · Clave; the comp in notes; the drums off). Each runs × 2 templates × 3 seeds. It checks:
 - the record and determinism (also from a fresh JSON copy), and the JSON round trip;
-- S4 per kind, and the neighbour rule, every relaxation proven necessary by enumerating the kind's candidates;
+- S4 per kind (Build–drop's intro exactly one layer), and the neighbour rule, every relaxation proven necessary by enumerating the kind's candidates;
+- a break free at its boundary, and the eighth mask played;
 - the curve within TIE_BAND a section of a brute-force best path;
 - the order against every permutation;
 - the passes, including a seed tempo of half;
@@ -2624,7 +2629,7 @@ The order's probe table, to the hundredth.
 1. **The sections are chosen together** (a shortest path), not one by one. One by one fell into dead ends: 7:5:3:2's Build–drop opened on "chords + inner", and nothing within two changes rose above 0.18 for builds targeting 0.35 and 0.65.
 2. **"Ties break by the seed" reads a tie as within 0.05** (TIE_BAND: a seeded key × 0.05 on each candidate's cost). Exact ties are rare, so without it Re-plan would rarely change the song. Arch varies with the seed on 11 of the 13 test loops.
 3. **The song's first section has no boundary.** It opens the song, and the repeat after home is the top again. Otherwise the intro would have to sit within two changes of home.
-4. **Where no candidate keeps the neighbour rule, the fewest changes stand**, and the section's why says so. That's every break after a peak: the drums off is one change, and the bass off is another, or Walking → Roots is three rungs.
+4. **Where no candidate keeps the neighbour rule, the fewest changes stand**, and the section's why says so. As built, that was every break after a peak. Since the planner made the break free (11-04), no planned boundary needs it; it stays for edited songs.
 5. **The order's steps start from E_0**, no layer (the lead, chords and bass alone), so a two-layer row's order is chosen too.
 6. **A density is recorded only for a part the section sounds.**
 7. **A filtered part is rearticulated** by the legato rule over what is left, and the comp's strokes are filtered with it. A part that loses nothing is the arrangement's own object.
