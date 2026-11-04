@@ -1,0 +1,74 @@
+/* arrangement-lane.css — Song v0's lane in the Composer window (Composer/page/arrangement-lane.js; ARRANGEMENT_ORDER.md
+   phase C2, S15), in the window's own look (composer-tab.css: #1a1a1a panels, #2a2a2a cells, #444 lines, #00ff88
+   accents). Every colour is a token on .alane, so a theme of the window redefines them in one place; the kinds' and the
+   parts' hues come from the view (--alane-kind, --alane-part). Also the window's Song | Loop switch and the on / off
+   controls the lane owns in Song (ctab-modes, ctab-lane-owned), and the part strips' Mute while Song is on. */
+
+.alane {
+  --alane-bg: #1f1f1f; --alane-cell: #2a2a2a; --alane-cell-on: #333; --alane-line: #444; --alane-dim: #333; --alane-text: #ccc; --alane-muted: #888;
+  --alane-accent: #00ff88; --alane-amber: #ffb347; --alane-now: rgba(255, 255, 255, 0.10); --alane-target: #888;
+  display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; background: var(--alane-bg); border: 1px solid var(--alane-dim); border-radius: 4px; padding: 6px 8px; color: var(--alane-text);
+}
+.alane-bar { gap: 8px; }
+.alane-label { color: var(--alane-accent); font-weight: 600; letter-spacing: 1px; }
+.ctab-left .alane-stale { border-color: var(--alane-amber) !important; color: var(--alane-amber) !important; padding: 1px 8px !important; font-size: 10px !important; }
+.alane-note { font-size: 11px; }
+.alane-note.amber { color: var(--alane-amber); }
+
+/* the grid: a row a head (84 px) and the sections' columns (fr ∝ passes; the view sets grid-template-columns) */
+/* every row is its own grid on one column template and one width (the view sets the rows' min-width), so the columns
+   line up; narrower than that, the lane scrolls sideways */
+.alane-grid { overflow-x: auto; padding-bottom: 2px; }
+.alane-grid-rows { display: flex; flex-direction: column; gap: 2px; }
+.alane-row { display: grid; grid-template-columns: 84px 1fr; gap: 6px; align-items: stretch; min-width: 0; }
+.alane-cols { display: grid; gap: 2px; min-width: 0; }
+.alane-cols > * { min-width: 0; }
+.alane-head { display: flex; align-items: center; font-size: 11px; padding: 0 6px; }
+.alane-part { border-left: 3px solid var(--alane-muted); font-weight: 600; font-size: 11px; }
+.alane-part.off { opacity: .45; }
+
+/* the energy line: each column its step and the join from the one before (solid E, dotted target) */
+.alane-energy { height: 30px; position: relative; border-bottom: 1px solid var(--alane-dim); }
+.alane-energy svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.alane-energy .alane-e { fill: none; stroke: var(--alane-accent); stroke-width: 2; }
+.alane-energy .alane-target { fill: none; stroke: var(--alane-target); stroke-width: 1; stroke-dasharray: 3 3; }
+.alane-energy.now { background: var(--alane-now); }
+
+/* the section heads: the kind's colour on the left edge, the sounding one lit */
+.alane-col { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; background: var(--alane-cell); border-left: 3px solid var(--alane-kind, var(--alane-muted)); border-radius: 3px; padding: 2px 4px; min-height: 22px; position: relative; overflow: hidden; }
+.alane-col.selected { box-shadow: inset 0 0 0 1px var(--alane-kind, var(--alane-accent)); }
+.alane-col.now { background: color-mix(in srgb, var(--alane-kind, #fff) 22%, var(--alane-cell)); }
+.ctab-left .alane-name { background: none !important; border: none !important; padding: 0 2px !important; font-weight: 600; color: var(--alane-text) !important; font-size: 11px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.alane-passes { display: inline-flex; align-items: center; gap: 2px; }
+.ctab-left .alane-nudge { padding: 0 4px !important; font-size: 10px !important; line-height: 14px; }
+.ctab-left .alane-nudge:disabled { opacity: .35; cursor: default; }
+.alane-n { min-width: 14px; text-align: center; font-family: monospace; font-size: 11px; }
+.alane-fill { font-size: 9px; color: var(--alane-amber); white-space: nowrap; }
+.alane-edited { color: var(--alane-accent); font-size: 12px; line-height: 10px; }
+
+/* the cells: on in the part's colour, off dim, a part off in the loop hatched */
+.ctab-left .alane-cell { min-height: 18px; padding: 0 4px !important; font-size: 10px !important; border-radius: 3px !important; border: 1px solid var(--alane-dim) !important; background: var(--alane-cell) !important; color: var(--alane-muted) !important; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctab-left .alane-cell.on { background: color-mix(in srgb, var(--alane-part, var(--alane-accent)) 38%, var(--alane-cell)) !important; border-color: var(--alane-part, var(--alane-accent)) !important; color: var(--alane-text) !important; }
+.ctab-left .alane-cell.dense { font-weight: 600; color: #fff !important; }
+.ctab-left .alane-cell.cant { background: repeating-linear-gradient(135deg, var(--alane-cell) 0 4px, var(--alane-bg) 4px 8px) !important; cursor: not-allowed; opacity: .6; }
+.ctab-left .alane-cell.now { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45); }
+.alane-chips { display: flex; gap: 2px; flex-wrap: wrap; align-items: center; border-radius: 3px; padding: 1px; }
+.alane-chips.now { background: var(--alane-now); }
+.ctab-left .alane-chip { padding: 0 5px !important; font-size: 10px !important; font-family: monospace; color: var(--alane-muted) !important; background: var(--alane-cell) !important; }
+.ctab-left .alane-chip.on { border-color: var(--alane-accent) !important; color: var(--alane-accent) !important; }
+
+/* the selected section's strip: its words and its densities */
+.alane-strip { display: flex; flex-direction: column; gap: 3px; border-left: 3px solid var(--alane-kind, var(--alane-muted)); padding: 3px 0 2px 8px; }
+.alane-strip-name { color: var(--alane-text); }
+.alane-strip-e { font-family: monospace; font-size: 11px; color: var(--alane-accent); }
+.alane-dens { display: inline-flex; gap: 4px; align-items: center; }
+.alane-why { font-size: 10px; line-height: 1.35; }
+
+/* the window: Loop | Song beside the transport; the on / off the lane owns in Song */
+.ctab-modes { display: inline-flex; gap: 0; }
+.ctab-left .ctab-modes .ctab-mode { border-radius: 0 !important; padding: 2px 9px !important; font-size: 11px !important; }
+.ctab-left .ctab-modes .ctab-mode:first-child { border-radius: 4px 0 0 4px !important; }
+.ctab-left .ctab-modes .ctab-mode:last-child { border-radius: 0 4px 4px 0 !important; border-left: none !important; }
+.ctab-left .ctab-modes .ctab-mode.on { background: rgba(0, 255, 136, 0.12) !important; }
+.ctab-lane-owned, .ctab-lane-owned:hover { opacity: .5; cursor: default !important; border-color: #444 !important; }
+.composition-part-strips .part-strip-mute:disabled { opacity: .5; cursor: default; }
