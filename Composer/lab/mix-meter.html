@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Composer Mix Meter</title>
+<!-- The Composer's stem meter and mix A/B (Composer/MIX_MASTER_ORDER.md, M1). Not linked from index.html. Serve the
+     repo root as a static site and open /Composer/lab/mix-meter.html. ?run=1 runs the probe at once (the headless run). -->
+<style>
+  :root { --bg: #111; --panel: #1a1a1a; --cell: #2a2a2a; --line: #444; --text: #fff; --muted: #aaa; --accent: #00ff88; --warn: #ffb347; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px 'Segoe UI', Roboto, sans-serif; }
+  header { padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; color: var(--accent); font-weight: 600; }
+  main { padding: 12px 16px; display: grid; gap: 12px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; overflow-x: auto; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 0 0 8px; }
+  label { color: var(--muted); margin-right: 10px; }
+  select, button, input { background: var(--cell); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: inherit; }
+  button { cursor: pointer; }
+  table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 2px 8px; text-align: right; border-bottom: 1px solid #2a2a2a; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; }
+  td:first-child, th:first-child { text-align: left; }
+  #status { color: var(--warn); margin-left: 10px; }
+  pre { white-space: pre-wrap; color: var(--muted); font-size: 11px; max-height: 240px; overflow: auto; }
+  p { color: var(--muted); margin: 4px 0 8px; }
+</style>
+</head>
+<body>
+<header><h1>Composer · mix meter</h1></header>
+<main>
+  <section>
+    <h2>Listen (A/B)</h2>
+    <p>The row composed with the defaults (seed 1), played through the player with the mix switches live. The level
+      faders stay at their defaults (0.8), so MIDI would be unchanged by any of this.</p>
+    <div>
+      <label>Row <select id="row"></select></label>
+      <button id="play">Play</button>
+      <label>Master <select id="master"><option value="knock">knock (the rack)</option><option value="classic">classic (today's compressor)</option></select></label>
+      <label><input type="checkbox" id="staging" checked> staging (trims, high-pass)</label>
+      <label><input type="checkbox" id="duck" checked> kick duck</label>
+      <label><input type="checkbox" id="mixOff"> today's graph (all off: replays)</label>
+      <label title="today's graph plays about 10 LU louder than the new mix (the probe); this turns it down by that much, so the A/B is of balance, not loudness"><input type="checkbox" id="match" checked> level-matched</label>
+      <span id="gr"></span>
+    </div>
+  </section>
+  <section>
+    <h2>Probe</h2>
+    <p>Each stem alone (and the whole mix), rendered offline through the player. Peak and RMS in dBFS, true peak in
+      dBTP, M-max, S-max and integrated in LUFS, GR (the master compressor's gain reduction while the mix plays) in dB.</p>
+    <button id="run">Run the probe</button><span id="status"></span>
+    <div id="tables"></div>
+    <pre id="json"></pre>
+  </section>
+</main>
+<script type="module">
+import { PROBE_ROWS, METER_CONFIGS, meterRow, composeRow } from './mix-meter.js';
+import { createPlayer } from '../perform/composer-player.js';
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); for (const k of kids) e.append(k); return e; };
+const f1 = (x) => (Number.isFinite(x) ? x.toFixed(1) : '−∞');
+const name = (r) => r.layers.filter(Boolean).join(':');
+
+// ── the probe ──
+const COLS = [['peakDb', 'peak'], ['truePeakDb', 'TP'], ['rmsDb', 'RMS'], ['mMaxLufs', 'M-max'], ['sMaxLufs', 'S-max'], ['integratedLufs', 'int.'], ['crestDb', 'crest'], ['grMedianDb', 'GR med'], ['grP95Db', 'GR p95']];
+function table(result) {
+  const t = el('table');
+  t.append(el('tr', {}, el('th', { textContent: `${result.row} · ${result.tempoBpm.toFixed(0)} BPM` }), el('th', { textContent: 'stem' }), ...COLS.map(([, h]) => el('th', { textContent: h }))));
+  for (const [cfg, stems] of Object.entries(result.stems)) for (const [stem, m] of Object.entries(stems)) {
+    t.append(el('tr', {}, el('td', { textContent: cfg }), el('td', { textContent: stem }), ...COLS.map(([k]) => el('td', { textContent: m[k] == null ? '' : f1(m[k]) }))));
+  }
+  return t;
+}
+const asked = new URLSearchParams(location.search).get('configs')?.split(',').filter((c) => c in METER_CONFIGS) || null;
+async function runProbe() {
+  $('run').disabled = true;
+  const results = [];
+  for (const r of PROBE_ROWS) {
+    const res = await meterRow(r, { ...(asked ? { configs: asked } : {}), onProgress: (s) => { $('status').textContent = s; } });
+    results.push(res);
+    $('tables').append(table(res));
+    $('json').textContent = JSON.stringify(results);
+  }
+  $('status').textContent = 'done';
+  window.__meter = results;
+  $('run').disabled = false;
+}
+$('run').addEventListener('click', runProbe);
+
+// ── listen ──
+for (const [i, r] of PROBE_ROWS.entries()) $('row').append(el('option', { value: String(i), textContent: name(r) }));
+let ctx = null, out = null, player = null, row = null, rowIndex = null, grTimer = null;
+const mixNow = () => ($('mixOff').checked ? null : { master: $('master').value, staging: $('staging').checked, duck: $('duck').checked });
+async function start() {
+  ctx ??= new AudioContext();
+  if (ctx.state === 'suspended') await ctx.resume();
+  const i = Number($('row').value);
+  if (rowIndex !== i) { $('play').disabled = true; row = await composeRow(PROBE_ROWS[i]); rowIndex = i; $('play').disabled = false; }
+  // today's graph is ~10 LU louder (the probe): level-matched, it plays 10 dB down
+  out ??= ctx.createGain(); out.connect(ctx.destination);
+  out.gain.value = $('mixOff').checked && $('match').checked ? Math.pow(10, -10 / 20) : 1;
+  player = createPlayer({ ctx, destination: out, mix: mixNow() });
+  for (const [id, v] of Object.entries(row.levels)) player.setLevel(id, v);
+  player.play(row.spec, () => row.parts, () => row.drums);
+  $('play').textContent = 'Stop';
+  grTimer = setInterval(() => {
+    const ch = player?.chain, comp = !ch ? player?.limiter : ch.mode === 'classic' ? ch.nodes.classic : ch.nodes.glue;
+    $('gr').textContent = comp ? `compressor GR ${f1(comp.reduction)} dB${ch?.mode === 'knock' ? ` · limiter ${f1(ch.limiterReduction())} dB` : ''}` : '';
+  }, 100);
+}
+function stop() { player?.stop(); const p = player; player = null; setTimeout(() => { try { p?.limiter.disconnect(); } catch {} }, 200); clearInterval(grTimer); $('play').textContent = 'Play'; }
+$('play').addEventListener('click', () => (player ? stop() : start()));
+$('row').addEventListener('change', () => { if (player) { stop(); start(); } });
+for (const id of ['master', 'staging', 'duck']) $(id).addEventListener('change', () => player?.setMix({ master: $('master').value, staging: $('staging').checked, duck: $('duck').checked }));
+for (const id of ['mixOff', 'match']) $(id).addEventListener('change', () => { if (player) { stop(); start(); } });
+
+if (new URLSearchParams(location.search).get('run') === '1') runProbe().catch((err) => { window.__meterError = String(err && err.stack || err); $('status').textContent = String(err); });
+</script>
+</body>
+</html>

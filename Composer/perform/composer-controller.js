@@ -177,6 +177,7 @@ import { arrangeArp, arpRefusal, arpTimes, ARP_PARTS, ARP_TIMES, ARP_DEFAULTS } 
 import { rootCandidates, chooseChordOnRoot, qualityById } from '../core/progression.js';
 import { NOTE_INSTRUMENT_IDS, getInstrument } from '../../Audio/voices/recipes.js';
 import { createPlayer } from './composer-player.js';
+import { COMPOSER_MIX } from './composer-master.js';
 import { arrangeDrums, gridOf, readGrid, beatsOf, ALL_DRUM_MODES, DRUM_VOICES, DEFAULT_KIT, GRID_CHARS } from '../core/drums.js';
 import { DRUM_PATTERNS } from '../core/drum-patterns.js';
 import { MADE_DRUM_CHOICES } from '../../Audio/drums/index.js';
@@ -288,16 +289,18 @@ export function readLayers(values) {
  *                 by default; none: every arp on this thread)
  *   runBass       ({ key, spec, options }) → Promise<the arranged bass part>: a big row's bass in the worker (phase H;
  *                 runCompose.bass by default; none: every bass on this thread)
+ *   mix           the player's mix (MIX_MASTER_ORDER.md: staging, the kick duck, the master chain; COMPOSER_MIX by
+ *                 default; null: today's graph). Audio only: the level faders, and so MIDI velocity, are untouched (M6).
  */
 export function createComposerController({ runCompose = async (l, T, o) => compose(l, T, o), createContext = () => new AudioContext(), timers = globalThis, clock = () => (globalThis.performance ? performance.now() : Date.now()), beforePerform = null, destination = null, state: initial = null,
-  runRearrange = runCompose?.rearrange ?? null, mainThreadOnsets = MAIN_THREAD_ONSETS, leadFullOnsets = MAIN_THREAD_LEAD_FULL_ONSETS, midi = null, runArp = runCompose?.arp ?? null, runBass = runCompose?.bass ?? null } = {}) {
+  runRearrange = runCompose?.rearrange ?? null, mainThreadOnsets = MAIN_THREAD_ONSETS, leadFullOnsets = MAIN_THREAD_LEAD_FULL_ONSETS, midi = null, runArp = runCompose?.arp ?? null, runBass = runCompose?.bass ?? null, mix = COMPOSER_MIX } = {}) {
   let state = initial ?? newCompositionState({ layers: PRESETS[0].layers, cycleSeconds: PRESETS[0].cycleSeconds, seed: 1 });
   const listeners = new Set(), levelListeners = new Set();
   const changed = (st = state) => { for (const f of listeners) f(st); };
   // per state: its compose generation (a change bumps it, dropping the answer in flight) and the compose in flight
   const runs = new WeakMap(), flights = new WeakMap();
   const bump = (st) => { const n = (runs.get(st) ?? 0) + 1; runs.set(st, n); return n; };
-  let ctx = null, player = null, choices = null, choicesKey = null;
+  let ctx = null, player = null, choices = null, choicesKey = null, mixNow = mix ? { ...mix } : null;
   let localSound = true;   // M7: the voices heard while the MIDI goes out (session only)
 
   const overrides = () => { const o = {}; for (const k of KNOBS) if (state.knobs[k] != null) o[k] = state.knobs[k]; return o; };
@@ -968,7 +971,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       if (beforePerform) beforePerform();
       ctx ??= createContext();
       if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
-      player ??= createPlayer({ ctx, timers, destination, midi });
+      player ??= createPlayer({ ctx, timers, destination, midi, mix: mixNow });
       player.localSound(localSound);
       for (const id of [...PART_IDS, 'drums']) player.setLevel(id, state.levels[id]);
       player.setGlide(state.glideMs / 1000);
@@ -979,6 +982,10 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     stop() { player?.stop(); if (state.status === 'playing') state.status = 'ready'; changed(); },
     /** the MIDI sink (phase B), or null */
     get midi() { return midi; },
+    /** the mix, live (MIX_MASTER_ORDER.md): { master: 'knock' | 'classic', staging, duck }; kept for the next Perform.
+     *  Audio only (M6). */
+    setMix(m = {}) { if (!mixNow) return; mixNow = { ...mixNow, ...Object.fromEntries(Object.entries(m).filter(([, v]) => v != null)) }; player?.setMix(m); },
+    mix: () => (mixNow ? { ...mixNow } : null),
     /** M7: hear the Composer's own voices, or only the MIDI */
     setLocalSound(on) { localSound = !!on; player?.localSound(localSound); changed(); },
     localSound: () => localSound,
