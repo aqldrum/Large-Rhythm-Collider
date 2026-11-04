@@ -223,3 +223,17 @@ What it shows:
 
 ## Log
 - 2026-11-04: written (planner) from Avery's "take all your recs". Phases A ∥ B, then C.
+- 2026-11-04: **phase B built** (branch `arrange/player`, off `arrange/song-v0`; code and tests d5c3cdc, these docs the commit after). B1:
+  `composer-player.js` S10–S13, the graph untouched; B2: `tests/assert-song-player.mjs` (24 checks) and a frozen copy
+  of the player at de96a16 (`tests/fixtures/player-before.js`) for the byte-for-byte gate. Suites 86/86 (the 85 and
+  the new one). Calls made, all in DESIGN_NOTES "Song v0 (phase B)":
+  - the getters are asked once a tick per pass, and also for the next pass in two places: the duck's look past the
+    booking (~7 ms, for the next downbeat's kick) and a lone note that crosses its pass's end;
+  - a lone note over the boundary is cut there, like a held chain, when the next pass mutes its part;
+  - MIDI needs no cut (midiNotesOf ends every note by T);
+  - `passAt` is exact from the segment sounding now on; a past time before a dropped tempo segment reads on the
+    oldest kept.
+  Open questions for Avery: (1) the rule also applies in Loop: a part switched off while its chain holds over the
+  loop's end now releases at the loop's end instead of its own (static booking unchanged; Compose's chains end by T,
+  so only hand-made or future wrapping specs hear it). Keep, or gate it on a song? (2) S12 says nothing of the
+  drums: a cymbal's ring over a boundary into a drumless pass is left as a one-shot.

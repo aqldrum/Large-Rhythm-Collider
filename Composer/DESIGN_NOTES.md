@@ -2542,6 +2542,24 @@ The order's probe table, to the hundredth.
 7. `compMovedMs` counts a different onset found at the stroke's very time as 0 ms moved. It doesn't count the stroke's own tone or a borrowed one.
 8. The comp's five store fields are edited in `store/` (outside the files listed for T1) so undo and a fresh entry read the gate.
 
+## Song v0 (phase B): the player plays passes (built 2026-11-04, branch `arrange/player`)
+
+`ARRANGEMENT_ORDER.md` phase B (B1–B2: S10–S13), one builder, parallel with phase A (`core/form.js`, which it doesn't use: the tests build their songs by hand). Only `perform/composer-player.js` changed; the graph is untouched. Nothing here has been heard.
+
+**Passes** (S10). `play(spec, getParts, getDrums)`: the getters are now called with the pass index c (the cycle counted from Perform) inside the booking loop, as it reaches each cycle, and return that pass's parts and drums. A tick asks for each pass at most once (`passOf`, a few reused slots), so a tick inside one cycle asks once, a tick over a boundary twice. Everything a cycle books reads its pass's: the voices, the drum strokes, the MIDI notes and strokes, and the duck's kicks. No getter (`() => spec.parts`, `() => spec.drums`), or getters that ignore c, book byte for byte as before: `assert-song-player.mjs` records every node, param call, connection, start and stop, and every MIDI message, against a frozen copy of the player at de96a16 (`tests/fixtures/player-before.js`, imports pointed at the live voices, drums, MIDI and master), in five sessions (no mix, knock, classic; MIDI and its clock on; a live tempo change in each; a lookahead of two whole cycles; chains and a lone note that wrap). Every caller today (the controller, the mix meter, Cosmos, the tests) passes no getter or one that takes no argument.
+
+**The duck per pass.** `bookDuck` scans each cycle's kicks from that pass's drums: a drumless pass (`enabled: false`, or no kick in the kit) ducks nothing. The scan looks ~7 ms past the booking (the dip starts 5 ms before a kick), so it asks for the next pass when the look reaches its downbeat: a pass after a drumless one dips under its first kick from the drumless pass's last 5 ms, as it should. Cheap: the kick times are memoized on the drums' hits (`kicksOf`, checked by their count), and the kicks still shaping the duck are compacted in place. Measured on the 16k row with the classic mix, 4,000 ticks: 3–5 µs a tick, the frozen player 5–6.
+
+**Same cycle** (S11). Every pass has the loop's `cycleSeconds` and tempo; a pass's own knobs aren't read. The tempo map, the playhead and the MIDI clock are unchanged (the test's clock runs at one spacing across five passes).
+
+**A held voice into a muted pass** (S12).
+- A held chain whose end runs past its pass's end (base + T) is released at that boundary, with the usual release (`o.release`), when the next pass doesn't sound its part: absent from its parts, or `enabled: false`. `advance` decides as the booking passes the boundary, where that tick has the next pass already. A part that plays on holds to its own end, as a loop holds it.
+- **Builder's call:** a lone note (a chain of one, booked whole with its planned length) over the boundary is cut the same way: its start asks for the next pass (only when its note crosses the end) and plans its length to the boundary.
+- MIDI needs no cut: `midiNotesOf` ends every note by the cycle's end (the last of a voice at T), so a held MIDI note's off is always at or before the boundary. The test checks no note of a part muted next is held over it.
+- **Builder's call (a change in Loop):** the rule reads "the next pass doesn't sound the part" from the getter, and a loop's getter is the page's live state. So in Loop, a part switched off while one of its chains holds over the loop's end now releases at the loop's end instead of ringing to its own. Static booking is unchanged (the identity sessions), and Compose's own chains end by T (`assert-lab.mjs`: a hand-made spec wraps), so it's heard only on hand-made or future wrapping specs. The alternative, if Avery wants today's behaviour exactly, is to gate the rule on a song (an arity check or a play option).
+
+**Where it is** (S13). `passAt(t = now)` → `floor(spec time / T)` on the tempo map; 0 before the loop starts, null when stopped. It is exact from the segment sounding now on, through the lookahead. A past time before a tempo change the map has already let go of is read on the oldest segment kept (the map drops a segment once the clock passes the next one). `passAt() + playhead()` is the spec time in cycles.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

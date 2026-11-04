@@ -40,6 +40,16 @@
 //            the phase and the live tempo), each a one-shot through Audio/drums into its own bus, 'drums': a `made:`
 //            choice is playMadeDrum at the stroke's velocity; a sample URL is playSample at the velocity × the made
 //            channel's sampleLevel (chunk-tunes' balance), loaded on first use, the made sound standing in until it is.
+//   song     (ARRANGEMENT_ORDER.md, phase B: S10–S13) a song is passes of the one cycle: getParts(c) and getDrums(c)
+//            are asked for pass c (the cycle counted from Perform) as the booking reaches it, once a tick each, and
+//            everything that cycle books reads that pass's: the voices, the drum strokes, the MIDI notes and strokes,
+//            and the duck's kicks (a drumless pass ducks nothing). A getter that ignores c books as before, byte for
+//            byte. Every pass shares the loop's cycleSeconds and tempo, so the tempo map and the MIDI clock run on
+//            unchanged (S11). A voice held over the end of its pass (a chain still holding, or a wrap) is released at
+//            the boundary, with the usual release, when the next pass doesn't sound its part (missing, or not
+//            enabled); a lone note's planned length is cut there the same way, so its start asks for the next pass
+//            when its note crosses the end. A part that plays on keeps its voice. MIDI needs no cut: midiNotesOf ends
+//            every note by the cycle's end. passAt(t) → the pass sounding at clock time t (S13).
 
 import { getRecipe, normalizeNoteInstrumentId } from '../../Audio/voices/recipes.js';
 import { planVoice } from '../../Audio/voices/plan.js';
@@ -79,10 +89,23 @@ function chainsOfUncached(part) {
 }
 /** where a chain ends, in its cycle's spec time (its last note's end; past T when it wraps the loop) */
 const endOf = (chain) => { const last = chain.notes[chain.notes.length - 1]; return last.time + last.duration; };
+const kickCache = new WeakMap();
+/** the cycle times of a drums' kicks, in hit order (the duck's scan; memoized on the hits, checked by their count) */
+function kicksOf(hits) {
+  const had = kickCache.get(hits);
+  if (had && had.n === hits.length) return had.times;
+  const times = [];
+  for (const hit of hits) if (hit.voice === 'kick') times.push(hit.time);
+  kickCache.set(hits, { n: hits.length, times });
+  return times;
+}
+/** does this pass sound part `id` (present and enabled)? */
+const sounds = (parts, id) => { for (const p of parts) if (p.id === id) return !!p.enabled; return false; };
 
 /**
- * createPlayer({ ctx, destination, voices, timers, options, mix }) → { buses, master, limiter, play(spec, getParts), stop(),
- *   tick(), setLevel(id, v), setGlide(seconds), setTimeFactor(factor), playhead(), playing, setMix(m), mix, chain, stages }
+ * createPlayer({ ctx, destination, voices, timers, options, mix }) → { buses, master, limiter, play(spec, getParts, getDrums),
+ *   stop(), tick(), setLevel(id, v), setGlide(seconds), setTimeFactor(factor), playhead(), passAt(t), playing, setMix(m),
+ *   mix, chain, stages }
  *   destination  the AudioNode the limiter feeds (ctx.destination by default): a host routes the whole mix into its
  *            own graph here (Cosmos, next, into its gate)
  *   mix      null (today's graph, unchanged) or { master: 'knock' | 'classic' | 'none', staging: true | false |
@@ -91,7 +114,9 @@ const endOf = (chain) => { const last = chain.notes[chain.notes.length - 1]; ret
  *   voices   { planVoice, createInstrumentVoice, getRecipe } (the library's, by default; a test may wrap them)
  *   timers   { setInterval, clearInterval } (the page's, by default). A host that drives the pulse itself passes
  *            {} (no setInterval: nothing is started) and calls the public tick() from its own scheduler.
- *   getParts () → the parts as they play now (the lab's sound, legato and on/off), read at every tick
+ *   getParts (c) → the parts as they play now (the lab's sound, legato and on/off), read at every tick; c is the pass
+ *            being booked (a song's, S10), which a loop's getter ignores
+ *   getDrums (c) → the drums the same way (the spec's own by default)
  */
 export function createPlayer({ ctx, destination = null, voices = { planVoice, createInstrumentVoice, getRecipe }, drums: drumLib = drumLibrary, timers = globalThis, options = {}, midi = null,
   now = () => (globalThis.performance ? performance.now() : Date.now()), mix = null } = {}) {
@@ -124,8 +149,21 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
   let booked = 0, bookedSpec = 0;
   /** the clock↔spec map: segments { t0, s0, factor } in time order, the last one current */
   let segments = [];
-  /** chains whose voice has started but whose moves or release are not all booked yet: { chain, base, handle, next, entry } */
+  /** chains whose voice has started but whose moves or release are not all booked yet: { chain, base, c, id, handle,
+   *  next, entry } (c its pass, id its part) */
   let holding = [];
+  // the passes this tick has asked for (S10): { c, parts, drums }, the slots reused tick to tick (a tick spans one
+  // cycle, two at a boundary)
+  const asked = [];
+  let askedN = 0;
+  /** pass c's parts and drums, asked of the getters once a tick */
+  const passOf = (c) => {
+    for (let i = 0; i < askedN; i++) if (asked[i].c === c) return asked[i];
+    const p = asked[askedN] ??= { c: 0, parts: null, drums: null };
+    p.c = c; p.parts = getParts(c); p.drums = getDrums(c); askedN++;
+    return p;
+  };
+  const forgetPasses = () => { for (let i = 0; i < askedN; i++) { asked[i].parts = null; asked[i].drums = null; } askedN = 0; };
   // MIDI (phase B): the notes whose off isn't booked yet { handle, end (spec time) }, the next clock tick (spec time),
   // each part's level (the velocity scales by it, M4), and whether the voices sound (M7)
   let midiHeld = [], nextTick = 0, local = true;
@@ -171,21 +209,25 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
   // the clock up to which its points are booked
   let duckKicks = [], duckScanned = 0, duckBooked = 0;
   const duckGains = () => Object.values(stages).map((s) => s.duck).filter(Boolean);
-  /** book the duck's points up to clock time `horizon`, looking for kicks a little past it (the dip starts before one) */
-  const bookDuck = (drums, until, horizon, T) => {
+  /** book the duck's points up to clock time `horizon`, looking for kicks a little past it (the dip starts before one):
+   *  each cycle's kicks are its pass's (S10), so a drumless pass ducks nothing, and the pass after this tick's last is
+   *  asked for when the look past reaches its downbeat */
+  const bookDuck = (until, horizon, T) => {
     const d = mixState.duckOpts, pad = (d.attackMs / 1000 + 0.002) / o.factor;
-    if (drums?.enabled && drums.kit?.kick) {
-      for (let c = Math.floor(duckScanned / T); c * T < until + pad; c++) {
-        for (const hit of drums.hits) {
-          if (hit.voice !== 'kick') continue;
-          const S = c * T + hit.time;
-          if (S >= duckScanned && S < until + pad) duckKicks.push(clockOf(S));
-        }
+    for (let c = Math.floor(duckScanned / T); c * T < until + pad; c++) {
+      const drums = passOf(c).drums;
+      if (!drums?.enabled || !drums.kit?.kick) continue;
+      for (const time of kicksOf(drums.hits)) {
+        const S = c * T + time;
+        if (S >= duckScanned && S < until + pad) duckKicks.push(clockOf(S));
       }
     }
     duckScanned = Math.max(duckScanned, until + pad);
     const keepAfter = duckBooked - (d.holdMs + d.recoveryMs) / 1000 - 0.01;
-    duckKicks = duckKicks.filter((k) => k >= keepAfter).sort((a, b) => a - b);
+    let kept = 0;
+    for (const k of duckKicks) if (k >= keepAfter) duckKicks[kept++] = k;
+    duckKicks.length = kept;
+    duckKicks.sort((a, b) => a - b);
     if (mixState.duck) {
       const points = duckPoints(duckKicks, duckBooked, horizon, d);
       for (const g of duckGains()) for (const [t, v] of points) g.gain.linearRampToValueAtTime(v, t);
@@ -199,14 +241,17 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
     const plan = voices.planVoice(recipe, { role: 'note', baseFreq: hz, timing, sampleRate: ctx.sampleRate });
     return voices.createInstrumentVoice({ ctx, destination, plan, when });
   };
-  /** start one chain of one cycle (`base` = the cycle's start in spec time); a chain of one note is booked whole */
-  const startChain = (part, chain, base) => {
-    const first = chain.notes[0], S = base + first.time, alone = chain.notes.length === 1;
-    const duration = alone ? first.duration * segAtSpec(S).factor : null;
+  /** start one chain of pass c (`base` = its start in spec time); a chain of one note is booked whole, its length cut
+   *  at the pass's end when it crosses it and the next pass doesn't sound its part (S12) */
+  const startChain = (part, chain, base, c) => {
+    const first = chain.notes[0], S = base + first.time, alone = chain.notes.length === 1, T = spec.knobs.cycleSeconds;
+    let length = first.duration;
+    if (alone && first.time + length > T && !sounds(passOf(c + 1).parts, part.id)) length = T - first.time;
+    const duration = alone ? length * segAtSpec(S).factor : null;
     const handle = startVoice(part.sound, first.hz, clockOf(S), first.velocity, duration, busOf(part.id));
     const entry = { handle, end: alone ? clockOf(S) + duration + 1 : Infinity };
     live.add(entry);
-    if (!alone) holding.push({ chain, base, handle, next: 1, entry });
+    if (!alone) holding.push({ chain, base, c, id: part.id, handle, next: 1, entry });
   };
   /** one drum stroke at clock time `at` through the drums bus; a sample not loaded yet starts loading, the made sound
    *  of its voice standing in */
@@ -225,15 +270,18 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
     }
     if (handle) live.add({ handle, end: handle.end + 0.05 });
   };
-  /** book a held chain's moves and release that fall before spec time `until`; true once its release is booked */
-  const advance = (h, until) => {
+  /** book a held chain's moves and release that fall before spec time `until`; true once its release is booked. A
+   *  chain held over its pass's end is released at the boundary when the next pass doesn't sound its part (S12). */
+  const advance = (h, until, T) => {
     const notes = h.chain.notes;
     while (h.next < notes.length && h.base + notes[h.next].time < until) {
       const n = notes[h.next++];
       h.handle.setFrequency(n.hz, clockOf(h.base + n.time), o.glide);
     }
     if (h.next < notes.length) return false;
-    const E = h.base + endOf(h.chain);
+    const B = h.base + T;
+    let E = h.base + endOf(h.chain);
+    if (E > B && B < until && !sounds(passOf(h.c + 1).parts, h.id)) E = B;
     if (E >= until) return false;
     const at = clockOf(E);
     h.handle.release(at, o.release);
@@ -248,11 +296,12 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
     const keep = Math.min(now, booked);
     while (segments.length > 1 && segments[1].t0 <= keep) segments.shift();
     const until = specAt(horizon);
-    const parts = getParts(), drums = getDrums ? getDrums() : null, m = midi?.active ? midi : null;
+    const m = midi?.active ? midi : null;
+    askedN = 0;
     // MIDI: the offs that come due first, so a voice's next note-on follows its last note-off (M3)
     if (midiHeld.length) midiHeld = midiHeld.filter((h) => { if (h.end >= until) return true; midi.off(h.handle, msOf(clockOf(h.end))); return false; });
     for (let c = Math.floor(bookedSpec / T); c * T < until; c++) {
-      const base = c * T;
+      const base = c * T, { parts, drums } = passOf(c);
       if (drums?.enabled) for (const hit of drums.hits) {
         const S = base + hit.time;
         if (S >= bookedSpec && S < until) { strike(drums.kit[hit.voice], hit, clockOf(S)); if (m) m.stroke(hit.voice, hit.velocity * (levels.drums ?? o.level), msOf(clockOf(S))); }
@@ -261,7 +310,7 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
         if (!part.enabled) continue;
         for (const chain of chainsOf(part)) {
           const S = base + chain.notes[0].time;
-          if (S >= bookedSpec && S < until) startChain(part, chain, base);
+          if (S >= bookedSpec && S < until) startChain(part, chain, base, c);
         }
         if (m && m.sends(part.id)) for (const n of midiNotesOf(part, T)) {
           const S = base + n.time;
@@ -280,19 +329,27 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
       if (nextTick < bookedSpec - dt) nextTick = Math.ceil(bookedSpec / dt) * dt;   // the clock came on mid-play
       for (; nextTick < until; nextTick += dt) m.clockTick(msOf(clockOf(nextTick)));
     }
-    holding = holding.filter((h) => !advance(h, until));
-    if (mixState) bookDuck(drums, until, horizon, T);
+    holding = holding.filter((h) => !advance(h, until, T));
+    if (mixState) bookDuck(until, horizon, T);
+    forgetPasses();
     booked = horizon; bookedSpec = until;
   }
+  /** S13: the pass sounding at clock time t (the cycle counted from Perform, on the tempo map); null when stopped */
+  const passAt = (t = ctx.currentTime) => {
+    if (!playing || !spec) return null;
+    const s = specAt(t);
+    return s < 0 ? 0 : Math.floor(s / spec.knobs.cycleSeconds);
+  };
 
   return {
     buses, master, limiter, chain, stages,
     get playing() { return playing; },
     /** start looping `spec` now (a little ahead, so the first notes are not late), at the current time factor;
-     *  theDrums () → the drums as they play now (the spec's own by default), read at every tick */
+     *  theParts (c) / theDrums (c) → pass c's parts and drums (S10; the spec's own by default), read at every tick */
     play(theSpec, theParts, theDrums) {
       if (playing) this.stop();
       spec = theSpec; getParts = theParts || (() => theSpec.parts); getDrums = theDrums || (() => theSpec.drums);
+      forgetPasses();
       for (const p of spec.parts) busOf(p.id);
       busOf('drums');
       loopStart = ctx.currentTime + 0.05; booked = loopStart; bookedSpec = 0; playing = true;
@@ -311,7 +368,7 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
       timer = null; playing = false;
       const now = ctx.currentTime;
       for (const v of live) { try { v.handle.fadeOut(now, o.stopFade); } catch {} try { v.handle.stop(now + o.stopFade + 0.02); } catch {} }
-      live.clear(); holding = [];
+      live.clear(); holding = []; forgetPasses();
       if (mixState) { resetDuck(); duckKicks = []; }
       midiHeld = [];
       midi?.allOff();
@@ -356,6 +413,10 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
     get factor() { return o.factor; },
     /** where the loop is, 0..1 of the cycle (null when stopped) */
     playhead() { if (!playing || !spec) return null; const T = spec.knobs.cycleSeconds, s = specAt(ctx.currentTime); return s < 0 ? 0 : (s % T) / T; },
+    /** the pass sounding at clock time t (now by default), counted from Perform: a song's section and pass (S13). Exact
+     *  from the tempo segment sounding now on, through the lookahead; a time already sounded before a tempo change the
+     *  map has let go of is read on the oldest segment kept. 0 before the loop starts, null when stopped. */
+    passAt,
     get liveVoices() { return live.size; },
     get loopStart() { return loopStart; },
     /** the clock up to which everything is booked (a tempo change takes over here) */
