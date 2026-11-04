@@ -98,7 +98,9 @@ export function createComposerBridge(win, { runCompose = createComposeRunner(), 
   const plotted = () => { const v = visuals(); return v && v.compositeRhythm ? { compositeRhythm: v.compositeRhythm, grid: v.grid } : null; };
   // the page's one overlay, and its seat: the tab while shown, the lens while on
   // STEP 4e: getFocus rings the window's selected matrix cell (only while the tab shows its context section)
-  const overlay = createPlotOverlay({ getHighlights: () => tab.highlights(plotted()), getSelected: () => tab.view.selected, getFocus: () => tab.cellFocus(plotted()), makeCanvas: () => doc.createElement('canvas') });
+  // the clean plot (DESIGN_NOTES "Song UI (visual pass)"): only while the window is open (the lens's own plot is left as it is)
+  const overlay = createPlotOverlay({ getHighlights: () => tab.highlights(plotted()), getSelected: () => tab.view.selected, getFocus: () => tab.cellFocus(plotted()), getClean: () => !!(tab.view.clean && tab.view.open),
+    makeCanvas: () => doc.createElement('canvas') });
   const seat = createOverlaySeat({ visuals, overlay });
   const navMidi = () => (win.navigator && typeof win.navigator.requestMIDIAccess === 'function' ? () => win.navigator.requestMIDIAccess({ sysex: false }) : null);
   const view = createComposerTab({ tab, doc, visuals, raf: (f) => win.requestAnimationFrame(f), clock, storage: local, overlay, seat, download, midiAccess: midiAccess !== undefined ? midiAccess : navMidi() });
