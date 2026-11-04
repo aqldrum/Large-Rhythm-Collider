@@ -2697,6 +2697,60 @@ An edited section's energy is said again by `energyOf` (which also checks it: a 
 
 **Tests** (C3). `assert-page-song.mjs` (73 checks) is in the README. Suites: 88/88 (the 87 and the new one).
 
+## Song UI (visual pass; built 2026-11-04, branch `arrange/song-ui`)
+
+Avery's first browser pass of Song v0: the song was squashed under the loop's cells, which don't show what the Song plays. So the Loop keeps its matrix, and Song gets the room: the lane became a clip timeline that shows the notes. Visual only: `core/`, the player, the planning, the playback, the store's data, undo and the export are untouched; the controller gained two read-only accessors. Nothing here has been seen in a browser: the order's "Song UI visual pass" checklist is Avery's.
+
+**Song | Loop.** In Song the left host carries `ctab-song-on`, and `arrangement-lane.css` hides the matrix and its bar picker under it. It's a class swap: the matrix is still rendered underneath (its on / off still read-only, S16), so Loop comes back at once, exactly as before, and nothing else in the window moves. The decisions list (Details) stays: it's Compose's, the song's material too. The inspector still shows the selected matrix cell's context.
+
+**The track.** Every column is a section, its width exactly ∝ its passes: `minmax(0, N fr)`, no gap, every row one min width. That width is a pass at the largest of three:
+- 36 px (`MIN_PASS_PX`);
+- 8 px a second of the cycle at the spec's tempo (`MIN_SECOND_PX`, so a tempo change doesn't move the layout);
+- 76 px over the shortest section (`MIN_SECTION_PX`, so its head's controls fit).
+
+Past that the lane scrolls sideways, with the row heads sticky. So one mapping holds in every row: `timeline(passes)` takes a position in the song in passes (pass k's start is k) to a share of the track's width (`toX`), and back (`fromX`, for a seek later), with `seconds(at, cycle)`. The rows, top to bottom:
+1. **The ruler**, one element (`.alane-ruler`, `data-passes`) across the track:
+   - a band a section in its kind's colour (its name in the title; the names are the heads just under it, so they aren't said twice);
+   - a tick a section (full height), a pass (⅔) and a bar (⅓; left out under 6 px a bar), one SVG of non-scaling strokes;
+   - the time at the playing tempo, every 0.5 / 1 / 2 / 5 / 10 / 15 / 20 / 30 s… at least 56 px apart, "m:ss" once the song reaches a minute.
+
+   A click / drag to seek later is a listener on this one element and `timeline().fromX` of the click's share; nothing is wired now.
+2. **The energy band**, slim (18 px), under the ruler: the same per-section `energyCell` steps, solid E and the dotted target.
+3. **The section heads** as before (name, − N +, → fill, the edited dot), the kind's colour on top and on the left; a click on the name selects (the strip below).
+4. **The clips**, a row a part (46 px; the drums 54). A clip is a `<button class="alane-clip">` with `data-section`, `data-part`, `data-passes` and `data-marks` (what it draws), so selection, copy, paste and duplicate can attach to it later. Its states are `on`, `off` (the section has the part off), `cant` (off in the loop), `selected` (the selected section's) and `now` (sounding).
+5. **The Layers chips** as before.
+
+The playhead is a line over the track (`.alane-over`, under the sticky heads), moved by `frame()` to `timeline().toX(songPosition().at)`, with a style write only when it moved.
+
+**A clip's notes** (`clipSvg`, pure): one SVG a clip, `viewBox` 1000 units a pass × 100, `preserveAspectRatio="none"`, every stroke non-scaling, so the drawing follows the clip's box with no layout read.
+- **Each pass the clip spans is drawn**, a group `g.alane-pass` translated to its place, so the passes tile, with a faint rule at each boundary (`alane-pdiv`).
+- **The pass's content is its own:** the drums' fill pass (`fill`) draws the fill bar's hits, and the section after a fill draws its crash. A drumless section's fill pass draws the fill alone, sounding.
+- **Pitched parts:** a note is a 3 px bar with round caps, x its time in the pass and its length (to the pass's end at most), y its pitch (log2 Hz) within the part's range over the whole song (`pitchRanges`, 12–88 of the 100), so a part's register reads the same in every clip.
+- **The drums:** a 1.5 px tick a hit in five voice rows (kick, snare, hat, perc, cym, the matrix's order and hues) with faint guides between.
+- **A pass whose part doesn't sound** (`enabled: false`) is ghosted (`mute`). An off clip is outlined with a dashed border in the part's colour, its notes dimmed: still there, and still a click toggles it. A part off in the loop is hatched and disabled, as before.
+- **The density word**, where it differs from the loop's, is a small label on the clip; the drums clip marks its fill pass ("fill").
+- **Cost:** a pass's path is memoized by its part (or drums) object, and passes alike are one object (form.js), so five passes of a section draw one path. A clip's drawing is reused by its place while its SVG's text is the same (no re-parse on a re-render). On the 16k row (4099:4093:4091:4079, 30 s) every clip of the song takes about 1 ms and 35 kB of SVG text; 8:7:6:5's six sections of five passes take 984 marks, under 1 ms.
+
+**The accessors** (read-only, `composer-controller.js`):
+- `songClips()` → `{ T, barStarts, sections: [{ index, passes: [{ index, pass, fill, parts: { id: part }, drums }] }] }`: the cached `songPasses` grouped by section, each pass's parts and drums as the getters hand them to the player (`liveParts` / `liveDrums`: the sounds, legato and kit as they are now). Null with no song, before a Compose, or on a song this loop can't play. The objects are the cache's, shared, never to be changed.
+- `songPosition()` → `{ at, passes, section, passInSection }`: `songAt().index` plus the player's `playhead()` share of its cycle (one clock in one call, so it never steps back in a pass), or null as `songAt`.
+
+**The clean plot** (Avery: "a cleaner viz mode where the background linear plot is fully hidden"):
+- **What it does.** A header toggle beside Details, off by default, kept in localStorage (`lrc.composer.cleanPlot`) as Details and show-the-work are. While the window is open (`tab.view.open`), the overlay's wash is opaque (`OVERLAY_STYLE.cleanWash`), so the Linear Plot's own dots, connectors and the rest are fully hidden. Only the Composer's marks show: its lit notes, the selected cell's ring, the playhead and the Compose animation. It washes even with nothing lit.
+- **What it doesn't touch.** It's a viewing flag on the tab's view (`setClean`). No spec, undo step or export moves, in Loop and in Song alike. Under the Composition lens with the window closed, the main page's plot is drawn as before.
+- **Builder's call:** it's named "clean plot", not "Clean view", because the window's Details off has been "the clean view" since CLEAN_MIDI_ORDER phase A (its titles and these notes say so).
+
+**Calls made (proposed):**
+1. **The ruler doesn't repeat the section names.** It carries their kind-coloured bands, and the names are the heads just under it.
+2. **Hidden in Song:** the matrix and its bar picker. The decisions list and the inspector stay.
+3. **Columns are exactly ∝ passes** (no per-section floor, no gaps), so one mapping serves the ruler, the clips, the playhead and a later seek. The scale's floor is per pass, per second and per section, as above.
+4. **A note longer than its pass is drawn to the pass's end**, so the passes tile exactly. The player holds it on over the boundary when the next pass plays the part.
+5. **Off and ghost:** an off clip still draws its notes, dimmed, and a pass that doesn't sound is ghosted. So a drumless break's fill pass reads as the one pass that plays.
+6. **The selected section's clips** carry `selected`, a thin bar in the part's colour along the top. There is no clip selection yet.
+7. **Clean plot**, as above: the name, and scoped to the window being open.
+
+**Tests.** `assert-page-song.mjs`: 88 checks. The 73 are kept, their cell selectors now `.alane-clip`, and 15 are new: the matrix hidden in Song and back in Loop; a clip a section × part; every clip's marks against `songPasses` pass by pass, with the rules; the fill pass; one pitch range a part; an off clip; the ruler's bands and ticks on the one mapping; the playhead; the clean plot in Song and in Loop, moving nothing.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
