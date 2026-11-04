@@ -331,6 +331,8 @@ await mc.compose();
 mc.setMode('song');
 const msong = mc.arrangement().song, intro = msong.sections[0];
 if (intro.parts.drums) mc.toggleSongPart(0, 'drums');
+// the section after it plays the drums (the planner's breaks and builds may be drumless since its 11-04 amendments)
+if (!mc.arrangement().song.sections[1].parts.drums) mc.toggleSongPart(1, 'drums');
 check('the intro edited to play no drums (and, as planned, no lead)', mc.arrangement().song.sections[0].parts.drums === false && intro.parts.lead === false);
 mc.perform();
 const pl = mc.player, L0 = pl.loopStart, spanIntro = mc.arrangement().song.sections[0].passes * T;
