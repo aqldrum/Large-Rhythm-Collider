@@ -13,7 +13,9 @@
 // The live core runs with `compStyle: 'notes'` and `voicing: 'close'` (BASS_VOICING_ORDER.md P7: the chords stacked close, as
 // the frozen core stacks them) (COMP_ARP_ORDER.md P9: the frozen core's comping, one note a stroke; the
 // default is now chords): the override is taken back out of the live spec's input, and out of the override list a bad
-// override's error names, before the texts are compared. The fixtures are untouched.
+// override's error names, before the texts are compared. The fixtures are untouched. The spec version (COMP_GATE_ORDER.md G5:
+// composer-spec-v2) is set back to the frozen core's, and the comp's gate, Snap and roll overrides are left out of the list
+// a bad override's error names, as the others are.
 //   node Composer/tests/assert-refactor-identity.mjs
 import { compose } from '../core/compose.js';
 import { compose as composeBefore } from './fixtures/compose-before.js';
@@ -27,8 +29,8 @@ const run = (f, L, T, o) => { try { return JSON.stringify(f(L, T, o)); } catch (
 /** the live core with the frozen core's comping (compStyle 'notes') and voicing (voicing 'close', BASS_VOICING_ORDER.md
  *  P7), the overrides themselves taken back out */
 const live = (L, T, o = {}) => {
-  try { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close', bass: { density: 'sparse', lock: 'free' } } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; delete spec.input.overrides.bass; return spec; }
-  catch (err) { throw new Error(err.message.replace(', compStyle, clave, compRelation, voicing, claveFrom, compDensity, bass, compTolerance, compBorrow)', ')')); }
+  try { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close', bass: { density: 'sparse', lock: 'free' } } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; delete spec.input.overrides.bass; spec.version = 'composer-spec-v1'; return spec; }
+  catch (err) { throw new Error(err.message.replace(', compStyle, clave, compRelation, voicing, claveFrom, compDensity, bass, compTolerance, compBorrow, compGate, compSnap, compRoll)', ')')); }
 };
 const pad = (L) => [...L, 0, 0, 0, 0].slice(0, 4);
 

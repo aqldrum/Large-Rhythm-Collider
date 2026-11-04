@@ -75,6 +75,14 @@
 //                         the comp before Amendment 3 byte for byte (its pin; the stats add `compTones`, the mean tones a
 //                         stroke, and `compSingles`, the share of single-note strokes, whatever the setting). A tie in the
 //                         frame claves' ranking goes to the sparser (rule 17, P38: claves.js).
+//                         THE GATE AND SNAP (COMP_GATE_ORDER.md, phase P: decided 1–3, Avery; G1–G9): the window is a
+//                         gate in ms (`compGate` 15 | 25 | 40, 25 by default) heard at the tempo the spec is seeded with
+//                         (a MIDI target's clip tempo: g × seed / spec tempo of spec time), each tone at its own time;
+//                         `compSnap: true` gathers within ±¼ slot and strikes every found tone on the stroke (`snapped`,
+//                         `from`, `fromTick`; `compRoll` 0 | 8 | 15 ms rolls them low to high, the stroke's own first;
+//                         `compMovedMs` the mean and max a tone moved). The slot window plays only when `compTolerance`
+//                         is asked (0.5: the comp before phase P byte for byte); a spec of the version before it reads
+//                         as ±½ (compStrumOf). Precedence and refusals: strumSetting.
 //                         `compStyle: 'notes'` (the frozen core): one note a stroke (rhythm-claves.js and
 //                         chunk-comping.js, ported), a slot's step sounding only where its strike is on one of the bar's
 //                         chord tones; the layer whose bars make the best claves (25–50 % of its steps sounding, a
@@ -128,7 +136,7 @@ import { createTrace, refusedTrace, traceCapsOf } from './trace.js';
 import { placeClip, targetRoot, registerOf, DEFAULTS as TARGET_DEFAULTS } from './target.js';
 import { pcName } from './midi.js';
 
-export const COMPOSER_SPEC_VERSION = 'composer-spec-v1';
+export const COMPOSER_SPEC_VERSION = 'composer-spec-v2';
 export const BEATS_PER_BAR = 4;
 export const TEMPO_RANGE = Object.freeze([90, 130]);
 export const BAR_CHOICES = Object.freeze([1, 2, 4, 8]);
@@ -151,19 +159,101 @@ export const STRUM_WINDOW = 0.25;
 /** chords: a stroke's own onset (plus 0.1 a layer more striking it), the strum's other tones, a borrowed tone (P7, proposed) */
 export const COMP_VELOCITY = Object.freeze({ stroke: 0.55, strum: 0.5, borrowed: 0.45 });
 export const MAX_COMP_VOICES = 4;
-/** the comp's tolerance (BASS_VOICING_ORDER.md Amendment 3, rule 15, P33): how far either side of a clave stroke, in
- *  slots of the stroke's slot, an onset may sound and still be part of its chord. ±½ by default (the probe's knee) */
+/** the comp's old window (BASS_VOICING_ORDER.md Amendment 3, rule 15, P33): how far either side of a clave stroke, in
+ *  slots of the stroke's slot, an onset may sound and still be part of its chord. Since COMP_GATE_ORDER.md (G4) it plays
+ *  only when asked (`compTolerance`); ±½ was Compose's default from Amendment 3 to phase P, so `compTolerance: 0.5` is the
+ *  comp of those specs byte for byte (the pin), and the old-spec read's window (G5) */
 export const COMP_TOLERANCES = Object.freeze([0.125, 0.25, 0.5, 1]);
 export const DEFAULT_COMP_TOLERANCE = 0.5;
-/** the comp's strum as Compose plays it by default (Amendment 3, P33–P34): ±½ slot, nothing borrowed (rule 16) */
-export const COMP_STRUM_DEFAULTS = Object.freeze({ tolerance: DEFAULT_COMP_TOLERANCE, borrow: false });
+/** the comp's gate (COMP_GATE_ORDER.md G1, decided 1, Avery): ms either side of a stroke, heard at the tempo the spec is
+ *  seeded with (G2); 25 by default */
+export const COMP_GATES = Object.freeze([15, 25, 40]);
+export const DEFAULT_COMP_GATE = 25;
+/** Snap's window (G3, decided 2): ±¼ slot (STRUM_WINDOW, the window before Amendment 3); every tone found is struck on the stroke */
+export const SNAP_WINDOW = STRUM_WINDOW;
+/** Snap's roll (G3): ms between a snapped chord's tones, low to high, the stroke's own first; 0 by default (a block chord) */
+export const COMP_ROLLS = Object.freeze([0, 8, 15]);
+export const DEFAULT_COMP_ROLL = 0;
+/** the comp's strum as Compose plays it by default (COMP_GATE_ORDER.md G1, G4): a 25 ms gate, nothing borrowed */
+export const COMP_STRUM_DEFAULTS = Object.freeze({ gate: DEFAULT_COMP_GATE, tolerance: null, snap: false, roll: 0, borrow: false });
 /** the strum before Amendment 3: ±¼ slot, every class the row doesn't sound there borrowed from the chord voices (P34's pin) */
 export const LEGACY_STRUM = Object.freeze({ tolerance: STRUM_WINDOW, borrow: true });
+/** the strum from Amendment 3 to phase P (Compose's default then): ±½ slot, nothing borrowed (`compTolerance: 0.5`, the pin) */
+export const SLOT_STRUM = Object.freeze({ gate: null, tolerance: DEFAULT_COMP_TOLERANCE, snap: false, roll: 0, borrow: false });
 /** a tolerance in words: '±½ slot' */
 export const toleranceWords = (t) => `±${({ 0.125: '⅛', 0.25: '¼', 0.5: '½', 1: '1' })[t] ?? t} slot`;
-/** the comp's strum a spec plays: its input's `compTolerance` and `compBorrow`, else Compose's defaults */
-export const compStrumOf = (spec) => ({ tolerance: spec?.input?.overrides?.compTolerance ?? DEFAULT_COMP_TOLERANCE, borrow: spec?.input?.overrides?.compBorrow ?? false });
-const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses', 'compStyle', 'clave', 'compRelation', 'voicing', 'claveFrom', 'compDensity', 'bass', 'compTolerance', 'compBorrow']);
+/** the comp's strum overrides (G1, G3, G4) */
+export const COMP_STRUM_KEYS = Object.freeze(['compTolerance', 'compGate', 'compSnap', 'compRoll', 'compBorrow']);
+/** the spec version before phase P: its comp read with no `compGate` / `compSnap` is the ±½ slot window (G5) */
+export const COMPOSER_SPEC_VERSION_V1 = 'composer-spec-v1';
+/**
+ * A strum's setting checked and put in one shape (G4: the precedence) → { gate (ms, or null), tolerance (slots, or null),
+ * snap, roll (ms; 0 unless snap), borrow }: Snap takes the place of both windows; an old window (`tolerance`) asked plays
+ * it, byte for byte as before; else the gate (25 ms unless asked). Two windows together, or a roll with no Snap, fail.
+ *   s { gate, tolerance, snap, roll, borrow } (any absent); `say` names the keys in a refusal (overrides or the door's)
+ */
+export function strumSetting(s = {}, say = { gate: 'compGate', tolerance: 'compTolerance', snap: 'compSnap', roll: 'compRoll', borrow: 'compBorrow' }) {
+  const { gate = null, tolerance = null, snap = false, roll = null, borrow = false } = s;
+  if (gate != null && !COMP_GATES.includes(gate)) fail(`${say.gate} must be one of ${COMP_GATES.join(', ')} (ms either side of a stroke, heard at the seed tempo), not ${JSON.stringify(gate)}`);
+  if (tolerance != null && !COMP_TOLERANCES.includes(tolerance)) fail(`${say.tolerance} must be one of ${COMP_TOLERANCES.join(', ')} (slots either side of a stroke), not ${JSON.stringify(tolerance)}`);
+  if (typeof snap !== 'boolean') fail(`${say.snap} must be true or false, not ${JSON.stringify(snap)}`);
+  if (roll != null && !COMP_ROLLS.includes(roll)) fail(`${say.roll} must be one of ${COMP_ROLLS.join(', ')} (ms between a snapped chord's tones), not ${JSON.stringify(roll)}`);
+  if (typeof borrow !== 'boolean') fail(`${say.borrow} must be true or false, not ${JSON.stringify(borrow)}`);
+  if (gate != null && tolerance != null) fail(`${say.gate} and ${say.tolerance} are two windows for one stroke: the gate (ms) is the comp's own, ${say.tolerance} the old window in slots (its pin); ask one`);
+  if (snap && (gate != null || tolerance != null)) fail(`${say.snap} takes the place of both windows (it gathers within ±¼ slot and strikes on the stroke): ask it without ${say.gate} or ${say.tolerance}`);
+  if (roll != null && !snap) fail(`${say.roll} rolls a snapped chord: it needs ${say.snap}`);
+  if (snap) return { gate: null, tolerance: null, snap: true, roll: roll ?? DEFAULT_COMP_ROLL, borrow };
+  if (tolerance != null) return { gate: null, tolerance, snap: false, roll: 0, borrow };
+  return { gate: gate ?? DEFAULT_COMP_GATE, tolerance: null, snap: false, roll: 0, borrow };
+}
+/** a spec's overrides → its strum setting (strumSetting over `compGate`, `compTolerance`, `compSnap`, `compRoll`, `compBorrow`) */
+export const strumOfOverrides = (ov = {}) => strumSetting({ gate: ov.compGate ?? null, tolerance: ov.compTolerance ?? null, snap: ov.compSnap ?? false, roll: ov.compRoll ?? null, borrow: ov.compBorrow ?? false });
+/** a strum setting as the overrides Compose is given for it, Compose's defaults left out (G5: the gate at 25, no Snap, no
+ *  roll, nothing borrowed); an old window is always written (it is no longer the default) */
+export const strumOverrides = (s) => ({ ...(s.tolerance != null ? { compTolerance: s.tolerance } : {}), ...(s.gate != null && s.gate !== DEFAULT_COMP_GATE ? { compGate: s.gate } : {}),
+  ...(s.snap ? { compSnap: true } : {}), ...(s.snap && s.roll !== DEFAULT_COMP_ROLL ? { compRoll: s.roll } : {}), ...(s.borrow ? { compBorrow: true } : {}) });
+/** do two strum settings play the same? */
+export const sameStrum = (a, b) => !!a && !!b && a.gate === b.gate && a.tolerance === b.tolerance && !!a.snap === !!b.snap && (a.roll ?? 0) === (b.roll ?? 0) && !!a.borrow === !!b.borrow;
+/**
+ * The setting a live change moves to (G7: the `restrum` door's and setCompStrum's keys), from the one playing:
+ *   edit { gate, tolerance, snap, roll, borrow } (absent: as it plays). A number for `tolerance` asks the old window, a
+ *   number for `gate` the gate, `snap: true` Snap (each in place of the others); `tolerance: null` or `snap: false` leaves
+ *   that mode for the gate (the one asked, else the one it played, else 25); `roll` asks Snap's roll (it needs Snap on, or
+ *   asked); `borrow` alone keeps the window. Two windows asked together fail, as in Compose.
+ */
+export function nextStrum(was, edit = {}, say = { gate: 'gate', tolerance: 'tolerance', snap: 'snap', roll: 'roll', borrow: 'borrow' }) {
+  const has = (k) => edit[k] !== undefined && edit[k] !== null;
+  const borrow = edit.borrow !== undefined ? edit.borrow : !!was.borrow;
+  if (edit.snap != null && typeof edit.snap !== 'boolean') strumSetting({ snap: edit.snap }, say);
+  const snapOn = edit.snap === true;
+  // two windows asked together: refused as Compose refuses the overrides
+  if ([has('tolerance'), has('gate'), snapOn].filter(Boolean).length > 1) strumSetting({ gate: edit.gate ?? null, tolerance: edit.tolerance ?? null, snap: snapOn, borrow }, say);
+  if (has('tolerance')) return strumSetting({ tolerance: edit.tolerance, borrow, ...(has('roll') && edit.roll !== DEFAULT_COMP_ROLL ? { roll: edit.roll } : {}) }, say);
+  if (has('gate')) return strumSetting({ gate: edit.gate, borrow, ...(has('roll') && edit.roll !== DEFAULT_COMP_ROLL ? { roll: edit.roll } : {}) }, say);
+  const snap = snapOn || (was.snap && edit.snap !== false);
+  if (snap) return strumSetting({ snap: true, roll: has('roll') ? edit.roll : was.snap ? was.roll : null, borrow }, say);
+  // no Snap: a roll other than none needs it
+  if (has('roll') && edit.roll !== DEFAULT_COMP_ROLL) strumSetting({ roll: edit.roll }, say);
+  if (was.tolerance != null && edit.tolerance !== null) return strumSetting({ tolerance: was.tolerance, borrow }, say);
+  return strumSetting({ gate: was.gate ?? DEFAULT_COMP_GATE, borrow }, say);
+}
+/** the comp's strum a spec plays (strumSetting's shape): its input's overrides; a spec of another version (before phase P)
+ *  with no `compGate` or `compSnap` reads as `compTolerance: 0.5` (its comp re-strums as it was made: G5) */
+export function compStrumOf(spec) {
+  const ov = spec?.input?.overrides ?? {};
+  if (spec?.version !== COMPOSER_SPEC_VERSION && ov.compGate == null && ov.compSnap == null) return strumSetting({ tolerance: ov.compTolerance ?? DEFAULT_COMP_TOLERANCE, borrow: ov.compBorrow ?? false });
+  return strumOfOverrides(ov);
+}
+/** the tempos a playback is seeded at stay inside these (the controller's TEMPO_LIMITS, composer-controller.js) */
+const SEED_TEMPO_LIMITS = Object.freeze([30, 300]);
+/** the tempo a spec's playback is seeded with (G2): a MIDI target's clip tempo (clamped as the controller clamps it),
+ *  else the spec's own natural tempo */
+export const seedTempoOf = (spec) => (spec?.target?.tempoBpm > 0 ? Math.min(SEED_TEMPO_LIMITS[1], Math.max(SEED_TEMPO_LIMITS[0], spec.target.tempoBpm)) : spec?.knobs?.tempoBpm ?? null);
+/** heard ms → spec ms for a spec (G2): seedTempo / specTempo (1 at a spec's natural tempo; a MIDI target's at its clip's) */
+export const heardScaleOf = (spec) => { const s = spec?.knobs?.tempoBpm, t = seedTempoOf(spec); return s > 0 && t > 0 ? t / s : 1; };
+/** the gate as heard at a playing tempo (G2's readout): g × seedTempo / playTempo, in ms */
+export const heardGateMs = (gate, seedTempo, playTempo) => (playTempo > 0 && seedTempo > 0 ? (gate * seedTempo) / playTempo : gate);
+const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses', 'compStyle', 'clave', 'compRelation', 'voicing', 'claveFrom', 'compDensity', 'bass', 'compTolerance', 'compBorrow', 'compGate', 'compSnap', 'compRoll']);
 /** the chords' two voicings (BASS_VOICING_ORDER.md, decided 3–4, P1–P7): led (the default: each tone the octave nearest
  *  the chord before, inside a window, clear of the mud limit) and close (root position from an octave under the root, as before) */
 export const VOICINGS = Object.freeze(['led', 'close']);
@@ -639,9 +729,10 @@ const compRangeOf = (ctx, c, k) => (c.slots != null ? { from: c.from, to: c.from
  * strikes, then the earliest).
  * → Map(class → node)
  */
-export function strumOf(ctx, c, s, from, to, tolerance = STRUM_WINDOW) {
+export function strumOf(ctx, c, s, from, to, tolerance = STRUM_WINDOW, seconds = null) {
   const { row, inSlot, timeOf, chordClass, slotSeconds, posSlot } = ctx;
-  const j = posSlot[s], ts = timeOf(row.tick[s]), w = tolerance * slotSeconds(j) + EPS, best = new Map();
+  // the window: ±`tolerance` × the stroke's slot, or (the gate, COMP_GATE_ORDER.md G1) ±`seconds` of spec time
+  const j = posSlot[s], ts = timeOf(row.tick[s]), w = (seconds != null ? seconds : tolerance * slotSeconds(j)) + EPS, best = new Map();
   const take = (i, t) => {
     const pc = chordClass(c, row.tone[i]); if (pc < 0) return;
     const d = Math.abs(t - ts), was = best.get(pc);
@@ -721,20 +812,42 @@ export function compChordsOfBar(ctx, c, k, given, range = null, voiced = null, s
   const at = strokes.map((s) => ({ s, t: timeOf(row.tick[s]) })).sort((a, b) => a.t - b.t || a.s - b.s);
   const end = to < P ? starts[to] * rowT : T, notes = [], counts = [];
   let found = 0, tones = 0;
-  const tolerance = strum.tolerance ?? DEFAULT_COMP_TOLERANCE;
+  // the window (COMP_GATE_ORDER.md G1–G4): Snap's ±¼ slot, the gate's ±g ms heard (spec seconds g × scale: G2), or the
+  // old window's ±tolerance slot (a strum of the old shape, { tolerance, borrow }, is the old window)
+  const scale = strum.scale ?? 1, snap = !!strum.snap;
+  const tolerance = snap ? SNAP_WINDOW : strum.tolerance ?? DEFAULT_COMP_TOLERANCE;
+  const seconds = !snap && strum.gate != null ? (strum.gate / 1000) * scale : null;
+  const moved = { n: 0, sum: 0, max: 0 };
+  // Snap (G3): each tone found in the row struck on the stroke (its own tone and pitch; `from` its onset, `snapped`), then
+  // rolled (`roll` ms a tone, low to high, the stroke's own first; the roll's span kept under half the stroke's hold)
+  const struck = (list, s, t, holdTo) => {
+    if (!snap) return list;
+    const j = posSlot[s], out = list.map((n) => {
+      if (n.borrowed || n.node === s) return n;
+      const d = Math.abs(n.time - t) * 1000 / scale;
+      moved.n++; moved.sum += d; if (d > moved.max) moved.max = d;
+      return { ...n, node: s, slot: j, time: t, slotSeconds: ctx.slotSeconds(j), from: n.node, fromTick: row.tick[n.node], snapped: true };
+    });
+    if (!(strum.roll > 0) || out.length < 2) return out;
+    const own = (n) => n.node === s && !n.snapped && !n.borrowed;
+    const order = [...out].sort((a, b) => (own(b) ? 1 : 0) - (own(a) ? 1 : 0) || a.pitch - b.pitch || a.voice - b.voice);
+    const step = Math.min((strum.roll / 1000) * scale, (holdTo - t) / (2 * (out.length - 1)));
+    order.forEach((n, r) => { n.time = t + r * step; });
+    return out;
+  };
   if (!strum.borrow) {
     at.forEach(({ s, t }, x) => {
       const holdTo = t < end ? Math.min(x + 1 < at.length ? at[x + 1].t : end, end) : T;
-      const got = strokeTonesOf(ctx, c, s, from, to, tolerance);
-      for (const n of voiceStroke(ctx, c, k, s, got, voiced ? voiceOf : null, voiceList)) notes.push({ ...n, holdTo });
+      const got = strokeTonesOf(ctx, c, s, from, to, tolerance, seconds);
+      for (const n of struck(voiceStroke(ctx, c, k, s, got, voiced ? voiceOf : null, voiceList).map((n) => ({ ...n, holdTo })), s, t, holdTo)) notes.push(n);
       found += got.length; tones += got.length; counts.push(got.length);
     });
-    return { notes, strokes: at.map(({ s, t }) => ({ node: s, tick: row.tick[s], time: t, bar: k, slot: posSlot[s] })), found, tones, counts, singles: counts.filter((n) => n === 1).length };
+    return { notes, strokes: at.map(({ s, t }) => ({ node: s, tick: row.tick[s], time: t, bar: k, slot: posSlot[s] })), found, tones, counts, singles: counts.filter((n) => n === 1).length, moved };
   }
   at.forEach(({ s, t }, x) => {
     // to the next stroke, never past the span; a stroke before the downbeat (sounding at the cycle's end) holds to that end
     const holdTo = t < end ? Math.min(x + 1 < at.length ? at[x + 1].t : end, end) : T;
-    const got = strumOf(ctx, c, s, from, to, tolerance), before = notes.length;
+    const got = strumOf(ctx, c, s, from, to, tolerance, seconds), before = notes.length;
     let floor = c.rootCents + REGISTER.chords - 50;
     c.intervals.slice(0, MAX_COMP_VOICES).forEach((pc, v) => {
       const i = got.get(pc), src = i === undefined ? voiceOf.get(v) : null;
@@ -750,17 +863,18 @@ export function compChordsOfBar(ctx, c, k, given, range = null, voiced = null, s
       if (i !== undefined) { found++; notes.push(noteAt(ctx, i, octave, pitch, k, { voice: v, ...lane, velocity: i === s ? Math.min(1, COMP_VELOCITY.stroke + 0.1 * Math.max(0, row.strikes[s] - 1)) : COMP_VELOCITY.strum, holdTo })); }
       else notes.push(noteAt(ctx, s, octave, pitch, k, { tone, voice: v, ...lane, velocity: COMP_VELOCITY.borrowed, holdTo, borrowed: true, from: src.node }));
     });
+    if (snap) notes.push(...struck(notes.splice(before), s, t, holdTo));
     counts.push(notes.length - before);
   });
-  return { notes, strokes: at.map(({ s, t }) => ({ node: s, tick: row.tick[s], time: t, bar: k, slot: posSlot[s] })), found, tones, counts, singles: counts.filter((n) => n === 1).length };
+  return { notes, strokes: at.map(({ s, t }) => ({ node: s, tick: row.tick[s], time: t, bar: k, slot: posSlot[s] })), found, tones, counts, singles: counts.filter((n) => n === 1).length, moved };
 }
 /**
  * Amendment 3 (P34): the tones stroke s plays with nothing borrowed — its own onset first (`v` its class index, −1 for a
  * frame tone that is no chord class), then each other class of chord c (root first, of the first MAX_COMP_VOICES) whose
  * onset strumOf finds within ±`tolerance` slot, until MAX_COMP_VOICES. → [{ i (node), v }]
  */
-export function strokeTonesOf(ctx, c, s, from, to, tolerance) {
-  const own = ctx.chordClass(c, ctx.row.tone[s]), got = strumOf(ctx, c, s, from, to, tolerance);
+export function strokeTonesOf(ctx, c, s, from, to, tolerance, seconds = null) {
+  const own = ctx.chordClass(c, ctx.row.tone[s]), got = strumOf(ctx, c, s, from, to, tolerance, seconds);
   const out = [{ i: s, v: own >= 0 ? c.intervals.indexOf(own) : -1 }];
   c.intervals.slice(0, MAX_COMP_VOICES).forEach((pc, v) => {
     if (pc === own || out.length >= MAX_COMP_VOICES) return;
@@ -807,20 +921,41 @@ function voiceStroke(ctx, c, k, s, got, voiceOf, voiceList) {
 }
 
 /** Amendment 3 (P36): the comp's strum stats — `compTones`, the mean tones a stroke; `compSingles`, the share of strokes
- *  playing a single note */
-export const compStrumStats = (strokes, tones, singles) => ({ compTones: strokes ? tones / strokes : 0, compSingles: strokes ? singles / strokes : 0 });
+ *  playing a single note; with Snap (COMP_GATE_ORDER.md G6) `compMovedMs`, { mean, max }: how far the snapped tones moved
+ *  onto their strokes, in ms heard at the seed tempo (`moved` { n, sum, max }: compChordsOfBar's, summed; the stroke's
+ *  own tone and a borrowed one don't count, a tone found at the stroke's very time counts 0) */
+export const compStrumStats = (strokes, tones, singles, moved = null) => ({ compTones: strokes ? tones / strokes : 0, compSingles: strokes ? singles / strokes : 0,
+  ...(moved ? { compMovedMs: { mean: moved.n ? moved.sum / moved.n : 0, max: moved.max } } : {}) });
+/** compChordsOfBar's `moved` summed into `acc` (→ acc) */
+export const addMoved = (acc, m) => { if (m) { acc.n += m.n; acc.sum += m.sum; if (m.max > acc.max) acc.max = m.max; } return acc; };
+/** a strum's window in words (G6): '25 ms gate', 'Snap (±¼ slot)', '±½ slot' (the old window) */
+export const strumWindowWords = (strum) => (strum.snap ? `Snap (${toleranceWords(SNAP_WINDOW)})` : strum.gate != null ? `${strum.gate} ms gate` : toleranceWords(strum.tolerance ?? DEFAULT_COMP_TOLERANCE));
 /**
- * The comp's strum in words (the `compStrum` decision; P36). Borrowing on, as before Amendment 3 (at ±¼, LEGACY_STRUM,
- * word for word): the tones found and the rest borrowed. Off: the tolerance and what it found, "±½ slot: 2.1 tones a
- * stroke, 30 % single notes".
- *   strum { tolerance, borrow }; got { strokes, relation, rooted (a bar or span with none struck on its root onset), found,
- *   tones, singles }; opts { asked (the tolerance or borrowing asked) }
+ * The comp's strum in words (the `compStrum` decision; P36, COMP_GATE_ORDER.md G6).
+ *   The old window (`compTolerance`), as before phase P word for word: borrowing on, the tones found and the rest borrowed;
+ *   off, "±½ slot: 2.1 tones a stroke, 30 % single notes".
+ *   The gate: "25 ms gate: 1.0 tones a stroke, 100 % single notes" (a MIDI target's: heard at the clip's tempo);
+ *   borrowing on, the tones found within it and the rest borrowed.
+ *   Snap: "Snap (±¼ slot): 1.7 tones a stroke, tones moved up to 114 ms" (and the roll; borrowing on, filled).
+ *   strum (strumSetting's shape, + `seedTempo` for a target's words); got { strokes, relation, rooted (a bar or span with none
+ *   struck on its root onset), found, tones, singles, moved ({ n, sum, max }: Snap's) }; opts { asked (the strum asked),
+ *   seedTempo (a MIDI target's clip tempo, its playback's seed: the gate said as heard there; else none) }
  */
-export function compStrumWhy(strum, got, { asked = false } = {}) {
+export function compStrumWhy(strum, got, { asked = false, seedTempo = null } = {}) {
   const { strokes, relation, rooted, found, tones, singles } = got, share = tones ? found / tones : 0;
   const head = `the clave's ${strokes} stroke${strokes === 1 ? '' : 's'} (${relation}${rooted ? '; a bar or span with none struck once on its root onset' : ''}), each the bar's chord`;
-  if (strum.borrow) return `${head}: ${found} of ${tones} tones (${(100 * share).toFixed(0)} %) from the row within ±${strum.tolerance} slot, the rest borrowed from the chord voices`;
   const { compTones: mean, compSingles: single } = compStrumStats(strokes, tones, singles);
+  if (strum.snap) {
+    const m = got.moved ?? { n: 0, sum: 0, max: 0 }, roll = strum.roll > 0 ? `, rolled ${strum.roll} ms a tone low to high (the stroke's own first)` : ', struck together';
+    return `${head}, its tones gathered and struck on the stroke (${asked ? 'asked' : 'COMP_GATE_ORDER.md G3'}): ${strumWindowWords(strum)}: ${mean.toFixed(1)} tones a stroke, tones moved up to ${Math.round(m.max)} ms (${(m.n ? m.sum / m.n : 0).toFixed(0)} ms on average)${roll}`
+      + (strum.borrow ? `; ${found} of ${tones} tones (${(100 * share).toFixed(0)} %) from the row, the rest borrowed from the chord voices` : '; nothing borrowed (compBorrow fills from the chords)');
+  }
+  if (strum.gate != null) {
+    const heard = seedTempo ? ` (heard at the clip's ${+seedTempo.toFixed(1)} BPM)` : '';
+    if (strum.borrow) return `${head}: ${found} of ${tones} tones (${(100 * share).toFixed(0)} %) from the row within a ${strum.gate} ms gate${heard}, the rest borrowed from the chord voices`;
+    return `${head} from the row alone (${asked ? 'asked' : 'COMP_GATE_ORDER.md, decided 1 (Avery): a 25 ms gate and nothing borrowed by default'}): ${strumWindowWords(strum)}${heard}: ${mean.toFixed(1)} tones a stroke, ${Math.round(100 * single)} % single notes; nothing borrowed (compBorrow fills from the chords)`;
+  }
+  if (strum.borrow) return `${head}: ${found} of ${tones} tones (${(100 * share).toFixed(0)} %) from the row within ±${strum.tolerance} slot, the rest borrowed from the chord voices`;
   return `${head} from the row alone (${asked ? 'asked' : 'Amendment 3, rules 15–16: ±½ slot and nothing borrowed by default'}): ${toleranceWords(strum.tolerance)}: ${mean.toFixed(1)} tones a stroke, ${Math.round(100 * single)} % single notes; nothing borrowed (compBorrow fills from the chords)`;
 }
 
@@ -950,7 +1085,7 @@ export function partOf(ctx, id, notes, { sound, legato, enabled, baseHz, ratioOf
         node: n.node, tick: row.tick[n.node], time: n.time, ratio: row.tones[n.tone], octave: n.octave, hz: baseHz * (num / den) * 2 ** n.octave * ratioOf(n.bar, n.slot),
         duration: n.duration, velocity: n.velocity ?? Math.min(1, VELOCITY[id] + accent), bar: n.bar, slot: n.slot, slotSeconds: n.slotSeconds, retrigger: n.retrigger, ...(voice ? { voice: n.voice } : {}), ...(voice && n.lane != null ? { lane: n.lane } : {}),
         ...(n.endTime != null ? { endTime: n.endTime } : {}), ...(n.clipNote != null ? { clipNote: n.clipNote } : {}),
-        ...(n.holdTo != null ? { holdTo: n.holdTo } : {}), ...(n.borrowed ? { borrowed: true, from: n.from } : {}), ...(n.offChord ? { offChord: true } : {}),
+        ...(n.holdTo != null ? { holdTo: n.holdTo } : {}), ...(n.borrowed ? { borrowed: true, from: n.from } : {}), ...(n.snapped ? { snapped: true, from: n.from, fromTick: n.fromTick } : {}), ...(n.offChord ? { offChord: true } : {}),
       };
     }),
     ...(strokes ? { strokes: [...strokes].sort((a, b) => a.time - b.time || a.node - b.node) } : {}),
@@ -1238,11 +1373,12 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   if (!COMP_STYLES.includes(compStyle)) fail(`compStyle must be one of ${COMP_STYLES.join(', ')}`);
   const chordsStyle = compStyle === 'chords';
   if (chordsStyle && ov.compLayer != null) fail('compLayer is compStyle \'notes\'\'s: in chords the clave leads the comp (the override is clave)');
-  if (!chordsStyle && (ov.clave != null || ov.compRelation != null || ov.claveFrom != null || ov.compDensity != null || ov.compTolerance != null || ov.compBorrow != null)) fail('clave, compRelation, claveFrom, compDensity, compTolerance and compBorrow are compStyle \'chords\'\'s: \'notes\' comps on a layer (compLayer)');
-  // the comp's tolerance and borrowing (BASS_VOICING_ORDER.md Amendment 3, rules 15–16, P33–P34): ±½ slot, nothing borrowed
-  if (ov.compTolerance != null && !COMP_TOLERANCES.includes(ov.compTolerance)) fail(`compTolerance must be one of ${COMP_TOLERANCES.join(', ')} (slots either side of a stroke), not ${JSON.stringify(ov.compTolerance)}`);
-  if (ov.compBorrow != null && typeof ov.compBorrow !== 'boolean') fail(`compBorrow must be true or false, not ${JSON.stringify(ov.compBorrow)}`);
-  const strum = { tolerance: ov.compTolerance ?? DEFAULT_COMP_TOLERANCE, borrow: ov.compBorrow ?? false };
+  if (!chordsStyle && (ov.clave != null || ov.compRelation != null || ov.claveFrom != null || ov.compDensity != null || COMP_STRUM_KEYS.some((k) => ov[k] != null))) fail(`clave, compRelation, claveFrom, compDensity, ${COMP_STRUM_KEYS.join(', ')} are compStyle 'chords''s: 'notes' comps on a layer (compLayer)`);
+  // the comp's window and borrowing (COMP_GATE_ORDER.md G1–G4; Amendment 3, rules 15–16): a 25 ms gate heard at the seed
+  // tempo (G2: a MIDI target's at its clip's), nothing borrowed; Snap, or the old window in slots, when asked
+  const strumAsked = COMP_STRUM_KEYS.some((k) => ov[k] != null);
+  const seeded = { knobs: { tempoBpm: meter.tempoBpm }, ...(tg ? { target: { tempoBpm: tg.clip.tempoBpm ?? tg.clip.bpm ?? null } } : {}) };
+  const strum = { ...strumOfOverrides(ov), scale: heardScaleOf(seeded) };
   if (chordsStyle) decide('compStyle', compStyle, ov.compStyle != null ? 'asked' : `chords by default (decided, Avery): the clave's strokes (Amendment 1), each the chord strummed from the row${strum.borrow ? ', then borrowed' : ' around it, down to a single note (Amendment 3)'}`);
   let comp = null, compChoices = null, clave = null, claveChoice = null;
   const compUnits = compUnitsOf(spans ? h.chords : null, N, S);
@@ -1298,17 +1434,19 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   parts.comp = [];
   const compStrokes = [];
   let compFound = 0, compTones = 0, compSingles = 0;
+  const compMoved = { n: 0, sum: 0, max: 0 };
   const compBar = (c, k, range = null, voicedNotes = null) => {
     if (!chordsStyle) { parts.comp.push(...compOfBar(ctx, c, k, comp.layer, range)); return; }
     const r = range ?? { from: k * S, to: (k + 1) * S };
     const got = compChordsOfBar(ctx, c, k, compNodesOf(clave, r.from, r.to), range, voicedNotes, strum);
     for (const n of got.notes) (parts.comp[n.voice] ||= []).push(n);
-    compStrokes.push(...got.strokes); compFound += got.found; compTones += got.tones; compSingles += got.singles;
+    compStrokes.push(...got.strokes); compFound += got.found; compTones += got.tones; compSingles += got.singles; addMoved(compMoved, got.moved);
   };
   for (const u of units) compBar(u.chord, u.bar, u.range, led ? u.notes : null);
   const compStrum = compTones ? compFound / compTones : 0;
-  const compStats = chordsStyle ? compStrumStats(compStrokes.length, compTones, compSingles) : null;
-  if (chordsStyle) decide('compStrum', compStrum, compStrumWhy(strum, { strokes: compStrokes.length, relation: clave.relation, rooted: compStrokes.length > compSourceOf(clave).length, found: compFound, tones: compTones, singles: compSingles }, { asked: ov.compTolerance != null || ov.compBorrow != null }));
+  const compStats = chordsStyle ? compStrumStats(compStrokes.length, compTones, compSingles, strum.snap ? compMoved : null) : null;
+  if (chordsStyle) decide('compStrum', compStrum, compStrumWhy(strum, { strokes: compStrokes.length, relation: clave.relation, rooted: compStrokes.length > compSourceOf(clave).length, found: compFound, tones: compTones, singles: compSingles, moved: compMoved },
+    { asked: strumAsked, seedTempo: strum.scale !== 1 ? seedTempoOf(seeded) : null }));
   // bass (BASS_VOICING_ORDER.md Amendment 2, rule 11, P28): Moving · Kick by default, arranged by bass.js `arrangeBass`
   // over the finished spec once its drums are (below: it covers their kick, and falls back to Free, saying why, with the
   // drums off or no kick in the mode). Asked Sparse · Free (`bass` override), Compose's own bass, mined here bar by bar,

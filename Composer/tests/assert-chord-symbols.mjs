@@ -31,6 +31,8 @@ import { chooseChordOnRoot, readProgression, harmonyPins, qualityById, FALLBACK_
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };
 const throws = (fn, re) => { try { fn(); return false; } catch (e) { return re.test(e.message); } };
+/** the spec version the frozen hashes were made at (phase P bumped it: COMP_GATE_ORDER.md G5) */
+const SPEC_V1 = 'composer-spec-v1';
 const sha = (x) => createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const E = 15;
 /** a spec without its input's progression (the object and ratio forms record what was asked) */
@@ -161,7 +163,8 @@ console.log('\n— the ratio form\'s identity');
   let bad = '';
   // the pins' comp is one note a stroke: compStyle 'notes' (COMP_ARP_ORDER.md P9), the override itself left out of the input
   // the frozen specs' comp in notes and chords close (BASS_VOICING_ORDER.md P7), the overrides themselves left out
-  const notes = (L, T, o) => { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close', bass: { density: 'sparse', lock: 'free' } } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; delete spec.input.overrides.bass; return spec; };
+  // the version as it was (COMP_GATE_ORDER.md G5 bumped it; nothing else of a spec in notes moved)
+  const notes = (L, T, o) => { const spec = compose(L, T, { ...o, overrides: { ...o.overrides, compStyle: 'notes', voicing: 'close', bass: { density: 'sparse', lock: 'free' } } }); delete spec.input.overrides.compStyle; delete spec.input.overrides.voicing; delete spec.input.overrides.bass; spec.version = SPEC_V1; return spec; };
   for (const [name, L, T, o] of RATIO_CASES) { const h = sha(notes(L, T, o)); if (h !== RATIO_HASHES[name]) { bad = `${name}: ${h}`; break; } }
   check(`${RATIO_CASES.length} targeted specs byte-identical to b69a39e's (traced, worker, mod off, too long, not of the row)`, !bad, bad);
   const L = [119, 42, 15, 8], plain = compose(L, 8, { seed: 1, progression: ['1/1', '3/2', null, '5/3'] });

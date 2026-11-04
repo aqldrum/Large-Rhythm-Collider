@@ -91,12 +91,16 @@
 //            in the snapshots, kept and carried like the voicing; Compose is sent it when it isn't the default.
 //
 // The comp's tolerance (BASS_VOICING_ORDER.md Amendment 3, phase O; DESIGN_NOTES "The comp's tolerance (phase O)"):
-//   compTolerance  0.125 | 0.25 | 0.5 | 1 (compose.js' override, slots either side of a clave stroke; ±½ is Compose's
-//            default), compBorrow  true | false ("fill from the chords"; false by default). Live (rearrange.js `restrum`,
-//            the fold's step after the density's), in the snapshots, kept and carried like the density; Compose is sent
-//            them when they aren't the defaults.
+//   compTolerance  0.125 | 0.25 | 0.5 | 1 (compose.js' override, slots either side of a clave stroke: the old window,
+//            null when it doesn't play), compBorrow  true | false ("fill from the chords"; false by default). Live
+//            (rearrange.js `restrum`, the fold's step after the density's), in the snapshots, kept and carried like the
+//            density; Compose is sent them when they aren't the defaults.
+// The comp's gate and Snap (COMP_GATE_ORDER.md, phase P):
+//   compGate  15 | 25 | 40 (ms either side of a stroke; null: Compose's 25), compSnap  true | false, compRoll  0 | 8 | 15
+//            (ms, Snap's). Kept, snapshotted and carried with the tolerance; the controller reads the five as one setting
+//            (Snap, else the old window when one is kept, else the gate).
 
-import { PART_IDS, DEFAULT_COMP_TOLERANCE } from '../core/compose.js';
+import { PART_IDS } from '../core/compose.js';
 import { DEFAULT_KIT } from '../core/drums.js';
 import { ARP_PARTS, ARP_DEFAULTS } from '../core/arp.js';
 import { COMPOSE_BASS } from '../core/bass.js';
@@ -148,8 +152,10 @@ export function newCompositionState({ layers = [0, 0, 0, 0], cycleSeconds = 10, 
     bass: composedBass(), voicing: 'led',
     // phase N (Amendment 2): the comp's density tier
     compDensity: DEFAULT_COMP_DENSITY,
-    // phase O (Amendment 3): the comp's tolerance (slots either side of a stroke) and borrowing from the chords
-    compTolerance: DEFAULT_COMP_TOLERANCE, compBorrow: false,
+    // phase O (Amendment 3): the comp's old window (slots either side of a stroke; null: none, phase P) and borrowing
+    compTolerance: null, compBorrow: false,
+    // phase P (COMP_GATE_ORDER.md): the comp's gate (null: Compose's 25 ms), Snap and its roll
+    compGate: null, compSnap: false, compRoll: 0,
   };
 }
 
@@ -179,9 +185,12 @@ function inheritEdits(to, from) {
   to.voicing = from.voicing ?? 'led';
   // phase N: the comp's density (proposed: as the voicing)
   to.compDensity = from.compDensity ?? DEFAULT_COMP_DENSITY;
-  // phase O: the comp's tolerance and borrowing (proposed: as the density)
-  to.compTolerance = from.compTolerance ?? DEFAULT_COMP_TOLERANCE;
+  // phase O: the comp's tolerance and borrowing (proposed: as the density); phase P: its gate, Snap and roll, the same way
+  to.compTolerance = from.compTolerance ?? null;
   to.compBorrow = !!from.compBorrow;
+  to.compGate = from.compGate ?? null;
+  to.compSnap = !!from.compSnap;
+  to.compRoll = from.compRoll ?? 0;
   return to;
 }
 

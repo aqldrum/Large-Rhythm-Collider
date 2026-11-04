@@ -384,6 +384,27 @@ console.log('\n— comping in chords: borrowed tones (A4)');
   check('the trace\'s comp part carries every note\'s voice (the animation reads the lit notes, rings landing last)', !!ev && ev.notes.length === comp.notes.length && ev.notes.every((n) => Number.isInteger(n.voice)));
 }
 
+console.log('\n— comping in chords: snapped tones (COMP_GATE_ORDER.md G8, phase P)');
+{
+  // a coarse meter (2 × 4: slots of ½ s on 8:7:6:5), so the ±¼ slot Snap gathers from finds tones to move
+  core.setKnob('bars', 2); core.setKnob('slotsPerBar', 4);
+  await core.setCompStrum({ snap: true, borrow: false, tolerance: null });
+  q(left, '.ctab-go').click(); await settle();
+  tab.selectCell('comp', 0);
+  const comp = tab.state.parts.comp, bars = tab.state.spec.knobs.bars;
+  const k = Array.from({ length: bars }, (_, i) => i).find((i) => comp.notes.some((n) => n.bar === i && n.snapped && n.fromTick !== n.tick)) ?? 0;
+  const inBar = comp.notes.filter((n) => n.bar === k), snappedHere = inBar.filter((n) => n.snapped);
+  tab.selectCell('comp', k);
+  const plotted = { compositeRhythm: win.lrcVisuals.compositeRhythm, grid: win.lrcVisuals.grid }, f = tab.cellFocus(plotted), pl = plotOf(plotted);
+  const own = [...new Set(snappedHere.map((n) => indexOfTick(pl.ticks, n.fromTick)))];
+  const line = q(inspector, '.ctab-comp-line');
+  check(`Snap: bar ${k + 1}'s ${snappedHere.length} snapped tones on their strokes; the cell's focus lights their own onsets (${own.join(', ')}); the line's title says so`, snappedHere.length > 0 && snappedHere.every((n) => n.time === comp.strokes.find((x) => x.node === n.node).time)
+    && own.every((i) => f.indices.includes(i)) && /snapped onto/.test(line?.title ?? ''));
+  const h = bridge.overlay.highlights ?? tab.highlights(plotted);
+  check(`the plot's ticks: each from a snapped tone's own onset to its stroke (${(h.parts.comp.snaps ?? []).length})`, (h.parts.comp.snaps ?? []).length > 0 && snappedHere.filter((n) => n.fromTick !== n.tick).every((n) => h.parts.comp.snaps.some((t) => t.from === indexOfTick(pl.ticks, n.fromTick) && t.to === indexOfTick(pl.ticks, n.tick))));
+  await core.setCompStrum({ snap: false, tolerance: 0.25, borrow: true });
+}
+
 bridge.hideTab();
 restore();
 console.log(`\n${PASS ? 'PASS' : 'FAIL'} — ${checks} checks`);

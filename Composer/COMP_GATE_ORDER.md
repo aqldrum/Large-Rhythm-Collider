@@ -123,18 +123,98 @@ Built in a worktree off `main` (branch `comp/gate`) and merged `--no-ff` into `c
   - The README, DESIGN_NOTES and the checklist below.
 
 ## Browser and rig checklist (for Avery; finished in P4)
-1. **8:7:6:5, default.** The comp plays single notes, locked to the clave; nothing smears. Inspector: "25 ms gate: 1.0 tones
-   a stroke".
-2. **Same row, Snap to stroke on.** Two-note stabs on the strokes, tight. The plot shows ticks from the moved onsets to
-   their strokes.
-3. **Roll 15 ms.** The stab becomes a quick downstroke. Roll 0 is a block chord again.
-4. **768:784, default.** Real 3-tone chords that already sound together. Snap changes little.
-5. **7:5:3:2, Snap.** The tones moved most (up to ~290 ms). Does it still sound like the row's harmony?
-6. **Details → Old window (slots) ±½.** Today's arpeggiated comp comes back; that's the pin.
-7. **A saved composition from before.** Re-open it and swap a chord: its comp re-strums the old way.
-8. **MIDI comp zone.** Gated tones arrive where they play. Snapped tones arrive together (or rolled).
-9. **A MIDI target** at the clip's tempo: the caption gives the gate as heard.
+Every control below is in the Comping cell's inspector (click a Comping cell in the matrix), on the row named, seed 1.
+1. **8:7:6:5, default.** The comp plays single notes, locked to the clave; nothing smears. The row reads "tight [25 ms]
+   [snap to stroke] [fill from the chords]" and the caption "25 ms gate: 1.0 tones a stroke, 100 % single notes".
+2. **Same row, "snap to stroke" on.** Two-note stabs on the strokes, tight. The caption: "Snap (±¼ slot): 1.7 tones a
+   stroke, tones moved up to 114 ms"; Tight dims. On the main plot, thin comp-coloured ticks run from each moved onset to
+   its stroke's dot.
+3. **The Roll select (shown while Snap is on) → 15 ms.** The stab becomes a quick downstroke, the stroke's own tone first,
+   then low to high; the caption adds "· rolled 15 ms". "block" (0) is a block chord again.
+4. **768:784, default.** Real 3-tone chords that already sound together: "25 ms gate: 3.0 tones a stroke, 0 % single
+   notes". Snap changes little (3.0 tones, moved up to ~20 ms).
+5. **7:5:3:2, Snap.** The tones moved most: "1.5 tones a stroke, tones moved up to 286 ms". Does it still sound like the
+   row's harmony?
+6. **Details (header toggle) → "Old window (slots)" → ±½ slot.** Today's arpeggiated comp comes back ("±½ slot: 2.0 tones a
+   stroke · 0 % single" on 8:7:6:5): that's the pin. "off" goes back to the gate.
+7. **A saved composition from before.** There is no way in the page to reopen one: the composition store lives for the
+   session, and JSON export doesn't load back. The old-spec read is checked in Node instead (`assert-strum.mjs`, G5: a
+   v1 spec swaps a chord at ±½). Skip unless you have old specs somewhere (see the open questions).
+8. **MIDI comp zone** (MIDI out on, a synth on the comp's zone). Gated tones arrive where they play; snapped tones arrive
+   together on the stroke, or 8 / 15 ms apart rolled. No player or MIDI code changed: they send each note at its own time.
+9. **A MIDI target** (drop a .mid on 41:42:43; ode-to-joy plays at the clip's 108 BPM, the spec's own is 150): the
+   caption gives the gate at the clip's tempo with no note. Move the tempo slider to half: the caption adds "· heard as
+   50 ms at 54 BPM" (on a plain row: "· heard as 50 ms at 60 BPM"), and the comp doesn't re-strum.
 
 ## Log
 - 2026-11-03: written (planner); Avery ruled 1–3 (G1–G9 approved). Committed on `composer-release`. Phase P handed to a
   cloud session.
+- 2026-11-03: **phase P built** (cloud session, branch `comp/gate` off `composer-release` at 0b2d12a, not `main`: the
+  release plan's integration branch already holds this order). Commits:
+  - 711ffef: P1–P2, the core (`compose.js` comp section, `rearrange.js` restrum door).
+  - 030d376: P3, the controller, the store's comp fields and the window.
+  - d2914f4: P4, the tests and the pins.
+  - The docs commit after it: README, DESIGN_NOTES ("The comp's gate and Snap (phase P)"), this Log and the checklist.
+
+  **What was built.** G1–G9 as written:
+  - `compGate` 15 | 25 | 40 ms, 25 by default, heard at the seed tempo (G2: g × seedTempo / specTempo of spec time).
+  - `compSnap` (±¼ slot, struck on the stroke: `snapped`, `from`, `fromTick`) and `compRoll` 0 | 8 | 15 ms.
+  - Precedence and refusals with words (`strumSetting`).
+  - `composer-spec-v2`, with v1 specs read as ±½ (`compStrumOf`).
+  - `compMovedMs` and the G6 words.
+  - The `restrum` door's `{ gate, snap, roll }` (`nextStrum`), `setCompStrum` and the export.
+  - The Comping cell's Tight, Snap to stroke, Roll and Details' "Old window (slots)", and the caption with the heard gate.
+  - The plot's snapped ticks.
+
+  G9 needed no change: the player and the MIDI comp zone send each note at its own `time` and lane. The probe's table
+  holds to the hundredth: at 25 ms, 1.00 tones a stroke on 8:7:6:5, 16:12:9 and 7:5:3:2, and 3.00 on 768:784. Snap gives
+  1.67 tones and 114 ms on 8:7:6:5, and 1.50 tones and 286 ms on 7:5:3:2.
+
+  **Suites.** This container can't meet the wall-clock budgets, and its Node build moves the floats some frozen hashes
+  were made on. So the clean `composer-release` itself passes **71 of 84** here, run alone. The 13 failures are:
+  - the 16k-row Compose budgets (about 2.5 s here against 1 s) in arp, comp, claves, compose, frame-clave, rearrange,
+    strum and voicing;
+  - the tutorial's 10 s opening and compose-dust's 2 ms frame;
+  - the hashes that "hold for one Node (V8) build": chord-symbols' 'traced' case, compose's, progression's and trace's
+    e3909e1 cases from the 4th on, and five of frame-clave's 768:769 cases.
+
+  `comp/gate` gives the same: **71 of 84**, the same 13 suites failing the same checks, and superrow passes alone.
+  Because those hash loops stop at their first miss, I hashed every frozen case on both trees directly:
+  - 69 e3909e1 cases (compose, progression, trace);
+  - 8 ratio-form cases;
+  - 76 c009aaa cases.
+
+  All of them are identical between `composer-release` and `comp/gate`. **Avery: please run the suites on the usual
+  machine;** they should be 84/84 there.
+
+  **Pins.** What moved, and how each is pinned (no fixture or hash re-frozen):
+  - The version bump moves every whole-spec hash and every comparison with the frozen pre-refactor Compose. These set
+    the version back to v1 (nothing else of those specs moved): `settle-baseline.mjs` `normSpec`,
+    `assert-chord-symbols`, `assert-comp`, `assert-voicing`, `assert-refactor-identity` (its bad-override error also
+    leaves out the three new keys) and `assert-frame-clave`'s P19.
+  - The default comp's move is pinned with `compTolerance: 0.5`: `assert-strum`'s phase O sections and
+    `assert-page-clave`'s phase O block.
+  - The `compBorrow: true` + 0.25 pin holds: `assert-comp`, `assert-composer-midi`, `assert-page-matrix` and
+    `assert-frame-clave`, and `assert-strum`'s P34 section.
+
+  **Builder's calls** (DESIGN_NOTES lists them):
+  1. The roll's span is held under half the stroke's hold.
+  2. Snap with borrowing reads tones as the old borrowing path does (chord classes only), so every stroke is a full chord.
+  3. `compRoll` without `compSnap` is refused.
+  4. A gate or old window asked while Snap plays turns Snap off; Snap off returns to the gate played before it, else 25.
+  5. A restrum writes the current spec version, so an old spec restrummed becomes v2.
+  6. Snapped notes carry `fromTick` for the plot.
+  7. `compMovedMs` counts only snapped tones, in heard ms.
+  8. The comp's five fields in `store/composition-store.js` and `store/composition-edits.js` were edited, outside the
+     listed files, so undo and a fresh entry read the gate. Nothing else in the store moved.
+
+  **Open questions for Avery:**
+  1. Checklist item 7: there is no way in the page to reopen a composition made before this build. The store lives for
+     the session, and JSON export doesn't load back. Where would old specs come from? Should JSON export load back, or
+     is G5 only for specs kept outside the page?
+  2. At 25 ms, 19:17:16:15 stays 60 % single notes and 768:769 70 %. At 40 ms that becomes 40 % and 70 %. Is that the
+     honest answer you want on those rows, or should their default be Snap?
+  3. Should Tight be disabled while Snap is on, rather than turning Snap off when a gate is chosen?
+  4. Snap moves 7:5:3:2's tones by 286 ms (checklist 5). Should Snap's window shrink on slow rows (say ±¼ slot or 150 ms,
+     whichever is less)?
+  5. Should Roll apply to a gated chord too (on 768:784 its tones are already within 21 ms), or stay Snap's only?

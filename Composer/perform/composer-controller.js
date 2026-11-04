@@ -171,7 +171,7 @@
 //              sent them when they aren't the defaults, so a re-compose keeps them. The clave's strokes never move, so the
 //              bass's Clave lock and the perc are unchanged by it.
 
-import { compose, rearticulate, chooseMeter, PART_IDS, TARGET_SETS, VOICINGS, COMP_TOLERANCES, DEFAULT_COMP_TOLERANCE, compStrumOf } from '../core/compose.js';
+import { compose, rearticulate, chooseMeter, PART_IDS, TARGET_SETS, VOICINGS, COMP_TOLERANCES, COMP_GATES, COMP_ROLLS, compStrumOf, strumSetting, nextStrum, strumOverrides, sameStrum, heardGateMs } from '../core/compose.js';
 import { arrangeBass, bassLockRefusal, BASS_DENSITIES, BASS_LOCKS } from '../core/bass.js';   // phase H: the bass's densities and lock
 import { arrangeArp, arpRefusal, arpTimes, ARP_PARTS, ARP_TIMES, ARP_DEFAULTS } from '../core/arp.js';   // B2: the Arp mode (phase D: mined)
 import { rootCandidates, chooseChordOnRoot, qualityById } from '../core/progression.js';
@@ -389,14 +389,18 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
    *  (rearrange.js reclave `{ density }`), or null */
   const densityStep = (st) => { const t = tierOf(st.composed), d = st.compDensity ?? DEFAULT_COMP_DENSITY; return t && d !== t ? { kind: 'density', density: d } : null; };
   // ── phase O (Amendment 3, rules 15–16, P33–P37): the comp's tolerance and borrowing ──
-  /** the entry's strum: { tolerance, borrow } */
-  const strumOfEntry = (st) => ({ tolerance: st.compTolerance ?? DEFAULT_COMP_TOLERANCE, borrow: !!st.compBorrow });
+  /** the entry's strum (compose.js strumSetting's shape: { gate, tolerance, snap, roll, borrow }; phase P, COMP_GATE_ORDER.md
+   *  G4: Snap, else the old window when one is kept, else the gate, 25 ms unless asked) */
+  const strumOfEntry = (st) => (st.compSnap ? strumSetting({ snap: true, roll: st.compRoll ?? null, borrow: !!st.compBorrow })
+    : st.compTolerance != null ? strumSetting({ tolerance: st.compTolerance, borrow: !!st.compBorrow }) : strumSetting({ gate: st.compGate ?? null, borrow: !!st.compBorrow }));
+  /** a strum setting written into the entry (each key, so a snapshot restores it whole) */
+  const keepStrum = (st, s) => { st.compGate = s.gate; st.compTolerance = s.tolerance; st.compSnap = s.snap; st.compRoll = s.roll; st.compBorrow = s.borrow; };
   /** the fold's step after the density's: the entry's strum when the composed spec (in chords) strums another way
-   *  (rearrange.js restrum `{ tolerance, borrow }`), or null */
+   *  (rearrange.js restrum `{ gate, tolerance, snap, roll, borrow }`), or null */
   const strumStep = (st) => {
     if (!st.composed?.clave) return null;
     const want = strumOfEntry(st), have = compStrumOf(st.composed);
-    return want.tolerance !== have.tolerance || want.borrow !== have.borrow ? { kind: 'strum', ...want } : null;
+    return sameStrum(want, have) ? null : { kind: 'strum', ...want };
   };
   /** phase N (rule 14, P30): the frame candidates as the edits leave them, the last fold step's that re-ranked them
    *  (rearrange's `claveAlternates`: a chord change, a density or a clave chosen again), or null (the trace's) */
@@ -495,7 +499,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     // phase N: the comp's density, rearrange's `reclave` door ({ density })
     if (e.kind === 'density') return { edit: { density: e.density }, opts: {} };
     // phase O: the comp's tolerance and borrowing, rearrange's `restrum` door
-    if (e.kind === 'strum') return { edit: { tolerance: e.tolerance, borrow: e.borrow }, opts: {} };
+    // phase P (COMP_GATE_ORDER.md G7): its gate, Snap and roll too (the whole setting, so the door lands on it exactly)
+    if (e.kind === 'strum') return { edit: { gate: e.gate, tolerance: e.tolerance, snap: e.snap, roll: e.roll, borrow: e.borrow }, opts: {} };
     if (e.kind === 'chord') return { edit: { [splitSpec(st.composed) ? 'span' : 'bar']: e.bar, chord: { rootTone: e.rootTone, quality: e.quality } }, opts: {} };
     const line = st.trace?.lines?.[e.lineId];
     if (!line) throw new Error(`composer: no line ${e.lineId} in the trace`);
@@ -763,7 +768,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     drumOptions: JSON.parse(JSON.stringify(st.drumOptions)), edits: JSON.parse(JSON.stringify(st.edits)), undo: st.undo.slice(), redo: st.redo.slice(), dropped: st.dropped,
     progression: JSON.parse(JSON.stringify(st.progression)), field: st.field, tempoBpm: st.tempoBpm, lastMs: st.lastMs, dirty: st.dirty, error: st.error, status: settled(st),
     arps: JSON.parse(JSON.stringify(st.arps ?? lineArps())), bass: JSON.parse(JSON.stringify(st.bass ?? composedBass())), voicing: st.voicing ?? 'led',
-    compDensity: st.compDensity ?? DEFAULT_COMP_DENSITY, compTolerance: st.compTolerance ?? DEFAULT_COMP_TOLERANCE, compBorrow: !!st.compBorrow });
+    compDensity: st.compDensity ?? DEFAULT_COMP_DENSITY, compTolerance: st.compTolerance ?? null, compBorrow: !!st.compBorrow, compGate: st.compGate ?? null, compSnap: !!st.compSnap, compRoll: st.compRoll ?? 0 });
   /** a compose in flight for this state is dropped (its answer is for another input), as touch() does */
   const dropFlight = (st) => { if (st.status === 'composing') { bump(st); flights.delete(st); st.status = settled(st); } };
   /** a new clip, or none: the pins, the field and the edits were another meter's bars (proposed) */
@@ -837,13 +842,10 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       // phase N: the comp's density, sent when it isn't the default (sparse–medium), so the composed spec needs no switch;
       // not to a composition whose clave has no tier (the pattern's, or a comp in notes: Compose refuses it there)
       if ((st.compDensity ?? DEFAULT_COMP_DENSITY) !== DEFAULT_COMP_DENSITY && !(st.composed && !st.composed.refused && !tierOf(st.composed))) options.overrides.compDensity = st.compDensity;
-      // phase O: the comp's tolerance and borrowing, sent when they aren't the defaults (±½, nothing borrowed), so the
-      // composed spec needs no switch; not to a composition that comps in notes (Compose refuses them there)
-      if (!(st.composed && !st.composed.refused && !st.composed.clave)) {
-        const sm = strumOfEntry(st);
-        if (sm.tolerance !== DEFAULT_COMP_TOLERANCE) options.overrides.compTolerance = sm.tolerance;
-        if (sm.borrow) options.overrides.compBorrow = true;
-      }
+      // phase O, phase P: the comp's window and borrowing, sent when they aren't the defaults (a 25 ms gate, no Snap,
+      // nothing borrowed; an old window always), so the composed spec needs no switch; not to a composition that comps
+      // in notes (Compose refuses them there)
+      if (!(st.composed && !st.composed.refused && !st.composed.clave)) Object.assign(options.overrides, strumOverrides(strumOfEntry(st)));
       // a typed chord chart (CHART_ORDER.md): its bars and changes (not with a MIDI target: the two together are not built)
       const shape = st.input.target ? null : shapeOfText(st.field?.text);
       if (shape) options.changes = shape;
@@ -1051,19 +1053,20 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     retunedBars: () => (ready(state) ? [...new Set(state.spec.chords.flatMap((c, k) => (Math.abs(c.fundamentalRatio - state.composed.chords[k].fundamentalRatio) > 1e-12 ? [c.bar] : [])))] : []),
     /** the edits as JSON export carries them (null with none); B2: `arps` when a part is in Arp; phase E: `clave` when chosen;
      *  phase H: `bass` when it isn't Compose's own, `voicing` when close; phase N: `compDensity` when it isn't the default;
-     *  phase O: `compTolerance` and `compBorrow` when they aren't the defaults */
+     *  phase O, phase P: the comp's strum overrides when they aren't the defaults (compose.js strumOverrides: `compGate`,
+     *  `compSnap`, `compRoll`, `compBorrow`; `compTolerance` whenever the old window plays) */
     editsExport() {
       const e = state.edits, grid = state.drumOptions.grid && (state.drumOptions.mode === 'grid' || state.drumOptions.mode === 'prime');
       const arps = ARP_PARTS.some((id) => state.arps?.[id]?.mode === 'arp') ? JSON.parse(JSON.stringify(state.arps)) : null;
       // phase H: the bass when it isn't Compose's own, the voicing when close
       const bass = isComposedBass(state.bass) ? null : JSON.parse(JSON.stringify(state.bass)), voicing = (state.voicing ?? 'led') === 'led' ? null : state.voicing;
       const compDensity = (state.compDensity ?? DEFAULT_COMP_DENSITY) === DEFAULT_COMP_DENSITY ? null : state.compDensity;
-      const sm = strumOfEntry(state), compTolerance = sm.tolerance === DEFAULT_COMP_TOLERANCE ? null : sm.tolerance, compBorrow = sm.borrow || null;
-      if (!hasEdits(state) && !grid && !state.field && !arps && !bass && !voicing && !compDensity && !compTolerance && !compBorrow) return null;
+      const strum = strumOverrides(strumOfEntry(state));
+      if (!hasEdits(state) && !grid && !state.field && !arps && !bass && !voicing && !compDensity && !Object.keys(strum).length) return null;
       return { chords: JSON.parse(JSON.stringify(e.chords)), lead: JSON.parse(JSON.stringify(e.lead)), order: [...e.order],
         drums: grid ? { mode: state.drumOptions.mode, grid: JSON.parse(JSON.stringify(state.drumOptions.grid)), from: e.grid?.from ?? null } : null, field: state.field ? state.field.text : null,
         ...(arps ? { arps } : {}), ...(e.clave ? { clave: { ...e.clave } } : {}), ...(bass ? { bass } : {}), ...(voicing ? { voicing } : {}), ...(compDensity ? { compDensity } : {}),
-        ...(compTolerance ? { compTolerance } : {}), ...(compBorrow ? { compBorrow } : {}) };
+        ...strum };
     },
     /**
      * A bar's alternates (a pure read of the kept trace): part 'chords' → the bar's 12 candidates; 'lead' → the bar's
@@ -1335,39 +1338,45 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       });
     },
     /**
-     * Phase O (Amendment 3, rules 15–16, P33–P37): the comp's tolerance and borrowing as they play → { tolerance, borrow
-     * (the entry's), playing ({ tolerance, borrow }: the spec's, or null before any Compose), tones (the mean tones a
-     * stroke, the spec's `compTones`), singles (the share of single-note strokes, `compSingles`), strokes, tolerances } |
-     * null (a composition that comps in notes: no strum)
+     * Phase O (Amendment 3, P33–P37), phase P (COMP_GATE_ORDER.md G1–G8): the comp's strum as it plays → { gate,
+     * tolerance, snap, roll, borrow (the entry's: compose.js strumSetting's shape), playing (the spec's, or null before any
+     * Compose), tones (the mean tones a stroke, the spec's `compTones`), singles (the share of single-note strokes,
+     * `compSingles`), moved (Snap's `compMovedMs` { mean, max }, or null), strokes, heard ({ gate, seedTempo, tempo }: the
+     * gate as heard at the playing tempo, G2's readout, or null), gates, rolls, tolerances } | null (a composition that
+     * comps in notes: no strum)
      */
     compStrumOf() {
       const s = ready(state) ? state.spec : null;
       if (s && !s.clave) return null;
-      const comp = s?.parts?.find((p) => p.id === 'comp');
-      return { ...strumOfEntry(state), playing: s ? compStrumOf(s) : null, tones: s?.stats?.compTones ?? null, singles: s?.stats?.compSingles ?? null,
-        strokes: comp?.strokes?.length ?? null, tolerances: [...COMP_TOLERANCES] };
+      const comp = s?.parts?.find((p) => p.id === 'comp'), mine = strumOfEntry(state), seed = s ? seedTempoOf(s) : null, tempo = s ? api.tempo() : null;
+      return { ...mine, playing: s ? compStrumOf(s) : null, tones: s?.stats?.compTones ?? null, singles: s?.stats?.compSingles ?? null, moved: s?.stats?.compMovedMs ?? null,
+        strokes: comp?.strokes?.length ?? null, heard: mine.gate != null && seed && tempo ? { gate: heardGateMs(mine.gate, seed, tempo), seedTempo: seed, tempo } : null,
+        gates: [...COMP_GATES], rolls: [...COMP_ROLLS], tolerances: [...COMP_TOLERANCES] };
     },
     /**
-     * Phase O: the comp's tolerance (0.125 | 0.25 | 0.5 | 1: slots either side of a clave stroke) and/or borrowing (true:
-     * "fill from the chords"), live with no re-compose (rearrange.js restrum: byte for byte a Compose given
-     * `compTolerance` / `compBorrow`), one undo step. The clave's strokes don't move (the perc and the bass's Clave lock
-     * read them). Before any Compose only kept (the Compose is sent them). A composition that comps in notes throws.
-     * → Promise<{ ok, kind: 'strum', tolerance, borrow, changedBars, … }>
+     * Phase O, phase P (G7): the comp's window and borrowing, live with no re-compose (rearrange.js restrum: byte for byte
+     * a Compose given the same overrides), one undo step:
+     *   gate (15 | 25 | 40 ms either side of a clave stroke, heard at the seed tempo), snap (true: gather within ±¼ slot and
+     *   strike on the stroke; false: back to the gate), roll (0 | 8 | 15 ms, Snap's), tolerance (0.125 | 0.25 | 0.5 | 1
+     *   slot: the old window; null: back to the gate), borrow (true: "fill from the chords"); absent: as it plays
+     *   (compose.js `nextStrum`: a window asked takes the place of the others; two together throw).
+     * The clave's strokes don't move (the perc and the bass's Clave lock read them). Before any Compose only kept (the
+     * Compose is sent them). A composition that comps in notes throws.
+     * → Promise<{ ok, kind: 'strum', gate, tolerance, snap, roll, borrow, changedBars, … }>
      */
-    setCompStrum({ tolerance, borrow } = {}) {
-      if (tolerance !== undefined && !COMP_TOLERANCES.includes(tolerance)) throw new Error(`composer: the comp's tolerance is one of ${COMP_TOLERANCES.join(', ')} (slots either side of a stroke), not ${JSON.stringify(tolerance)}`);
-      if (borrow !== undefined && typeof borrow !== 'boolean') throw new Error(`composer: borrow is true or false, not ${JSON.stringify(borrow)}`);
-      const st = state, was = strumOfEntry(st), want = { tolerance: tolerance ?? was.tolerance, borrow: borrow ?? was.borrow };
-      const same = (x) => x.tolerance === want.tolerance && x.borrow === want.borrow;
+    setCompStrum(ask = {}) {
+      const st = state, was = strumOfEntry(st);
+      let want;
+      try { want = nextStrum(was, ask ?? {}); } catch (err) { throw new Error(err.message.replace(/^composer\/compose: /, 'composer: the comp\'s ')); }
       if (!ready(st)) {
-        if (same(was)) return Promise.resolve({ ok: true, noop: true, kind: 'strum', ...want });
-        st.compTolerance = want.tolerance; st.compBorrow = want.borrow; changed();
+        if (sameStrum(was, want)) return Promise.resolve({ ok: true, noop: true, kind: 'strum', ...want });
+        keepStrum(st, want); changed();
         return Promise.resolve({ ok: true, live: false, kind: 'strum', ...want });
       }
       if (!st.composed.clave) throw new Error('composer: this composition comps in notes (compStyle \'notes\'): it has no strum');
       return edit('strum', want, (x) => {
-        if (same(strumOfEntry(x))) return false;
-        x.compTolerance = want.tolerance; x.compBorrow = want.borrow;
+        if (sameStrum(strumOfEntry(x), want)) return false;
+        keepStrum(x, want);
         return true;
       });
     },
@@ -1627,7 +1636,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       if (x.target) st.input.target = x.target; else delete st.input.target;
       Object.assign(st, { placements: x.placements, spec: x.spec, composed: x.composed, trace: x.trace, parts: x.parts, drums: x.drums, drumOptions: x.drumOptions, edits: x.edits,
         undo: x.undo, redo: x.redo, dropped: x.dropped, progression: x.progression, field: x.field, tempoBpm: x.tempoBpm, lastMs: x.lastMs, dirty: x.dirty, error: x.error, status: x.status, arps: x.arps, bass: x.bass, voicing: x.voicing, compDensity: x.compDensity,
-        compTolerance: x.compTolerance, compBorrow: x.compBorrow });
+        compTolerance: x.compTolerance, compBorrow: x.compBorrow, compGate: x.compGate, compSnap: x.compSnap, compRoll: x.compRoll });
       folds.delete(st); auditions.delete(st);
       if (live && st.spec && !st.spec.refused) api.perform(); else changed(st);
       return Promise.resolve({ ok: true, index: x.placements?.current ?? 0 });
