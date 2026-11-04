@@ -7,9 +7,9 @@
 //
 //   the loop   `loopSpec` is the spec AS IT PLAYS: its parts as they play (the arps placed, the bass arranged, each part
 //              rearticulated with its sound, legato and on/off) and `drums` the arrangement that plays (its `options`
-//              are what every other section arranges with). The controller passes `{ ...st.spec, parts: [...st.parts],
-//              drums: st.drums }`. `materials` is its { row, cells } (rearrange.js `materialsOf`). Home is this loop,
-//              byte for byte: its own part and drum objects.
+//              are what every other section arranges with). The controller passes `{ ...st.spec, drums: st.drums,
+//              parts: PART_IDS.map((id) => st.parts[id]) }` (st.spec.drums is Compose's). `materials` is its { row,
+//              cells } (rearrange.js `materialsOf`). Home is this loop, byte for byte: its own part and drum objects.
 //   layers     (ruling 1) a section on layers M (a mask, A = bit 0) keeps the drum hits, the comp's notes and the inner's
 //              whose onset one of M's layers strikes (row.owners[node] & M; a drum hit's node is the onset at its tick).
 //              The lead, the chords and the bass stay whole. A subset of layers is a different tone row, so a section
