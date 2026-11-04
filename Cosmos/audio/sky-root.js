@@ -17,11 +17,23 @@ const ALL_DEGREES = Array.from({ length: 12 }, (_, d) => d);
 // min-|dev| rule grid-core.js's poolFromRatios uses for the anchor-0 case, generalized. Anchor 0
 // reproduces today's pool exactly (guarded — the tone list is a superset that loses nothing at the
 // anchor it was originally folded at).
-export function poolFromTones(tones, anchorCents = 0) {
+// `pins` (a targeted scale's bed triad, cents above the anchor) re-aim their slots: the slot nearest each
+// pin holds the tone nearest the PIN, dev measured from the pin, so a 7/4 target is not lost to a 16/9 that
+// sits nearer 1000¢. No pins → the plain 12TET fold, unchanged.
+export function poolFromTones(tones, anchorCents = 0, pins = []) {
   const pool = new Array(12).fill(null);
   for (const t of tones) {
     const { d, dev } = nearestDegree(t.c, anchorCents);
     if (!pool[d] || Math.abs(dev) < Math.abs(pool[d].dev)) pool[d] = { fraction: t.f, cents: t.c, dev };
+  }
+  for (const pin of pins) {
+    const absolutePin = wrapOctaveCents(anchorCents + pin);
+    let best = null;
+    for (const t of tones) {
+      const dev = signedCircularCentsDistance(t.c, absolutePin);
+      if (!best || Math.abs(dev) < Math.abs(best.dev)) best = { fraction: t.f, cents: t.c, dev };
+    }
+    pool[Math.round(wrapOctaveCents(pin) / 100) % 12] = best;
   }
   return pool;
 }

@@ -976,7 +976,7 @@ export function leadNoteInChord(ratio, chordId, rootCents = 0) {
 }
 
 export function leadNoteInHarmony(ratio, rootCents, policy) {
-  const widened = { ...policy, toleranceCents: LEAD_MASK_WINDOW };
+  const widened = { ...policy, toleranceCents: policy?.leadWindowCents ?? LEAD_MASK_WINDOW };
   return !!matchHarmonyTarget(ratioToCents(ratio), rootCents, widened)?.selected;
 }
 
@@ -1666,7 +1666,8 @@ export function currentSkySeconds() {
 export function currentSkyChord() {
   const policy = currentHarmonyPolicy();
   if (policy.source === HARMONY_SOURCES.SCALE) {
-    return { symbol: SCALE_POLICIES[policy.scaleId].label, id: policy.id, semitones: policy.targets.map(target => target / 100), targets: [...policy.targets], source: policy.source };
+    return { symbol: SCALE_POLICIES[policy.scaleId].label, id: policy.id, semitones: policy.targets.map(target => target / 100), targets: [...policy.targets], source: policy.source,
+      ...(policy.ratios ? { ratios: [...policy.ratios] } : {}) };
   }
   return { symbol: CHORDS[skyChordId].symbol, id: skyChordId, semitones: currentChordSemitones(), targets: [...policy.targets], source: policy.source };
 }
