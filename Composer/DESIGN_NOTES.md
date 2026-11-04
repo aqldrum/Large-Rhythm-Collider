@@ -2645,7 +2645,7 @@ The order's probe table, to the hundredth.
 
 **The state** (C1). The entry holds `arrangement: { mode, template, seed, song, loop }` (`store/composition-store.js` `newArrangement`: Loop, Arch, seed 1, no song). `song` is form.js's S1 record; `loop` is the content signature of the loop it was planned on. The store keeps it per rhythm, like the bass: through a re-compose and the glyph's recall, but not to a new cycle of the same row (proposed: a song is planned on one loop).
 
-**Song | Loop** (S14). `setMode('song')` plans a song the first time, from the loop as it plays: `{ ...st.spec, drums: st.drums, parts: PART_IDS.map((id) => st.parts[id]) }`. (Phase A's note checks out against the code: `st.spec.drums` is Compose's, `st.drums` the window's.) So home is what Loop sounds. Before any Compose the mode is only kept, and Perform plans it. The switch sits beside the transport, after the Compose → Perform ⇄ Stop button.
+**Song | Loop** (S14). `setMode('song')` plans a song the first time, from the loop as it plays: `{ ...st.spec, drums: st.drums, parts: PART_IDS.map((id) => st.parts[id]) }`. (Phase A's note checks out against the code: `st.spec.drums` is Compose's, `st.drums` the window's.) So home is what Loop sounds. Before any Compose the mode is only kept, and the Compose landing plans it (`firstPlan`; Perform too, as a fallback). While Compose's animation plays in Song, the matrix shows and the lane is held back until it ends (11-04). The switch sits beside the transport, after the Compose → Perform ⇄ Stop button.
 
 **The getters** (S10, S16). Perform hands the player `playParts(c)` and `playDrums(c)`, which read the mode at every tick:
 - **In Loop** they return the window's parts and drums, the same objects as before, so Loop is unchanged.

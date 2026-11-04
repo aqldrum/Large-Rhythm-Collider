@@ -29,6 +29,9 @@
 .alane-head { display: flex; align-items: center; font-size: 11px; padding: 0 6px; position: sticky; left: 0; z-index: 3; background: var(--alane-bg); }
 .alane-part { border-left: 3px solid var(--alane-muted); font-weight: 600; font-size: 11px; color: var(--alane-text); }
 .alane-part.off { opacity: .45; }
+.ctab-left .alane-part { background: var(--alane-bg) !important; border: none !important; border-left: 3px solid !important; border-radius: 2px !important; padding: 0 6px !important; text-align: left; cursor: pointer; }
+.ctab-left .alane-part:hover { color: #fff !important; }
+.ctab-left .alane-part.selected { background: var(--alane-cell-on) !important; color: var(--alane-accent) !important; }
 
 /* the ruler: the sections' bands, the ticks (sections, passes, bars), the time */
 .alane-ruler { position: relative; height: 30px; background: var(--alane-track); border: 1px solid var(--alane-dim); border-radius: 3px; overflow: hidden; }
@@ -113,6 +116,8 @@
 .ctab-left .ctab-modes .ctab-mode:first-child { border-radius: 4px 0 0 4px !important; }
 .ctab-left .ctab-modes .ctab-mode:last-child { border-radius: 0 4px 4px 0 !important; border-left: none !important; }
 .ctab-left .ctab-modes .ctab-mode.on { background: rgba(0, 255, 136, 0.12) !important; }
-.ctab-left.ctab-song-on .ctab-matrix-wrap, .ctab-left.ctab-song-on .ctab-barpick { display: none !important; }
+/* …except while Compose's animation plays: it builds the loop's matrix, then the lane takes the room when it ends */
+.ctab-left.ctab-song-on:not(.ctab-animating) .ctab-matrix-wrap, .ctab-left.ctab-song-on:not(.ctab-animating) .ctab-barpick { display: none !important; }
+.ctab-left.ctab-animating .alane { display: none !important; }
 .ctab-lane-owned, .ctab-lane-owned:hover { opacity: .5; cursor: default !important; border-color: #444 !important; }
 .composition-part-strips .part-strip-mute:disabled { opacity: .5; cursor: default; }

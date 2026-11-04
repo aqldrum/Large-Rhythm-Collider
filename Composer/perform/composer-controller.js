@@ -880,6 +880,13 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     st.arrangement = { ...arrOf(st), template, seed, song, loop: c.sig };
     return song;
   }
+  /** Song with no song yet: the first plan, once there's a loop to plan on (a Compose landing, or Perform); not an undo
+   *  step. A plan that can't be made is said (planErrors) and leaves the loop playing. */
+  function firstPlan(st) {
+    const a = arrOf(st);
+    if (a.mode !== 'song' || a.song || !ready(st)) return;
+    try { planOn(st, a.template, a.seed); } catch (err) { planErrors.set(st, errText(err)); }
+  }
   /** a pass's parts with the user's sound and legato as they are now (S16): where one moved since the loop object was
    *  read, it wins; else the pass's own (form.js' Arp ↔ Line keeps its own sound). On/off is the pass's, and never on
    *  for a part off in the loop. Memoized per pass's parts and the parts as they play. */
@@ -1074,6 +1081,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
             st.status = 'ready'; st.tempoBpm = seedTempoOf(spec);
           }
           landPlacements(st, spec);   // MIDI targets: the search's list (kept when this compose was given its placement)
+          firstPlan(st);   // Song v0: Song before any Compose plans its song as the Compose lands
         } catch (err) {
           if (mine !== runs.get(st)) return st.spec;
           st.status = 'error'; st.error = String(err && err.message ? err.message : err);
@@ -1163,8 +1171,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       player.setGlide(state.glideMs / 1000);
       player.setTimeFactor(api.tempoFactor());
       // Song v0 (S14): Song with no song yet plans one now; a plan that can't be made leaves the loop playing (said)
-      const a = arrOf(state);
-      if (a.mode === 'song' && !a.song && ready(state)) { try { planOn(state, a.template, a.seed); } catch (err) { planErrors.set(state, errText(err)); } }
+      firstPlan(state);
       player.play(state.spec, playParts, playDrums);
       state.status = 'playing'; changed();
     },
@@ -1848,7 +1855,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     songMode: () => arrOf(state).mode,
     /**
      * Loop or Song (S14). Song plans a song the first time, from the loop as it plays (not an undo step: a re-plan is);
-     * before any Compose it is only kept (Perform plans it). While playing, Song starts again from its top; Loop carries
+     * before any Compose it is only kept (the Compose landing plans it). While playing, Song starts again from its top; Loop carries
      * on where it is (the player's getters read the mode). → { ok, mode, planned?, error? }
      */
     setMode(mode) {

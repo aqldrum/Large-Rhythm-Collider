@@ -239,7 +239,7 @@ lane appears above the matrix. Hard-reload first: the lane's stylesheet is new (
 10. **The JSON export** (Details → JSON) has `edits.arrangement` with the song. Switch the page's rhythm away and back: the song and Song are still there.
 
 ## Song UI visual pass (for Avery; branch `arrange/song-ui`)
-Hard-reload first (`arrangement-lane.css?v=20261104.1`, `composer-bridge.js?v=20261104.1`; the modules under the bridge
+Hard-reload first (`arrangement-lane.css?v=20261104.3`, `composer-bridge.js?v=20261104.3`; the modules under the bridge
 need the hard reload). Composer window, Compose, then **Song**. Nothing should sound different from Song v0: this pass
 only changes what you see.
 1. **119:42:15:8, Song · Arch.**
@@ -260,6 +260,8 @@ only changes what you see.
    - Off: the row is back under them as before.
    - It works in Loop and Song, survives a reload, and changes nothing else: ↶ has nothing new, the JSON export is the same.
 7. **A laptop width:** the clips readable (around 46 px a part, the drums 54), the section heads' controls legible, nothing overlapping the sticky part names.
+8. **A part's name selects it** (11-04 fix). In Song, click Bass, then Drums, in the lane's names on the left: each lights and the inspector shows it, as the matrix's names do in Loop. Nothing is edited (↶ has nothing new).
+9. **Song before Compose** (11-04 fix). On a fresh row, press Song, then Compose with "show the work" on: the animation plays on the matrix as in Loop, and the lane appears with its song when it ends (or at once on Skip), with no Perform needed. With "show the work" off, the lane is there as Compose lands.
 
 ## Later (recorded, not ruled)
 - Re-mining parts from a section's layers (`allowNodes`).
@@ -441,3 +443,7 @@ only changes what you see.
     2. Is a zoom wanted (the scale is fixed by those floors)? It would sit naturally with the seek.
     3. The inspector still shows the selected matrix cell's context in Song. Should it show the selected clip or section instead, once clips can be selected?
     4. Is the clean plot the right reading of "the background linear plot fully hidden"? It hides the row under the notes, not the plot's panel. The other reading would give the inspector the whole right column (in `PartitionsUI.js`).
+- **11-04, two fixes from Avery's first look at the visual pass** (planner, on arrange/song-v0):
+  - *Stuck on Chords in Song.* The lane's part names were labels, and the matrix that selects a part in Loop is hidden in Song. They are now buttons that select the part (`createArrangementLane({ select })` → `tab.select`), lit when selected. Clip clicks still toggle the part on or off: clip selection waits for editable clips.
+  - *The lane only appeared on Perform.* Song chosen before a Compose was planned only by Perform. `firstPlan` in the controller now plans it as the Compose lands too (still no undo step), and Perform keeps it as a fallback. While the animation plays in Song, the matrix shows (the animation builds it) and the lane is held back (`.ctab-animating .alane`), so the lane takes the room when the animation ends.
+

@@ -220,13 +220,14 @@ export function energyCell(col, prev, scale) {
 }
 
 /**
- * createArrangementLane({ doc, core, view, edit, rerender })
+ * createArrangementLane({ doc, core, view, edit, rerender, select })
  *   core      the shared controller (songState, songClips, songPosition, the section edits, songAt)
- *   view      the tab's view: `songSection` (the selected section) is kept there
+ *   view      the tab's view: `songSection` (the selected section) is kept there, `selected` (the part) read
  *   edit      (run) → Promise of run()'s result (the window's one door for edits: an open audition is kept first)
  *   rerender  () → the window rendered again (after a selection)
+ *   select    (part) → the part selected (a row's name: the inspector shows it, as the loop's matrix names do)
  */
-export function createArrangementLane({ doc = globalThis.document, core, view = {}, edit = (run) => Promise.resolve(run()), rerender = () => {} } = {}) {
+export function createArrangementLane({ doc = globalThis.document, core, view = {}, edit = (run) => Promise.resolve(run()), rerender = () => {}, select = () => {} } = {}) {
   const el = (tag, props = {}, ...kids) => { const e = Object.assign(doc.createElement(tag), props); for (const k of kids) if (k != null) e.append(k); return e; };
   const root = el('div', { className: 'alane' });
   root.style.display = 'none';
@@ -302,8 +303,9 @@ export function createArrangementLane({ doc = globalThis.document, core, view = 
     const clips = core.songClips?.() ?? null, ranges = pitchRanges(clips), T = clips?.T ?? (okSpec ? spec.knobs.cycleSeconds : 1);
     const live = new Set();
     const parts = m.rows.map((row) => {
-      const head = el('span', { className: `alane-head alane-part${row.loopOn ? '' : ' off'}`, textContent: row.label, title: row.loopOn ? row.label : `${row.label} is off in the loop` });
-      head.style.borderLeftColor = row.color;
+      const head = btn(row.label, `alane-head alane-part${row.loopOn ? '' : ' off'}${view.selected === row.id ? ' selected' : ''}`, `select ${row.label.toLowerCase()}: the inspector shows it${row.loopOn ? '' : ` (off in the loop)`}`, () => select(row.id));
+      head.dataset.part = row.id;
+      head.style.setProperty('border-left-color', row.color, 'important');
       return rowOf(head, row.clips.map((c) => {
         const passes = clips?.sections[c.section]?.passes ?? [], key = `${c.section}|${row.id}`;
         const svg = clipSvg(passes, row.id, T, ranges[row.id]);

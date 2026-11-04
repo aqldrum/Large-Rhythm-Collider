@@ -275,7 +275,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   function undo() { if (audition.state !== 'idle') return audition.revert().then(said); return core.undo().then(said); }
   function redo() { return audition.settle().then(() => core.redo()).then(said); }
   // Song v0 (phase C2): the lane, its edits through the same door; in Song the lane owns on / off (S16)
-  const lane = createArrangementLane({ doc, core, view: tab.view, edit: (run) => doEdit(run), rerender: () => render() });
+  const lane = createArrangementLane({ doc, core, view: tab.view, edit: (run) => doEdit(run), rerender: () => render(), select: (id) => tab.select(id) });
   const LANE_DECIDES = 'the lane decides: in Song each section turns the parts on and off (Loop to change it here)';
   /** an on / off control, read-only while Song is on */
   const laneOwned = (b) => { if (core.songMode() === 'song') { b.disabled = true; b.title = LANE_DECIDES; b.classList.add('ctab-lane-owned'); } return b; };

@@ -5,7 +5,7 @@
 // here from the order, not read from the controller:
 //   • Loop by default: the lane hidden, Loop lit; the getters Perform hands the player return the window's parts and
 //     drums exactly (the same objects) whatever the pass
-//   • Song before any Compose is kept (nothing planned); after it, Song plans from the loop AS IT PLAYS (S14: the
+//   • Song before any Compose is kept (nothing planned) and planned as the Compose lands; after it, Song plans from the loop AS IT PLAYS (S14: the
 //     window's parts and drums, not Compose's): byte for byte form.js planSong over `{ ...spec, drums, parts }`; it is no
 //     undo step; while playing, Song starts again from its top (a new play) and Loop carries on (none)
 //   • in Song the getters map pass c → the song's pass c mod its length (form.js songPasses), the song repeating after
@@ -158,6 +158,11 @@ check(`a column a section (${secs.length}), named, coloured by kind`, cols.lengt
 const tplCols = q(left, '.alane-cols').style.gridTemplateColumns;
 check('each column as wide as its passes (fr units)', secs.every((s) => tplCols.includes(`${s.passes}fr`)) && tplCols.split('minmax').length - 1 === secs.length, tplCols);
 check('a row a part (the matrix\'s order) and a Layers row', [...qa(left, '.alane-part')].map((x) => x.textContent).join() === 'Lead,Chords,Comping,Bass,Inner,Drums' && qa(left, '.alane-layers-row').length === 1);
+{
+  const before = J({ arr: A(), undo: S().undo.length }), head = (id) => q(left, `.alane-part[data-part="${id}"]`), picked = [];
+  for (const id of ['bass', 'drums', 'lead']) { await click(head(id)); picked.push(tab.view.selected === id && q(inspector, '.ctab-insp-name').textContent === head(id).textContent && q(left, '.alane-part.selected') === head(id)); }
+  check('a part\'s name in the lane selects it, as the loop\'s matrix names do: the inspector shows it, the name lit, nothing edited', picked.every(Boolean) && J({ arr: A(), undo: S().undo.length }) === before, J(picked));
+}
 const cell = (part, i) => q(left, `.alane-clip[data-part="${part}"][data-section="${i}"]`);
 check('every cell on or off as its section has it', secs.every((s, i) => PART_IDS.concat('drums').every((id) => cell(id, i).classList.contains('on') === !!s.parts[id])));
 const dense = secs.findIndex((s) => s.parts.bass && s.density?.bass);
@@ -175,7 +180,8 @@ check('"→ fill" on a section before a peak', secs.every((s, i) => !!cols[i].qu
 console.log('\n— the Song UI: the matrix hidden, the clips, the ruler, the playhead, the clean plot');
 const laneCss = readFileSync(new URL('../page/arrangement-lane.css', import.meta.url), 'utf8');
 check('in Song the loop\'s matrix and its bar picker are hidden (ctab-song-on, a class swap), still rendered under it for an instant Loop', left.classList.contains('ctab-song-on')
-  && /\.ctab-left\.ctab-song-on \.ctab-matrix-wrap, \.ctab-left\.ctab-song-on \.ctab-barpick \{ display: none !important; \}/.test(laneCss) && qa(left, '.ctab-lane').length === 6);
+  && /\.ctab-left\.ctab-song-on:not\(\.ctab-animating\) \.ctab-matrix-wrap, \.ctab-left\.ctab-song-on:not\(\.ctab-animating\) \.ctab-barpick \{ display: none !important; \}/.test(laneCss) && qa(left, '.ctab-lane').length === 6);
+check('…except while Compose\'s animation plays: the matrix it builds shows, the lane held back until it ends', /\.ctab-left\.ctab-animating \.alane \{ display: none !important; \}/.test(laneCss));
 const LANE_ROWS = ['lead', 'chords', 'comp', 'bass', 'inner', 'drums'];
 const clipEls = [...qa(left, '.alane-clip')];
 check(`a clip a section × part (${secs.length} × 6), each with its data-section and data-part`, clipEls.length === secs.length * 6
@@ -376,6 +382,12 @@ check('a song this loop can\'t play, or none, is refused with words', !bad.ok &&
 const heldSong = A().song, keyBefore = tab.key();
 setRhythm([5, 4, 0, 0], 3); tab.syncRhythm(); await settle();
 check('another rhythm: its own entry, in Loop with no song', tab.key() !== keyBefore && A().mode === 'loop' && A().song === null);
+setRhythm([6, 5, 4, 0], 3); tab.syncRhythm(); await settle();   // a row of its own (5:4 is refused)
+await click(modeBtn('Song'));
+const songFirst = { song: A().song, undo: S().undo.length };
+await tab.press(); await settle();   // Compose, in Song
+check('Song before Compose: the song is planned as the Compose lands (no Perform needed), no undo step; the lane shows it', songFirst.song === null && S().status === 'ready' && !!A().song
+  && J(A().song) === J(planSong(loopNow(), materialsOf(S().composed), { template: A().template, seed: A().seed })) && S().undo.length === 0 && qa(left, '.alane-clip').length > 0 && !fake.playing);
 setRhythm(L, T); tab.syncRhythm(); await settle();
 check('back: the store kept the song and Song (the entry\'s own)', tab.key() === keyBefore && A().song === heldSong && A().mode === 'song');
 core.setSeed(2); await settle();
