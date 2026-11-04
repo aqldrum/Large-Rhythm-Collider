@@ -86,12 +86,12 @@ export function motionAllowed(win) {
 }
 
 /** the bridge over a window (the page's, or a test's stub) */
-export function createComposerBridge(win, { runCompose = createComposeRunner(), createContext, timers, clock, storage, session, motion = () => motionAllowed(win), midiAccess, download } = {}) {
+export function createComposerBridge(win, { runCompose = createComposeRunner(), createContext, timers, clock, storage, session, motion = () => motionAllowed(win), midiAccess, download, createPlayer } = {}) {
   const doc = win.document, host = pageHost(win);
   const store = createCompositionStore();
   // MIDI out (CLEAN_MIDI_ORDER.md phase B): the page's one sink, booked by the player, its ports picked in the window
   const midi = createComposerMidi(win.performance ? { now: () => win.performance.now() } : {});
-  const tab = createTabController({ host, runCompose, createContext, timers, store, keepPlaying: () => store.lens === 'composition', midi });
+  const tab = createTabController({ host, runCompose, createContext, timers, store, keepPlaying: () => store.lens === 'composition', midi, createPlayer });
   const local = storage !== undefined ? storage : (() => { try { return win.localStorage ?? null; } catch { return null; } })();
   const sess = session !== undefined ? session : (() => { try { return win.sessionStorage ?? null; } catch { return null; } })();
   const visuals = () => win.lrcVisuals ?? null;
