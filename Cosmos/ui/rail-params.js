@@ -45,7 +45,8 @@ export const RAIL_PARAMS = Object.freeze({
   mix:         { default: 0.8,  min: 0,     max: 1,    curve: 'linear', persist: true,  unit: '',         group: 'texture',   label: 'BED/ROWS' },
   space:       { default: 0.5,  min: 0,     max: 1,    curve: 'linear', persist: true,  unit: '',         group: 'texture',   label: 'SPACE' },
   harmonySource: { default: 'chord-walk', curve: 'choice', choices: ['chord-walk', 'scale'], persist: true, group: 'harmony', label: 'HARMONY SOURCE' },
-  scale:       { default: 'diatonic-major', curve: 'choice', choices: ['chromatic', 'diatonic-major'], persist: true, group: 'harmony', label: 'SCALE' },
+  scale:       { default: 'diatonic-major', curve: 'choice', choices: ['chromatic', 'diatonic-major', 'just-major', 'harmonic-8-16', 'subharmonic-16-8',
+                 'hexany-1357', 'slendro-7', 'maqam-rast', 'maqam-bayati', 'gong-pentatonic', 'thai-7edo'], persist: true, group: 'harmony', label: 'SCALE' },
   rowFundamental: { default: true, curve: 'bool', persist: true, group: 'advanced', label: 'ROW 1/1' },
   // Default ON — carries the `f54198c` lab entry default forward (see MODULATION_DEFAULT in cosmos-audio.js).
   modulation:  { default: true,                        curve: 'bool',   persist: true,                    group: 'advanced',  label: 'MODULATION' },
