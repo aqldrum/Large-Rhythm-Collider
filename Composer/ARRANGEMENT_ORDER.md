@@ -237,3 +237,58 @@ What it shows:
   loop's end now releases at the loop's end instead of its own (static booking unchanged; Compose's chains end by T,
   so only hand-made or future wrapping specs hear it). Keep, or gate it on a song? (2) S12 says nothing of the
   drums: a cymbal's ring over a boundary into a drumless pass is left as a one-shot.
+- 2026-11-04: **phase A built** (builder, branch `arrange/form`, off `arrange/song-v0`):
+  - **The commits:** `d784867` (drums.js `fillBars`), `a46e9fe` (`core/form.js` + `assert-form.mjs`), then the docs commit (this line, DESIGN_NOTES "Song v0 (phase A)", the README).
+  - **The suites:** 86/86, i.e. the 85 before plus `assert-form.mjs` (37 checks). `drums-baseline.mjs`, `assert-drums.mjs` and every frozen fixture are untouched.
+  - **The cost:** `planSong` takes 77 ms on the 16,359-onset row, from a fresh loop.
+
+  **The songs, seed 1** (Compose's own loop on each probe row). Layers are listed in the order they enter, then the part mask (S3's names; "all−lead" is every part but the lead), the densities that differ from the loop's, and **E**/target. "→fill" marks a section whose last bar fills into the next.
+
+| row | template | order | passes | intro | build (1) | peak 1 / build 2 | break / drop | peak 2 / break | home |
+|---|---|---|--:|---|---|---|---|---|---|
+| 8:7:6:5 | Arch | D5 B7 C6 A8 | 5 | D all−lead (bass Sparse, comp sparse) **0.27**/0.30 | DB all−lead (bass Sparse, comp sparse) **0.60**/0.60 →fill | DBCA all (bass Walking, comp medium) **1.06**/1.15 | DBCA chords+inner **0.27**/0.40 →fill | DBCA all (bass Walking, comp medium) **1.06**/1.15 | DBCA all **1.00**/1.00 |
+| 8:7:6:5 | Build–drop | D5 C6 B7 A8 | 5 | DC drums+bass **0.17**/0.15 | DCB drums+bass (bass Walking) **0.35**/0.35 | DCBA drums+bass+chords (bass Walking) **0.64**/0.65 →fill | DCBA all (bass Walking, comp medium) **1.06**/1.15 | DCBA chords+inner **0.27**/0.35 | DCBA all **1.00**/1.00 |
+| 11:9:7:5 | Arch | C7 A11 B9 D5 | 5 | CA drums+bass **0.32**/0.30 | CA drums+bass+chords (bass Walking) **0.55**/0.60 →fill | CABD all (bass Walking, comp medium) **1.07**/1.15 | CABD chords+inner **0.27**/0.40 →fill | CABD all (bass Walking, comp medium) **1.07**/1.15 | CABD all **1.00**/1.00 |
+| 11:9:7:5 | Build–drop | D5 C7 B9 A11 | 5 | D drums+bass (bass Sparse) **0.15**/0.15 | DC drums+bass+chords (bass Sparse) **0.37**/0.35 | DCBA drums+bass+chords (bass Sparse) **0.55**/0.65 →fill | DCBA all (bass Walking, comp medium) **1.07**/1.15 | DCBA chords+inner **0.27**/0.35 | DCBA all **1.00**/1.00 |
+| 16:12:9 | Arch | C9 B12 A16 | 5 | C drums+bass+chords (bass Sparse) **0.29**/0.30 | CBA drums+bass+chords (bass Sparse) **0.57**/0.60 →fill | CBA all (bass Walking, comp medium) **1.08**/1.15 | CBA chords+inner **0.27**/0.40 →fill | CBA all (bass Walking, comp medium) **1.08**/1.15 | CBA all **1.00**/1.00 |
+| 16:12:9 | Build–drop | C9 B12 A16 | 5 | C drums+bass **0.13**/0.15 | C drums+bass+chords (bass Walking) **0.37**/0.35 | CBA drums+bass+chords (bass Walking) **0.65**/0.65 →fill | CBA all (bass Walking, comp medium) **1.08**/1.15 | CBA chords+inner **0.27**/0.35 | CBA all **1.00**/1.00 |
+| 7:5:3:2 | Arch | B5 A7 C3 D2 | 5 | BA drums+bass **0.35**/0.30 | BA drums+bass+chords (bass Walking) **0.59**/0.60 →fill | BACD all (bass Walking, comp medium) **1.06**/1.15 | BACD chords+inner **0.18**/0.40 →fill | BACD all (bass Walking, comp medium) **1.06**/1.15 | BACD all **1.00**/1.00 |
+| 7:5:3:2 | Build–drop | D2 C3 B5 A7 | 5 | DC chords **0.18**/0.15 | DC drums+bass+chords (bass Sparse) **0.45**/0.35 | DCBA drums+bass+chords (bass Sparse) **0.65**/0.65 →fill | DCBA all (bass Walking, comp medium) **1.06**/1.15 | DCBA chords+inner **0.18**/0.35 | DCBA all **1.00**/1.00 |
+| 19:17:16:15 | Arch | D15 A19 B17 C16 | 5 | DA drums+bass+chords **0.28**/0.30 | DABC drums+bass+chords **0.58**/0.60 →fill | DABC all (bass Walking, comp medium) **1.05**/1.15 | DABC chords+inner **0.26**/0.40 →fill | DABC all (bass Walking, comp medium) **1.05**/1.15 | DABC all **1.00**/1.00 |
+| 19:17:16:15 | Build–drop | D15 C16 B17 A19 | 5 | D drums+bass **0.12**/0.15 | D drums+bass+chords (bass Walking) **0.32**/0.35 | DC drums+bass+chords (bass Walking) **0.63**/0.65 →fill | DCBA all (bass Walking, comp medium) **1.05**/1.15 | DCBA chords+inner **0.26**/0.35 | DCBA all **1.00**/1.00 |
+| 119:42:15:8 | Arch | C15 D8 B42 A119 | 3 | CD all−lead **0.31**/0.30 | CDB all−lead **0.57**/0.60 →fill | CDBA all (bass Walking, comp medium) **1.08**/1.15 | CDBA chords+inner **0.27**/0.40 →fill | CDBA all (bass Walking, comp medium) **1.08**/1.15 | CDBA all **1.00**/1.00 |
+| 119:42:15:8 | Build–drop | D8 C15 B42 A119 | 3 | DC chords **0.16**/0.15 | DC drums+bass+chords (bass Walking) **0.35**/0.35 | DCBA drums+bass+chords (bass Walking) **0.65**/0.65 →fill | DCBA all (bass Walking, comp medium) **1.08**/1.15 | DCBA chords+inner **0.27**/0.35 | DCBA all **1.00**/1.00 |
+| 768:769 | Arch | B769 A768 | 3 | B drums+bass+chords **0.31**/0.30 | BA drums+bass+chords **0.57**/0.60 →fill | BA all (bass Walking, comp medium) **1.08**/1.15 | BA chords+inner **0.27**/0.40 →fill | BA all (bass Walking, comp medium) **1.08**/1.15 | BA all **1.00**/1.00 |
+| 768:769 | Build–drop | A768 B769 | 3 | A chords **0.16**/0.15 | A drums+bass+chords **0.50**/0.35 | AB drums+bass+chords (bass Walking) **0.65**/0.65 →fill | AB all (bass Walking, comp medium) **1.08**/1.15 | AB chords+inner **0.27**/0.35 | AB all **1.00**/1.00 |
+| 768:784 | Arch | B784 A768 | 3 | B drums+bass **0.33**/0.30 | BA drums+bass+chords **0.57**/0.60 →fill | BA all (bass Walking, comp medium) **1.07**/1.15 | BA chords+inner **0.27**/0.40 →fill | BA all (bass Walking, comp medium) **1.07**/1.15 | BA all **1.00**/1.00 |
+| 768:784 | Build–drop | A768 B784 | 3 | A drums+bass (bass Sparse) **0.14**/0.15 | A drums+bass+chords **0.33**/0.35 | AB drums+bass+chords (bass Walking) **0.64**/0.65 →fill | AB all (bass Walking, comp medium) **1.07**/1.15 | AB chords+inner **0.27**/0.35 | AB all **1.00**/1.00 |
+| 4099:4093:4091:4079 | Arch | A4099 B4093 C4091 D4079 | 1 | A all−lead (bass Sparse, comp sparse) **0.36**/0.30 | AB all (bass Sparse, comp sparse) **0.61**/0.60 →fill | ABCD all (bass Walking, comp medium) **1.07**/1.15 | ABCD chords+inner **0.27**/0.40 →fill | ABCD all (bass Walking, comp medium) **1.07**/1.15 | ABCD all **1.00**/1.00 |
+| 4099:4093:4091:4079 | Build–drop | D4079 C4091 B4093 A4099 | 1 | DC drums+bass **0.22**/0.15 | DCB drums+bass (bass Walking) **0.34**/0.35 | DCBA drums+bass+chords (bass Walking) **0.64**/0.65 →fill | DCBA all (bass Walking, comp medium) **1.07**/1.15 | DCBA chords+inner **0.27**/0.35 | DCBA all **1.00**/1.00 |
+
+  What it shows:
+  - **The builds track their targets** within about 0.05.
+  - **The intros sit at 0.13–0.36.**
+  - **Every peak and drop is the high preset** (Walking bass, the medium comp) at 1.05–1.08, short of 1.15.
+  - **Every break is "chords + inner"** at 0.18–0.27, short of its 0.35–0.40. See open questions 1–2.
+
+  **Calls the order didn't fix** (all in DESIGN_NOTES "Song v0", calls 1–12):
+  1. **The sections are chosen together**, as a shortest path through their candidates nearest the targets, with the neighbour rule and a build's layers as its edges. Chosen one by one, they fell into dead ends: 7:5:3:2's Build–drop stalled at 0.18 for builds targeting 0.35 and 0.65.
+  2. **A tie is anything within 0.05** (TIE_BAND), broken by a seeded key, so Re-plan changes the song. Arch varies with the seed on 11 of the 13 test loops.
+  3. **The first section has no boundary.** It opens the song, and the repeat after home is the top again.
+  4. **Where no candidate keeps the neighbour rule, the fewest changes stand**, and the why says so. That's every break after a peak, at 4 changes.
+  5. **The order's steps start from no layer** (E_0: the lead, chords and bass alone), so two-layer rows get a real choice. The variance is the population variance.
+  6. **A density is recorded only for a part the section sounds.**
+  7. **A filtered part is rearticulated** by the legato rule over what is left, and the comp's strokes are filtered with it.
+  8. **Densities keep the loop's bass lock.** The loop's picks are kept at its own density and dropped at another. Arp → Line restores the line's sound where the inner played the harp. The comp ladder is sparse < sparse–medium < medium < dense.
+  9. **The fill bar's crash moves to the peak's downbeat**, the next section's first pass. The fill pass keeps bar 1 as its section plays it.
+  10. **A drumless section plays the fill alone** into a peak: the fill bar's kick and snare from beat 3. That's Arch's break.
+  11. **The bass isn't re-landed on a fill bar's kicks.**
+  12. **`targetSeconds` goes in the record only when it isn't 20.**
+
+  **For phase C:** pass the loop as it plays, `{ ...st.spec, parts: PART_IDS.map((id) => st.parts[id]), drums: st.drums }`, since `st.spec.drums` is Compose's. Section edits are plain data changes to `song.sections`; `songPasses` validates them, and `energyOf` and `boundaryChanges` read them.
+
+  **Open questions for Avery:**
+  1. **The breaks.** Out of a peak, no break can keep the 2-change rule: the drums off is one change, and the bass off is another, or Walking → Roots is three rungs. So every break falls to "chords + inner" at about 0.27. Should a break's bass at Roots count as one change? Or should S3 get an "every part but the drums and the bass" mask, so the comp and the lead can stay?
+  2. **The peaks.** They reach only 1.05–1.08: high is one rung up, and on most loops that's Walking and the medium comp. Should a peak go two rungs (the dense comp), or should its target come down to about 1.08?
+  3. **The checklist's item 3** expects Build–drop on 8:7:6:5 to open on D5 alone. The path takes D5 + C6, drums and bass, at 0.17 for 0.15: S4 allows up to ⌈L/2⌉ layers. Should Build–drop's intro be one layer?
+  4. **TIE_BAND at 0.05**: is that enough variety for Re-plan, or too loose?

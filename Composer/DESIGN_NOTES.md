@@ -2559,6 +2559,80 @@ The order's probe table, to the hundredth.
 - **Builder's call (a change in Loop):** the rule reads "the next pass doesn't sound the part" from the getter, and a loop's getter is the page's live state. So in Loop, a part switched off while one of its chains holds over the loop's end now releases at the loop's end instead of ringing to its own. Static booking is unchanged (the identity sessions), and Compose's own chains end by T (`assert-lab.mjs`: a hand-made spec wraps), so it's heard only on hand-made or future wrapping specs. The alternative, if Avery wants today's behaviour exactly, is to gate the rule on a song (an arity check or a play option).
 
 **Where it is** (S13). `passAt(t = now)` → `floor(spec time / T)` on the tempo map; 0 before the loop starts, null when stopped. It is exact from the segment sounding now on, through the lookahead. A past time before a tempo change the map has already let go of is read on the oldest segment kept (the map drops a segment once the clock passes the next one). `passAt() + playhead()` is the spec time in cycles.
+## Song v0 (phase A; built 2026-11-04, branch `arrange/form`)
+
+`ARRANGEMENT_ORDER.md` phase A (A1–A4), core only, one builder. Rulings 1–6 are Avery's (2026-11-04, "I'll take all your recs"); S1–S9 are the planner's proposals, built as written; the builder's calls are listed at the end. Nothing here has been heard: the player (phase B) and the window (phase C) are still to come.
+
+**What it is** (`core/form.js`, pure). `planSong(loopSpec, materials, { template, seed, targetSeconds })` turns the loop into a song: a list of sections, each some whole passes of the same cycle, that thin, build, peak, break and come home. `songPasses(song, loopSpec, materials)` expands it pass by pass for the player. `energyOf(section, …)` gives a section's energy. Nothing is re-solved: the decomposition, the chords, the lead and the meter are the loop's.
+- **The loop** is the spec *as it plays*: the parts as they play (arps placed, the bass arranged, each part rearticulated) and the drums that play. The controller passes `{ ...st.spec, parts: PART_IDS.map((id) => st.parts[id]), drums: st.drums }`; `st.spec.drums` is Compose's, not the window's. Home is this loop byte for byte: its own part and drum objects.
+- **Layers** (ruling 1). A section on layers M keeps the drum hits, the comp's notes and the inner's whose onset one of M's layers strikes (`row.owners[node] & M`; a drum hit's node is the onset at its tick). The lead, the chords and the bass stay whole.
+- **Parts.** A part off in a section plays with `enabled: false`, its notes kept, so the player and MIDI skip it. A part off in the loop is off everywhere.
+- **Densities** (ruling 4): `{ bass?, comp?, lead?, inner? }`, set only where they differ from the loop's. A setting is arranged as the controller arranges the window's choices, in its order:
+  1. the comp's tier (`reclave({ density })`, applied);
+  2. the lead, then the inner (Arp → Line is `lineOf`, rearticulated; Line → Arp is `arrangeArp`);
+  3. the drums over that, at the loop's options;
+  4. the bass over the drums as they play, at the loop's lock.
+
+  Each setting is arranged once per (loop, materials). `assert-form.mjs` rebuilds the low and high presets through the controller's idioms and finds them byte for byte.
+- **Energy** (S2): E = Σ w·u over the parts a section sounds, divided by home's, so home = 1.
+  - **Weights:** drums 0.30; bass, comp, lead and chords 0.15 each; inner 0.10.
+  - **A struck part's u:** its notes a cycle after the filter, over that part's most across the low, loop and high presets on every layer, capped at 1.
+  - **The chords' u:** the share of bars with a chord note.
+
+  The counts come from a 16-bin histogram of the notes' owner masks per arrangement, so any layer mask costs nothing.
+- **Candidates** (S3): the order's prefixes × S3's seven masks × three presets.
+  - **The rungs:** bass roots < sparse < moving < walking; the comp's tier sparse < sparse–medium < medium < dense, so the default sparse–medium steps to sparse and to medium as S3 says; Line < Arp.
+  - **The presets:** low steps everything down one rung (Arp → Line); high steps up one (Line stays Line).
+  - **The record:** only a part the section sounds records a density, so two candidates that sound alike are one.
+- **Kinds** (S4) as the order has them. A break's mask with the bass plays it at Roots, the preset's other densities kept.
+- **The choice** (S5): the sections are chosen **together**.
+  - It's a shortest path through the sections' candidates: least Σ |E − target|, plus TIE_BAND (0.05) × a seeded key a candidate.
+  - **Its edges:** a build's layers hold the section before's, and a boundary into an intro, a build or a break changes at most 2 things (layers, toggles, density rungs both sections sound). Where no candidate keeps that, the fewest changes stand.
+- **The order** (S6):
+  - **Arch:** of the active layers' permutations, the one whose prefix energies (every part, the loop's densities) step most evenly. The steps run E_0 (no layer) → E_L, by population variance; ties go fastest-first.
+  - **Build–drop:** slowest-first.
+- **Passes** (S7): clamp(round(20 s / the cycle at the seed tempo), 1, 16) for every section.
+- **The fill** (S8; `drums.js` `fillBars`): a section followed by a peak or a drop (the song wrapping) has `fillBefore`. Its last pass's drums are arranged with `fillBars: [N − 1]`.
+- **Expansion** (S9): `songPasses` gives one entry a pass, `{ section, pass, parts, drums }`. It's cached by (layers, parts, setting, fill, crash), so passes alike are one object. It reads only the sections' kind, passes, layers, parts, density and fillBefore, so phase C's edits are plain data. Songs are validated, and a bad section is refused with words.
+
+**`fillBars`** (`drums.js`, `DRUM_OPTIONS`, `readDrumOptions`): the listed bars fill from beat 3 as a phrase end does, and the bar after each crashes (wrapping), whether or not `fills` is on. The options echo it, and the `drums.fills` decision and the bar's why say "asked (fillBars)". Unset, nothing moves: `drums-baseline.mjs` (527 cases × variants), `assert-drums.mjs`, `assert-drum-grid.mjs` and `assert-drum-prime.mjs` hold untouched.
+
+**The songs, seed 1** (layers in the order they enter; E / target; → a fill into the next): the table is in the order's Log. The shape on every probe row:
+- intros at 0.13–0.36;
+- builds land within about 0.05 of 0.35, 0.60 and 0.65;
+- peaks and drops at 1.05–1.08: high is one rung up, Walking bass and the medium comp;
+- every break "chords + inner" at 0.18–0.27;
+- home 1.
+
+**Measured:** `planSong` 77 ms on the 16,359-onset row from a fresh loop (the low and high arrangements included), about 1 ms after; `songPasses` under 1 ms. The small rows take 1–20 ms.
+
+**Tests** (`assert-form.mjs`, 37 checks; brute forces written from the order). It runs 13 loops: the 8 probe rows as Compose makes them, and 5 played as the window would (Arp lead and inner with Walking; Arp inner, Roots and drums *with*; the lead off with Sparse · Clave; the comp in notes; the drums off). Each runs × 2 templates × 3 seeds. It checks:
+- the record and determinism (also from a fresh JSON copy), and the JSON round trip;
+- S4 per kind, and the neighbour rule, every relaxation proven necessary by enumerating the kind's candidates;
+- the curve within TIE_BAND a section of a brute-force best path;
+- the order against every permutation;
+- the passes, including a seed tempo of half;
+- home by JSON and by identity;
+- the filter exact on comp, inner and drums, with lead, chords and bass byte for byte;
+- the presets as the controller arranges them;
+- `fillBars`: the baseline hashes, bar k / k + 1 on every bar, the phrase ends asked equal to the phrase fills, the refusals;
+- the song's fills, crashes and fill alone;
+- an edited song, and the refusals;
+- the 16k row's cost.
+
+**Calls beyond the order (proposed):**
+1. **The sections are chosen together** (a shortest path), not one by one. One by one fell into dead ends: 7:5:3:2's Build–drop opened on "chords + inner", and nothing within two changes rose above 0.18 for builds targeting 0.35 and 0.65.
+2. **"Ties break by the seed" reads a tie as within 0.05** (TIE_BAND: a seeded key × 0.05 on each candidate's cost). Exact ties are rare, so without it Re-plan would rarely change the song. Arch varies with the seed on 11 of the 13 test loops.
+3. **The song's first section has no boundary.** It opens the song, and the repeat after home is the top again. Otherwise the intro would have to sit within two changes of home.
+4. **Where no candidate keeps the neighbour rule, the fewest changes stand**, and the section's why says so. That's every break after a peak: the drums off is one change, and the bass off is another, or Walking → Roots is three rungs.
+5. **The order's steps start from E_0**, no layer (the lead, chords and bass alone), so a two-layer row's order is chosen too.
+6. **A density is recorded only for a part the section sounds.**
+7. **A filtered part is rearticulated** by the legato rule over what is left, and the comp's strokes are filtered with it. A part that loses nothing is the arrangement's own object.
+8. **Densities keep the loop's bass lock.** The loop's bass picks are kept at the loop's density and dropped at another. Arp → Line restores the line's own sound where the inner played the harp. A new inner arp (an edit) takes the harp.
+9. **The crash moves to the peak's downbeat.** The fill bar's crash would wrap to bar 1 of its own pass. The fill pass keeps bar 1 as the section plays it, and the next section's first pass crashes on bar 1 instead (drums.js's own crash hit).
+10. **A section with the drums off plays the fill alone on its last pass**: the fill bar's kick and snare from beat 3. That's Arch's break into its second peak; ruling 5 asks for a fill before every peak.
+11. **The bass keeps its section's arrangement under a fill bar** (its Kick lock isn't re-landed on the fill's kicks). A fill doesn't change a section's energy.
+12. **The song record carries `targetSeconds` only when it isn't 20.**
 
 ## Layout (agreed earlier, 2026-10-21)
 
