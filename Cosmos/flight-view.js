@@ -2711,7 +2711,7 @@ function renderSkyDebug(now) {
     ? `ON  root → fundamental, shift ${s.modulation.cents >= 0 ? '+' : ''}${s.modulation.cents.toFixed(0)}¢, glide ${s.modulation.glideSeconds.toFixed(2)}s (${s.modulation.onsetTicks.toFixed(0)} ticks/onset)`
     : 'off  (absolute JI against a fixed 1/1 — a root change re-reads, it does not transpose)'}`);
   if (s.fundamental) lines.push(`fund   ${s.fundamental.cents >= 0 ? '+' : ''}${s.fundamental.cents.toFixed(0)}¢ transpose (summed with modul on one detune bus; ±${s.fundamental.maxCents}¢)`);
-  lines.push(`chord  ${s.chord.symbol}  degrees [${s.chord.semitones.join(',')}]`);
+  lines.push(`chord  ${s.chord.symbol}  ${s.chord.ratios ? `ratios [${s.chord.ratios.join(' ')}]` : `degrees [${s.chord.semitones.join(',')}]`}`);
   // Exposure: which of the chord's degrees the ROWS have actually SOUNDED this window (the bed does not
   // expose — see chordExposure). The chord will not move until this is complete (or the cap fires); with
   // no row source in the field the floor reads `no rows` and goes vacuous, leaving DWELL to pace the walk.
@@ -3064,8 +3064,12 @@ function loop() {
     audibleIds = new Set(skyChosen.map(c => c.z.grid));
     // Re-anchored playback: each zone lazily caches its re-folded pool at the CURRENT solved root,
     // invalidated by rootKey (a swap is rare — most passes every chosen zone's cache just hits).
+    // A targeted scale pins its bed triad into the fold, so the cache keys on the pins too.
+    const bedPins = currentHarmonyPolicy().bedTargets || [], pinKey = bedPins.join(',');
     setField(skyChosen.map(({ z, position, distance }) => {
-      if (!z.skyPoolAt || z.skyPoolAt.rootKey !== root.rootKey) z.skyPoolAt = { rootKey: root.rootKey, pool: poolFromTones(z.skyTones || [], root.cents) };
+      if (!z.skyPoolAt || z.skyPoolAt.rootKey !== root.rootKey || z.skyPoolAt.pinKey !== pinKey) {
+        z.skyPoolAt = { rootKey: root.rootKey, pinKey, pool: poolFromTones(z.skyTones || [], root.cents, bedPins) };
+      }
       return { id: z.grid, pool: z.skyPoolAt.pool, ...skyPoseFor(position, distance, basis) };
     }));
   } else {

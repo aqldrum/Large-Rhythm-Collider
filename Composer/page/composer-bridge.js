@@ -86,19 +86,21 @@ export function motionAllowed(win) {
 }
 
 /** the bridge over a window (the page's, or a test's stub) */
-export function createComposerBridge(win, { runCompose = createComposeRunner(), createContext, timers, clock, storage, session, motion = () => motionAllowed(win), midiAccess, download } = {}) {
+export function createComposerBridge(win, { runCompose = createComposeRunner(), createContext, timers, clock, storage, session, motion = () => motionAllowed(win), midiAccess, download, createPlayer } = {}) {
   const doc = win.document, host = pageHost(win);
   const store = createCompositionStore();
   // MIDI out (CLEAN_MIDI_ORDER.md phase B): the page's one sink, booked by the player, its ports picked in the window
   const midi = createComposerMidi(win.performance ? { now: () => win.performance.now() } : {});
-  const tab = createTabController({ host, runCompose, createContext, timers, store, keepPlaying: () => store.lens === 'composition', midi });
+  const tab = createTabController({ host, runCompose, createContext, timers, store, keepPlaying: () => store.lens === 'composition', midi, createPlayer });
   const local = storage !== undefined ? storage : (() => { try { return win.localStorage ?? null; } catch { return null; } })();
   const sess = session !== undefined ? session : (() => { try { return win.sessionStorage ?? null; } catch { return null; } })();
   const visuals = () => win.lrcVisuals ?? null;
   const plotted = () => { const v = visuals(); return v && v.compositeRhythm ? { compositeRhythm: v.compositeRhythm, grid: v.grid } : null; };
   // the page's one overlay, and its seat: the tab while shown, the lens while on
   // STEP 4e: getFocus rings the window's selected matrix cell (only while the tab shows its context section)
-  const overlay = createPlotOverlay({ getHighlights: () => tab.highlights(plotted()), getSelected: () => tab.view.selected, getFocus: () => tab.cellFocus(plotted()), makeCanvas: () => doc.createElement('canvas') });
+  // the clean plot (DESIGN_NOTES "Song UI (visual pass)"): only while the window is open (the lens's own plot is left as it is)
+  const overlay = createPlotOverlay({ getHighlights: () => tab.highlights(plotted()), getSelected: () => tab.view.selected, getFocus: () => tab.cellFocus(plotted()), getClean: () => !!(tab.view.clean && tab.view.open),
+    makeCanvas: () => doc.createElement('canvas') });
   const seat = createOverlaySeat({ visuals, overlay });
   const navMidi = () => (win.navigator && typeof win.navigator.requestMIDIAccess === 'function' ? () => win.navigator.requestMIDIAccess({ sysex: false }) : null);
   const view = createComposerTab({ tab, doc, visuals, raf: (f) => win.requestAnimationFrame(f), clock, storage: local, overlay, seat, download, midiAccess: midiAccess !== undefined ? midiAccess : navMidi() });

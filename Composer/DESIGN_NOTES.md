@@ -2542,6 +2542,215 @@ The order's probe table, to the hundredth.
 7. `compMovedMs` counts a different onset found at the stroke's very time as 0 ms moved. It doesn't count the stroke's own tone or a borrowed one.
 8. The comp's five store fields are edited in `store/` (outside the files listed for T1) so undo and a fresh entry read the gate.
 
+## Song v0 (phase B): the player plays passes (built 2026-11-04, branch `arrange/player`)
+
+`ARRANGEMENT_ORDER.md` phase B (B1–B2: S10–S13), one builder, parallel with phase A (`core/form.js`, which it doesn't use: the tests build their songs by hand). Only `perform/composer-player.js` changed; the graph is untouched. Nothing here has been heard.
+
+**Passes** (S10). `play(spec, getParts, getDrums)`: the getters are now called with the pass index c (the cycle counted from Perform) inside the booking loop, as it reaches each cycle, and return that pass's parts and drums. A tick asks for each pass at most once (`passOf`, a few reused slots), so a tick inside one cycle asks once, a tick over a boundary twice. Everything a cycle books reads its pass's: the voices, the drum strokes, the MIDI notes and strokes, and the duck's kicks. No getter (`() => spec.parts`, `() => spec.drums`), or getters that ignore c, book byte for byte as before: `assert-song-player.mjs` records every node, param call, connection, start and stop, and every MIDI message, against a frozen copy of the player at de96a16 (`tests/fixtures/player-before.js`, imports pointed at the live voices, drums, MIDI and master), in five sessions (no mix, knock, classic; MIDI and its clock on; a live tempo change in each; a lookahead of two whole cycles; chains and a lone note that wrap). Every caller today (the controller, the mix meter, Cosmos, the tests) passes no getter or one that takes no argument.
+
+**The duck per pass.** `bookDuck` scans each cycle's kicks from that pass's drums: a drumless pass (`enabled: false`, or no kick in the kit) ducks nothing. The scan looks ~7 ms past the booking (the dip starts 5 ms before a kick), so it asks for the next pass when the look reaches its downbeat: a pass after a drumless one dips under its first kick from the drumless pass's last 5 ms, as it should. Cheap: the kick times are memoized on the drums' hits (`kicksOf`, checked by their count), and the kicks still shaping the duck are compacted in place. Measured on the 16k row with the classic mix, 4,000 ticks: 3–5 µs a tick, the frozen player 5–6.
+
+**Same cycle** (S11). Every pass has the loop's `cycleSeconds` and tempo; a pass's own knobs aren't read. The tempo map, the playhead and the MIDI clock are unchanged (the test's clock runs at one spacing across five passes).
+
+**A held voice into a muted pass** (S12).
+- A held chain whose end runs past its pass's end (base + T) is released at that boundary, with the usual release (`o.release`), when the next pass doesn't sound its part: absent from its parts, or `enabled: false`. `advance` decides as the booking passes the boundary, where that tick has the next pass already. A part that plays on holds to its own end, as a loop holds it.
+- **Builder's call:** a lone note (a chain of one, booked whole with its planned length) over the boundary is cut the same way: its start asks for the next pass (only when its note crosses the end) and plans its length to the boundary.
+- MIDI needs no cut: `midiNotesOf` ends every note by the cycle's end (the last of a voice at T), so a held MIDI note's off is always at or before the boundary. The test checks no note of a part muted next is held over it.
+- **Builder's call (a change in Loop):** the rule reads "the next pass doesn't sound the part" from the getter, and a loop's getter is the page's live state. So in Loop, a part switched off while one of its chains holds over the loop's end now releases at the loop's end instead of ringing to its own. Static booking is unchanged (the identity sessions), and Compose's own chains end by T (`assert-lab.mjs`: a hand-made spec wraps), so it's heard only on hand-made or future wrapping specs. The alternative, if Avery wants today's behaviour exactly, is to gate the rule on a song (an arity check or a play option).
+
+**Where it is** (S13). `passAt(t = now)` → `floor(spec time / T)` on the tempo map; 0 before the loop starts, null when stopped. It is exact from the segment sounding now on, through the lookahead. A past time before a tempo change the map has already let go of is read on the oldest segment kept (the map drops a segment once the clock passes the next one). `passAt() + playhead()` is the spec time in cycles.
+## Song v0 (phase A; built 2026-11-04, branch `arrange/form`)
+
+`ARRANGEMENT_ORDER.md` phase A (A1–A4), core only, one builder. Rulings 1–6 are Avery's (2026-11-04, "I'll take all your recs"); S1–S9 are the planner's proposals, built as written; the builder's calls are listed at the end. Nothing here has been heard: the player (phase B) and the window (phase C) are still to come.
+
+**What it is** (`core/form.js`, pure). `planSong(loopSpec, materials, { template, seed, targetSeconds })` turns the loop into a song: a list of sections, each some whole passes of the same cycle, that thin, build, peak, break and come home. `songPasses(song, loopSpec, materials)` expands it pass by pass for the player. `energyOf(section, …)` gives a section's energy. Nothing is re-solved: the decomposition, the chords, the lead and the meter are the loop's.
+- **The loop** is the spec *as it plays*: the parts as they play (arps placed, the bass arranged, each part rearticulated) and the drums that play. The controller passes `{ ...st.spec, parts: PART_IDS.map((id) => st.parts[id]), drums: st.drums }`; `st.spec.drums` is Compose's, not the window's. Home is this loop byte for byte: its own part and drum objects.
+- **Layers** (ruling 1). A section on layers M keeps the drum hits, the comp's notes and the inner's whose onset one of M's layers strikes (`row.owners[node] & M`; a drum hit's node is the onset at its tick). The lead, the chords and the bass stay whole.
+- **Parts.** A part off in a section plays with `enabled: false`, its notes kept, so the player and MIDI skip it. A part off in the loop is off everywhere.
+- **Densities** (ruling 4): `{ bass?, comp?, lead?, inner? }`, set only where they differ from the loop's. A setting is arranged as the controller arranges the window's choices, in its order:
+  1. the comp's tier (`reclave({ density })`, applied);
+  2. the lead, then the inner (Arp → Line is `lineOf`, rearticulated; Line → Arp is `arrangeArp`);
+  3. the drums over that, at the loop's options;
+  4. the bass over the drums as they play, at the loop's lock.
+
+  Each setting is arranged once per (loop, materials). `assert-form.mjs` rebuilds the low and high presets through the controller's idioms and finds them byte for byte.
+- **Energy** (S2): E = Σ w·u over the parts a section sounds, divided by home's, so home = 1.
+  - **Weights:** drums 0.30; bass, comp, lead and chords 0.15 each; inner 0.10.
+  - **A struck part's u:** its notes a cycle after the filter, over that part's most across the low, loop and high presets on every layer, capped at 1.
+  - **The chords' u:** the share of bars with a chord note.
+
+  The counts come from a 16-bin histogram of the notes' owner masks per arrangement, so any layer mask costs nothing.
+- **Candidates** (S3): the order's prefixes × eight masks × three presets. The eight are S3's seven plus "every part but the drums and the bass" (the planner's ruling, 11-04, for the breaks).
+  - **The rungs:** bass roots < sparse < moving < walking; the comp's tier sparse < sparse–medium < medium < dense, so the default sparse–medium steps to sparse and to medium as S3 says; Line < Arp.
+  - **The presets:** low steps everything down one rung (Arp → Line); high steps up one (Line stays Line).
+  - **The record:** only a part the section sounds records a density, so two candidates that sound alike are one.
+- **Kinds** (S4) as the order has them. A break's mask with the bass plays it at Roots, the preset's other densities kept. By the planner's rulings of 11-04:
+  - Build–drop's intro is one layer, its slowest (`introLayers: 1` on the template);
+  - the peak and drop targets are 1.08, with high staying one rung.
+- **The choice** (S5): the sections are chosen **together**.
+  - It's a shortest path through the sections' candidates: least Σ |E − target|, plus TIE_BAND (0.05) × a seeded key a candidate.
+  - **Its edges:** a build's layers hold the section before's, and a boundary into an intro or a build changes at most 2 things (layers, toggles, density rungs both sections sound). Where no candidate keeps that, the fewest changes stand.
+  - **The break is free**, like a peak, a drop and home: a contrast section, not a drift (the planner's ruling, 11-04).
+- **The order** (S6):
+  - **Arch:** of the active layers' permutations, the one whose prefix energies (every part, the loop's densities) step most evenly. The steps run E_0 (no layer) → E_L, by population variance; ties go fastest-first.
+  - **Build–drop:** slowest-first.
+- **Passes** (S7): clamp(round(20 s / the cycle at the seed tempo), 1, 16) for every section.
+- **The fill** (S8; `drums.js` `fillBars`): a section followed by a peak or a drop (the song wrapping) has `fillBefore`. Its last pass's drums are arranged with `fillBars: [N − 1]`.
+- **Expansion** (S9): `songPasses` gives one entry a pass, `{ section, pass, parts, drums }`. It's cached by (layers, parts, setting, fill, crash), so passes alike are one object. It reads only the sections' kind, passes, layers, parts, density and fillBefore, so phase C's edits are plain data. Songs are validated, and a bad section is refused with words.
+
+**`fillBars`** (`drums.js`, `DRUM_OPTIONS`, `readDrumOptions`): the listed bars fill from beat 3 as a phrase end does, and the bar after each crashes (wrapping), whether or not `fills` is on. The options echo it, and the `drums.fills` decision and the bar's why say "asked (fillBars)". Unset, nothing moves: `drums-baseline.mjs` (527 cases × variants), `assert-drums.mjs`, `assert-drum-grid.mjs` and `assert-drum-prime.mjs` hold untouched.
+
+**The songs, seed 1** (layers in the order they enter; E / target; → a fill into the next): the tables are in the order's Log, as built and after the rulings. The shape on every probe row, after the rulings:
+- Arch's intros sit at 0.27–0.36. Build–drop's open on one layer at 0.13–0.22.
+- Builds mostly land within about 0.05 of 0.35, 0.60 and 0.65.
+- Peaks and drops sit at 1.05–1.08 for 1.08: Walking bass and the medium comp.
+- Arch's breaks mostly play every part but the drums and the bass, with the comp a rung down, at 0.48–0.55 for 0.40. Otherwise they play "chords + inner" at 0.27.
+- Build–drop's breaks play "chords + inner" (0.18–0.27 for 0.35).
+- Home is 1.
+
+**Measured:** `planSong` 77 ms on the 16,359-onset row from a fresh loop (the low and high arrangements included), about 1 ms after; `songPasses` under 1 ms. The small rows take 1–20 ms.
+
+**Tests** (`assert-form.mjs`, 39 checks; brute forces written from the order). It runs 13 loops: the 8 probe rows as Compose makes them, and 5 played as the window would (Arp lead and inner with Walking; Arp inner, Roots and drums *with*; the lead off with Sparse · Clave; the comp in notes; the drums off). Each runs × 2 templates × 3 seeds. It checks:
+- the record and determinism (also from a fresh JSON copy), and the JSON round trip;
+- S4 per kind (Build–drop's intro exactly one layer), and the neighbour rule, every relaxation proven necessary by enumerating the kind's candidates;
+- a break free at its boundary, and the eighth mask played;
+- the curve within TIE_BAND a section of a brute-force best path;
+- the order against every permutation;
+- the passes, including a seed tempo of half;
+- home by JSON and by identity;
+- the filter exact on comp, inner and drums, with lead, chords and bass byte for byte;
+- the presets as the controller arranges them;
+- `fillBars`: the baseline hashes, bar k / k + 1 on every bar, the phrase ends asked equal to the phrase fills, the refusals;
+- the song's fills, crashes and fill alone;
+- an edited song, and the refusals;
+- the 16k row's cost.
+
+**Calls beyond the order (proposed):**
+1. **The sections are chosen together** (a shortest path), not one by one. One by one fell into dead ends: 7:5:3:2's Build–drop opened on "chords + inner", and nothing within two changes rose above 0.18 for builds targeting 0.35 and 0.65.
+2. **"Ties break by the seed" reads a tie as within 0.05** (TIE_BAND: a seeded key × 0.05 on each candidate's cost). Exact ties are rare, so without it Re-plan would rarely change the song. Arch varies with the seed on 11 of the 13 test loops.
+3. **The song's first section has no boundary.** It opens the song, and the repeat after home is the top again. Otherwise the intro would have to sit within two changes of home.
+4. **Where no candidate keeps the neighbour rule, the fewest changes stand**, and the section's why says so. As built, that was every break after a peak. Since the planner made the break free (11-04), no planned boundary needs it; it stays for edited songs.
+5. **The order's steps start from E_0**, no layer (the lead, chords and bass alone), so a two-layer row's order is chosen too.
+6. **A density is recorded only for a part the section sounds.**
+7. **A filtered part is rearticulated** by the legato rule over what is left, and the comp's strokes are filtered with it. A part that loses nothing is the arrangement's own object.
+8. **Densities keep the loop's bass lock.** The loop's bass picks are kept at the loop's density and dropped at another. Arp → Line restores the line's own sound where the inner played the harp. A new inner arp (an edit) takes the harp.
+9. **The crash moves to the peak's downbeat.** The fill bar's crash would wrap to bar 1 of its own pass. The fill pass keeps bar 1 as the section plays it, and the next section's first pass crashes on bar 1 instead (drums.js's own crash hit).
+10. **A section with the drums off plays the fill alone on its last pass**: the fill bar's kick and snare from beat 3. That's Arch's break into its second peak; ruling 5 asks for a fill before every peak.
+11. **The bass keeps its section's arrangement under a fill bar** (its Kick lock isn't re-landed on the fill's kicks). A fill doesn't change a section's energy.
+12. **The song record carries `targetSeconds` only when it isn't 20.**
+
+## Song v0 (phase C): the window (built 2026-11-04, branch `arrange/window`)
+
+`ARRANGEMENT_ORDER.md` phase C (C1–C3: S14–S17), one builder, over phases A and B merged on `arrange/song-v0`. `core/form.js` and `composer-player.js` are untouched: the controller codes against form.js's exported API, and the player gets its passes through the getters phase B gave it. Nothing here has been heard: Avery's browser and rig pass is the order's checklist.
+
+**The state** (C1). The entry holds `arrangement: { mode, template, seed, song, loop }` (`store/composition-store.js` `newArrangement`: Loop, Arch, seed 1, no song). `song` is form.js's S1 record; `loop` is the content signature of the loop it was planned on. The store keeps it per rhythm, like the bass: through a re-compose and the glyph's recall, but not to a new cycle of the same row (proposed: a song is planned on one loop).
+
+**Song | Loop** (S14). `setMode('song')` plans a song the first time, from the loop as it plays: `{ ...st.spec, drums: st.drums, parts: PART_IDS.map((id) => st.parts[id]) }`. (Phase A's note checks out against the code: `st.spec.drums` is Compose's, `st.drums` the window's.) So home is what Loop sounds. Before any Compose the mode is only kept, and the Compose landing plans it (`firstPlan`; Perform too, as a fallback). While Compose's animation plays in Song, the matrix shows and the lane is held back until it ends (11-04). The switch sits beside the transport, after the Compose → Perform ⇄ Stop button.
+
+**The getters** (S10, S16). Perform hands the player `playParts(c)` and `playDrums(c)`, which read the mode at every tick:
+- **In Loop** they return the window's parts and drums, the same objects as before, so Loop is unchanged.
+- **In Song** pass c is the song's pass c mod its length, so the song repeats from the top after home. The passes come from `songPasses` over the loop as it plays, cached until the song object or the loop's content changes.
+- **Live sounds** (S16). A part's sound or legato changed since that loop object was read wins in every pass; otherwise the pass keeps its own (form.js's Arp → Line keeps its own sound). The drum kit is laid over the pass's drums the same way. A pass's on/off is the lane's, and never on for a part off in the loop. Levels and glide are the buses' and stay live as ever.
+- **Cost**, on the 16,359-onset row in Node: the plan 108 ms, the expansion and energies 1 ms, a getter pair under 1 µs, a section edit 0.2 ms, a re-plan 1 ms (form.js keeps its arrangements per loop object).
+
+**Stale** (S14). The loop's content is hashed (`loopSig`, two 32-bit FNV-style lanes over the meter, each part's on/off, Line or Arp and notes, the drums' on/off and hits). A part's sound, legato, the kit and the levels aren't in it. The hash is recomputed only when the spec, the drums or a part changed object. A song whose loop hashes differently is stale: the lane says "stale: re-plan", and nothing re-plans on its own. A part toggled off and on again hashes the same, so it isn't stale.
+
+**The edits** (S15). Each is a plain-data change to `song.sections`, one undo step:
+- `toggleSongPart(i, part)`;
+- `toggleSongLayer(i, layer)`;
+- `setSongPasses(i, n)` and `nudgeSongPasses(i, ±1)`, within 1..`MAX_SECTION_PASSES`;
+- `setSongDensity(i, part, value | null)`: the loop's own value removes the key, as the planner records only differences;
+- `setSongTemplate(t)` and `planSong({ template, seed })`, which re-plan;
+- `replan()` (seed + 1);
+- `loadSong(x)`.
+
+An edited section's energy is said again by `energyOf` (which also checks it: a refused density refuses the edit with words), and it gets `edited: true`. A song step's snapshot carries the arrangement; its undo restores the song alone, with no fold (the spec stays the same object) and the mode as it is. A loop step's snapshot doesn't carry it, so a loop undo never touches the song. A Compose clears the stack as ever, and the song stays (stale).
+
+**The export and back.** `editsExport()` carries `arrangement: { mode, template, seed, loop, stale, song }` while there is a song or Song is on, so the JSON export has it under `edits`. `loadSong` takes back the export, an arrangement or a bare S1 record, checked against the loop by `songPasses`, one undo step. It isn't stale on its own loop (the signature is deterministic); a bare record is (its loop unknown).
+
+**Where it is** (S13). `songAt()` → `{ pass, index, section, passInSection, passes }` from the player's `passAt`, or null in Loop, stopped or with no song.
+
+**MIDI** (S17). It's the player's: a part a pass mutes sends nothing, a filtered note isn't there to send, and the clock runs on. `assert-page-song.mjs` runs the real player with a recording sink over a drumless intro.
+
+**The lane** (C2, `page/arrangement-lane.js` + `.css`), above the matrix while Song is on, hidden in Loop:
+- **the bar:** "Song", the template select (Arch | Build–drop), Re-plan, the seed, the song's length in sections, passes and seconds, "stale: re-plan" (amber), and a song this loop can't play or a refused edit in words;
+- **the columns:** a section each, as wide as its passes (`fr`, a 56 px floor, then the lane scrolls sideways), named and coloured by kind, with "− N +" passes, "→ fill" before a peak or a drop, and a dot when edited;
+- **the energy line:** across the top, each column drawing its own step and the join from the one before (solid E, the target dotted, one scale), so it stays continuous whatever the widths;
+- **the rows:** a row a part in the matrix's order, each cell on/off (a click toggles it) with the density's word where it differs from the loop's ("Walking", "Dense", "Arp"); a part off in the loop is hatched and disabled;
+- **Layers:** the row's layers as chips, A–D;
+- **the strip:** the selected section (a click on its name) with its kind, energy against target, passes, the planner's why, and a density select for the bass, the comp, the lead and the inner;
+- **the playhead:** the sounding section lit by `frame()` without a rebuild.
+
+**The strips while in Song** (S16). The part strips under the lens show the sounding section's on/off (the lane's selected section while stopped). Their Mute is disabled, their title says "the lane decides", and `frame()` re-renders them when the section changes. In the window, the matrix's lane toggles and the inspector's on/off are read-only with the same title. Sound and Level stay live.
+
+**Calls beyond the order (proposed):**
+1. **A stale song plays its sections over the loop as it plays now**, not over the loop it was planned on. Home is always what Loop plays, there is no second loop to keep, and a loaded song plays at once. The order's checklist item 6 reads "home follows the edit after Re-plan"; here it follows at once, and Re-plan chooses the sections again for it.
+2. **Stale is a content hash**, not the objects. Sounds, legato, the kit and the levels stay live over the song and aren't loop changes.
+3. **Entering Song plans without an undo step** (it's like a Compose). Re-plan, the template, a load and every section edit are undo steps. The mode isn't one, and an undo keeps it.
+4. **Re-plan is seed + 1.** The template select keeps the seed. The stale marker re-plans at the same seed: the same song re-fitted to the loop.
+5. **Song while playing starts the song from its top** (the intro), and so do a re-plan, a template change and a load. Section edits are live (no restart). Loop while playing carries on where it is.
+6. **A section can't turn on a part that is off in the loop.** It is refused, said with words: turn it on in Loop.
+7. **The densities are edited in the strip below the lane**, not in the cells, whose click toggles on/off. A muted part's density may be set and is kept for when it plays.
+8. **The window is dark only.** No light theme exists anywhere on the site, so the lane uses the window's palette, as tokens on `.alane` for a theme to redefine in one place.
+9. **A `createPlayer` seam on the controller** (passed through the tab controller and the bridge) lets the test record what Perform hands the player. The player itself is untouched.
+10. **Planning runs on this thread**, as phase A measured it, even past `MAIN_THREAD_ONSETS`: there's no worker path for form.js yet.
+
+**Tests** (C3). `assert-page-song.mjs` (73 checks) is in the README. Suites: 88/88 (the 87 and the new one).
+
+## Song UI (visual pass; built 2026-11-04, branch `arrange/song-ui`)
+
+Avery's first browser pass of Song v0: the song was squashed under the loop's cells, which don't show what the Song plays. So the Loop keeps its matrix, and Song gets the room: the lane became a clip timeline that shows the notes. Visual only: `core/`, the player, the planning, the playback, the store's data, undo and the export are untouched; the controller gained two read-only accessors. Nothing here has been seen in a browser: the order's "Song UI visual pass" checklist is Avery's.
+
+**Song | Loop.** In Song the left host carries `ctab-song-on`, and `arrangement-lane.css` hides the matrix and its bar picker under it. It's a class swap: the matrix is still rendered underneath (its on / off still read-only, S16), so Loop comes back at once, exactly as before, and nothing else in the window moves. The decisions list (Details) stays: it's Compose's, the song's material too. The inspector still shows the selected matrix cell's context.
+
+**The track.** Every column is a section, its width exactly ∝ its passes: `minmax(0, N fr)`, no gap, every row one min width. That width is a pass at the largest of three:
+- 36 px (`MIN_PASS_PX`);
+- 8 px a second of the cycle at the spec's tempo (`MIN_SECOND_PX`, so a tempo change doesn't move the layout);
+- 76 px over the shortest section (`MIN_SECTION_PX`, so its head's controls fit).
+
+Past that the lane scrolls sideways, with the row heads sticky. So one mapping holds in every row: `timeline(passes)` takes a position in the song in passes (pass k's start is k) to a share of the track's width (`toX`), and back (`fromX`, for a seek later), with `seconds(at, cycle)`. The rows, top to bottom:
+1. **The ruler**, one element (`.alane-ruler`, `data-passes`) across the track:
+   - a band a section in its kind's colour (its name in the title; the names are the heads just under it, so they aren't said twice);
+   - a tick a section (full height), a pass (⅔) and a bar (⅓; left out under 6 px a bar), one SVG of non-scaling strokes;
+   - the time at the playing tempo, every 0.5 / 1 / 2 / 5 / 10 / 15 / 20 / 30 s… at least 56 px apart, "m:ss" once the song reaches a minute.
+
+   A click / drag to seek later is a listener on this one element and `timeline().fromX` of the click's share; nothing is wired now.
+2. **The energy band**, slim (18 px), under the ruler: the same per-section `energyCell` steps, solid E and the dotted target.
+3. **The section heads** as before (name, − N +, → fill, the edited dot), the kind's colour on top and on the left; a click on the name selects (the strip below).
+4. **The clips**, a row a part (46 px; the drums 54). A clip is a `<button class="alane-clip">` with `data-section`, `data-part`, `data-passes` and `data-marks` (what it draws), so selection, copy, paste and duplicate can attach to it later. Its states are `on`, `off` (the section has the part off), `cant` (off in the loop), `selected` (the selected section's) and `now` (sounding).
+5. **The Layers chips** as before.
+
+The playhead is a line over the track (`.alane-over`, under the sticky heads), moved by `frame()` to `timeline().toX(songPosition().at)`, with a style write only when it moved.
+
+**A clip's notes** (`clipSvg`, pure): one SVG a clip, `viewBox` 1000 units a pass × 100, `preserveAspectRatio="none"`, every stroke non-scaling, so the drawing follows the clip's box with no layout read.
+- **Each pass the clip spans is drawn**, a group `g.alane-pass` translated to its place, so the passes tile, with a faint rule at each boundary (`alane-pdiv`).
+- **The pass's content is its own:** the drums' fill pass (`fill`) draws the fill bar's hits, and the section after a fill draws its crash. A drumless section's fill pass draws the fill alone, sounding.
+- **Pitched parts:** a note is a 3 px bar with round caps, x its time in the pass and its length (to the pass's end at most), y its pitch (log2 Hz) within the part's range over the whole song (`pitchRanges`, 12–88 of the 100), so a part's register reads the same in every clip.
+- **The drums:** a 1.5 px tick a hit in five voice rows (kick, snare, hat, perc, cym, the matrix's order and hues) with faint guides between.
+- **A pass whose part doesn't sound** (`enabled: false`) is ghosted (`mute`). An off clip is outlined with a dashed border in the part's colour, its notes dimmed: still there, and still a click toggles it. A part off in the loop is hatched and disabled, as before.
+- **The density word**, where it differs from the loop's, is a small label on the clip; the drums clip marks its fill pass ("fill").
+- **Cost:** a pass's path is memoized by its part (or drums) object, and passes alike are one object (form.js), so five passes of a section draw one path. A clip's drawing is reused by its place while its SVG's text is the same (no re-parse on a re-render). On the 16k row (4099:4093:4091:4079, 30 s) every clip of the song takes about 1 ms and 35 kB of SVG text; 8:7:6:5's six sections of five passes take 984 marks, under 1 ms.
+
+**The accessors** (read-only, `composer-controller.js`):
+- `songClips()` → `{ T, barStarts, sections: [{ index, passes: [{ index, pass, fill, parts: { id: part }, drums }] }] }`: the cached `songPasses` grouped by section, each pass's parts and drums as the getters hand them to the player (`liveParts` / `liveDrums`: the sounds, legato and kit as they are now). Null with no song, before a Compose, or on a song this loop can't play. The objects are the cache's, shared, never to be changed.
+- `songPosition()` → `{ at, passes, section, passInSection }`: `songAt().index` plus the player's `playhead()` share of its cycle (one clock in one call, so it never steps back in a pass), or null as `songAt`.
+
+**The clean plot** (Avery: "a cleaner viz mode where the background linear plot is fully hidden"):
+- **What it does.** A header toggle beside Details, off by default, kept in localStorage (`lrc.composer.cleanPlot`) as Details and show-the-work are. While the window is open (`tab.view.open`), the overlay's wash is opaque (`OVERLAY_STYLE.cleanWash`), so the Linear Plot's own dots, connectors and the rest are fully hidden. Only the Composer's marks show: its lit notes, the selected cell's ring, the playhead and the Compose animation. It washes even with nothing lit.
+- **What it doesn't touch.** It's a viewing flag on the tab's view (`setClean`). No spec, undo step or export moves, in Loop and in Song alike. Under the Composition lens with the window closed, the main page's plot is drawn as before.
+- **Builder's call:** it's named "clean plot", not "Clean view", because the window's Details off has been "the clean view" since CLEAN_MIDI_ORDER phase A (its titles and these notes say so).
+
+**Calls made (proposed):**
+1. **The ruler doesn't repeat the section names.** It carries their kind-coloured bands, and the names are the heads just under it.
+2. **Hidden in Song:** the matrix and its bar picker. The decisions list and the inspector stay.
+3. **Columns are exactly ∝ passes** (no per-section floor, no gaps), so one mapping serves the ruler, the clips, the playhead and a later seek. The scale's floor is per pass, per second and per section, as above.
+4. **A note longer than its pass is drawn to the pass's end**, so the passes tile exactly. The player holds it on over the boundary when the next pass plays the part.
+5. **Off and ghost:** an off clip still draws its notes, dimmed, and a pass that doesn't sound is ghosted. So a drumless break's fill pass reads as the one pass that plays.
+6. **The selected section's clips** carry `selected`, a thin bar in the part's colour along the top. There is no clip selection yet.
+7. **Clean plot**, as above: the name, and scoped to the window being open.
+
+**Tests.** `assert-page-song.mjs`: 88 checks. The 73 are kept, their cell selectors now `.alane-clip`, and 15 are new: the matrix hidden in Song and back in Loop; a clip a section × part; every clip's marks against `songPasses` pass by pass, with the rules; the fill pass; one pitch range a part; an off clip; the ruler's bands and ticks on the one mapping; the playhead; the clean plot in Song and in Loop, moving nothing.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

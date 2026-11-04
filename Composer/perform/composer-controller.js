@@ -170,6 +170,27 @@
 //              swap, a clave switch) strum at it; byte for byte a Compose given `compTolerance` / `compBorrow`. Compose is
 //              sent them when they aren't the defaults, so a re-compose keeps them. The clave's strokes never move, so the
 //              bass's Clave lock and the perc are unchanged by it.
+//   song       (ARRANGEMENT_ORDER.md phase C, S14–S17; DESIGN_NOTES "Song v0 (phase C)") Loop or Song, the entry's
+//              `arrangement` { mode, template, seed, song (core/form.js' record), loop (the signature it was planned on) }:
+//                setMode('loop' | 'song')    Song plans a song the first time (planSong over the loop AS IT PLAYS: `{ ...spec,
+//                                            drums: state.drums, parts: state.parts }`, so home is what Loop sounds); while
+//                                            playing, Song starts again from its top, Loop carries on (the getters read the mode)
+//                planSong({ template, seed }) / replan() (seed + 1) / setSongTemplate(t)   a new song, one undo step
+//                toggleSongPart(i, part) / toggleSongLayer(i, layer) / setSongPasses(i, n) / nudgeSongPasses(i, ±1) /
+//                setSongDensity(i, part, value | null: the loop's)   plain data changes to song.sections, each one undo
+//                                            step (the section's energy said again by form.js energyOf, `edited` set)
+//                loadSong(exported | arrangement | record)   a song back (one undo step), checked against the loop
+//                songState() → the lane's data; songAt() → { pass, index, section, passInSection, passes } | null
+//                songClips() / songPosition()   READ-ONLY, for the Song UI's clips and playhead (DESIGN_NOTES "Song UI
+//                                            (visual pass)"): the cached passes as the getters hand them; the pass + its share
+//              The player gets getters that read the mode at every tick: in Song, pass c → the song's pass c mod its
+//              length (songPasses over the loop as it plays, cached until the song or the loop's CONTENT changes), with
+//              the user's sounds, legato and drum kit as they are now laid over it (S16: the lane owns on/off; levels
+//              and glide are the buses' and stay live). The loop's content is its notes, drum hits, on/off and meter,
+//              hashed (`loopSig`): a sound or legato change is not a loop change. A song whose loop changed is STALE
+//              (said, never re-planned on its own) and plays its sections over the loop as it plays now. A song step's
+//              undo restores the song alone (the fold isn't run); a loop step's undo never touches the song. MIDI is the
+//              player's (S17): a muted part sends nothing, a filtered note isn't sent, the clock runs on.
 
 import { compose, rearticulate, chooseMeter, PART_IDS, TARGET_SETS, VOICINGS, COMP_TOLERANCES, COMP_GATES, COMP_ROLLS, compStrumOf, strumSetting, nextStrum, strumOverrides, sameStrum, heardGateMs } from '../core/compose.js';
 import { arrangeBass, bassLockRefusal, BASS_DENSITIES, BASS_LOCKS } from '../core/bass.js';   // phase H: the bass's densities and lock
@@ -181,7 +202,7 @@ import { COMPOSER_MIX } from './composer-master.js';
 import { arrangeDrums, gridOf, readGrid, beatsOf, ALL_DRUM_MODES, DRUM_VOICES, DEFAULT_KIT, GRID_CHARS } from '../core/drums.js';
 import { DRUM_PATTERNS } from '../core/drum-patterns.js';
 import { MADE_DRUM_CHOICES } from '../../Audio/drums/index.js';
-import { newCompositionState, KNOB_NAMES, emptyEdits, UNDO_LIMIT, lineArps, composedBass, isComposedBass } from '../store/composition-store.js';
+import { newCompositionState, KNOB_NAMES, emptyEdits, UNDO_LIMIT, lineArps, composedBass, isComposedBass, newArrangement } from '../store/composition-store.js';
 import { ALTERNATE_CAPS } from '../core/trace.js';   // STEP 4a
 // STEP 4d: the edits
 import { rearrange, applyRearrange, materialsOf, materialsKey } from '../core/rearrange.js';
@@ -192,6 +213,9 @@ import { phrasesOf, isStrongBeat } from '../core/harmony.js';
 import { readMidi, decodeClip } from '../core/midi.js';
 import { onsetCount } from '../core/row.js';
 import { claveOf as readClave, claveText, claveSource, COMP_RELATIONS, COMP_DENSITIES, DEFAULT_COMP_DENSITY } from '../core/claves.js';   // phase E: the clave picker; phase N: the comp's density
+// Song v0 (ARRANGEMENT_ORDER.md phase C): the song planner, by its exported API
+import { planSong, songPasses, energyOf, TEMPLATES, SONG_PARTS, SONG_VERSION, DENSITY_PARTS, DENSITY_LADDERS, MAX_SECTION_PASSES } from '../core/form.js';
+import { LAYER_NAMES } from '../core/row.js';
 import { orderedEdits, setChordEdit, removeChordEdit, setLeadEdit, removeLeadEdit, sameRecord, hasEdits, snapshotOf, restoreSnapshot, pushUndo, pinOf, asksOf,
   rewriteToken, rewriteChart, chordAlternates, leadAlternates, leadAlternatesOf, phraseOfBar } from '../store/composition-edits.js';
 
@@ -291,9 +315,10 @@ export function readLayers(values) {
  *                 runCompose.bass by default; none: every bass on this thread)
  *   mix           the player's mix (MIX_MASTER_ORDER.md: staging, the kick duck, the master chain; COMPOSER_MIX by
  *                 default; null: today's graph). Audio only: the level faders, and so MIDI velocity, are untouched (M6).
+ *   createPlayer  the player's maker (composer-player.js' by default; a test may record what it is handed)
  */
 export function createComposerController({ runCompose = async (l, T, o) => compose(l, T, o), createContext = () => new AudioContext(), timers = globalThis, clock = () => (globalThis.performance ? performance.now() : Date.now()), beforePerform = null, destination = null, state: initial = null,
-  runRearrange = runCompose?.rearrange ?? null, mainThreadOnsets = MAIN_THREAD_ONSETS, leadFullOnsets = MAIN_THREAD_LEAD_FULL_ONSETS, midi = null, runArp = runCompose?.arp ?? null, runBass = runCompose?.bass ?? null, mix = COMPOSER_MIX } = {}) {
+  runRearrange = runCompose?.rearrange ?? null, mainThreadOnsets = MAIN_THREAD_ONSETS, leadFullOnsets = MAIN_THREAD_LEAD_FULL_ONSETS, midi = null, runArp = runCompose?.arp ?? null, runBass = runCompose?.bass ?? null, mix = COMPOSER_MIX, createPlayer: makePlayer = createPlayer } = {}) {
   let state = initial ?? newCompositionState({ layers: PRESETS[0].layers, cycleSeconds: PRESETS[0].cycleSeconds, seed: 1 });
   const listeners = new Set(), levelListeners = new Set();
   const changed = (st = state) => { for (const f of listeners) f(st); };
@@ -784,6 +809,173 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   const outcome = (st, spec, extra = {}) => (spec && !spec.refused && st.status !== 'error' ? { ok: true, spec, ...extra }
     : { ok: false, spec, error: st.status === 'error' ? st.error : spec?.reason ?? 'nothing composed', ...extra });
 
+
+  // ── Song v0 (ARRANGEMENT_ORDER.md phase C: S14–S17; the head of this file) ─────────────────────────────────────────
+  const errText = (err) => String(err && err.message ? err.message : err);
+  const copyOf = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
+  const arrOf = (st) => (st.arrangement ??= newArrangement());
+  const inSong = (st = state) => arrOf(st).mode === 'song';
+  /** the loop as it plays (form.js' head): the window's parts and drums, not Compose's (st.spec.drums is Compose's) */
+  const loopNow = (st) => ({ ...st.spec, drums: st.drums, parts: PART_IDS.map((id) => st.parts[id]) });
+  /** the loop's densities as form.js reads them (the bass's record, a frame clave's tier, Line or Arp), for the lane */
+  const ownDensities = (loop) => {
+    const by = Object.fromEntries(loop.parts.map((p) => [p.id, p]));
+    return { bass: by.bass?.bass?.density ?? 'sparse', comp: loop.clave?.read === 'frame' && loop.clave.compDensity ? loop.clave.compDensity.asked : null,
+      lead: by.lead?.arp ? 'arp' : 'line', inner: by.inner?.arp ? 'arp' : 'line' };
+  };
+  /**
+   * The loop's CONTENT as two 32-bit hashes (hex): the meter, each part's on/off, Line or Arp and notes (onset, time,
+   * pitch), the drums' on/off and hits (tick, voice, velocity). Not a part's sound or legato (they move durations only,
+   * and stay live over a song, S16), not the drum kit, not a level. Deterministic, so an exported song's `loop` is its
+   * loop's in any session. A few ms on the 16k row, and only when a part, the spec or the drums changed object.
+   */
+  function loopSig(st) {
+    let a = 0x811c9dc5, b = 0x9e3779b9;
+    const mix = (x) => { a = Math.imul(a ^ (x | 0), 16777619) >>> 0; b = Math.imul(b ^ (x | 0), 0x85ebca6b) >>> 0; b = ((b << 13) | (b >>> 19)) >>> 0; };
+    const num = (v) => { const r = Math.round((Number(v) || 0) * 1e6); mix(r); mix(Math.floor(r / 4294967296)); };
+    const k = st.spec.knobs;
+    num(k.cycleSeconds); mix(k.bars); mix(k.slotsPerBar); num(k.tempoBpm);
+    PART_IDS.forEach((id, i) => {
+      const p = st.parts[id];
+      mix(i);
+      if (!p) { mix(-1); return; }
+      mix(p.enabled ? 1 : 0); mix(p.arp ? 1 : 0); mix(p.notes.length);
+      for (const n of p.notes) { mix(n.node); num(n.time); num(n.hz); }
+    });
+    const d = st.drums;
+    mix(d ? (d.enabled ? 1 : 0) : -1);
+    if (d) { mix(d.hits.length); for (const h of d.hits) { mix(h.tick); mix(DRUM_VOICES.indexOf(h.voice)); num(h.velocity); } }
+    return `${a.toString(16).padStart(8, '0')}${b.toString(16).padStart(8, '0')}`;
+  }
+  // per state: the loop as it plays and its expansion { ids (the objects it was read from), sig, composed, loop, mats,
+  // song (the record expanded), passes (songPasses'), energies (each section's on this loop), error }; a new loop object
+  // only when the content moved (a sound change keeps it, so nothing is arranged again)
+  const songCache = new WeakMap(), planErrors = new WeakMap();
+  const idsOf = (st) => [st.spec, st.drums, ...PART_IDS.map((id) => st.parts[id])];
+  function loopOf(st) {
+    let c = songCache.get(st);
+    const ids = idsOf(st);
+    if (c && c.ids.every((v, i) => v === ids[i])) return c;
+    const sig = loopSig(st);
+    if (!c || c.sig !== sig || c.composed !== st.composed) c = { sig, composed: st.composed, loop: loopNow(st), mats: materialsFor(st), song: undefined, passes: null, energies: null, error: null };
+    c.ids = ids;
+    songCache.set(st, c);
+    return c;
+  }
+  function expanded(st) {
+    const c = loopOf(st), song = arrOf(st).song;
+    if (c.song !== song) {
+      c.song = song; c.passes = null; c.energies = null; c.error = null;
+      if (song) {
+        try { c.passes = songPasses(song, c.loop, c.mats); c.energies = song.sections.map((sec) => energyOf(sec, c.loop, c.mats)); }
+        catch (err) { c.passes = null; c.energies = null; c.error = errText(err); }
+      }
+    }
+    return c;
+  }
+  /** a new song on the loop as it plays (S14), its loop's signature kept for "stale" */
+  function planOn(st, template, seed) {
+    const c = loopOf(st), song = planSong(c.loop, c.mats, { template, seed });
+    planErrors.delete(st);
+    st.arrangement = { ...arrOf(st), template, seed, song, loop: c.sig };
+    return song;
+  }
+  /** Song with no song yet: the first plan, once there's a loop to plan on (a Compose landing, or Perform); not an undo
+   *  step. A plan that can't be made is said (planErrors) and leaves the loop playing. */
+  function firstPlan(st) {
+    const a = arrOf(st);
+    if (a.mode !== 'song' || a.song || !ready(st)) return;
+    try { planOn(st, a.template, a.seed); } catch (err) { planErrors.set(st, errText(err)); }
+  }
+  /** a pass's parts with the user's sound and legato as they are now (S16): where one moved since the loop object was
+   *  read, it wins; else the pass's own (form.js' Arp ↔ Line keeps its own sound). On/off is the pass's, and never on
+   *  for a part off in the loop. Memoized per pass's parts and the parts as they play. */
+  const liveMemo = new WeakMap(), kitMemo = new WeakMap();
+  function liveParts(st, c, parts) {
+    const now = PART_IDS.map((id) => st.parts[id]), m = liveMemo.get(parts);
+    if (m && m.now.every((v, i) => v === now[i])) return m.out;
+    const T = st.spec.knobs.cycleSeconds, was = c.loop.parts;
+    const out = parts.map((p) => {
+      const i = PART_IDS.indexOf(p.id), live = now[i], base = was[i];
+      if (!live || !base) return p;
+      const sound = live.sound !== base.sound ? live.sound : p.sound, legato = live.legato !== base.legato ? live.legato : p.legato, enabled = !!p.enabled && !!live.enabled;
+      return sound === p.sound && legato === p.legato && enabled === !!p.enabled ? p : rearticulate(p, { sound, legato, enabled, cycleSeconds: T });
+    });
+    liveMemo.set(parts, { now, out });
+    return out;
+  }
+  /** a pass's drums with the kit as it is now (a kit change re-arranges the same hits) */
+  function liveDrums(st, c, d) {
+    const live = st.drums?.kit, base = c.loop.drums?.kit;
+    if (!d || !live || live === base || JSON.stringify(live) === JSON.stringify(base)) return d;
+    const m = kitMemo.get(d);
+    if (m && m.kit === live) return m.out;
+    const out = { ...d, kit: live };
+    kitMemo.set(d, { kit: live, out });
+    return out;
+  }
+  /** the song's pass for the player's pass c (the song repeating from the top after home), or null: the loop plays */
+  const songPassOf = (c) => {
+    const st = state;
+    if (!inSong(st) || !ready(st) || !Number.isInteger(c) || !arrOf(st).song) return null;
+    const x = expanded(st);
+    if (!x.passes) return null;
+    const n = x.passes.length;
+    return { x, e: x.passes[((c % n) + n) % n] };
+  };
+  // the player's getters (S10): they read the mode at every tick, so Loop ⇄ Song needs no new booking; in Loop they are
+  // the window's parts and drums exactly as before
+  const playParts = (c) => { const p = songPassOf(c); return p ? liveParts(state, p.x, p.e.parts) : api.currentParts(); };
+  const playDrums = (c) => { const p = songPassOf(c); return p ? liveDrums(state, p.x, p.e.drums) : state.drums; };
+  /** one undoable change of the song: mutate (st, arrangement) → false (nothing to do) | extra result fields; it sets
+   *  st.arrangement anew (a new object, so the expansion follows). A throw refuses it, said, with nothing changed. */
+  function songEdit(kind, detail, mutate) {
+    const st = state;
+    if (!ready(st)) return { ok: false, error: 'composer: Compose first: a song plays a composition', kind, ...detail };
+    const before = snapshotOf(st), had = arrOf(st);
+    before.arrangement = copyOf(had);
+    let out;
+    try { out = mutate(st, had); } catch (err) { st.arrangement = had; return { ok: false, error: errText(err), kind, ...detail }; }
+    if (out === false) { st.arrangement = had; return { ok: true, noop: true, kind, ...detail }; }
+    pushUndo(st, before);
+    changed(st);
+    return { ok: true, kind, ...detail, ...(out && typeof out === 'object' ? out : {}) };
+  }
+  /** one section's plain-data change: change(a copy, the loop) → the new section | false; its energy said again */
+  function sectionEdit(kind, i, detail, change) {
+    return songEdit(kind, { section: i, ...detail }, (st, a) => {
+      const song = a.song;
+      if (!song) throw new Error('composer: no song to edit (Song plans one)');
+      if (!(Number.isInteger(i) && i >= 0 && i < song.sections.length)) throw new Error(`composer: the song has no section ${i}`);
+      const c = loopOf(st), next = change(copyOf(song.sections[i]), c);
+      if (next === false) return false;
+      next.energy = energyOf(next, c.loop, c.mats);   // checks the section (a refused density throws)
+      next.edited = true;
+      st.arrangement = { ...a, song: { ...song, sections: song.sections.map((x, k) => (k === i ? next : x)) } };
+      return { energy: next.energy };
+    });
+  }
+  /** a re-plan at a template and seed, one undo step; playing in Song, it starts again from the top */
+  function replanTo(template, seed) {
+    if (!TEMPLATES[template]) throw new Error(`composer: no template ${JSON.stringify(template)} (${Object.keys(TEMPLATES).join(', ')})`);
+    const r = songEdit('plan', { template, seed }, (st, a) => {
+      const sig = loopOf(st).sig, prev = a.song, song = planOn(st, template, seed);
+      if (prev && a.loop === sig && a.template === template && a.seed === seed && JSON.stringify(prev) === JSON.stringify(song)) return false;
+      return {};
+    });
+    if (r.ok && !r.noop && inSong() && state.status === 'playing') api.perform();
+    return r;
+  }
+  /** a song step's snapshot restored: the song alone when nothing else differs (no fold); the mode stays as it is */
+  function restoreStep(st, snap, cur, kind) {
+    restoreSnapshot(st, snap);
+    if (!snap.arrangement) return applyEdits(st, { kind });
+    st.arrangement = { ...copyOf(snap.arrangement), mode: arrOf(st).mode };
+    const { arrangement: _a, ...x } = snap, { arrangement: _b, ...y } = cur;
+    if (JSON.stringify(x) === JSON.stringify(y)) { changed(st); return Promise.resolve({ ok: true, kind, song: true }); }
+    return applyEdits(st, { kind }).then((r) => ({ ...r, song: true }));
+  }
+
   const api = {
     get state() { return state; },
     onChange(f) { listeners.add(f); return () => listeners.delete(f); },
@@ -889,6 +1081,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
             st.status = 'ready'; st.tempoBpm = seedTempoOf(spec);
           }
           landPlacements(st, spec);   // MIDI targets: the search's list (kept when this compose was given its placement)
+          firstPlan(st);   // Song v0: Song before any Compose plans its song as the Compose lands
         } catch (err) {
           if (mine !== runs.get(st)) return st.spec;
           st.status = 'error'; st.error = String(err && err.message ? err.message : err);
@@ -966,17 +1159,20 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     /** back to the seed tempo (the spec's own; a target's, the clip's) */
     resetTempo() { if (api.specTempo() == null) return; state.tempoBpm = api.seedTempo(); player?.setTimeFactor(api.tempoFactor()); },
 
+    /** start playing from the top: the loop, or (Song) the song, its passes handed to the player per pass (S10) */
     perform() {
       if (!state.spec || state.spec.refused) return;
       if (beforePerform) beforePerform();
       ctx ??= createContext();
       if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
-      player ??= createPlayer({ ctx, timers, destination, midi, mix: mixNow });
+      player ??= makePlayer({ ctx, timers, destination, midi, mix: mixNow });
       player.localSound(localSound);
       for (const id of [...PART_IDS, 'drums']) player.setLevel(id, state.levels[id]);
       player.setGlide(state.glideMs / 1000);
       player.setTimeFactor(api.tempoFactor());
-      player.play(state.spec, api.currentParts, () => state.drums);
+      // Song v0 (S14): Song with no song yet plans one now; a plan that can't be made leaves the loop playing (said)
+      firstPlan(state);
+      player.play(state.spec, playParts, playDrums);
       state.status = 'playing'; changed();
     },
     stop() { player?.stop(); if (state.status === 'playing') state.status = 'ready'; changed(); },
@@ -1061,7 +1257,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     /** the edits as JSON export carries them (null with none); B2: `arps` when a part is in Arp; phase E: `clave` when chosen;
      *  phase H: `bass` when it isn't Compose's own, `voicing` when close; phase N: `compDensity` when it isn't the default;
      *  phase O, phase P: the comp's strum overrides when they aren't the defaults (compose.js strumOverrides: `compGate`,
-     *  `compSnap`, `compRoll`, `compBorrow`; `compTolerance` whenever the old window plays) */
+     *  `compSnap`, `compRoll`, `compBorrow`; `compTolerance` whenever the old window plays); Song v0: `arrangement` while
+     *  there is a song or Song is on (loadSong takes it back) */
     editsExport() {
       const e = state.edits, grid = state.drumOptions.grid && (state.drumOptions.mode === 'grid' || state.drumOptions.mode === 'prime');
       const arps = ARP_PARTS.some((id) => state.arps?.[id]?.mode === 'arp') ? JSON.parse(JSON.stringify(state.arps)) : null;
@@ -1069,11 +1266,14 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       const bass = isComposedBass(state.bass) ? null : JSON.parse(JSON.stringify(state.bass)), voicing = (state.voicing ?? 'led') === 'led' ? null : state.voicing;
       const compDensity = (state.compDensity ?? DEFAULT_COMP_DENSITY) === DEFAULT_COMP_DENSITY ? null : state.compDensity;
       const strum = strumOverrides(strumOfEntry(state));
-      if (!hasEdits(state) && !grid && !state.field && !arps && !bass && !voicing && !compDensity && !Object.keys(strum).length) return null;
+      // Song v0 (phase C): the arrangement while there is a song, or Song is on: { mode, template, seed, loop, stale, song }
+      const arr = arrOf(state), arrangement = arr.song || arr.mode === 'song'
+        ? { mode: arr.mode, template: arr.template, seed: arr.seed, loop: arr.loop, stale: !!arr.song && ready(state) && arr.loop !== loopOf(state).sig, song: copyOf(arr.song) } : null;
+      if (!hasEdits(state) && !grid && !state.field && !arps && !bass && !voicing && !compDensity && !Object.keys(strum).length && !arrangement) return null;
       return { chords: JSON.parse(JSON.stringify(e.chords)), lead: JSON.parse(JSON.stringify(e.lead)), order: [...e.order],
         drums: grid ? { mode: state.drumOptions.mode, grid: JSON.parse(JSON.stringify(state.drumOptions.grid)), from: e.grid?.from ?? null } : null, field: state.field ? state.field.text : null,
         ...(arps ? { arps } : {}), ...(e.clave ? { clave: { ...e.clave } } : {}), ...(bass ? { bass } : {}), ...(voicing ? { voicing } : {}), ...(compDensity ? { compDensity } : {}),
-        ...strum };
+        ...strum, ...(arrangement ? { arrangement } : {}) };
     },
     /**
      * A bar's alternates (a pure read of the kept trace): part 'chords' → the bar's 12 candidates; 'lead' → the bar's
@@ -1494,18 +1694,18 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     undo() {
       const st = state;
       if (!ready(st) || !st.undo.length) return Promise.resolve({ ok: false, empty: true, kind: 'undo' });
-      const snap = st.undo.pop();
-      st.redo.push(snapshotOf(st));
-      restoreSnapshot(st, snap);
-      return applyEdits(st, { kind: 'undo' });
+      const snap = st.undo.pop(), cur = snapshotOf(st);
+      if (snap.arrangement) cur.arrangement = copyOf(arrOf(st));   // Song v0: a song step's redo carries the song
+      st.redo.push(cur);
+      return restoreStep(st, snap, cur, 'undo');
     },
     redo() {
       const st = state;
       if (!ready(st) || !st.redo.length) return Promise.resolve({ ok: false, empty: true, kind: 'redo' });
-      const snap = st.redo.pop();
-      st.undo.push(snapshotOf(st));
-      restoreSnapshot(st, snap);
-      return applyEdits(st, { kind: 'redo' });
+      const snap = st.redo.pop(), cur = snapshotOf(st);
+      if (snap.arrangement) cur.arrangement = copyOf(arrOf(st));
+      st.undo.push(cur);
+      return restoreStep(st, snap, cur, 'redo');
     },
 
     // ── STEP 4e: the audition (DESIGN_NOTES "Step 4e") — an edit tried live, then kept as one undo step or taken back
@@ -1647,6 +1847,155 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       folds.delete(st); auditions.delete(st);
       if (live && st.spec && !st.spec.refused) api.perform(); else changed(st);
       return Promise.resolve({ ok: true, index: x.placements?.current ?? 0 });
+    },
+    // ── Song v0 (ARRANGEMENT_ORDER.md phase C: S14–S17; DESIGN_NOTES "Song v0 (phase C)") ──
+    /** the entry's arrangement as kept: { mode, template, seed, song, loop } */
+    arrangement: () => arrOf(state),
+    /** 'loop' | 'song' */
+    songMode: () => arrOf(state).mode,
+    /**
+     * Loop or Song (S14). Song plans a song the first time, from the loop as it plays (not an undo step: a re-plan is);
+     * before any Compose it is only kept (the Compose landing plans it). While playing, Song starts again from its top; Loop carries
+     * on where it is (the player's getters read the mode). → { ok, mode, planned?, error? }
+     */
+    setMode(mode) {
+      if (mode !== 'loop' && mode !== 'song') throw new Error(`composer: a mode is 'loop' or 'song', not ${JSON.stringify(mode)}`);
+      const st = state, a = arrOf(st);
+      if (a.mode === mode && (mode === 'loop' || a.song || !ready(st))) return { ok: true, noop: true, mode };
+      st.arrangement = { ...a, mode };
+      let planned = false, error = null;
+      if (mode === 'song' && !a.song && ready(st)) { try { planOn(st, a.template, a.seed); planned = true; } catch (err) { error = errText(err); planErrors.set(st, error); } }
+      if (mode === 'song' && st.status === 'playing') api.perform(); else changed(st);
+      return { ok: !error, mode, planned, ...(error ? { error } : {}) };
+    },
+    /** a new song (S14): { template, seed } (the arrangement's own where unset), one undo step → { ok, template, seed } */
+    planSong({ template, seed } = {}) { const a = arrOf(state); return replanTo(template ?? a.template, seed ?? a.seed); },
+    /** Re-plan (S15): the same template at a new seed (the seed + 1), one undo step */
+    replan() { const a = arrOf(state), s = Number(a.seed); return replanTo(a.template, Number.isFinite(s) ? s + 1 : 1); },
+    /** the template select (S15): Arch | Build–drop, planned at the same seed, one undo step */
+    setSongTemplate(template) { return replanTo(template, arrOf(state).seed); },
+    /** a section's part on or off (S15); a part off in the loop can't be turned on in a section */
+    toggleSongPart(i, part) {
+      if (!SONG_PARTS.includes(part)) throw new Error(`composer: a song's parts are ${SONG_PARTS.join(', ')}, not ${JSON.stringify(part)}`);
+      return sectionEdit('part', i, { part }, (sec) => {
+        const on = !sec.parts[part], loopOn = part === 'drums' ? !!state.drums?.enabled : !!state.parts[part]?.enabled;
+        if (on && !loopOn) throw new Error(`composer: the ${part} is off in the loop: turn it on in Loop first`);
+        sec.parts[part] = on;
+        return sec;
+      });
+    },
+    /** a section's layer in or out (S15): layer the index of one of the row's layers (A = 0) */
+    toggleSongLayer(i, layer) {
+      return sectionEdit('layer', i, { layer }, (sec, c) => {
+        if (!c.mats.row.active.includes(layer)) throw new Error(`composer: the row has no layer ${JSON.stringify(layer)} (${c.mats.row.active.map((b) => LAYER_NAMES[b]).join(', ')})`);
+        sec.layers ^= 1 << layer;
+        return sec;
+      });
+    },
+    /** a section's passes (S7, S15): a whole number 1..MAX_SECTION_PASSES */
+    setSongPasses(i, n) {
+      return sectionEdit('passes', i, { passes: n }, (sec) => {
+        if (!(Number.isInteger(n) && n >= 1 && n <= MAX_SECTION_PASSES)) throw new Error(`composer: a section's passes are a whole number 1..${MAX_SECTION_PASSES}, not ${JSON.stringify(n)}`);
+        if (sec.passes === n) return false;
+        sec.passes = n;
+        return sec;
+      });
+    },
+    /** ±passes (S15): one more or one fewer, kept within 1..MAX_SECTION_PASSES (a no-op at either end) */
+    nudgeSongPasses(i, by) {
+      const sec = arrOf(state).song?.sections?.[i];
+      return api.setSongPasses(i, sec ? Math.max(1, Math.min(MAX_SECTION_PASSES, sec.passes + Math.sign(by || 0))) : NaN);
+    },
+    /** a section's density for one part (ruling 4): a rung of DENSITY_LADDERS[part], or null (the loop's own); recorded
+     *  only where it differs from the loop's, as the planner records it */
+    setSongDensity(i, part, value) {
+      if (!DENSITY_PARTS.includes(part)) throw new Error(`composer: a density is set for ${DENSITY_PARTS.join(', ')}, not ${JSON.stringify(part)}`);
+      if (value != null && !DENSITY_LADDERS[part].includes(value)) throw new Error(`composer: the ${part}'s density is one of ${DENSITY_LADDERS[part].join(', ')}, not ${JSON.stringify(value)}`);
+      return sectionEdit('density', i, { part, value: value ?? null }, (sec, c) => {
+        const own = ownDensities(c.loop)[part], density = { ...(sec.density ?? {}) };
+        if (part === 'comp' && own == null && value != null) throw new Error('composer: the loop\'s clave isn\'t read from the frames: the comp has no density tier');
+        if (value == null || value === own) delete density[part]; else density[part] = value;
+        if (JSON.stringify(density) === JSON.stringify(sec.density ?? {})) return false;
+        sec.density = density;
+        return sec;
+      });
+    },
+    /**
+     * A song back (the export's `edits.arrangement`, an arrangement, or a bare S1 record): checked against the loop as it
+     * plays (songPasses), one undo step. Its `loop` signature says whether it is stale here; a bare record is (its loop
+     * unknown). The arrangement's mode is taken; playing in Song, it starts again from the top. → { ok, stale, error? }
+     */
+    loadSong(x) {
+      const arr = x?.edits?.arrangement ?? (x?.version === SONG_VERSION ? { song: x } : x?.arrangement ?? x);
+      const r = songEdit('load', {}, (st, a) => {
+        if (!arr?.song) throw new Error('composer: no song to load');
+        const song = copyOf(arr.song), c = loopOf(st);
+        songPasses(song, c.loop, c.mats);   // throws with words on a song this loop can't play
+        st.arrangement = { mode: arr.mode === 'song' || arr.mode === 'loop' ? arr.mode : a.mode, template: TEMPLATES[song.template] ? song.template : a.template,
+          seed: song.seed ?? a.seed, song, loop: typeof arr.loop === 'string' ? arr.loop : null };
+        return { stale: st.arrangement.loop !== c.sig };
+      });
+      if (r.ok && inSong() && state.status === 'playing') api.perform();
+      return r;
+    },
+    /** the sounding pass (S13) as the song has it: { pass (the player's), index (in the song), section, passInSection,
+     *  passes (the section's) } | null (Loop, stopped, or no song) */
+    songAt() {
+      const c = player?.playing ? player.passAt?.() : null, p = c == null ? null : songPassOf(c);
+      if (!p) return null;
+      const n = p.x.passes.length, sec = arrOf(state).song.sections[p.e.section];
+      return { pass: c, index: ((c % n) + n) % n, section: p.e.section, passInSection: p.e.pass, passes: sec.passes };
+    },
+    /** READ-ONLY (the Song UI's playhead): songAt() plus the player's place in its cycle → { at (the song's pass + the
+     *  share of it played, 0 ≤ at < passes), passes (the song's), section, passInSection } | null (as songAt). passAt and
+     *  playhead read one clock in one call, so `at` never steps back inside a pass */
+    songPosition() {
+      const a = api.songAt();
+      if (!a) return null;
+      const f = Number(player?.playhead?.()) || 0, n = expanded(state).passes.length;
+      return { at: a.index + Math.max(0, Math.min(1 - 1e-9, f)), passes: n, section: a.section, passInSection: a.passInSection };
+    },
+    /**
+     * READ-ONLY (the Song UI's clips): the song's passes as the player gets them (the getters' parts and drums: form.js
+     * songPasses, cached, with the sounds, legato and kit as they are now laid over), grouped a section at a time.
+     * Nothing is planned, arranged or stored: the objects are the cache's, shared, and must not be changed.
+     * → null (no song, not composed, or a song this loop can't play) | { T (the cycle, spec seconds), barStarts (spec
+     * seconds), sections: [{ index, passes: [{ index (in the song), pass (in the section), fill (its drums the fill
+     * bar's), parts: { id: part }, drums }] }] }
+     */
+    songClips() {
+      const st = state, song = arrOf(st).song;
+      if (!ready(st) || !song) return null;
+      const x = expanded(st);
+      if (!x.passes) return null;
+      const sections = song.sections.map((sec, index) => ({ index, passes: [] }));
+      x.passes.forEach((e, index) => {
+        const sec = song.sections[e.section], parts = liveParts(st, x, e.parts);
+        sections[e.section].passes.push({ index, pass: e.pass, fill: !!sec.fillBefore && e.pass === sec.passes - 1, parts: Object.fromEntries(parts.map((p) => [p.id, p])), drums: liveDrums(st, x, e.drums) });
+      });
+      return { T: st.spec.knobs.cycleSeconds, barStarts: st.spec.timeline?.barStarts ?? [], sections };
+    },
+    /**
+     * The lane's data (S15): { mode, template, seed, templates [{ id, label }], song (the record, or null), ready, stale,
+     * error (why the song can't play this loop, or why a plan failed), energies (each section's on the loop as it plays),
+     * passes (the song's, all sections), layers [{ index, mask, name, value }] (the row's), own (the loop's densities),
+     * loopOn ({ part: on in the loop }), ladders, maxPasses, at (songAt()) }
+     */
+    songState() {
+      const st = state, a = arrOf(st);
+      const out = { mode: a.mode, template: a.template, seed: a.seed, templates: Object.values(TEMPLATES).map((t) => ({ id: t.id, label: t.label })), song: a.song, ready: ready(st),
+        stale: false, error: planErrors.get(st) ?? null, energies: null, passes: 0, layers: [], own: null, loopOn: null, ladders: DENSITY_LADDERS, maxPasses: MAX_SECTION_PASSES, at: null };
+      if (!ready(st)) return out;
+      const c = expanded(st), row = c.mats.row;
+      out.stale = !!a.song && a.loop !== c.sig;
+      out.error = c.error ?? out.error;
+      out.energies = c.energies;
+      out.passes = c.passes?.length ?? 0;
+      out.layers = row.active.map((b) => ({ index: b, mask: 1 << b, name: LAYER_NAMES[b], value: row.layers[b] }));
+      out.own = ownDensities(c.loop);
+      out.loopOn = Object.fromEntries(SONG_PARTS.map((id) => [id, id === 'drums' ? !!st.drums?.enabled : !!st.parts[id]?.enabled]));
+      out.at = api.songAt();
+      return out;
     },
     get player() { return player; },
     get context() { return ctx; },

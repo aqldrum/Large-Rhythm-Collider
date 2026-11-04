@@ -11,6 +11,10 @@
 // stays visible. The layer strips come back exactly as they were with the row (their elements are only hidden).
 // A part playing as an arpeggio (COMP_ARP_ORDER.md B3) is named so: "Lead · arp", "Inner · arp".
 //
+// Song v0 (ARRANGEMENT_ORDER.md phase C2, S16): while Song is on, the lane owns on / off. The strips show the sounding
+// section's (the lane's selected section while stopped), read-only: Mute is disabled and the title says "the lane
+// decides". Sound and Level stay live. frame() re-renders them when the sounding section changes.
+//
 //   dominantLayer(indices, layerMap) → 'A'..'D' | null     (pure)
 //   stripRows({ parts, drums, levels, highlights, layerMap }) → the strips as data (pure)
 //   createPartStrips({ doc, tab, highlights, layerMap }) → { enter(), leave(), update(), frame(), shown, root }
@@ -22,6 +26,8 @@ export const LAYER_COLORS = Object.freeze({ A: '#ff6b6b', B: '#4ecdc4', C: '#00a
 export const STRIPS_CLASS = 'composition-part-strips';
 /** what the Layer Controls header says under the lens (proposed) */
 export const PARTS_HEADER = 'Part Controls';
+/** S16: the title the strips carry while Song is on */
+export const LANE_DECIDES = 'the lane decides';
 
 /** the layer that strikes most of these plotted onsets (ties: the earlier layer) */
 export function dominantLayer(indices, layerMap) {
@@ -33,14 +39,16 @@ export function dominantLayer(indices, layerMap) {
   return best;
 }
 
-/** the six strips as data: { id, label (B3: "Lead · arp" while it plays an arpeggio), color, has, arp, enabled, level, sound, layer } */
-export function stripRows({ parts = {}, drums = null, drumOptions = {}, levels = {}, highlights = null, layerMap = null } = {}) {
+/** the six strips as data: { id, label (B3: "Lead · arp" while it plays an arpeggio), color, has, arp, enabled, level, sound, layer };
+ *  Song v0: `section` ({ name, parts }: the section sounding, or selected) sets each strip's on / off, and `locked` */
+export function stripRows({ parts = {}, drums = null, drumOptions = {}, levels = {}, highlights = null, layerMap = null, section = null } = {}) {
   return HIGHLIGHT_PARTS.map((id) => {
     const isDrums = id === 'drums', p = isDrums ? drums : parts[id];
     const h = highlights?.parts?.[id];
     return {
       id, label: `${PART_LABELS[id]}${!isDrums && p?.arp ? ' · arp' : ''}`, color: PART_COLORS[id], has: !!p, arp: !isDrums && !!p?.arp,
-      enabled: isDrums ? (drums ? drums.enabled !== false : drumOptions.enabled !== false) : p ? p.enabled !== false : true,
+      enabled: (isDrums ? (drums ? drums.enabled !== false : drumOptions.enabled !== false) : p ? p.enabled !== false : true) && (!section || !!section.parts?.[id]),
+      locked: !!section,
       level: levels[id] ?? 0.8,
       sound: isDrums ? drumOptions.mode ?? 'backbeat' : p?.sound ?? null,
       layer: h ? dominantLayer(h.indices, layerMap) : null,
@@ -58,15 +66,24 @@ export function createPartStrips({ doc = globalThis.document, tab, highlights = 
   const core = tab.core;
   const sounds = soundChoices(), drumModes = drumModeChoices();
   const el = (tag, props = {}, ...kids) => { const e = Object.assign(doc.createElement(tag), props); for (const k of kids) if (k != null) e.append(k); return e; };
-  let root = null, shown = false, hiddenEls = [], header = null, headerText = null, levelEl = null, levelOut = null;
+  let root = null, shown = false, hiddenEls = [], header = null, headerText = null, levelEl = null, levelOut = null, shownSection = null;
+  /** Song v0: the section whose on / off the strips show (sounding, else the lane's selected), or null in Loop */
+  const songSection = () => {
+    if (core.songMode?.() !== 'song') return null;
+    const song = core.arrangement?.().song;
+    if (!song) return null;
+    const i = core.songAt?.()?.section ?? Math.min(song.sections.length - 1, tab.view?.songSection ?? 0);
+    return { index: i, ...song.sections[i] };
+  };
 
   const host = () => doc.getElementById?.('layer-controls-content') ?? null;
   const pct = (v) => `${Math.round(Number(v) * 100)}%`;
 
   function render() {
     if (!root) return;
-    const s = tab.state, selected = tab.view.selected;
-    const rows = stripRows({ parts: s.parts, drums: s.drums, drumOptions: s.drumOptions, levels: s.levels, highlights: highlights(), layerMap: layerMap() });
+    const s = tab.state, selected = tab.view.selected, section = songSection();
+    shownSection = section ? section.index : null;
+    const rows = stripRows({ parts: s.parts, drums: s.drums, drumOptions: s.drumOptions, levels: s.levels, highlights: highlights(), layerMap: layerMap(), section });
     const toggles = el('div', { className: 'playback-layer-toggles part-strip-toggles' }, ...rows.map((r) => {
       const b = el('button', { className: `playback-layer-btn part-strip-btn${r.id === selected ? ' active' : ''}${r.enabled ? '' : ' off'}`, textContent: r.label, title: `${r.label}${r.layer ? `: read mostly from layer ${r.layer}` : ''}` });
       b.dataset.part = r.id;
@@ -76,9 +93,9 @@ export function createPartStrips({ doc = globalThis.document, tab, highlights = 
       return b;
     }));
     const r = rows.find((x) => x.id === selected) ?? rows[0];
-    const title = el('h4', { textContent: `${r.label}` });
+    const title = el('h4', { textContent: `${r.label}${r.locked ? ` · ${LANE_DECIDES}` : ''}`, title: r.locked ? `Song: ${section.name} turns the parts on and off (the Composer window's lane); sound and level stay live` : '' });
     title.style.color = r.color;
-    const mute = el('button', { className: `control-btn part-strip-mute${r.enabled ? '' : ' active'}`, textContent: 'Mute', title: 'play this part or not (live)', disabled: !r.has });
+    const mute = el('button', { className: `control-btn part-strip-mute${r.enabled ? '' : ' active'}`, textContent: 'Mute', title: r.locked ? `${LANE_DECIDES}: ${section.name} ${r.enabled ? 'plays' : 'mutes'} it` : 'play this part or not (live)', disabled: !r.has || r.locked });
     mute.addEventListener('click', () => (r.id === 'drums' ? core.setDrums({ enabled: !r.enabled }) : core.setPart(r.id, { enabled: !r.enabled })));
     const isDrums = r.id === 'drums';
     const sound = el('select', { className: 'part-strip-sound', disabled: !r.has, title: isDrums ? 'the drum mode, or a curated pattern (live)' : 'its sound (Audio/voices): live' },
@@ -135,6 +152,7 @@ export function createPartStrips({ doc = globalThis.document, tab, highlights = 
       header = null; headerText = null; levelEl = null; levelOut = null;
     },
     update() { if (shown) render(); },
-    frame() {},
+    /** Song v0: a new sounding section re-renders the strips' on / off */
+    frame() { if (shown && core.songMode?.() === 'song' && (songSection()?.index ?? null) !== shownSection) render(); },
   };
 }

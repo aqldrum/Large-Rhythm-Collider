@@ -117,6 +117,22 @@
 //               tempo isn't the seed's); Details adds "Old window (slots)" (off | ±⅛ | ±¼ | ±½ | ±1: Amendment 3's
 //               window, ±½ its pin); the cell's line says the bar's tones a stroke (with borrowing, the share from the
 //               row, as before); the dots and the MIDI comp zone are what plays
+//
+// Song v0 (ARRANGEMENT_ORDER.md phase C2, S14–S16; DESIGN_NOTES "Song v0 (phase C)"):
+//   Song | Loop  beside the transport (the Compose → Perform ⇄ Stop button): the controller's setMode. Loop by default;
+//               Song plans a song the first time, from the loop as it plays, and Perform plays it; while playing, Song
+//               starts it from its top and Loop carries on where it is
+//   the lane    while Song is on, above the matrix (arrangement-lane.js): a column a section, a row a part, the Layers
+//               chips, the energy line, the template, Re-plan, "stale: re-plan"; every click one undo step (↶ ↷ undo it)
+//   on / off    in Song the lane owns it (S16): the matrix's lane toggles and the inspector's on / off are read-only,
+//               titled "the lane decides"; sounds, legato, levels and glide stay live over the song. The matrix shows
+//               the loop
+// The Song UI's visual pass (DESIGN_NOTES "Song UI (visual pass)"; Avery's first browser pass of Song v0):
+//   Song        the loop's matrix and its bar picker are hidden (the left host's `ctab-song-on`, a class swap: instant,
+//               and the matrix is still rendered underneath, so Loop comes back as it was); the lane is a clip timeline
+//   clean plot  a header toggle beside Details (off by default, kept in localStorage as Details is): while the window is
+//               open the overlay's wash is opaque, so the Linear Plot's own drawing is fully hidden under the Composer's
+//               notes, in Loop and in Song. Named "clean plot", not "clean view": Details off is the clean view already
 
 import { soundChoices, drumModeChoices, DRUM_LAB_VOICES, TEMPO_LIMITS, ARP_CHOICES } from '../perform/composer-controller.js';
 import { KNOB_FIELDS, TABLE_FIELD, fieldValue, refusalText, readoutItems, knobChosen, decisionRows, rootGroups, strayRootOption, chordGot, progressionNote,
@@ -134,6 +150,8 @@ import { arrangeDrums, gridOf, DRUM_VOICES, beatsOf } from '../core/drums.js';
 // MIDI targets (phase B)
 import { TARGET_SETS } from '../core/compose.js';
 import { decodeLine, fitLine, placementRow, tonicChoices, clipMarks, noteName, KIND_WORDS, targetError } from './target-lines.js';
+// Song v0 (phase C2): the arrangement lane
+import { createArrangementLane } from './arrangement-lane.js';
 
 const KNOBS_OF = Object.freeze({ harmony: ['modulation', 'settlePasses', 'presence'], lines: ['bars', 'slotsPerBar', 'anchors'], tuning: ['frameCentsEachSide'] });
 /** the caption's names for the trace's beats */
@@ -144,6 +162,10 @@ const defaultStorage = () => { try { return globalThis.localStorage ?? null; } c
 export const DETAILS_KEY = 'lrc.composer.details';
 export function readDetails(storage) { try { return storage?.getItem?.(DETAILS_KEY) === '1'; } catch { return false; } }
 export function writeDetails(storage, on) { try { storage?.setItem?.(DETAILS_KEY, on ? '1' : '0'); } catch { /* storage refused: the setting lasts the page */ } }
+/** the clean plot (DESIGN_NOTES "Song UI (visual pass)"): where the toggle is kept, read and written as Details is */
+export const CLEAN_KEY = 'lrc.composer.cleanPlot';
+export function readClean(storage) { try { return storage?.getItem?.(CLEAN_KEY) === '1'; } catch { return false; } }
+export function writeClean(storage, on) { try { storage?.setItem?.(CLEAN_KEY, on ? '1' : '0'); } catch { /* storage refused: the setting lasts the page */ } }
 /** the knobs only Details shows (C5); the Table row too, though it is where Compose runs, not an ask */
 export const DETAIL_KNOBS = Object.freeze(['settlePasses', 'presence', 'anchors', 'frameCentsEachSide']);
 /** the asked knobs the clean view hides (C3): [label value] for the Details toggle's dot */
@@ -223,7 +245,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   const core = tab.core;
   const el = (tag, props = {}, ...kids) => { const e = Object.assign(doc.createElement(tag), props); for (const k of kids) if (k != null) e.append(k); return e; };
   const plotted = () => { const v = visuals(); return v && v.compositeRhythm ? { compositeRhythm: v.compositeRhythm, grid: v.grid } : null; };
-  const overlay = sharedOverlay ?? createPlotOverlay({ getHighlights: () => tab.highlights(plotted()), getSelected: () => tab.view.selected, getFocus: () => tab.cellFocus(plotted()), makeCanvas });
+  const overlay = sharedOverlay ?? createPlotOverlay({ getHighlights: () => tab.highlights(plotted()), getSelected: () => tab.view.selected, getFocus: () => tab.cellFocus(plotted()), getClean: () => !!(tab.view.clean && tab.view.open), makeCanvas });
   // the overlay on the plot: through the page's seat when there is one (the lens shares it), else set directly
   const claimPlot = () => (seat ? seat.claim('tab') : visuals()?.setComposerOverlay?.(overlay));
   const releasePlot = () => (seat ? seat.release('tab') : visuals()?.setComposerOverlay?.(null));
@@ -238,6 +260,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   let lastEdit = null, followPref = false, nowBar = -1, pickEls = [], headEls = [], inspWhere = null;
   tab.view.showWork = readShowWork(storage);
   tab.view.details = readDetails(storage);
+  tab.view.clean = readClean(storage);
 
   // ── STEP 4e: the audition, and every edit through one door (an open audition is kept before another edit) ──
   const audition = createAudition({
@@ -251,6 +274,11 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     .then(said, (err) => said({ ok: false, error: String(err?.message ?? err) }));
   function undo() { if (audition.state !== 'idle') return audition.revert().then(said); return core.undo().then(said); }
   function redo() { return audition.settle().then(() => core.redo()).then(said); }
+  // Song v0 (phase C2): the lane, its edits through the same door; in Song the lane owns on / off (S16)
+  const lane = createArrangementLane({ doc, core, view: tab.view, edit: (run) => doEdit(run), rerender: () => render(), select: (id) => tab.select(id) });
+  const LANE_DECIDES = 'the lane decides: in Song each section turns the parts on and off (Loop to change it here)';
+  /** an on / off control, read-only while Song is on */
+  const laneOwned = (b) => { if (core.songMode() === 'song') { b.disabled = true; b.title = LANE_DECIDES; b.classList.add('ctab-lane-owned'); } return b; };
 
   const recomposeIfQuick = () => { if (core.canAutoRecompose()) core.compose(); };
   const field = (f, value) => {
@@ -271,9 +299,13 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     seed.addEventListener('change', () => core.setSeed(seed.value));
     const go = el('button', { className: 'ctab-go', textContent: 'Compose' });
     go.addEventListener('click', pressGo);
+    // Song v0 (S14): Loop | Song beside the transport
+    const modeLoop = button('Loop', 'ctab-toggle ctab-mode', 'play the loop: the composition, every part, over and over', () => doEdit(() => core.setMode('loop')));
+    const modeSong = button('Song', 'ctab-toggle ctab-mode', 'play a song: the loop\'s layers and parts assembling over sections (the lane, above the matrix)', () => doEdit(() => core.setMode('song')));
+    const modes = el('span', { className: 'ctab-modes', title: 'what Perform plays' }, modeLoop, modeSong);
     const mod = isMac() ? '⌘' : 'Ctrl+';
     // the icons alone in the clean view, the words with Details (C5)
-    const undoBtn = button('↶', 'ctab-btn ctab-undo', `undo the last edit (${mod}Z): a swap, the typed field, a drum step`, () => undo());
+    const undoBtn = button('↶', 'ctab-btn ctab-undo', `undo the last edit (${mod}Z): a swap, the typed field, a drum step, a song edit`, () => undo());
     const redoBtn = button('↷', 'ctab-btn ctab-redo', `redo it (${isMac() ? '⇧⌘Z' : 'Ctrl+Shift+Z'})`, () => redo());
     undoBtn.append(el('span', { className: `ctab-word ${DETAIL}`, textContent: ' Undo' }));
     redoBtn.append(el('span', { className: `ctab-word ${DETAIL}`, textContent: ' Redo' }));
@@ -281,6 +313,9 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     work.addEventListener('click', () => { const on = !tab.view.showWork; writeShowWork(storage, on); tab.setShowWork(on); });
     const details = el('button', { className: 'ctab-toggle ctab-details', textContent: 'details' });
     details.addEventListener('click', () => { const on = !tab.view.details; writeDetails(storage, on); tab.setDetails(on); });
+    // the clean plot: a viewing flag (the plot redraws through tab.onChange); nothing composed, undone or exported moves
+    const cleanPlot = el('button', { className: 'ctab-toggle ctab-cleanplot', textContent: 'clean plot' });
+    cleanPlot.addEventListener('click', () => { const on = !tab.view.clean; writeClean(storage, on); tab.setClean(on); });
     const json = el('button', { className: `ctab-btn ${DETAIL}`, textContent: 'JSON', title: 'download the spec as it plays now' });
     json.addEventListener('click', exportJSON);
     const midiFile = el('button', { className: `ctab-btn ctab-midi-file ${DETAIL}`, textContent: 'MIDI file', title: 'download the composition as it plays now, one cycle, as a .mid: a track a part, in exact tuning (pitch bends)' });
@@ -328,14 +363,14 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       clipError, clipSummary, clipDecode, clipFit, clipAlts);
     left.replaceChildren(
       el('div', { className: 'ctab-head' },
-        el('div', { className: 'ctab-row' }, rhythm, el('label', { className: 'ctab-muted', textContent: 'Seed' }), seed, go, undoBtn, redoBtn, json, midiFile, work, details, midiBtn, status),
+        el('div', { className: 'ctab-row' }, rhythm, el('label', { className: 'ctab-muted', textContent: 'Seed' }), seed, go, modes, undoBtn, redoBtn, json, midiFile, work, details, cleanPlot, midiBtn, status),
         el('div', { className: 'ctab-row' }, el('label', { className: 'ctab-muted', textContent: 'Tempo', title: 'playback tempo: the composed cycle faster or slower, live (pitch unchanged)' }), tempo, tempoBpm, tempoReset,
           el('label', { className: 'ctab-muted', textContent: 'Glide' }), glide, glideOut)),
       midiPanel, target, note, refusal, dropped, caption, summary, readouts,
-      el('div', { className: 'ctab-scroll' }, barPick, el('div', { className: 'ctab-matrix-wrap' }, lanes), decisions));
+      el('div', { className: 'ctab-scroll' }, lane.root, barPick, el('div', { className: 'ctab-matrix-wrap' }, lanes), decisions));
     // a click anywhere in the tab skips the animation (the button and the toggle do their own thing)
     left.addEventListener('click', (e) => { if (anim.status === 'playing' && !e.target?.closest?.('.ctab-go, .ctab-work')) skipAnimation(); });
-    return { seed, go, undoBtn, redoBtn, json, midiFile, midiBtn, midiPanel, work, details, summary, clipSummary, tempo, tempoBpm, tempoReset, glide, glideOut, rhythm, status, note, refusal, dropped, caption, capLabel, capDetail, capBeats, readouts, lanes, barPick, table,
+    return { seed, go, modeLoop, modeSong, undoBtn, redoBtn, json, midiFile, midiBtn, midiPanel, work, details, cleanPlot, summary, clipSummary, tempo, tempoBpm, tempoReset, glide, glideOut, rhythm, status, note, refusal, dropped, caption, capLabel, capDetail, capBeats, readouts, lanes, barPick, table,
       target, clipFile, clipChoose, clipTonic, clipTonicLabel, clipClear, clipHint, clipError, clipDecode, clipFit, clipAlts };
   }
   function showTempo() {
@@ -493,9 +528,16 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     ui.go.className = `ctab-go${skipping ? ' skip' : label === 'Stop' ? ' stop' : ''}`;
     ui.go.disabled = skipping ? false : !tab.canPress();
     ui.go.title = skipping ? 'skip to the end (or click the plot, or press Esc)' : '';
+    const song = core.songMode() === 'song';
+    ui.modeLoop.className = `ctab-toggle ctab-mode${song ? '' : ' on'}`;
+    ui.modeSong.className = `ctab-toggle ctab-mode${song ? ' on' : ''}`;
     ui.undoBtn.disabled = !(core.canUndo() || audition.state !== 'idle');
     ui.redoBtn.disabled = !core.canRedo();
     ui.work.className = `ctab-toggle ctab-work${tab.view.showWork ? ' on' : ''}`;
+    ui.cleanPlot.className = `ctab-toggle ctab-cleanplot${tab.view.clean ? ' on' : ''}`;
+    ui.cleanPlot.title = tab.view.clean ? 'the clean plot: only the Composer\'s notes on the Linear Plot; a click shows the row under them again' : 'hide the Linear Plot under the Composer\'s notes: only what the Composer plays shows (a view only)';
+    // Song: the loop's matrix gives the lane the room (a class swap, instant: arrangement-lane.css)
+    hosts.left.classList?.toggle('ctab-song-on', song);
     renderDetails();
     renderMidi();
     ui.midiFile.disabled = !s || s.refused;
@@ -522,6 +564,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     ui.readouts.replaceChildren(...readoutItems(s, { lastMs: tab.state.lastMs, drums: tab.state.drums }).map(([k, val]) => el('span', {}, `${k} `, el('b', { textContent: val }))));
     ui.table.replaceChildren(...decisionRows(s, tab.state.drums).map((d) => el('tr', {}, el('td', { textContent: d.what }), el('td', { textContent: d.value }), el('td', { textContent: d.why }))));
     renderTarget();
+    lane.render();
     renderMatrix();
     showTempo();
   }
@@ -739,7 +782,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       name.style.borderLeftColor = row.color;
       name.addEventListener('click', () => tab.select(row.id));
       const onToggle = row.id === 'drums' ? () => core.setDrums({ enabled: !row.enabled }) : () => core.setPart(row.id, { enabled: !row.enabled });
-      return el('div', { className: 'ctab-lane-head' }, name, toggle(row.enabled ? 'on' : 'off', row.enabled, 'play this part or not (live)', onToggle));
+      return el('div', { className: 'ctab-lane-head' }, name, laneOwned(toggle(row.enabled ? 'on' : 'off', row.enabled, 'play this part or not (live)', onToggle)));
     };
     // the bar numbers, over the columns
     const nums = el('div', { className: 'ctab-bars ctab-mnums' });
@@ -931,7 +974,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     mode.value = o.mode;
     mode.addEventListener('change', () => core.setDrums({ mode: mode.value }));
     return [mode, toggle('fills', o.fills, 'on: the last bar of each phrase of 4 bars or more fills from beat 3, and a crash opens the next', () => core.setDrums({ fills: !o.fills })),
-      toggle(enabled ? 'on' : 'off', enabled, 'play the drums or not (live)', () => core.setDrums({ enabled: !enabled })), levelSlider('drums')];
+      laneOwned(toggle(enabled ? 'on' : 'off', enabled, 'play the drums or not (live)', () => core.setDrums({ enabled: !enabled }))), levelSlider('drums')];
   }
   function kitRow() {
     const kit = tab.state.drumOptions.kit;
@@ -950,7 +993,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     sound.value = part.sound;
     sound.addEventListener('change', () => core.setPart(id, { sound: sound.value }));
     return [sound, toggle('legato', part.legato, "on: each note holds to the part's next note", () => core.setPart(id, { legato: !part.legato })),
-      toggle(part.enabled ? 'on' : 'off', part.enabled, 'play this part or not (live)', () => core.setPart(id, { enabled: !part.enabled })), levelSlider(id)];
+      laneOwned(toggle(part.enabled ? 'on' : 'off', part.enabled, 'play this part or not (live)', () => core.setPart(id, { enabled: !part.enabled }))), levelSlider(id)];
   }
   function tuningReadout() {
     const s = tab.state.spec;
@@ -1510,6 +1553,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       if (a.kind === 'frame') applyFrame(a.frame);
     }
     audition.tick();
+    lane.frame();   // Song v0: the sounding section lit
     if (at) {
       if (onLinear) overlay.frame(at);
       if (firstBars && playheadEl) {
@@ -1546,6 +1590,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     /** MIDI targets: a .mid File (or a Blob with a name) read, decoded, placed and composed, as a drop does */
     loadClip,
     undo, redo,
+    /** Song v0 (phase C2): the arrangement lane (a look for the tests) */
+    lane,
     /** fill the two hosts (again if the window was rebuilt) */
     mount({ left, inspector }) {
       if (hosts && hosts.left === left && hosts.inspector === inspector) return;

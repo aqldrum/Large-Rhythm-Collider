@@ -99,6 +99,14 @@
 //   compGate  15 | 25 | 40 (ms either side of a stroke; null: Compose's 25), compSnap  true | false, compRoll  0 | 8 | 15
 //            (ms, Snap's). Kept, snapshotted and carried with the tolerance; the controller reads the five as one setting
 //            (Snap, else the old window when one is kept, else the gate).
+//
+// Song v0 (ARRANGEMENT_ORDER.md phase C; DESIGN_NOTES "Song v0 (phase C)"; the controller acts on it):
+//   arrangement  { mode ('loop' | 'song': what Perform plays; Loop by default), template ('arch' | 'build-drop'), seed
+//            (the planner's ties), song (core/form.js' record, S1, or null: none planned), loop (the content signature
+//            of the loop the song was planned on, or null: the song is stale when the loop as it plays has another) }.
+//            The entry's own, like the bass: kept through a re-compose (stale then) and the glyph's recall; a section
+//            edit, a template change and a Re-plan are undo steps (their snapshots carry it; no other step touches it).
+//            Not carried to a new cycle of the same row (proposed: a song is planned on one loop).
 
 import { PART_IDS } from '../core/compose.js';
 import { DEFAULT_KIT } from '../core/drums.js';
@@ -121,6 +129,8 @@ export const lineArps = () => Object.fromEntries(ARP_PARTS.map((id) => [id, { mo
 export const composedBass = () => ({ density: COMPOSE_BASS.density, lock: COMPOSE_BASS.lock, picks: {} });
 /** phase H: is this bass Compose's own (nothing arranged over it, while the kick it covers plays; phase N)? */
 export const isComposedBass = (b) => !b || (b.density === COMPOSE_BASS.density && b.lock === COMPOSE_BASS.lock && !Object.keys(b.picks ?? {}).length);
+/** Song v0 (phase C): no song, Loop, Arch at seed 1 */
+export const newArrangement = () => ({ mode: 'loop', template: 'arch', seed: 1, song: null, loop: null });
 const copy = (x) => (x == null ? x : JSON.parse(JSON.stringify(x)));
 /** a pin list entry copied (a ratio, { ratio, quality }, or null) */
 const copyPin = (x) => (x && typeof x === 'object' ? { ...x } : x);
@@ -156,6 +166,8 @@ export function newCompositionState({ layers = [0, 0, 0, 0], cycleSeconds = 10, 
     compTolerance: null, compBorrow: false,
     // phase P (COMP_GATE_ORDER.md): the comp's gate (null: Compose's 25 ms), Snap and its roll
     compGate: null, compSnap: false, compRoll: 0,
+    // Song v0 (ARRANGEMENT_ORDER.md phase C): Loop or Song, and the song
+    arrangement: newArrangement(),
   };
 }
 

@@ -1,0 +1,123 @@
+/* arrangement-lane.css — Song v0's lane in the Composer window (Composer/page/arrangement-lane.js; ARRANGEMENT_ORDER.md
+   phase C2, S15; DESIGN_NOTES "Song UI (visual pass)"), in the window's own look (composer-tab.css: #1a1a1a panels,
+   #2a2a2a cells, #444 lines, #00ff88 accents), laid out as a DAW's arrangement view: a ruler, then a track a part of
+   clips, the row heads sticky while the track scrolls sideways. Every colour is a token on .alane, so a theme of the
+   window redefines them in one place; the kinds' and the parts' hues come from the view (--alane-kind, --alane-part).
+   Also the window's Song | Loop switch, the loop's matrix hidden while Song is on (ctab-song-on: a class swap, so the
+   switch is instant), and the on / off controls the lane owns in Song (ctab-lane-owned), and the part strips' Mute. */
+
+.alane {
+  --alane-bg: #1f1f1f; --alane-cell: #2a2a2a; --alane-cell-on: #333; --alane-line: #444; --alane-dim: #333; --alane-text: #ccc; --alane-muted: #888;
+  --alane-accent: #00ff88; --alane-amber: #ffb347; --alane-now: rgba(255, 255, 255, 0.10); --alane-target: #888;
+  --alane-track: #181818; --alane-rule: rgba(255, 255, 255, 0.07); --alane-pass-rule: rgba(255, 255, 255, 0.16); --alane-playhead: #fff;
+  --alane-head: 84px; --alane-clip-h: 46px; --alane-drum-h: 54px;
+  display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; background: var(--alane-bg); border: 1px solid var(--alane-dim); border-radius: 4px; padding: 6px 8px; color: var(--alane-text);
+}
+.alane-bar { gap: 8px; }
+.alane-label { color: var(--alane-accent); font-weight: 600; letter-spacing: 1px; }
+.ctab-left .alane-stale { border-color: var(--alane-amber) !important; color: var(--alane-amber) !important; padding: 1px 8px !important; font-size: 10px !important; }
+.alane-note { font-size: 11px; }
+.alane-note.amber { color: var(--alane-amber); }
+
+/* the track: a row a head (sticky) and the sections' columns, exactly ∝ passes (minmax(0, N fr), no gap: the view sets
+   grid-template-columns and the rows' one min-width), so the ruler, the clips and the playhead share one mapping */
+.alane-grid { overflow-x: auto; padding-bottom: 4px; }
+.alane-grid-rows { display: flex; flex-direction: column; gap: 3px; position: relative; }
+.alane-row { display: grid; grid-template-columns: var(--alane-head) 1fr; gap: 6px; align-items: stretch; min-width: 0; }
+.alane-cols { display: grid; gap: 0; min-width: 0; }
+.alane-cols > * { min-width: 0; }
+.alane-head { display: flex; align-items: center; font-size: 11px; padding: 0 6px; position: sticky; left: 0; z-index: 3; background: var(--alane-bg); }
+.alane-part { border-left: 3px solid var(--alane-muted); font-weight: 600; font-size: 11px; color: var(--alane-text); }
+.alane-part.off { opacity: .45; }
+.ctab-left .alane-part { background: var(--alane-bg) !important; border: none !important; border-left: 3px solid !important; border-radius: 2px !important; padding: 0 6px !important; text-align: left; cursor: pointer; }
+.ctab-left .alane-part:hover { color: #fff !important; }
+.ctab-left .alane-part.selected { background: var(--alane-cell-on) !important; color: var(--alane-accent) !important; }
+
+/* the ruler: the sections' bands, the ticks (sections, passes, bars), the time */
+.alane-ruler { position: relative; height: 30px; background: var(--alane-track); border: 1px solid var(--alane-dim); border-radius: 3px; overflow: hidden; }
+.alane-ruler-secs { position: absolute; left: 0; right: 0; top: 0; height: 4px; }
+.alane-ruler-sec { position: absolute; top: 0; bottom: 0; background: var(--alane-kind, var(--alane-muted)); opacity: .85; }
+.alane-ticks { position: absolute; left: 0; right: 0; bottom: 0; height: 24px; }
+.alane-ticks svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.alane-tick-sec { stroke: var(--alane-text); stroke-width: 1; fill: none; }
+.alane-tick-pass { stroke: var(--alane-muted); stroke-width: 1; fill: none; }
+.alane-tick-bar { stroke: var(--alane-dim); stroke-width: 1; fill: none; }
+.alane-ruler-labels { position: absolute; left: 0; right: 0; top: 5px; height: 12px; pointer-events: none; }
+.alane-ruler-label { position: absolute; top: 0; padding-left: 3px; font-family: monospace; font-size: 9px; line-height: 12px; color: var(--alane-muted); white-space: nowrap; }
+
+/* the energy line: a slim band under the ruler, each column its step and the join from the one before */
+.alane-energy { height: 18px; position: relative; background: var(--alane-track); border-bottom: 1px solid var(--alane-dim); }
+.alane-energy svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.alane-energy .alane-e { fill: none; stroke: var(--alane-accent); stroke-width: 2; }
+.alane-energy .alane-target { fill: none; stroke: var(--alane-target); stroke-width: 1; stroke-dasharray: 3 3; }
+.alane-energy.now { background: var(--alane-now); }
+
+/* the section heads: the kind's colour on top and on the left edge, the sounding one lit */
+.alane-col { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; background: var(--alane-cell); border-left: 3px solid var(--alane-kind, var(--alane-muted)); border-top: 2px solid var(--alane-kind, var(--alane-muted)); border-radius: 3px; margin: 0 1px; padding: 2px 4px; min-height: 22px; position: relative; overflow: hidden; }
+.alane-col.selected { box-shadow: inset 0 0 0 1px var(--alane-kind, var(--alane-accent)); }
+.alane-col.now { background: color-mix(in srgb, var(--alane-kind, #fff) 22%, var(--alane-cell)); }
+.ctab-left .alane-name { background: none !important; border: none !important; padding: 0 2px !important; font-weight: 600; color: var(--alane-text) !important; font-size: 11px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.alane-passes { display: inline-flex; align-items: center; gap: 2px; }
+.ctab-left .alane-nudge { padding: 0 4px !important; font-size: 10px !important; line-height: 14px; }
+.ctab-left .alane-nudge:disabled { opacity: .35; cursor: default; }
+.alane-n { min-width: 14px; text-align: center; font-family: monospace; font-size: 11px; }
+.alane-fill { font-size: 9px; color: var(--alane-amber); white-space: nowrap; }
+.alane-edited { color: var(--alane-accent); font-size: 12px; line-height: 10px; }
+
+/* the clips: a box a section × part, its notes drawn (pitched: bars; drums: ticks in five voice rows), a rule a pass;
+   on, tinted and bordered in the part's colour; off in the section, outlined and dim (still a click); off in the loop,
+   hatched */
+.alane-part-row .alane-cols { height: var(--alane-clip-h); }
+.alane-part-row.drums .alane-cols { height: var(--alane-drum-h); }
+.ctab-left .alane-clip { position: relative; display: block; height: 100%; margin: 0 1px; padding: 0 !important; overflow: hidden; text-align: left;
+  border-radius: 4px !important; border: 1px solid var(--alane-dim) !important; background: var(--alane-track) !important; color: var(--alane-muted) !important; }
+.ctab-left .alane-clip.on { background: color-mix(in srgb, var(--alane-part, var(--alane-accent)) 16%, var(--alane-track)) !important; border-color: color-mix(in srgb, var(--alane-part, var(--alane-accent)) 70%, var(--alane-track)) !important; color: var(--alane-text) !important; }
+.ctab-left .alane-clip.off { border-style: dashed !important; border-color: color-mix(in srgb, var(--alane-part, var(--alane-accent)) 35%, var(--alane-track)) !important; }
+.ctab-left .alane-clip.off .alane-notes { opacity: .45; }
+.ctab-left .alane-clip.cant { background: repeating-linear-gradient(135deg, var(--alane-track) 0 4px, var(--alane-bg) 4px 8px) !important; cursor: not-allowed; opacity: .6; }
+.ctab-left .alane-clip:hover:not(:disabled) { border-color: var(--alane-part, var(--alane-accent)) !important; }
+.ctab-left .alane-clip.selected { box-shadow: inset 0 2px 0 var(--alane-part, var(--alane-accent)); }
+.ctab-left .alane-clip.now { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45); }
+.ctab-left .alane-clip.now.on { background: color-mix(in srgb, var(--alane-part, var(--alane-accent)) 26%, var(--alane-track)) !important; }
+.alane-notes { position: absolute; inset: 2px 0; display: block; pointer-events: none; }
+.alane-notes svg { display: block; width: 100%; height: 100%; }
+.alane-notes .alane-pdiv { stroke: var(--alane-pass-rule); stroke-width: 1; fill: none; }
+.alane-notes .alane-drow { stroke: var(--alane-rule); stroke-width: 1; fill: none; }
+.alane-notes .alane-n { fill: none; stroke: var(--alane-part, var(--alane-accent)); stroke-width: 3; stroke-linecap: round; }
+.alane-notes .alane-hit { stroke-width: 1.5; stroke-linecap: butt; }
+.alane-notes .alane-hit.kick { stroke: #ff6b6b; } .alane-notes .alane-hit.snare { stroke: #f9ca24; } .alane-notes .alane-hit.hat { stroke: #aaa; }
+.alane-notes .alane-hit.perc { stroke: #4ecdc4; } .alane-notes .alane-hit.cym { stroke: #fff; }
+.alane-notes .alane-pass.mute { opacity: .3; }
+.alane-clip-label { position: absolute; left: 4px; top: 2px; padding: 0 4px; border-radius: 3px; font-size: 9px; line-height: 13px; font-weight: 600; color: #fff;
+  background: color-mix(in srgb, var(--alane-part, var(--alane-accent)) 45%, rgba(0, 0, 0, 0.55)); pointer-events: none; white-space: nowrap; }
+.alane-clip-tag { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed color-mix(in srgb, var(--alane-amber) 60%, transparent); pointer-events: none; }
+.alane-clip-tag::after { content: 'fill'; position: absolute; left: 3px; bottom: 1px; font-size: 8px; line-height: 10px; color: var(--alane-amber); }
+
+/* the playhead: one line over the track (the heads cover it as the track scrolls under them) */
+.alane-over { position: absolute; top: 0; bottom: 0; left: calc(var(--alane-head) + 6px); right: 0; pointer-events: none; z-index: 2; }
+.alane-playhead { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px solid var(--alane-playhead); box-shadow: 0 0 4px rgba(255, 255, 255, 0.5); }
+
+/* the Layers row */
+.alane-chips { display: flex; gap: 2px; flex-wrap: wrap; align-items: center; border-radius: 3px; padding: 1px; margin: 0 1px; }
+.alane-chips.now { background: var(--alane-now); }
+.ctab-left .alane-chip { padding: 0 5px !important; font-size: 10px !important; font-family: monospace; color: var(--alane-muted) !important; background: var(--alane-cell) !important; }
+.ctab-left .alane-chip.on { border-color: var(--alane-accent) !important; color: var(--alane-accent) !important; }
+
+/* the selected section's strip: its words and its densities */
+.alane-strip { display: flex; flex-direction: column; gap: 3px; border-left: 3px solid var(--alane-kind, var(--alane-muted)); padding: 3px 0 2px 8px; }
+.alane-strip-name { color: var(--alane-text); }
+.alane-strip-e { font-family: monospace; font-size: 11px; color: var(--alane-accent); }
+.alane-dens { display: inline-flex; gap: 4px; align-items: center; }
+.alane-why { font-size: 10px; line-height: 1.35; }
+
+/* the window: Loop | Song beside the transport; in Song the loop's matrix (and its bar picker) gives the lane the room */
+.ctab-modes { display: inline-flex; gap: 0; }
+.ctab-left .ctab-modes .ctab-mode { border-radius: 0 !important; padding: 2px 9px !important; font-size: 11px !important; }
+.ctab-left .ctab-modes .ctab-mode:first-child { border-radius: 4px 0 0 4px !important; }
+.ctab-left .ctab-modes .ctab-mode:last-child { border-radius: 0 4px 4px 0 !important; border-left: none !important; }
+.ctab-left .ctab-modes .ctab-mode.on { background: rgba(0, 255, 136, 0.12) !important; }
+/* …except while Compose's animation plays: it builds the loop's matrix, then the lane takes the room when it ends */
+.ctab-left.ctab-song-on:not(.ctab-animating) .ctab-matrix-wrap, .ctab-left.ctab-song-on:not(.ctab-animating) .ctab-barpick { display: none !important; }
+.ctab-left.ctab-animating .alane { display: none !important; }
+.ctab-lane-owned, .ctab-lane-owned:hover { opacity: .5; cursor: default !important; border-color: #444 !important; }
+.composition-part-strips .part-strip-mute:disabled { opacity: .5; cursor: default; }
