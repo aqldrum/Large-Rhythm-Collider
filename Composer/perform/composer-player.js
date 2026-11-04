@@ -6,6 +6,13 @@
 // cycle looping from the moment Perform was pressed.
 //
 //   graph    each part → its gain bus (a level per part) → master gain → limiter (DynamicsCompressor) → destination
+//            With `mix` (MIX_MASTER_ORDER.md; the Composer's controller passes it, Cosmos doesn't): each part's bus (its
+//            level fader) → its trim → its high-pass (chords, comp, inner) → its duck gain (the same three) → master
+//            gain → the master chain (composer-master.js: 'knock', the rack; 'classic', today's compressor; 'none')
+//            → destination. Audio only (M6): MIDI velocity is the note's × the level fader, as before; the trims,
+//            filters, duck and master never reach it.
+//   duck     (mix only, M3) every kick the drums book also books a dip on the duck gains, from the kick's own clock
+//            time (composer-master.js duckPoints): down 3 dB over the 5 ms before it, back over 120 ms. No detector.
 //   voices   a note with `retrigger` starts a voice of its part's sound (`note` role, its velocity the peak). The notes
 //            after it without `retrigger` are a CHAIN: the same voice, held, moved to each one's pitch with
 //            setFrequency at its time (in the chords, and the comp in chords, a chain is one voice's: one lane's when
@@ -39,6 +46,7 @@ import { planVoice } from '../../Audio/voices/plan.js';
 import { createInstrumentVoice } from '../../Audio/voices/voice.js';
 import * as drumLibrary from '../../Audio/drums/index.js';
 import { midiNotesOf, zonedPart } from './composer-midi.js';
+import { createMasterChain, duckPoints, MIX_STAGING, DUCK_DEFAULTS, KNOCK } from './composer-master.js';
 
 export const PLAYER_DEFAULTS = Object.freeze({ tickMs: 25, aheadSeconds: 0.15, master: 0.8, level: 0.8, release: 0.08, glide: 0.012, stopFade: 0.03, factor: 1 });
 const LIMITER = Object.freeze({ threshold: -10, knee: 6, ratio: 6, attack: 0.003, release: 0.2 });
@@ -73,25 +81,43 @@ function chainsOfUncached(part) {
 const endOf = (chain) => { const last = chain.notes[chain.notes.length - 1]; return last.time + last.duration; };
 
 /**
- * createPlayer({ ctx, destination, voices, timers, options }) → { buses, master, limiter, play(spec, getParts), stop(),
- *   tick(), setLevel(id, v), setGlide(seconds), setTimeFactor(factor), playhead(), playing }
+ * createPlayer({ ctx, destination, voices, timers, options, mix }) → { buses, master, limiter, play(spec, getParts), stop(),
+ *   tick(), setLevel(id, v), setGlide(seconds), setTimeFactor(factor), playhead(), playing, setMix(m), mix, chain, stages }
  *   destination  the AudioNode the limiter feeds (ctx.destination by default): a host routes the whole mix into its
  *            own graph here (Cosmos, next, into its gate)
+ *   mix      null (today's graph, unchanged) or { master: 'knock' | 'classic' | 'none', staging: true | false |
+ *            { trimsDb, highpassHz }, duck: true | false | { depthDb, attackMs, holdMs, recoveryMs, parts }, knock: { inputDb, … } }
+ *            (MIX_MASTER_ORDER.md). With it, `limiter` is the chain's output node (what feeds the destination).
  *   voices   { planVoice, createInstrumentVoice, getRecipe } (the library's, by default; a test may wrap them)
  *   timers   { setInterval, clearInterval } (the page's, by default). A host that drives the pulse itself passes
  *            {} (no setInterval: nothing is started) and calls the public tick() from its own scheduler.
  *   getParts () → the parts as they play now (the lab's sound, legato and on/off), read at every tick
  */
 export function createPlayer({ ctx, destination = null, voices = { planVoice, createInstrumentVoice, getRecipe }, drums: drumLib = drumLibrary, timers = globalThis, options = {}, midi = null,
-  now = () => (globalThis.performance ? performance.now() : Date.now()) } = {}) {
+  now = () => (globalThis.performance ? performance.now() : Date.now()), mix = null } = {}) {
   const o = { ...PLAYER_DEFAULTS, ...options };
-  const limiter = ctx.createDynamicsCompressor();
-  for (const [k, v] of Object.entries(LIMITER)) limiter[k].value = v;
-  limiter.connect(destination ?? ctx.destination);
   const master = ctx.createGain();
   master.gain.value = o.master;
-  master.connect(limiter);
-  const buses = {}, live = new Set();
+  // the end of the graph: today's compressor, or (mix) the master chain
+  let limiter, chain = null;
+  const mixState = mix ? {
+    master: mix.master ?? 'knock',
+    staging: mix.staging === false ? false : true,
+    table: typeof mix.staging === 'object' && mix.staging ? { ...MIX_STAGING, ...mix.staging } : MIX_STAGING,
+    duck: mix.duck === false ? false : true,
+    duckOpts: { ...DUCK_DEFAULTS, ...(typeof mix.duck === 'object' && mix.duck ? mix.duck : {}) },
+  } : null;
+  if (mixState) {
+    chain = createMasterChain(ctx, { mode: mixState.master, ...(mix.knock ? { knock: { ...KNOCK, ...mix.knock } } : {}) });
+    master.connect(chain.input);
+    limiter = chain.output;
+  } else {
+    limiter = ctx.createDynamicsCompressor();
+    for (const [k, v] of Object.entries(LIMITER)) limiter[k].value = v;
+    master.connect(limiter);
+  }
+  limiter.connect(destination ?? ctx.destination);
+  const buses = {}, stages = {}, live = new Set();
   let spec = null, getParts = null, getDrums = null, loopStart = 0, timer = null, playing = false;
   const samples = new Map();   // url → AudioBuffer once loaded (null while loading or failed)
   // booked: the clock up to which everything is booked; bookedSpec: the same instant in spec time
@@ -117,10 +143,56 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
   const specAt = (t) => { const g = segAtClock(t); return g.s0 + (t - g.t0) / g.factor; };
   const clockOf = (s) => { const g = segAtSpec(s); return g.t0 + (s - g.s0) * g.factor; };
 
+  const dbGain = (db) => Math.pow(10, db / 20);
+  /** a part's staging (mix only): its trim, high-pass and duck gain, after its level fader */
+  const stageOf = (id, bus) => {
+    const t = mixState.table, trim = ctx.createGain();
+    trim.gain.value = mixState.staging ? dbGain(t.trimsDb?.[id] ?? 0) : 1;
+    bus.connect(trim);
+    let last = trim, hpf = null, duck = null;
+    if (t.highpassHz?.[id]) {
+      hpf = ctx.createBiquadFilter();
+      hpf.type = 'highpass'; hpf.Q.value = Math.SQRT1_2;
+      hpf.frequency.value = mixState.staging ? t.highpassHz[id] : 10;
+      last.connect(hpf); last = hpf;
+    }
+    if (mixState.duckOpts.parts.includes(id)) { duck = ctx.createGain(); duck.gain.value = 1; last.connect(duck); last = duck; }
+    last.connect(master);
+    return { trim, hpf, duck };
+  };
   const busOf = (id) => {
-    if (!buses[id]) { const g = ctx.createGain(); g.gain.value = o.level; g.connect(master); buses[id] = g; }
+    if (!buses[id]) {
+      const g = ctx.createGain(); g.gain.value = o.level; buses[id] = g;
+      if (mixState) stages[id] = stageOf(id, g); else g.connect(master);
+    }
     return buses[id];
   };
+  // the duck (mix only): the kicks' clock times still shaping it, how far (spec time) kicks have been looked for, and
+  // the clock up to which its points are booked
+  let duckKicks = [], duckScanned = 0, duckBooked = 0;
+  const duckGains = () => Object.values(stages).map((s) => s.duck).filter(Boolean);
+  /** book the duck's points up to clock time `horizon`, looking for kicks a little past it (the dip starts before one) */
+  const bookDuck = (drums, until, horizon, T) => {
+    const d = mixState.duckOpts, pad = (d.attackMs / 1000 + 0.002) / o.factor;
+    if (drums?.enabled && drums.kit?.kick) {
+      for (let c = Math.floor(duckScanned / T); c * T < until + pad; c++) {
+        for (const hit of drums.hits) {
+          if (hit.voice !== 'kick') continue;
+          const S = c * T + hit.time;
+          if (S >= duckScanned && S < until + pad) duckKicks.push(clockOf(S));
+        }
+      }
+    }
+    duckScanned = Math.max(duckScanned, until + pad);
+    const keepAfter = duckBooked - (d.holdMs + d.recoveryMs) / 1000 - 0.01;
+    duckKicks = duckKicks.filter((k) => k >= keepAfter).sort((a, b) => a - b);
+    if (mixState.duck) {
+      const points = duckPoints(duckKicks, duckBooked, horizon, d);
+      for (const g of duckGains()) for (const [t, v] of points) g.gain.linearRampToValueAtTime(v, t);
+    }
+    duckBooked = horizon;
+  };
+  const resetDuck = () => { const t = ctx.currentTime; for (const g of duckGains()) { g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(1, t); } };
   const startVoice = (sound, hz, when, velocity, duration, destination) => {
     const recipe = voices.getRecipe(normalizeNoteInstrumentId(sound), 'note');
     const timing = { attack: 0.01, decay: 0.12, sustain: 0.7, release: o.release, peak: velocity, duration };
@@ -209,11 +281,12 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
       for (; nextTick < until; nextTick += dt) m.clockTick(msOf(clockOf(nextTick)));
     }
     holding = holding.filter((h) => !advance(h, until));
+    if (mixState) bookDuck(drums, until, horizon, T);
     booked = horizon; bookedSpec = until;
   }
 
   return {
-    buses, master, limiter,
+    buses, master, limiter, chain, stages,
     get playing() { return playing; },
     /** start looping `spec` now (a little ahead, so the first notes are not late), at the current time factor;
      *  theDrums () → the drums as they play now (the spec's own by default), read at every tick */
@@ -224,6 +297,7 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
       busOf('drums');
       loopStart = ctx.currentTime + 0.05; booked = loopStart; bookedSpec = 0; playing = true;
       segments = [{ t0: loopStart, s0: 0, factor: o.factor }]; holding = []; midiHeld = []; nextTick = 0;
+      if (mixState) { resetDuck(); duckKicks = []; duckScanned = 0; duckBooked = ctx.currentTime; }
       master.gain.cancelScheduledValues(ctx.currentTime);
       master.gain.setValueAtTime(local ? o.master : 0, ctx.currentTime);
       if (midi?.active) midi.clockStart(msOf(loopStart));
@@ -238,9 +312,26 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
       const now = ctx.currentTime;
       for (const v of live) { try { v.handle.fadeOut(now, o.stopFade); } catch {} try { v.handle.stop(now + o.stopFade + 0.02); } catch {} }
       live.clear(); holding = [];
+      if (mixState) { resetDuck(); duckKicks = []; }
       midiHeld = [];
       midi?.allOff();
     },
+    /** the mix, live (mix only; MIX_MASTER_ORDER.md): { master: 'knock' | 'classic' | 'none', staging: bool, duck: bool }.
+     *  The level faders, and so the MIDI, are untouched. */
+    setMix({ master: m = null, staging = null, duck = null } = {}) {
+      if (!mixState) return;
+      const t = ctx.currentTime;
+      if (m != null && chain) { chain.setMode(m); mixState.master = chain.mode; }
+      if (staging != null) {
+        mixState.staging = !!staging;
+        for (const [id, s] of Object.entries(stages)) {
+          s.trim.gain.setTargetAtTime(mixState.staging ? dbGain(mixState.table.trimsDb?.[id] ?? 0) : 1, t, 0.02);
+          if (s.hpf) s.hpf.frequency.setTargetAtTime(mixState.staging ? mixState.table.highpassHz[id] : 10, t, 0.02);
+        }
+      }
+      if (duck != null) { mixState.duck = !!duck; if (!mixState.duck) resetDuck(); }
+    },
+    get mix() { return mixState ? { master: mixState.master, staging: mixState.staging, duck: mixState.duck } : null; },
     setLevel(id, value) { levels[id] = Math.max(0, Number(value) || 0); const b = busOf(id); b.gain.setTargetAtTime(Math.max(0, value), ctx.currentTime, 0.02); },
     /** M7: the voices heard or not (the master), the MIDI going on either way */
     localSound(on) { local = !!on; master.gain.setTargetAtTime(local ? o.master : 0, ctx.currentTime, 0.02); },

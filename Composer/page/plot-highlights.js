@@ -17,6 +17,9 @@
 // `from`: the chord voice it takes its tone from) sounds on the stroke's onset with another onset's tone, so it lights
 // its SOURCE onset instead, as a ring (hollow; `rings`), the way the MIDI clip's substitutes are marked in the matrix.
 // Its source's tick is the chord voice's (`sourceTicks`), so it is found among the plotted onsets like any note.
+// A SNAPPED tone (COMP_GATE_ORDER.md G3, G8: `snapped`, `from` its own onset, `fromTick` that onset's tick) sounds on its
+// stroke with its own tone, so it lights its OWN onset (a dot, as a strummed tone) and a thin tick from there to its stroke
+// (`snaps`: [{ from, to }] dot indices); a borrowed tone stays ringed.
 //
 // MIDI targets (phase B): a WINDOW composition loops on a window of the row's cycle (knobs.cycleSeconds the loop,
 // knobs.rowCycleSeconds the row's cycle; target.js' window share W = loop / row cycle), from the phase. Its playhead
@@ -64,8 +67,9 @@ export function sourceTicks(chordsPart) {
   for (const n of chordsPart?.notes ?? []) if (!m.has(n.node)) m.set(n.node, n.tick);
   return m;
 }
-/** the tick a note lights: its own, or a borrowed tone's source's (null when the source isn't among the chord voices) */
-export const litTickOf = (n, sources) => (n.borrowed ? sources.get(n.from) ?? null : n.tick);
+/** the tick a note lights: its own, a snapped tone's own onset's (phase P), or a borrowed tone's source's (null when the
+ *  source isn't among the chord voices) */
+export const litTickOf = (n, sources) => (n.borrowed ? sources.get(n.from) ?? null : n.snapped ? n.fromTick ?? null : n.tick);
 
 /**
  * The Composer's selections as a lit-node layer a part.
@@ -75,14 +79,16 @@ export const litTickOf = (n, sources) => (n.borrowed ? sources.get(n.from) ?? nu
  * → null when there is nothing to light (no spec, a refusal, or a spec of another rhythm), else
  *   { grid, n, cycleSeconds, phaseX, share (the loop's share of the row's cycle: loopShare), plot, missed, total,
  *     parts: { [id]: { id, color, enabled, indices (sorted, unique), notes: [{ index, time, end, ring? }] (by time),
- *       rings (sorted, unique: the borrowed tones' source onsets not lit otherwise; drawn hollow) } },
+ *       rings (sorted, unique: the borrowed tones' source onsets not lit otherwise; drawn hollow), snaps ([{ from, to }]: a
+ *       snapped tone's own onset and its stroke's, unique, by from then to; only when there are any: phase P) } },
  *     arrangement: { voicing ('led' | 'close'), voicingStats (the voicing pass's, or null), bass: { density, lock (the one
  *       that ran), asked (the lock asked), refused (why it fell back, or null), (hits, missedHits: a lock's; walkFill:
  *       the bars a walk can't fill; phase L) }, clave (phase N, P31: the comp's clave as it plays, a reference: { id, from,
  *       read, steps, span, pattern, patterns?, relation, strokes (how many), partner: { pattern, patterns?, strokes, shared },
  *       compDensity?, share?, tier?, reread (the bars a chord edit re-read the same clave in: `composed`, Compose's own
  *       spec, given; else none), picked (`picked`: a clave chosen in the window) }; absent in notes), strum (phase O: the
- *       comp's { tolerance, borrow, tones (a stroke's, mean), singles (the single-note strokes' share) }; absent in notes) } (BASS_VOICING_ORDER.md phase H: what the trace's caption says the
+ *       comp's { tolerance, borrow, tones (a stroke's, mean), singles (the single-note strokes' share) }; phase P: compose.js
+ *       strumSetting's shape { gate, tolerance, snap, roll, borrow }, and `moved` (Snap's compMovedMs) when it snaps; absent in notes) } (BASS_VOICING_ORDER.md phase H: what the trace's caption says the
  *       chords, the bass and (phase N) the comp play as) }
  *   `missed` counts notes or strokes whose tick is not a plotted onset (never, for a matching spec).
  */
@@ -106,17 +112,20 @@ export function highlightsOf({ spec, parts = null, drums = undefined, composed =
   const byId = Object.fromEntries((parts || spec.parts).map((p) => [p.id, p]));
   const sources = sourceTicks(byId.chords);
   const lane = (id, color, enabled, items, litFor) => {
-    const notes = [], seen = new Set(), ringed = new Set();
+    const notes = [], seen = new Set(), ringed = new Set(), snaps = new Map();
     for (const it of items) {
       total++;
       const tick = litTickOf(it, sources), index = tick == null ? -1 : indexOfTick(plot.ticks, tick);
       if (index < 0) { missed++; continue; }
       if (it.borrowed) { ringed.add(index); notes.push({ index, time: it.time, end: it.time + litFor(it), ring: true }); continue; }
+      // phase P: a snapped tone's tick, from its own onset to its stroke's
+      if (it.snapped) { const to = indexOfTick(plot.ticks, it.tick); if (to >= 0 && to !== index) snaps.set(`${index}:${to}`, { from: index, to }); }
       seen.add(index);
       notes.push({ index, time: it.time, end: it.time + litFor(it) });
     }
     notes.sort((a, b) => a.time - b.time || a.index - b.index);
-    out[id] = { id, color, enabled, indices: [...seen].sort((a, b) => a - b), notes, rings: [...ringed].filter((i) => !seen.has(i)).sort((a, b) => a - b) };
+    const ticks = [...snaps.values()].sort((a, b) => a.from - b.from || a.to - b.to);
+    out[id] = { id, color, enabled, indices: [...seen].sort((a, b) => a - b), notes, rings: [...ringed].filter((i) => !seen.has(i)).sort((a, b) => a - b), ...(ticks.length ? { snaps: ticks } : {}) };
   };
   for (const id of PART_IDS) {
     const p = byId[id];
@@ -134,7 +143,7 @@ export function highlightsOf({ spec, parts = null, drums = undefined, composed =
     // phase N (P31): the comp's clave as it plays (a clave picked in the window, its tier, the bars re-read under new chords)
     ...(spec.clave ? { clave: claveRefOf(spec.clave, composed?.clave ?? null, picked) } : {}),
     // phase O (Amendment 3, P36): the comp's tolerance and borrowing as it plays, and what the strokes found
-    ...(spec.clave ? { strum: { ...compStrumOf(spec), tones: spec.stats?.compTones ?? null, singles: spec.stats?.compSingles ?? null } } : {}) };
+    ...(spec.clave ? { strum: { ...compStrumOf(spec), tones: spec.stats?.compTones ?? null, singles: spec.stats?.compSingles ?? null, ...(spec.stats?.compMovedMs ? { moved: { ...spec.stats.compMovedMs } } : {}) } } : {}) };
   return { grid: plot.grid, n: plot.n, cycleSeconds: T, phaseX: phase[0] / phase[1], share: loopShare(spec), plot, parts: out, missed, total, arrangement };
 }
 

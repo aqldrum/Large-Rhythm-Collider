@@ -107,12 +107,16 @@
 //               +3.2¢ · slot 3"; an exact root "root · slot 3"), the tone in the title; Compose's own over drums whose kick
 //               it didn't cover says it covers the kick as they play
 //
-// The comp's tolerance (BASS_VOICING_ORDER.md Amendment 3, phase O; DESIGN_NOTES "The comp's tolerance (phase O)"):
-//   comp cell   under the density row, a Tolerance select (±⅛ | ±¼ | ±½ | ±1 slot: how far either side of a stroke an
-//               onset still counts as its chord) and a "fill from the chords" toggle (borrowing, off by default), both
-//               the controller's setCompStrum (live, one undo step each), and beside them what the strokes found ("2.1
-//               tones a stroke · 30 % single"); the cell's line says the bar's tones a stroke (with borrowing, the share
-//               from the row, as before); the dots and the MIDI comp zone are what plays
+// The comp's window (COMP_GATE_ORDER.md G8, phase P; BASS_VOICING_ORDER.md Amendment 3, phase O; DESIGN_NOTES "The
+// comp's gate and Snap (phase P)"):
+//   comp cell   under the density row, Tight (15 | 25 | 40 ms: how far either side of a stroke a tone may sound and still
+//               be heard as its chord; 25 Compose's), "snap to stroke" (the tones gathered within ±¼ slot, struck on the
+//               stroke) with its Roll (block | 8 | 15 ms, shown while Snap is on) and "fill from the chords" (borrowing,
+//               off by default), each the controller's setCompStrum (live, one undo step each), and beside them what
+//               the strokes found (G6: "25 ms gate: 1.0 tones a stroke, 100 % single notes"; the gate as heard when the
+//               tempo isn't the seed's); Details adds "Old window (slots)" (off | ±⅛ | ±¼ | ±½ | ±1: Amendment 3's
+//               window, ±½ its pin); the cell's line says the bar's tones a stroke (with borrowing, the share from the
+//               row, as before); the dots and the MIDI comp zone are what plays
 
 import { soundChoices, drumModeChoices, DRUM_LAB_VOICES, TEMPO_LIMITS, ARP_CHOICES } from '../perform/composer-controller.js';
 import { KNOB_FIELDS, TABLE_FIELD, fieldValue, refusalText, readoutItems, knobChosen, decisionRows, rootGroups, strayRootOption, chordGot, progressionNote,
@@ -171,9 +175,27 @@ const COMP_DENSITY_TITLES = Object.freeze({ 'sparse-med': 'Compose\'s own: a cla
 /** phase O (Amendment 3, P33): the comp's tolerances in the window's words, and their titles */
 export const COMP_TOLERANCE_LABELS = Object.freeze({ 0.125: '±⅛ slot', 0.25: '±¼ slot', 0.5: '±½ slot', 1: '±1 slot' });
 const COMP_TOLERANCE_TITLES = Object.freeze({ 0.125: 'tight: only onsets almost with the stroke join its chord (mostly single notes)', 0.25: 'the window before Amendment 3',
-  0.5: 'Compose\'s own (Amendment 3): onsets within half a slot of the stroke join its chord', 1: 'wide: a slot either side, so a stroke can roll its chord across two slots' });
+  0.5: 'Compose\'s own from Amendment 3 to phase P: onsets within half a slot of the stroke join its chord', 1: 'wide: a slot either side, so a stroke can roll its chord across two slots' });
 /** phase O (P36): what the comp's strokes found, in the window's words ("2.1 tones a stroke · 30 % single") */
 export const strumReadout = (tones, singles) => (tones == null ? '' : `${tones.toFixed(1)} tones a stroke · ${Math.round(100 * (singles ?? 0))} % single`);
+/** phase P (COMP_GATE_ORDER.md G8): the gate's choices, Snap's rolls, in the window's words, and their titles */
+export const COMP_GATE_LABELS = Object.freeze({ 15: '15 ms', 25: '25 ms', 40: '40 ms' });
+const COMP_GATE_TITLES = Object.freeze({ 15: 'only tones within 15 ms of the stroke join its chord (heard at the seed tempo)', 25: 'Compose\'s own (Avery, 2026-11-03): tones within 25 ms of the stroke join its chord, so a chord is heard as one',
+  40: 'tones within 40 ms of the stroke join its chord: the loosest that still reads as one strike' });
+export const COMP_ROLL_LABELS = Object.freeze({ 0: 'block', 8: '8 ms', 15: '15 ms' });
+/** phase P (G6, G8): the comp's caption — "25 ms gate: 1.0 tones a stroke, 100 % single notes" (· "heard as 50 ms at 60
+ *  BPM" when the tempo isn't the seed's), "Snap (±¼ slot): 1.7 tones a stroke, tones moved up to 114 ms", the old window
+ *  "±½ slot: 2.1 tones a stroke · 30 % single"; '' before a Compose. `st` the controller's compStrumOf() */
+export function strumCaption(st) {
+  if (!st || st.tones == null) return '';
+  const p = st.playing ?? st, mean = `${st.tones.toFixed(1)} tones a stroke`;
+  if (p.snap) return `Snap (±¼ slot): ${mean}, tones moved up to ${Math.round(st.moved?.max ?? 0)} ms${p.roll > 0 ? ` · rolled ${p.roll} ms` : ''}`;
+  if (p.gate != null) {
+    const h = st.heard && Math.abs(st.heard.gate - p.gate) > 0.05 ? ` · heard as ${+st.heard.gate.toFixed(1)} ms at ${+st.heard.tempo.toFixed(1)} BPM` : '';
+    return `${p.gate} ms gate: ${mean}, ${Math.round(100 * (st.singles ?? 0))} % single notes${h}`;
+  }
+  return `${COMP_TOLERANCE_LABELS[p.tolerance] ?? `±${p.tolerance} slot`}: ${strumReadout(st.tones, st.singles)}`;
+}
 /** phase N (P29): a tone's cents off its chord's root, signed and to a tenth ("+3.2¢"; an exact root: "") */
 export const rootCentsText = (cents) => { const v = Math.round(cents * 10) / 10; return v ? `${v > 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}¢` : ''; };
 /** phase N (P29): a Roots runner-up's note by its cents off its chord's root, then its slot ("root +3.2¢ · slot 3", "root ·
@@ -1230,7 +1252,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     });
     const legend = c.read === 'frame' ? `● plays now · C Compose's · the frame's claves by score, in the density's tier (a layer's strikes in frame, each bar its own pattern${c.reranked ? '; ranked again over the chords as they play' : ''}), then the curated, landed in frame only · score: recurrence, density, fit`
       : '● plays now · C Compose\'s · the mined claves ranked, then the curated · score: recurrence, density, fit';
-    return [line, density, strumRow(), detail, rows.length ? el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: legend }) : null,
+    return [line, density, ...strumRow(), detail, rows.length ? el('div', { className: `ctab-muted ctab-legend ${DETAIL}`, textContent: legend }) : null,
       rows.length ? el('div', { className: 'ctab-alts ctab-clave-alts' }, ...rows) : null, rows.length ? auditionBar() : null].filter(Boolean);
   }
   /**
@@ -1251,25 +1273,45 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       el('span', { className: `ctab-muted ctab-comp-tier${said.amber ? ' amber' : ''}`, textContent: said.text, title: said.title }));
   }
   /**
-   * Phase O (Amendment 3, rules 15–16, P33–P37): the comp's tolerance — a select (±⅛ | ±¼ | ±½ | ±1 slot: how far
-   * either side of a clave stroke an onset still counts as its chord) and a "fill from the chords" toggle (borrowing the
-   * classes the row doesn't sound there from the chord voices, as before Amendment 3), both live (setCompStrum, one undo
-   * step each), and beside them what the strokes found ("2.1 tones a stroke · 30 % single"). → an element | null (a comp
-   * in notes)
+   * Phase P (COMP_GATE_ORDER.md G8; phase O before it): the comp's window — Tight, a select (15 | 25 | 40 ms: how far either
+   * side of a clave stroke a tone may sound and still be heard as its chord; Compose's 25), a "snap to stroke" toggle (the
+   * tones gathered within ±¼ slot and struck on the stroke) and, while it is on, its Roll (block | 8 | 15 ms, low to high),
+   * "fill from the chords" (borrowing the classes the row doesn't sound there from the chord voices) and the caption
+   * (strumCaption: G6's words); under Details, "Old window (slots)" (off | ±⅛ | ±¼ | ±½ | ±1 slot: Amendment 3's window, ±½
+   * its old default and pin). Each live (setCompStrum, one undo step each). → [element] (none: a comp in notes)
    */
   function strumRow() {
     const st = core.compStrumOf();
-    if (!st) return null;
-    const sel = el('select', { className: 'ctab-comp-tolerance', title: 'the comp\'s tolerance: how far either side of a clave stroke an onset may sound and still be part of its chord (live, no re-compose)' },
-      ...st.tolerances.map((x) => el('option', { value: String(x), textContent: COMP_TOLERANCE_LABELS[x] ?? `±${x} slot`, title: COMP_TOLERANCE_TITLES[x] ?? '' })));
-    sel.value = String(st.tolerance);
-    sel.addEventListener('change', () => doEdit(() => core.setCompStrum({ tolerance: Number(sel.value) })));
+    if (!st) return [];
+    const mode = st.snap ? 'snap' : st.tolerance != null ? 'slots' : 'gate';
+    const tight = el('select', { className: `ctab-comp-gate${mode === 'gate' ? '' : ' off'}`, title: mode === 'gate' ? 'the comp\'s gate: how far either side of a clave stroke a tone may sound and still be part of its chord, in ms heard at the seed tempo (live, no re-compose)'
+      : `the gate doesn't play while ${mode === 'snap' ? 'Snap gathers the chord' : 'the old window (Details) plays'}: choosing one plays it instead` },
+      ...st.gates.map((x) => el('option', { value: String(x), textContent: COMP_GATE_LABELS[x] ?? `${x} ms`, title: COMP_GATE_TITLES[x] ?? '' })));
+    tight.value = String(st.gate ?? 25);
+    tight.addEventListener('change', () => doEdit(() => core.setCompStrum({ gate: Number(tight.value) })));
+    const snap = toggle('snap to stroke', st.snap, st.snap ? 'on: every chord tone the row sounds within ¼ slot of the stroke is struck on the stroke itself (a tone keeps its pitch, not its time; the plot ticks it to its stroke); click for the gate (live, no re-compose)'
+      : 'off: each tone plays at its own onset, inside the gate; click to gather the chord tones within ¼ slot and strike them together on the stroke (live, no re-compose)', () => doEdit(() => core.setCompStrum({ snap: !st.snap })));
+    snap.classList.add('ctab-comp-snap');
+    let roll = null;
+    if (st.snap) {
+      roll = el('select', { className: 'ctab-comp-roll', title: 'Snap\'s roll: a quick downstroke, low to high, the stroke\'s own tone first (block: struck together)' },
+        ...st.rolls.map((x) => el('option', { value: String(x), textContent: COMP_ROLL_LABELS[x] ?? `${x} ms` })));
+      roll.value = String(st.roll);
+      roll.addEventListener('change', () => doEdit(() => core.setCompStrum({ roll: Number(roll.value) })));
+    }
     const fill = toggle('fill from the chords', st.borrow, st.borrow ? 'on: a class the row doesn\'t sound near the stroke is borrowed from the chord voices, so every stroke sounds the full chord (the comp before Amendment 3); click for only what the row sounds (live, no re-compose)'
       : 'off (Compose\'s own, Amendment 3): a stroke plays only what the row sounds near it, down to a single note; click to borrow the missing classes from the chord voices (live, no re-compose)', () => doEdit(() => core.setCompStrum({ borrow: !st.borrow })));
     fill.classList.add('ctab-comp-borrow');
-    const said = strumReadout(st.tones, st.singles);
-    return el('div', { className: 'ctab-row ctab-comp-strum-row' }, el('span', { className: 'ctab-muted', textContent: 'tolerance' }), sel, fill,
-      said ? el('span', { className: 'ctab-muted ctab-comp-strum', textContent: `${said}${st.borrow ? ' · filled from the chords' : ''}`, title: `the comp's ${st.strokes ?? 0} stroke${st.strokes === 1 ? '' : 's'}: on average ${st.tones.toFixed(2)} tones each, ${Math.round(100 * (st.singles ?? 0))} % of them a single note${st.borrow ? ' (the borrowed tones counted)' : ' (only what the row sounds within the tolerance)'}` }) : null);
+    const said = strumCaption(st);
+    const row = el('div', { className: 'ctab-row ctab-comp-strum-row' }, el('span', { className: 'ctab-muted', textContent: 'tight' }), tight, snap, roll, fill,
+      said ? el('span', { className: 'ctab-muted ctab-comp-strum', textContent: `${said}${st.borrow ? ' · filled from the chords' : ''}`, title: `the comp's ${st.strokes ?? 0} stroke${st.strokes === 1 ? '' : 's'}: on average ${st.tones.toFixed(2)} tones each, ${Math.round(100 * (st.singles ?? 0))} % of them a single note${st.borrow ? ' (the borrowed tones counted)' : ''}${st.moved ? `; the snapped tones moved ${st.moved.mean.toFixed(0)} ms on average, ${st.moved.max.toFixed(0)} ms at most` : ''}` }) : null);
+    // Details: the old window in slots (Amendment 3's; ±½ is the comp before phase P)
+    const old = el('select', { className: 'ctab-comp-tolerance', title: 'the old window: how far either side of a clave stroke an onset may sound and still be part of its chord, in slots (each tone at its own time: an arpeggio on slow rows); off, the gate plays' },
+      el('option', { value: 'off', textContent: 'off', title: 'the gate (or Snap) plays' }),
+      ...st.tolerances.map((x) => el('option', { value: String(x), textContent: COMP_TOLERANCE_LABELS[x] ?? `±${x} slot`, title: COMP_TOLERANCE_TITLES[x] ?? '' })));
+    old.value = st.tolerance != null ? String(st.tolerance) : 'off';
+    old.addEventListener('change', () => doEdit(() => core.setCompStrum({ tolerance: old.value === 'off' ? null : Number(old.value) })));
+    return [row, el('div', { className: `ctab-row ctab-comp-old-row ${DETAIL}` }, el('span', { className: 'ctab-muted', textContent: 'Old window (slots)' }), old)];
   }
   /** phase N (P31): the tier as the clave plays it, in words → { text, title, amber } */
   function tierWords(d) {

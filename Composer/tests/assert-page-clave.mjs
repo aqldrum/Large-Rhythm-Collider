@@ -22,6 +22,10 @@
 //     the comp's Density select (live, one undo step, equal to a Compose given that compDensity both ways, kept on a
 //     re-compose; a picked clave goes with a change, one undo restoring both); the tier said in the cell and the caption
 //     (a picked clave, the bars re-read); 16:12:9's sparse falling back to medium, in amber
+//   • phase P (COMP_GATE_ORDER.md G8): the phase O block pinned at ±½ (`compTolerance: 0.5`, the default before it); the comp
+//     cell's Tight select (15 | 25 | 40 ms, 25 Compose's), "snap to stroke" and its Roll (shown while Snap is on), the Old
+//     window under Details; each live, one undo step, a Compose given the same overrides; the caption in G6's words (the
+//     gate as heard at another tempo); the plot's snapped ticks; the export and a re-compose keep them
 //   node Composer/tests/assert-page-clave.mjs
 import { makeDom, installGlobals } from './dom-stub.mjs';
 import { siteRhythm } from './site-scripts.mjs';
@@ -443,21 +447,23 @@ console.log('\n— phase N: the picker re-ranked, the comp\'s density (768:769; 
   await core.setCompDensity('sparse-med');
 }
 
-console.log('\n— phase O: the comp\'s tolerance and "fill from the chords" (768:769; 11:9:7:5)');
+console.log('\n— phase O: the comp\'s tolerance and "fill from the chords" (768:769; 11:9:7:5), pinned at ±½ (phase P\'s old window under Details)');
 {
   const FL = [768, 769], lane = (id) => qa(left, '.ctab-lane').find((l) => l.dataset.part === id);
   setRhythm(FL, T);
   await core.setCompDensity('sparse-med');
+  // phase P (COMP_GATE_ORDER.md G4): ±½ slot was Compose's default before it; `compTolerance: 0.5` is that comp byte for byte
+  await core.setCompStrum({ tolerance: 0.5 });
   core.setSeed(S().input.seed);   // a fresh Compose at the default density
   q(left, '.ctab-go').click(); await settle();
   tab.selectCell('comp', 0);
   const tol = () => q(inspector, '.ctab-comp-tolerance'), fill = () => q(inspector, '.ctab-comp-borrow'), said = () => q(inspector, '.ctab-comp-strum')?.textContent;
-  const readout = (s) => `${s.stats.compTones.toFixed(1)} tones a stroke · ${Math.round(100 * s.stats.compSingles)} % single`;
+  const readout = (s) => `±${({ 0.125: '⅛', 0.25: '¼', 0.5: '½', 1: '1' })[s.input.overrides.compTolerance]} slot: ${s.stats.compTones.toFixed(1)} tones a stroke · ${Math.round(100 * s.stats.compSingles)} % single`;
   const asked = (o) => compose(FL, T, { seed: S().input.seed, worker: S().table === 'full', overrides: { ...S().composed.input.overrides, ...o } });
   const sameComp = (want) => J(partOf('comp')) === J(partOf('comp', want)) && J(S().spec.stats.compTones) === J(want.stats.compTones) && J(S().spec.stats.compSingles) === J(want.stats.compSingles)
     && J(S().drums.hits) === J(arrangeDrums(want, S().drumOptions).hits);
-  check(`the comp cell: Tolerance ±⅛ | ±¼ | ±½ | ±1 slot (±½ chosen), "fill from the chords" off, and what the strokes found ("${said()}")`, !!tol() && qa(tol(), 'option').map((o) => o.textContent).join('|') === '±⅛ slot|±¼ slot|±½ slot|±1 slot'
-    && tol().value === '0.5' && !!fill() && !fill().classList.contains('on') && said() === readout(S().spec) && said() === '2.1 tones a stroke · 30 % single');
+  check(`the comp cell: Details' Old window off | ±⅛ | ±¼ | ±½ | ±1 slot (±½ chosen), "fill from the chords" off, and what the strokes found ("${said()}")`, !!tol() && qa(tol(), 'option').map((o) => o.textContent).join('|') === 'off|±⅛ slot|±¼ slot|±½ slot|±1 slot'
+    && tol().value === '0.5' && !!fill() && !fill().classList.contains('on') && said() === readout(S().spec) && said() === '±½ slot: 2.1 tones a stroke · 30 % single' && S().composed.input.overrides.compTolerance === 0.5);
   // the bass on the Clave lock: it reads the strokes, which a tolerance change doesn't move
   await core.setBass({ lock: 'clave' }); tab.selectCell('comp', 0);
   const bass0 = J(partOf('bass')), strokes0 = J(partOf('comp').strokes), perc0 = J(S().drums.hits.filter((h) => h.voice === 'perc')), n0 = composes, u0 = S().undo.length;
@@ -500,8 +506,67 @@ console.log('\n— phase O: the comp\'s tolerance and "fill from the chords" (76
   q(left, '.ctab-go').click(); await settle();
   tab.selectCell('comp', 0);
   const line = q(inspector, '.ctab-comp-line');
-  check(`11:9:7:5: "${said()}", the cell's line "${line?.textContent}" (the dots what plays: one a stroke)`, said() === '1.0 tones a stroke · 100 % single' && /1\.0 tones a stroke/.test(line?.textContent ?? '')
+  check(`11:9:7:5: "${said()}", the cell's line "${line?.textContent}" (the dots what plays: one a stroke)`, said() === '±½ slot: 1.0 tones a stroke · 100 % single' && /1\.0 tones a stroke/.test(line?.textContent ?? '')
     && qa(lane('comp').querySelectorAll('.ctab-cell').find((c) => c.dataset.bar === '0'), '.ctab-dot').length === partOf('comp').notes.filter((x) => x.bar === 0).length);
+}
+
+console.log('\n— phase P: the comp\'s gate, Snap and its roll, the old window under Details (8:7:6:5; 768:784)');
+{
+  const PL = [8, 7, 6, 5], PT = 4;
+  setRhythm(PL, PT);
+  await core.setCompStrum({ tolerance: null, borrow: false });
+  core.setSeed(1);
+  q(left, '.ctab-go').click(); await settle();
+  tab.selectCell('comp', 0);
+  const gate = () => q(inspector, '.ctab-comp-gate'), snap = () => q(inspector, '.ctab-comp-snap'), roll = () => q(inspector, '.ctab-comp-roll'), old = () => q(inspector, '.ctab-comp-tolerance');
+  const said = () => q(inspector, '.ctab-comp-strum')?.textContent;
+  const asked = (o) => compose(PL, PT, { seed: S().input.seed, worker: S().table === 'full', overrides: { ...Object.fromEntries(Object.entries(S().composed.input.overrides).filter(([k]) => !/^comp(Gate|Snap|Roll|Tolerance|Borrow)$/.test(k))), ...o } });
+  const sameComp = (want) => J(partOf('comp')) === J(partOf('comp', want)) && J(S().spec.stats.compTones) === J(want.stats.compTones) && J(S().spec.stats.compMovedMs) === J(want.stats.compMovedMs)
+    && J(S().drums.hits) === J(arrangeDrums(want, S().drumOptions).hits);
+  check(`8:7:6:5 by default: Tight 15 | 25 | 40 ms (25 chosen), "snap to stroke" off and no Roll, the Old window off under Details; "${said()}"`, !!gate() && qa(gate(), 'option').map((o) => o.textContent).join('|') === '15 ms|25 ms|40 ms' && gate().value === '25'
+    && !snap().classList.contains('on') && !roll() && old().value === 'off' && q(inspector, '.ctab-comp-old-row').classList.contains('ctab-detail') && said() === '25 ms gate: 1.0 tones a stroke, 100 % single notes' && J(S().composed.input.overrides.compGate) === undefined);
+  const n0 = composes, u0 = S().undo.length, strokes0 = J(partOf('comp').strokes);
+  gate().value = '40'; dom.fire(gate(), 'change'); await settle();
+  check(`Tight → 40 ms: live (no Compose), one undo step, a Compose given compGate 40 ("${said()}")`, composes === n0 && S().undo.length === u0 + 1 && S().compGate === 40 && sameComp(asked({ compGate: 40 })) && gate().value === '40');
+  await click('.ctab-comp-snap');
+  const snapped = asked({ compSnap: true });
+  check(`snap to stroke: live, one more undo step, a Compose given compSnap; the Roll shows (block chosen); "${said()}"`, composes === n0 && S().undo.length === u0 + 2 && S().compSnap === true && sameComp(snapped) && snap().classList.contains('on')
+    && !!roll() && roll().value === '0' && qa(roll(), 'option').map((o) => o.textContent).join('|') === 'block|8 ms|15 ms' && gate().classList.contains('off') && said() === `Snap (±¼ slot): 1.7 tones a stroke, tones moved up to ${Math.round(snapped.stats.compMovedMs.max)} ms`);
+  const hl = tab.highlights(plotted()), snaps = hl.parts.comp.snaps ?? [];
+  const movedNotes = partOf('comp').notes.filter((x) => x.snapped && x.fromTick !== x.tick);
+  check(`the plot: each snapped tone lights its own onset with a tick to its stroke (${snaps.length} ticks), a borrowed tone none; the overlay draws them`, snaps.length > 0 && movedNotes.every((x) => snaps.some((t) => t.from === indexOfTick(plotted().compositeRhythm, x.fromTick) && t.to === indexOfTick(plotted().compositeRhythm, x.tick)))
+    && movedNotes.every((x) => hl.parts.comp.indices.includes(indexOfTick(plotted().compositeRhythm, x.fromTick))));
+  check(`the caption: "${strumDetail(hl.arrangement.strum)}"`, /^Snap \(±¼ slot\): 1\.7 tones a stroke, tones moved up to \d+ ms$/.test(strumDetail(hl.arrangement.strum)));
+  roll().value = '15'; dom.fire(roll(), 'change'); await settle();
+  check(`Roll → 15 ms: live, one more undo step, a Compose given compRoll 15 ("${said()}")`, composes === n0 && S().undo.length === u0 + 3 && S().compRoll === 15 && sameComp(asked({ compSnap: true, compRoll: 15 })) && / · rolled 15 ms$/.test(said()));
+  check('JSON export carries compSnap and compRoll (and no gate, no tolerance)', J(core.editsExport() && { s: core.editsExport().compSnap, r: core.editsExport().compRoll, g: core.editsExport().compGate, t: core.editsExport().compTolerance }) === J({ s: true, r: 15 }));
+  core.setSeed(S().input.seed);
+  q(left, '.ctab-go').click(); await settle(); tab.selectCell('comp', 0);
+  check('Compose again: Snap and its roll kept (sent as compSnap, compRoll), nothing to switch after it', composes === n0 + 1 && S().composed.input.overrides.compSnap === true && S().composed.input.overrides.compRoll === 15
+    && J(partOf('comp')) === J(partOf('comp', S().composed)) && snap().classList.contains('on') && roll().value === '15');
+  await click('.ctab-comp-snap');
+  check(`snap off: back to the gate it played before Snap (25: none kept), no Roll; "${said()}"`, S().compSnap === false && !roll() && gate().value === '25' && sameComp(asked({})) && said() === '25 ms gate: 1.0 tones a stroke, 100 % single notes');
+  await click('.ctab-undo', left);
+  check('undo: Snap rolled 15 ms again', S().compSnap === true && S().compRoll === 15 && J(partOf('comp')) === J(partOf('comp', S().composed)));
+  await click('.ctab-redo', left);
+  old().value = '0.5'; dom.fire(old(), 'change'); await settle();
+  check(`Details → Old window ±½: today's arpeggiated comp comes back (the pin: a Compose given compTolerance 0.5; "${said()}"), the gate dimmed`, S().compTolerance === 0.5 && sameComp(asked({ compTolerance: 0.5 })) && said() === '±½ slot: 2.0 tones a stroke · 0 % single' && gate().classList.contains('off'));
+  gate().value = '15'; dom.fire(gate(), 'change'); await settle();
+  check('Tight 15 ms takes the place of the old window (one undo step)', S().compTolerance === null && S().compGate === 15 && old().value === 'off' && sameComp(asked({ compGate: 15 })));
+  old().value = 'off'; dom.fire(old(), 'change'); await settle();
+  check('setCompStrum refuses two windows and a gate it doesn\'t know', (() => { try { core.setCompStrum({ gate: 25, tolerance: 0.5 }); return false; } catch (e) { return /two windows/.test(e.message); } })()
+    && (() => { try { core.setCompStrum({ gate: 30 }); return false; } catch (e) { return /15, 25, 40/.test(e.message); } })());
+  // G2: the gate as heard at the playing tempo
+  const seed = core.seedTempo();
+  core.setTempo(seed / 2); tab.selectCell('comp', 0);
+  check(`at half the seed tempo: "${said()}"`, said().endsWith(`· heard as 30 ms at ${+(seed / 2).toFixed(1)} BPM`));
+  core.resetTempo(); tab.selectCell('comp', 0);
+  check('back at the seed tempo: no "heard as"', !/heard as/.test(said()));
+  await core.setCompStrum({ gate: 25 });
+  // 768:784: real chords at 25 ms
+  setRhythm([768, 784], 8);
+  core.setSeed(1); q(left, '.ctab-go').click(); await settle(); tab.selectCell('comp', 0);
+  check(`768:784 by default: "${said()}" (real chords already together: ≥ 2.5 tones a stroke, the probe's)`, /^25 ms gate: /.test(said()) && S().spec.stats.compTones >= 2.5);
 }
 
 bridge.hideTab();

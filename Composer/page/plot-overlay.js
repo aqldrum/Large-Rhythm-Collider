@@ -7,7 +7,8 @@
 //   draw    a dark wash over the plot (the invert button left clear), then a lit-node layer a part, from
 //           plot-highlights.js: a dot in the part's colour on each of its nodes (drum strokes as squares), the selected
 //           part on top with a ring, a part that is off faint; a borrowed comp tone's source onset a hollow ring of the
-//           part's colour (`rings`; COMP_ARP_ORDER.md A4). Then a snapshot of the whole canvas.
+//           part's colour (`rings`; COMP_ARP_ORDER.md A4); a snapped comp tone a thin tick from its own onset to its
+//           stroke (`snaps`; COMP_GATE_ORDER.md G8). Then a snapshot of the whole canvas.
 //   frame   the snapshot back (one blit, however many onsets the row has), then the playhead: a line at its place on
 //           the plot, a ring on the onset under it, and a glow on each node sounding now. No dot of the row is redrawn
 //           per frame, so a 16k-onset row costs the same as 8:7:6:5.
@@ -22,16 +23,23 @@
 
 import { HIGHLIGHT_PARTS, playheadAt, playheadX, soundingAt } from './plot-highlights.js';
 
-export const OVERLAY_STYLE = Object.freeze({ wash: 'rgba(16, 16, 16, 0.62)', offAlpha: 0.25, ring: 3, glow: 6, playhead: 'rgba(255, 255, 255, 0.75)' });
+export const OVERLAY_STYLE = Object.freeze({ wash: 'rgba(16, 16, 16, 0.62)', offAlpha: 0.25, ring: 3, glow: 6, playhead: 'rgba(255, 255, 255, 0.75)', snapTick: 1 });
 /** a lit dot's radius on a view */
 export const litRadius = (view) => Math.max(2, ((view && view.dotSize) || 4) * 0.9);
 
 /** one part's lit nodes as one path: dots, or squares for the drums (the selected part ringed); `indices` defaults to
  *  all of the part's (an animation frame passes the ones landed so far). `rings` (the part's own, `h.rings`, when all of
- *  it is drawn) are drawn hollow: the borrowed comp tones' source onsets (A4) */
-export function drawLitPart(ctx, h, positions, r, ringed, indices = h.indices, rings = indices === h.indices ? h.rings : null) {
+ *  it is drawn) are drawn hollow: the borrowed comp tones' source onsets (A4); `snaps` (the part's own, `h.snaps`, when all
+ *  of it is drawn: phase P) thin ticks, each from a snapped tone's own onset to its stroke, under the dots */
+export function drawLitPart(ctx, h, positions, r, ringed, indices = h.indices, rings = indices === h.indices ? h.rings : null, snaps = indices === h.indices ? h.snaps : null) {
   ctx.save();
   ctx.globalAlpha = h.enabled ? 1 : OVERLAY_STYLE.offAlpha;
+  if (snaps?.length) {
+    ctx.strokeStyle = h.color; ctx.lineWidth = OVERLAY_STYLE.snapTick;
+    ctx.beginPath();
+    for (const { from, to } of snaps) { const a = positions[from], b = positions[to]; if (!a || !b) continue; ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }
+    ctx.stroke();
+  }
   ctx.fillStyle = h.color;
   ctx.beginPath();
   for (const i of indices) {

@@ -56,7 +56,8 @@ export const hasEdits = (state) => !!state?.edits && (state.edits.order.length >
 export function snapshotOf(state) {
   return { edits: copy(state.edits ?? emptyEdits()), field: copy(state.field ?? null), progression: copy(state.progression ?? []),
     drums: { mode: state.drumOptions.mode, grid: copy(state.drumOptions.grid ?? null) }, arps: copy(state.arps ?? null), bass: copy(state.bass ?? null), voicing: state.voicing ?? null,
-    compDensity: state.compDensity ?? null, compTolerance: state.compTolerance ?? null, compBorrow: state.compBorrow ?? null };
+    compDensity: state.compDensity ?? null, compTolerance: state.compTolerance ?? null, compBorrow: state.compBorrow ?? null,
+    compGate: state.compGate ?? null, compSnap: state.compSnap ?? null, compRoll: state.compRoll ?? null };
 }
 export function restoreSnapshot(state, snap) {
   state.edits = copy(snap.edits);
@@ -68,9 +69,15 @@ export function restoreSnapshot(state, snap) {
   if (snap.bass) state.bass = copy(snap.bass);
   if (snap.voicing) state.voicing = snap.voicing;
   if (snap.compDensity) state.compDensity = snap.compDensity;
-  // phase O (Amendment 3): the comp's tolerance and borrowing
-  if (snap.compTolerance != null) state.compTolerance = snap.compTolerance;
-  if (snap.compBorrow != null) state.compBorrow = snap.compBorrow;
+  // phase O (Amendment 3): the comp's tolerance and borrowing; phase P: with its gate, Snap and roll the five are one
+  // setting, restored whole (a null tolerance or gate is a setting too: the gate, Compose's 25 ms)
+  if ('compSnap' in snap) {
+    state.compTolerance = snap.compTolerance; state.compGate = snap.compGate; state.compSnap = !!snap.compSnap; state.compRoll = snap.compRoll ?? 0;
+    if (snap.compBorrow != null) state.compBorrow = snap.compBorrow;
+  } else {
+    if (snap.compTolerance != null) state.compTolerance = snap.compTolerance;
+    if (snap.compBorrow != null) state.compBorrow = snap.compBorrow;
+  }
 }
 /** a step onto the undo stack (at most UNDO_LIMIT, the oldest dropped); a new edit clears the redo stack */
 export function pushUndo(state, snap) {

@@ -16,6 +16,7 @@ export function normSpec(spec) {
   delete s.input.overrides.settlePasses; delete s.input.overrides.presence;
   if (s.stats) delete s.stats.settle;
   delete s.drums;   // the drums (2026-10-22 night) are a part of their own: they never move the others
+  if (s.version === 'composer-spec-v2') s.version = 'composer-spec-v1';   // COMP_GATE_ORDER.md G5 bumped it (the comp's gate): nothing of e3909e1's moved
   if (s.decisions) s.decisions = s.decisions.filter((d) => d.what !== 'settlePasses' && d.what !== 'presence');
   return s;
 }

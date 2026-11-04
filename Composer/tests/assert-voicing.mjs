@@ -295,6 +295,7 @@ console.log('\n— voicing: \'close\'');
   for (const [L, T, ov] of cases) for (const seed of [1, 4]) {
     const live = compose(L, T, { seed, overrides: { ...ov, compStyle: 'notes', voicing: 'close', bass: { density: 'sparse', lock: 'free' } } });
     delete live.input.overrides.compStyle; delete live.input.overrides.voicing; delete live.input.overrides.bass;
+    live.version = 'composer-spec-v1';   // COMP_GATE_ORDER.md G5 bumped it; a comp in notes moved nothing else
     if (J(live) === J(composeBefore(L, T, { seed, overrides: ov }))) same++;
   }
   check(`'close' with the comp in notes: ${same}/${cases.length * 2} byte for byte the frozen Compose (fixtures/compose-before.js)`, same === cases.length * 2);

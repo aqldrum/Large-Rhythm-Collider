@@ -301,6 +301,7 @@ console.log('\n— P19: claveFrom \'pattern\', byte for byte the clave before ph
     // strum to the one before Amendment 3 (P34's pin: ±¼ slot, borrowing; its two new stats, compTones and compSingles, set aside)
     const s = compose(c.L, c.T, { seed: c.seed, overrides: { ...c.overrides, claveFrom: 'pattern', bass: { density: 'sparse', lock: 'free' }, compBorrow: true, compTolerance: 0.25 }, ...(c.changes ? { changes: c.changes } : {}), ...(c.trace ? { trace: true } : {}), ...(c.target ? { target: ODE() } : {}) });
     delete s.input.overrides.claveFrom; delete s.input.overrides.bass; delete s.input.overrides.compBorrow; delete s.input.overrides.compTolerance; delete s.stats.compTones; delete s.stats.compSingles;
+    s.version = 'composer-spec-v1';   // COMP_GATE_ORDER.md G5 bumped it; the pinned comp is the same
     if (s.target) delete s.target.search.ms;   // the placement search's own timing
     const h = c.whole ? hash(s) : hash([s.clave, s.drums, s.parts.find((p) => p.id === 'comp').strokes]);
     if (h !== HASHES[x]) bad.push(`${c.L.join(':')} ${J(c.overrides)}${c.changes ? ' (chart)' : ''}${c.target ? ' (target)' : ''}`);
