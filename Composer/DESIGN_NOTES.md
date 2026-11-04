@@ -2634,6 +2634,64 @@ The order's probe table, to the hundredth.
 11. **The bass keeps its section's arrangement under a fill bar** (its Kick lock isn't re-landed on the fill's kicks). A fill doesn't change a section's energy.
 12. **The song record carries `targetSeconds` only when it isn't 20.**
 
+## Song v0 (phase C): the window (built 2026-11-04, branch `arrange/window`)
+
+`ARRANGEMENT_ORDER.md` phase C (C1–C3: S14–S17), one builder, over phases A and B merged on `arrange/song-v0`. `core/form.js` and `composer-player.js` are untouched: the controller codes against form.js's exported API, and the player gets its passes through the getters phase B gave it. Nothing here has been heard: Avery's browser and rig pass is the order's checklist.
+
+**The state** (C1). The entry holds `arrangement: { mode, template, seed, song, loop }` (`store/composition-store.js` `newArrangement`: Loop, Arch, seed 1, no song). `song` is form.js's S1 record; `loop` is the content signature of the loop it was planned on. The store keeps it per rhythm, like the bass: through a re-compose and the glyph's recall, but not to a new cycle of the same row (proposed: a song is planned on one loop).
+
+**Song | Loop** (S14). `setMode('song')` plans a song the first time, from the loop as it plays: `{ ...st.spec, drums: st.drums, parts: PART_IDS.map((id) => st.parts[id]) }`. (Phase A's note checks out against the code: `st.spec.drums` is Compose's, `st.drums` the window's.) So home is what Loop sounds. Before any Compose the mode is only kept, and Perform plans it. The switch sits beside the transport, after the Compose → Perform ⇄ Stop button.
+
+**The getters** (S10, S16). Perform hands the player `playParts(c)` and `playDrums(c)`, which read the mode at every tick:
+- **In Loop** they return the window's parts and drums, the same objects as before, so Loop is unchanged.
+- **In Song** pass c is the song's pass c mod its length, so the song repeats from the top after home. The passes come from `songPasses` over the loop as it plays, cached until the song object or the loop's content changes.
+- **Live sounds** (S16). A part's sound or legato changed since that loop object was read wins in every pass; otherwise the pass keeps its own (form.js's Arp → Line keeps its own sound). The drum kit is laid over the pass's drums the same way. A pass's on/off is the lane's, and never on for a part off in the loop. Levels and glide are the buses' and stay live as ever.
+- **Cost**, on the 16,359-onset row in Node: the plan 108 ms, the expansion and energies 1 ms, a getter pair under 1 µs, a section edit 0.2 ms, a re-plan 1 ms (form.js keeps its arrangements per loop object).
+
+**Stale** (S14). The loop's content is hashed (`loopSig`, two 32-bit FNV-style lanes over the meter, each part's on/off, Line or Arp and notes, the drums' on/off and hits). A part's sound, legato, the kit and the levels aren't in it. The hash is recomputed only when the spec, the drums or a part changed object. A song whose loop hashes differently is stale: the lane says "stale: re-plan", and nothing re-plans on its own. A part toggled off and on again hashes the same, so it isn't stale.
+
+**The edits** (S15). Each is a plain-data change to `song.sections`, one undo step:
+- `toggleSongPart(i, part)`;
+- `toggleSongLayer(i, layer)`;
+- `setSongPasses(i, n)` and `nudgeSongPasses(i, ±1)`, within 1..`MAX_SECTION_PASSES`;
+- `setSongDensity(i, part, value | null)`: the loop's own value removes the key, as the planner records only differences;
+- `setSongTemplate(t)` and `planSong({ template, seed })`, which re-plan;
+- `replan()` (seed + 1);
+- `loadSong(x)`.
+
+An edited section's energy is said again by `energyOf` (which also checks it: a refused density refuses the edit with words), and it gets `edited: true`. A song step's snapshot carries the arrangement; its undo restores the song alone, with no fold (the spec stays the same object) and the mode as it is. A loop step's snapshot doesn't carry it, so a loop undo never touches the song. A Compose clears the stack as ever, and the song stays (stale).
+
+**The export and back.** `editsExport()` carries `arrangement: { mode, template, seed, loop, stale, song }` while there is a song or Song is on, so the JSON export has it under `edits`. `loadSong` takes back the export, an arrangement or a bare S1 record, checked against the loop by `songPasses`, one undo step. It isn't stale on its own loop (the signature is deterministic); a bare record is (its loop unknown).
+
+**Where it is** (S13). `songAt()` → `{ pass, index, section, passInSection, passes }` from the player's `passAt`, or null in Loop, stopped or with no song.
+
+**MIDI** (S17). It's the player's: a part a pass mutes sends nothing, a filtered note isn't there to send, and the clock runs on. `assert-page-song.mjs` runs the real player with a recording sink over a drumless intro.
+
+**The lane** (C2, `page/arrangement-lane.js` + `.css`), above the matrix while Song is on, hidden in Loop:
+- **the bar:** "Song", the template select (Arch | Build–drop), Re-plan, the seed, the song's length in sections, passes and seconds, "stale: re-plan" (amber), and a song this loop can't play or a refused edit in words;
+- **the columns:** a section each, as wide as its passes (`fr`, a 56 px floor, then the lane scrolls sideways), named and coloured by kind, with "− N +" passes, "→ fill" before a peak or a drop, and a dot when edited;
+- **the energy line:** across the top, each column drawing its own step and the join from the one before (solid E, the target dotted, one scale), so it stays continuous whatever the widths;
+- **the rows:** a row a part in the matrix's order, each cell on/off (a click toggles it) with the density's word where it differs from the loop's ("Walking", "Dense", "Arp"); a part off in the loop is hatched and disabled;
+- **Layers:** the row's layers as chips, A–D;
+- **the strip:** the selected section (a click on its name) with its kind, energy against target, passes, the planner's why, and a density select for the bass, the comp, the lead and the inner;
+- **the playhead:** the sounding section lit by `frame()` without a rebuild.
+
+**The strips while in Song** (S16). The part strips under the lens show the sounding section's on/off (the lane's selected section while stopped). Their Mute is disabled, their title says "the lane decides", and `frame()` re-renders them when the section changes. In the window, the matrix's lane toggles and the inspector's on/off are read-only with the same title. Sound and Level stay live.
+
+**Calls beyond the order (proposed):**
+1. **A stale song plays its sections over the loop as it plays now**, not over the loop it was planned on. Home is always what Loop plays, there is no second loop to keep, and a loaded song plays at once. The order's checklist item 6 reads "home follows the edit after Re-plan"; here it follows at once, and Re-plan chooses the sections again for it.
+2. **Stale is a content hash**, not the objects. Sounds, legato, the kit and the levels stay live over the song and aren't loop changes.
+3. **Entering Song plans without an undo step** (it's like a Compose). Re-plan, the template, a load and every section edit are undo steps. The mode isn't one, and an undo keeps it.
+4. **Re-plan is seed + 1.** The template select keeps the seed. The stale marker re-plans at the same seed: the same song re-fitted to the loop.
+5. **Song while playing starts the song from its top** (the intro), and so do a re-plan, a template change and a load. Section edits are live (no restart). Loop while playing carries on where it is.
+6. **A section can't turn on a part that is off in the loop.** It is refused, said with words: turn it on in Loop.
+7. **The densities are edited in the strip below the lane**, not in the cells, whose click toggles on/off. A muted part's density may be set and is kept for when it plays.
+8. **The window is dark only.** No light theme exists anywhere on the site, so the lane uses the window's palette, as tokens on `.alane` for a theme to redefine in one place.
+9. **A `createPlayer` seam on the controller** (passed through the tab controller and the bridge) lets the test record what Perform hands the player. The player itself is untouched.
+10. **Planning runs on this thread**, as phase A measured it, even past `MAIN_THREAD_ONSETS`: there's no worker path for form.js yet.
+
+**Tests** (C3). `assert-page-song.mjs` (73 checks) is in the README. Suites: 88/88 (the 87 and the new one).
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

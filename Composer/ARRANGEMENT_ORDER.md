@@ -198,16 +198,40 @@ What it shows:
 - **C3.** Page tests (`assert-page-song.mjs`, on `dom-stub.mjs`), the README, DESIGN_NOTES and this order's checklist.
 
 ## Browser and rig checklist (for Avery; finished in C3)
-1. **119:42:15:8, Song · Arch.** The layers enter in the order the decision names. The intro is the slowest groove,
-   building to a peak with Walking bass and denser comp, a drumless break, a second peak, then home exactly as the Loop
-   sounds.
-2. **A fill** in the last bar before each peak, with a crash on the peak's downbeat.
-3. **8:7:6:5, Build–drop.** It opens on D5 alone (the near-silent start), and the drop lands everything at once.
-4. **768:784.** Two layers, so most of the curve comes from the densities. Does it still arc?
-5. **The lane:** toggle a part in one section, ±passes, undo. Re-plan gives a different song on the same loop.
-6. **Edit the loop in Loop** (swap a chord), back to Song: "re-plan" shows, and home follows the edit after Re-plan.
-7. **MIDI:** a section with the drums off sends no drum notes, and the clock never stops across sections.
-8. **Loop again:** everything as before.
+Open the Composer window (double-click the Playback header), Compose, then press **Song** beside Compose → Perform. The
+lane appears above the matrix. Hard-reload first: the lane's stylesheet is new (`arrangement-lane.css?v=20261104`).
+1. **119:42:15:8, Song · Arch.**
+   - The Layers chips fill in, section by section, in the build order (hover a chip: "it enters 2nd in the build order"; a section's why, in the strip under the lane, names its layers: click the section's name).
+   - Hear the intro as the slowest groove, building to Peak 1 (the Bass cell says "Walking", the Comping cell "Medium").
+   - Then a drumless break (its Drums cell off), Peak 2, then Home exactly as Loop sounds.
+   - The energy line over the columns climbs, dips at the break and lands at home; the dotted target sits close to it.
+   - While it plays, the sounding section's column is lit, moving left to right, and the song starts again at the intro after Home.
+2. **A fill** in the last bar of each section marked "→ fill", and a crash on the next section's downbeat. The break's last bar plays the fill alone (kick and snare from beat 3) with the drums otherwise off.
+3. **8:7:6:5, the template select → Build–drop.**
+   - It opens on the slowest layer (the intro's chips: D alone, or D and one more until phase A's one-layer intro lands).
+   - The drop lands everything at once.
+   - ↶ goes back to the Arch song exactly.
+4. **768:784, Arch.** Two chips only, so most of the curve comes from the densities (the Bass and Comping words in the cells). Does it still arc?
+5. **The lane's edits:**
+   - Click a cell (Chords in the intro): it turns off, and you hear it within a pass.
+   - Click a layer chip, and − / + on a section's passes (the column narrows or widens, and the song's length in the bar changes).
+   - In the strip, set a density (click a section's name, then Bass → Roots).
+   - Each is one ↶. ⌘Z undoes them one at a time without touching the loop, ⇧⌘Z redoes.
+   - **Re-plan** gives a different song on the same loop (the seed in the bar goes up one); ↶ brings the first back.
+6. **Edit the loop:** press Loop, swap a chord in the matrix, press Song. "stale: re-plan" shows in amber.
+   - Home already plays the swapped chord: the sections are applied to the loop as it plays (builder's call 1, phase C).
+   - Click the marker: the song is planned again for the edited loop and the marker goes.
+   - A sound or legato change in the inspector is not a loop change: no marker, and the new sound plays in every section.
+7. **MIDI** (the MIDI panel: Send on before Perform).
+   - A section with its Drums cell off sends no drum notes, and a part off in a section sends nothing for it.
+   - The DAW's clock never stops or jumps across sections.
+8. **The lane decides:** in Song the part strips under the lens (the glyph), the matrix's on/off toggles and the inspector's on/off are greyed out, titled "the lane decides".
+   - The strips' on/off follow the section that sounds.
+   - Sound and Level still work.
+9. **Loop again:** press Loop while it plays.
+   - The loop carries on with no restart, everything as before; the lane hides.
+   - Song again restarts the song at its intro.
+10. **The JSON export** (Details → JSON) has `edits.arrangement` with the song. Switch the page's rhythm away and back: the song and Song are still there.
 
 ## Later (recorded, not ruled)
 - Re-mining parts from a section's layers (`allowNodes`).
@@ -292,3 +316,34 @@ What it shows:
   2. **The peaks.** They reach only 1.05–1.08: high is one rung up, and on most loops that's Walking and the medium comp. Should a peak go two rungs (the dense comp), or should its target come down to about 1.08?
   3. **The checklist's item 3** expects Build–drop on 8:7:6:5 to open on D5 alone. The path takes D5 + C6, drums and bass, at 0.17 for 0.15: S4 allows up to ⌈L/2⌉ layers. Should Build–drop's intro be one layer?
   4. **TIE_BAND at 0.05**: is that enough variety for Re-plan, or too loose?
+- 2026-11-04: **phase C built** (branch `arrange/window`, off `arrange/song-v0` at 477dc7a; the code and the test in one commit, these docs the commit after). `core/form.js`, `assert-form.mjs` and `composer-player.js` are untouched. Suites 88/88 (the 87 and the new `assert-page-song.mjs`, 73 checks).
+  - **C1, the controller:**
+    - `arrangement` on the entry; `setMode`, `planSong`, `replan`, `setSongTemplate`;
+    - the section edits `toggleSongPart`, `toggleSongLayer`, `setSongPasses` / `nudgeSongPasses`, `setSongDensity`, plus `loadSong`, each one undo step;
+    - `songState()` for the lane and `songAt()` for the sounding section;
+    - the player's getters read the mode at every tick and map pass c to the song's pass, the user's sounds, legato and kit laid over it;
+    - a content hash for "stale"; `edits.arrangement` in the JSON export.
+
+    Phase A's note checks out against the code: `st.spec.drums` is Compose's, `st.drums` the window's.
+  - **C2, the page:** `page/arrangement-lane.js` + `.css` above the matrix; Loop | Song beside the transport; on/off read-only in Song (the matrix, the inspector, the part strips: "the lane decides").
+  - **The cost** on the 16k row: the plan 108 ms through the controller, every later read under 1 ms.
+
+  **Calls made** (all in DESIGN_NOTES "Song v0 (phase C)", calls 1–10):
+  1. **A stale song plays its sections over the loop as it plays now**, so home follows a loop edit at once; Re-plan chooses the sections again for it.
+  2. **Stale is a content hash** of the notes, hits, on/off and meter. Sounds, legato, the kit and the levels stay live and aren't loop changes.
+  3. **The first plan (entering Song) is no undo step.** Re-plan, the template, a load and the section edits are. The mode isn't, and an undo keeps it. A song step's undo restores the song alone (no fold).
+  4. **Re-plan is seed + 1**; the template select keeps the seed; the stale marker re-plans at the same seed.
+  5. **Song while playing restarts at the intro**, and so do a re-plan, a template change and a load. Section edits are live. Loop carries on where it is.
+  6. **A section can't turn on a part that is off in the loop.**
+  7. **The densities are edited in a strip under the lane** (the selected section); the cells toggle on/off and show the density's word.
+  8. **No light theme exists on the site.** The lane uses the window's dark palette, as tokens on `.alane`.
+  9. **A `createPlayer` seam** on the controller (through the tab controller and the bridge), for the recording player.
+  10. **Planning runs on this thread**, even past `MAIN_THREAD_ONSETS`.
+
+  **Open questions for Avery:**
+  1. **Call 1.** Should a stale song keep playing the loop it was planned on until Re-plan, as the checklist's item 6 first read?
+  2. **Call 5.** Song while playing restarts at the intro. Should it wait for the next cycle boundary instead?
+  3. **Load.** There's no JSON import in the window (there never was one). `loadSong` is the controller's only. Should the window get a "Load song…"?
+  4. **A new cycle of the same row** starts in Loop with no song. Should the arrangement carry over, stale?
+  5. **The .mid download** is still one cycle of the loop in Song. A whole-song file is in "Later".
+  6. **Phase B's two questions still stand:** the held-voice rule also applies in Loop, and a cymbal ringing into a drumless pass.
