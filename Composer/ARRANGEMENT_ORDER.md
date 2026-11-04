@@ -388,3 +388,17 @@ lane appears above the matrix. Hard-reload first: the lane's stylesheet is new (
   4. **A new cycle of the same row** starts in Loop with no song. Should the arrangement carry over, stale?
   5. **The .mid download** is still one cycle of the loop in Song. A whole-song file is in "Later".
   6. **Phase B's two questions still stand:** the held-voice rule also applies in Loop, and a cymbal ringing into a drumless pass.
+- 2026-11-04: **Avery's first pass and rulings** ("love this first pass"):
+  - **A stale song keeps looping**: its sections are applied over the loop as it plays now (phase C's call 1 stands).
+  - **Switching mid-play restarts.** Song and Loop are two separate audio states and need a clean swap (call 5 stands).
+  - **Loading songs comes later.**
+  - **The .mid download stays one cycle** for now.
+  - **The held-voice rule stays in Loop**: a muted part's held voice is released at the loop's end.
+  - **Next: the UI.**
+    - The song is squashed: the Loop's cells don't show what the Song plays. So the Loop's visuals are kept for Loop
+      and hidden in Song, where the lane's cells expand into clips that show their notes.
+    - Later: a timeline you can jump around in, editable clips, and DAW-like duplicate, copy and paste.
+    - Also asked: a cleaner view mode with the background linear plot fully hidden.
+    - First, a visual pass with no change to the underlying function (branch `arrange/song-ui`).
+  - **Open:** a new cycle of the same row doesn't carry the song over. That's the entry's data, not just the visuals:
+    the planner proposes carrying it over as stale, so it keeps looping over the new loop.
