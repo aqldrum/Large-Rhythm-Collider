@@ -13,6 +13,13 @@
 //   • the lane: a column a section, its width ∝ passes, named and kind-coloured; a row a part and the Layers chips; on /
 //     off and the density words where they differ; the energy line (solid, its target dotted); the template select,
 //     Re-plan, the seed; the sounding section lit by frame()
+//   • the Song UI's visual pass (DESIGN_NOTES "Song UI (visual pass)"): in Song the loop's matrix is hidden (a class
+//     swap, the matrix still rendered under it), in Loop shown; a clip a section × part, each drawing every note or hit
+//     of every pass it spans (form.js songPasses, counted from its SVG's text), tiled a pass at a time with a rule
+//     between, the fill pass its own drums, each part on one pitch range over the song; an off clip present, outlined
+//     and dim, its passes ghosted; the ruler one element with a band a section, a tick a section and a pass, and the
+//     time; the playhead at songPosition(); the clean plot hides the plot (an opaque wash) and moves no state, undo or
+//     export, in Song and in Loop
 //   • every edit through the lane's own controls, each ONE undo step, and its undo and redo: a part, a layer, ± passes,
 //     a density (the strip's select), the template, Re-plan (seed + 1); a song step's undo runs no fold (the spec is the
 //     same object) and keeps the mode; the getters follow each edit live; refusals said in words
@@ -35,7 +42,7 @@ import { createComposerController } from '../perform/composer-controller.js';
 import { createPlayer } from '../perform/composer-player.js';
 import { createComposerMidi, MIDI_PARTS, DRUM_CHANNEL } from '../perform/composer-midi.js';
 import { newCompositionState } from '../store/composition-store.js';
-import { laneModel, energyCell, KIND_COLORS } from '../page/arrangement-lane.js';
+import { laneModel, energyCell, KIND_COLORS, timeline } from '../page/arrangement-lane.js';
 import { readFileSync } from 'node:fs';
 
 let PASS = true, checks = 0;
@@ -76,8 +83,9 @@ const fake = { playing: false, pass: 0, play(spec, gp, gd) { plays.push({ spec, 
   setGlide() {}, setTimeFactor() {}, localSound() {}, setMix() {}, playhead() { return this.playing ? 0.25 : null; }, passAt() { return this.playing ? this.pass : null; } };
 const runCompose = async (l, T, o) => compose(l, T, o);
 const { createComposerBridge } = await import('../page/composer-bridge.js');
+const stored = {};
 const bridge = createComposerBridge(win, { runCompose, createContext: () => ({ state: 'running' }), createPlayer: () => fake, timers: { setInterval: () => 1, clearInterval: () => {} },
-  storage: { getItem: () => '0', setItem() {} }, session: null, motion: () => false });
+  storage: { getItem: () => '0', setItem(k, v) { stored[k] = v; } }, session: null, motion: () => false });
 const tab = bridge.controller, core = tab.core;
 const left = doc.createElement('div'), inspector = doc.createElement('div');
 doc.body.append(left, inspector);
@@ -101,6 +109,7 @@ console.log('\n— Loop by default, and Song before any Compose');
 check('the entry starts in Loop with no song (the store\'s newArrangement)', J(A()) === J({ mode: 'loop', template: 'arch', seed: 1, song: null, loop: null }) && J(newCompositionState().arrangement) === J(A()));
 check('the switch sits beside the transport, Loop lit; the lane is hidden', !!modeBtn('Loop') && !!modeBtn('Song') && modeBtn('Loop').className.includes(' on') && !modeBtn('Song').className.includes(' on')
   && q(left, '.ctab-go').nextSibling === q(left, '.ctab-modes') && laneEl().style.display === 'none');
+check('Loop shows the loop\'s matrix (no ctab-song-on on the left host)', !left.classList.contains('ctab-song-on') && !!q(left, '.ctab-matrix-wrap'));
 await click(modeBtn('Song'));
 check('Song before any Compose is kept, nothing planned; the lane says to Compose first', A().mode === 'song' && A().song === null && laneEl().style.display === '' && /Compose first/.test(laneEl().textContent));
 await click(modeBtn('Loop'));
@@ -149,7 +158,7 @@ check(`a column a section (${secs.length}), named, coloured by kind`, cols.lengt
 const tplCols = q(left, '.alane-cols').style.gridTemplateColumns;
 check('each column as wide as its passes (fr units)', secs.every((s) => tplCols.includes(`${s.passes}fr`)) && tplCols.split('minmax').length - 1 === secs.length, tplCols);
 check('a row a part (the matrix\'s order) and a Layers row', [...qa(left, '.alane-part')].map((x) => x.textContent).join() === 'Lead,Chords,Comping,Bass,Inner,Drums' && qa(left, '.alane-layers-row').length === 1);
-const cell = (part, i) => q(left, `.alane-cell[data-part="${part}"][data-section="${i}"]`);
+const cell = (part, i) => q(left, `.alane-clip[data-part="${part}"][data-section="${i}"]`);
 check('every cell on or off as its section has it', secs.every((s, i) => PART_IDS.concat('drums').every((id) => cell(id, i).classList.contains('on') === !!s.parts[id])));
 const dense = secs.findIndex((s) => s.parts.bass && s.density?.bass);
 check('a density where it differs from the loop\'s, in words', dense >= 0 && cell('bass', dense).textContent === { roots: 'Roots', sparse: 'Sparse', moving: 'Moving', walking: 'Walking' }[secs[dense].density.bass], `${dense} ${cell('bass', Math.max(0, dense))?.textContent}`);
@@ -161,11 +170,74 @@ check('the energies are energyOf on the loop as it plays', secs.every((s, i) => 
 check('the bar: the template select (Arch | Build–drop), Re-plan, the seed, no stale marker', q(left, '.alane-template').value === 'arch' && [...q(left, '.alane-template').options].map((o) => o.textContent).join('|') === Object.values(TEMPLATES).map((t) => t.label).join('|')
   && !!q(left, '.alane-replan') && /seed 1/.test(q(left, '.alane-seed').textContent) && !q(left, '.alane-stale'));
 check('"→ fill" on a section before a peak', secs.every((s, i) => !!cols[i].querySelector('.alane-fill') === !!s.fillBefore) && secs.some((s) => s.fillBefore));
+
+// ── the Song UI's visual pass ──
+console.log('\n— the Song UI: the matrix hidden, the clips, the ruler, the playhead, the clean plot');
+const laneCss = readFileSync(new URL('../page/arrangement-lane.css', import.meta.url), 'utf8');
+check('in Song the loop\'s matrix and its bar picker are hidden (ctab-song-on, a class swap), still rendered under it for an instant Loop', left.classList.contains('ctab-song-on')
+  && /\.ctab-left\.ctab-song-on \.ctab-matrix-wrap, \.ctab-left\.ctab-song-on \.ctab-barpick \{ display: none !important; \}/.test(laneCss) && qa(left, '.ctab-lane').length === 6);
+const LANE_ROWS = ['lead', 'chords', 'comp', 'bass', 'inner', 'drums'];
+const clipEls = [...qa(left, '.alane-clip')];
+check(`a clip a section × part (${secs.length} × 6), each with its data-section and data-part`, clipEls.length === secs.length * 6
+  && new Set(clipEls.map((c) => `${c.dataset.section}|${c.dataset.part}`)).size === clipEls.length && secs.every((_, i) => LANE_ROWS.every((id) => !!cell(id, i))));
+/** what a clip draws, from its SVG's text: the marks (a subpath a note or hit) a pass group, the rules between passes */
+const drawnOf = (c) => {
+  const html = q(c, '.alane-notes').innerHTML, groups = [...html.matchAll(/<g class="alane-pass([^"]*)" data-pass="(\d+)"[^>]*>(.*?)<\/g>/g)];
+  const marks = (t) => [...t.matchAll(/<path class="alane-n[^"]*" d="([^"]*)"/g)].reduce((a, m) => a + (m[1].match(/M/g) ?? []).length, 0);
+  const rules = /class="alane-pdiv" d="([^"]*)"/.exec(html);
+  return { groups: groups.map((g) => ({ cls: g[1], pass: +g[2], marks: marks(g[3]), body: g[3] })), marks: marks(html), rules: rules ? rules[1].match(/M/g).length : 0, html };
+};
+const passesOf = (i) => passes.filter((e) => e.section === i);
+const contentOf = (e, id) => (id === 'drums' ? e.drums.hits.length : e.parts.find((p) => p.id === id).notes.length);
+check('each clip draws every note or hit of each pass it spans (songPasses), a group a pass, a rule between passes', secs.every((sec, i) => LANE_ROWS.every((id) => {
+  const d = drawnOf(cell(id, i)), ps = passesOf(i);
+  return d.groups.length === sec.passes && d.rules === sec.passes - 1 && d.groups.every((g, k) => g.marks === contentOf(ps[k], id)) && d.marks === ps.reduce((a, e) => a + contentOf(e, id), 0)
+    && cell(id, i).dataset.marks === String(d.marks);
+})));
+const fillSec = secs.findIndex((s) => s.fillBefore && s.passes > 1);
+const fd = fillSec >= 0 ? drawnOf(cell('drums', fillSec)) : null, fps = fillSec >= 0 ? passesOf(fillSec) : [];
+check('the fill pass draws its own drums (the fill bar\'s; a drumless section\'s the fill alone, sounding), marked, unlike the section\'s other passes', fillSec >= 0 && fd.groups[fd.groups.length - 1].cls.includes('fill')
+  && fd.groups[0].body !== fd.groups[fd.groups.length - 1].body && !fd.groups[fd.groups.length - 1].cls.includes('mute') && fd.groups[0].cls.includes('mute') === !secs[fillSec].parts.drums
+  && J(fps[fps.length - 1].drums.hits) !== J(fps[0].drums.hits) && !!q(cell('drums', fillSec), '.alane-clip-tag'), `${fillSec}`);
+const ysOf = (id) => secs.flatMap((_, i) => [...drawnOf(cell(id, i)).html.matchAll(/<path class="alane-n" d="([^"]*)"/g)].flatMap((m) => [...m[1].matchAll(/M[\d.]+ ([\d.]+)H/g)].map((y) => +y[1])));
+const homeSec = passes[homeAt].section, peakSec = secs.findIndex((s) => s.kind === 'peak');
+check('a part\'s register reads the same in every clip: one pitch range over the song (its lowest and highest notes at the same height in any clip)', ['bass', 'chords', 'lead'].every((id) => {
+  const ys = ysOf(id); return ys.length > 0 && Math.min(...ys) === 12 && Math.max(...ys) === 88;
+}) && drawnOf(cell('chords', homeSec)).groups[0].body === drawnOf(cell('chords', peakSec)).groups[0].body);
+const offAt = secs.findIndex((s) => !s.parts.lead);
+const offClip = offAt >= 0 ? cell('lead', offAt) : null, od = offClip ? drawnOf(offClip) : null;
+check('a clip whose part is off in its section: present, outlined and dim (its passes ghosted), still clickable', !!offClip && offClip.classList.contains('off') && !offClip.classList.contains('on') && !offClip.disabled
+  && od.groups.every((g) => g.cls.includes('mute')) && od.marks > 0 && /\.alane-clip\.off \{[^}]*dashed/.test(laneCss) && /\.alane-clip\.off \.alane-notes \{ opacity/.test(laneCss), `${offAt}`);
+const rulers = [...qa(left, '.alane-ruler')], ruler = rulers[0], totalPasses = secs.reduce((a, s) => a + s.passes, 0);
+const tickD = (cls) => (new RegExp(`class="${cls}" d="([^"]*)"`).exec(q(ruler, '.alane-ticks').innerHTML)?.[1].match(/M/g) ?? []).length;
+const bands = [...qa(ruler, '.alane-ruler-sec')];
+check('the ruler: one element across the track, a band a section in its kind\'s colour, a tick a section and a pass, the time from 0 s', rulers.length === 1 && bands.length === secs.length
+  && bands.every((b, i) => b.style['--alane-kind'] === KIND_COLORS[secs[i].kind] && b.dataset.section === String(i)) && tickD('alane-tick-sec') === secs.length - 1 && tickD('alane-tick-pass') === totalPasses - secs.length
+  && /^0(:00| s)$/.test(q(ruler, '.alane-ruler-label').textContent) && ruler.dataset.passes === String(totalPasses));
+let from = 0;
+check('…its bands on the one mapping (timeline): a section from its first pass to its last, as shares of the song', bands.every((b, i) => { const ok = Math.abs(parseFloat(b.style.left) - (100 * from) / totalPasses) < 1e-9 && Math.abs(parseFloat(b.style.width) - (100 * secs[i].passes) / totalPasses) < 1e-9; from += secs[i].passes; return ok; })
+  && timeline(totalPasses).fromX(timeline(totalPasses).toX(2.5)) === 2.5);
 await tab.press(); await settle();   // Perform (Song)
 fake.pass = passes.findIndex((e) => e.section === 2);
 bridge.showTab();
 dom.raf.flush(3);
 check('the sounding section lit while Song plays (frame())', [...qa(left, '.alane-col')].every((c, i) => c.classList.contains('now') === (i === 2)) && cell('chords', 2).classList.contains('now') && !cell('chords', 1).classList.contains('now'));
+const pos = core.songPosition(), ph = q(left, '.alane-playhead');
+check('the playhead over the track at songPosition(): the song\'s pass + the share of it played (the player\'s playhead)', pos && pos.at === fake.pass + 0.25 && pos.section === 2 && pos.passes === total()
+  && ph.style.display === 'block' && ph.style.left === `${((100 * (fake.pass + 0.25)) / total()).toFixed(3)}%`, J(pos));
+// the clean plot, in Song (playing)
+const cleanBtn = q(left, '.ctab-cleanplot'), washes = () => ctx2d.calls.filter((c) => c[0] === 'set' && c[1] === 'fillStyle' && /^rgba?\(16, 16, 16/.test(c[2])).map((c) => c[2]);
+const stateNow = () => J({ arr: A(), undo: S().undo.length, redo: S().redo?.length ?? 0, edits: core.editsExport(), exp: core.exportJSON() });
+const before = stateNow(), specBefore = S().spec, playsBeforeClean = plays.length;
+ctx2d.calls.length = 0;
+await click(cleanBtn);
+const w1 = washes();
+check('the clean plot (beside Details): the plot under the Composer\'s notes fully hidden (an opaque wash), kept as a view preference', !!cleanBtn && cleanBtn.nextSibling === q(left, '.ctab-midi') && tab.view.clean === true && cleanBtn.classList.contains('on')
+  && w1.length > 0 && w1.every((c) => c === 'rgb(16, 16, 16)') && stored['lrc.composer.cleanPlot'] === '1', J(w1));
+check('…and it moves nothing: the song, the undo stack, the edits, the export and the play are as they were', stateNow() === before && S().spec === specBefore && plays.length === playsBeforeClean);
+ctx2d.calls.length = 0;
+await click(cleanBtn);
+check('…off again: the plot\'s usual wash (the row under the notes)', tab.view.clean === false && washes().length > 0 && washes().every((c) => c === 'rgba(16, 16, 16, 0.62)') && stored['lrc.composer.cleanPlot'] === '0' && stateNow() === before);
 
 // ── the edits, each one undo step ──
 console.log('\n— every edit is one undo step (S15), live in the getters, its undo the song alone');
@@ -263,6 +335,13 @@ console.log('\n— stale: the loop changed under the song (S14)');
 await click(modeBtn('Loop'));
 const playsAtLoop = plays.length;
 check('Loop while playing carries on (no new play), and the getters are the loop\'s again', plays.length === playsAtLoop && same(lastPlay().gp(inSec(0)), cur()) && lastPlay().gd(inSec(0)) === S().drums && laneEl().style.display === 'none');
+check('…the loop\'s matrix back (no ctab-song-on), as it was', !left.classList.contains('ctab-song-on') && qa(left, '.ctab-lane').length === 6);
+const loopBefore = J({ arr: A(), undo: S().undo.length, exp: core.exportJSON() });
+ctx2d.calls.length = 0;
+await click(q(left, '.ctab-cleanplot'));
+const wLoop = ctx2d.calls.filter((c) => c[0] === 'set' && c[1] === 'fillStyle' && c[2] === 'rgb(16, 16, 16)').length;
+await click(q(left, '.ctab-cleanplot'));
+check('the clean plot in Loop too, and nothing moved', wLoop > 0 && tab.view.clean === false && J({ arr: A(), undo: S().undo.length, exp: core.exportJSON() }) === loopBefore);
 const alt = core.alternatesOf(0, 'chords').candidates.find((c) => !c.current);
 const songBeforeSwap = J(A().song);
 const sw = await core.swapChord(0, alt); await settle();

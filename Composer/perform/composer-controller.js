@@ -181,6 +181,8 @@
 //                                            step (the section's energy said again by form.js energyOf, `edited` set)
 //                loadSong(exported | arrangement | record)   a song back (one undo step), checked against the loop
 //                songState() → the lane's data; songAt() → { pass, index, section, passInSection, passes } | null
+//                songClips() / songPosition()   READ-ONLY, for the Song UI's clips and playhead (DESIGN_NOTES "Song UI
+//                                            (visual pass)"): the cached passes as the getters hand them; the pass + its share
 //              The player gets getters that read the mode at every tick: in Song, pass c → the song's pass c mod its
 //              length (songPasses over the loop as it plays, cached until the song or the loop's CONTENT changes), with
 //              the user's sounds, legato and drum kit as they are now laid over it (S16: the lane owns on/off; levels
@@ -1936,6 +1938,35 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       if (!p) return null;
       const n = p.x.passes.length, sec = arrOf(state).song.sections[p.e.section];
       return { pass: c, index: ((c % n) + n) % n, section: p.e.section, passInSection: p.e.pass, passes: sec.passes };
+    },
+    /** READ-ONLY (the Song UI's playhead): songAt() plus the player's place in its cycle → { at (the song's pass + the
+     *  share of it played, 0 ≤ at < passes), passes (the song's), section, passInSection } | null (as songAt). passAt and
+     *  playhead read one clock in one call, so `at` never steps back inside a pass */
+    songPosition() {
+      const a = api.songAt();
+      if (!a) return null;
+      const f = Number(player?.playhead?.()) || 0, n = expanded(state).passes.length;
+      return { at: a.index + Math.max(0, Math.min(1 - 1e-9, f)), passes: n, section: a.section, passInSection: a.passInSection };
+    },
+    /**
+     * READ-ONLY (the Song UI's clips): the song's passes as the player gets them (the getters' parts and drums: form.js
+     * songPasses, cached, with the sounds, legato and kit as they are now laid over), grouped a section at a time.
+     * Nothing is planned, arranged or stored: the objects are the cache's, shared, and must not be changed.
+     * → null (no song, not composed, or a song this loop can't play) | { T (the cycle, spec seconds), barStarts (spec
+     * seconds), sections: [{ index, passes: [{ index (in the song), pass (in the section), fill (its drums the fill
+     * bar's), parts: { id: part }, drums }] }] }
+     */
+    songClips() {
+      const st = state, song = arrOf(st).song;
+      if (!ready(st) || !song) return null;
+      const x = expanded(st);
+      if (!x.passes) return null;
+      const sections = song.sections.map((sec, index) => ({ index, passes: [] }));
+      x.passes.forEach((e, index) => {
+        const sec = song.sections[e.section], parts = liveParts(st, x, e.parts);
+        sections[e.section].passes.push({ index, pass: e.pass, fill: !!sec.fillBefore && e.pass === sec.passes - 1, parts: Object.fromEntries(parts.map((p) => [p.id, p])), drums: liveDrums(st, x, e.drums) });
+      });
+      return { T: st.spec.knobs.cycleSeconds, barStarts: st.spec.timeline?.barStarts ?? [], sections };
     },
     /**
      * The lane's data (S15): { mode, template, seed, templates [{ id, label }], song (the record, or null), ready, stale,

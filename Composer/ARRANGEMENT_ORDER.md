@@ -238,6 +238,29 @@ lane appears above the matrix. Hard-reload first: the lane's stylesheet is new (
    - Song again restarts the song at its intro.
 10. **The JSON export** (Details → JSON) has `edits.arrangement` with the song. Switch the page's rhythm away and back: the song and Song are still there.
 
+## Song UI visual pass (for Avery; branch `arrange/song-ui`)
+Hard-reload first (`arrangement-lane.css?v=20261104.1`, `composer-bridge.js?v=20261104.1`; the modules under the bridge
+need the hard reload). Composer window, Compose, then **Song**. Nothing should sound different from Song v0: this pass
+only changes what you see.
+1. **119:42:15:8, Song · Arch.**
+   - The matrix is gone and the lane fills the left half: a **ruler** on top, the slim **energy** band, the section heads, then a **clip** row a part (Lead, Chords, Comping, Bass, Inner, Drums) and the Layers chips.
+   - The ruler: a coloured band a section (the kinds' colours, the heads' names just under it), a tall tick a section, a shorter one a pass, short ones a bar, and the time ("0:00", "0:15", … or "5 s", …).
+   - Each clip shows its notes: bars by pitch for the pitched parts, a faint rule at each pass, the same notes tiled pass after pass. The bass sits in the same band of its row in every clip, the lead the same.
+   - The intro's Lead clip (off) is outlined with a dashed border, its notes ghosted. Click it: it fills in (on), one ↶.
+   - The density words (Walking, Medium) are small labels on the Peak clips.
+   - The Drums clips: ticks in five rows (kick on top, then snare, hat, perc, cym). The Build's last pass (the fill) looks different from its others and is tagged "fill"; the Peak's first pass has the crash.
+   - The Break's Drums clip is dashed (off), every pass ghosted except its last, which plays the fill alone.
+   - Perform: a white **playhead** line glides across the whole track, smoothly (not jumping a pass at a time), and the sounding section's heads and clips light as it passes. After Home it starts again at the left.
+2. **8:7:6:5, Build–drop.** Five passes a section at a 4 s cycle: the lane is wider than the window and scrolls sideways; the part names stay put on the left while the clips slide under them. Every clip of a section spans its five passes with four faint rules.
+3. **768:784, Arch.** The clips are dense, but each part's register is readable (two layers, so the comp and inner clips change most between sections).
+4. **The controls in their new places**: − / + on a section's passes (its column and every clip under it widen by a pass, the ruler's ticks follow), a Layers chip, the template select, Re-plan, the stale marker (Loop, swap a chord, Song), a section's name (the strip under the lane, and that section's clips get a thin coloured top edge). Each is one ↶ as before.
+5. **Loop.** Press Loop: the matrix is back exactly as it was, at once, the lane gone. Song again: the lane at once.
+6. **Clean plot** (a toggle beside "details"; named so because Details off is already "the clean view").
+   - On: the Linear Plot in the window's upper right goes dark under the Composer's notes: only the lit notes (and the playhead while playing) show, none of the row's own dots.
+   - Off: the row is back under them as before.
+   - It works in Loop and Song, survives a reload, and changes nothing else: ↶ has nothing new, the JSON export is the same.
+7. **A laptop width:** the clips readable (around 46 px a part, the drums 54), the section heads' controls legible, nothing overlapping the sticky part names.
+
 ## Later (recorded, not ruled)
 - Re-mining parts from a section's layers (`allowNodes`).
 - Pulse modulation (which layer is the beat; a new meter).
@@ -402,3 +425,19 @@ lane appears above the matrix. Hard-reload first: the lane's stylesheet is new (
     - First, a visual pass with no change to the underlying function (branch `arrange/song-ui`).
   - **Open:** a new cycle of the same row doesn't carry the song over. That's the entry's data, not just the visuals:
     the planner proposes carrying it over as stale, so it keeps looping over the new loop.
+- 2026-11-04: **the Song UI visual pass built** (branch `arrange/song-ui`, off `arrange/song-v0` at 37fae67; the code and the test in one commit, these docs the commit after). Visual only: `core/`, the player, planning, playback, the store's data, undo and the export are untouched. Suites 88/88 (`assert-page-song.mjs` now 88 checks: the 73 kept, cell selectors now `.alane-clip`, 15 new). DESIGN_NOTES "Song UI (visual pass)"; Avery's checklist is "Song UI visual pass" above.
+  - **Song hides the loop's matrix** and its bar picker (a class swap on the left host, the matrix still rendered under it), and the lane is a clip timeline: a ruler (kind-coloured section bands, ticks a section, a pass and a bar, the time), the energy band, the section heads, a clip a section × part drawing every pass's notes (bars by pitch, one range a part over the song) or hits (five voice rows), the Layers chips, and a playhead gliding over the track.
+  - **Read-only accessors** on the controller: `songClips()` (the cached `songPasses` grouped by section, as the getters hand them to the player) and `songPosition()` (`songAt()` plus the player's share of its cycle).
+  - **The clean plot**: a toggle beside Details (localStorage, as Details): the overlay's wash opaque while the window is open, so the Linear Plot's own drawing is fully hidden under the Composer's notes, in Loop and Song. No state, undo or export moves.
+  - **Calls made:**
+    1. It's named "clean plot", because Details off is already "the clean view".
+    2. The ruler shows the sections as kind-coloured bands, with the names left to the heads just under it (not said twice).
+    3. Columns are exactly ∝ passes (no floor per section, no gap), so one mapping (`timeline()`) serves the ruler, the clips, the playhead and a later seek. The scale's floor is 36 px a pass, 8 px a second of the cycle and 76 px over the shortest section; past it, the lane scrolls with the part names sticky.
+    4. A note longer than its pass is drawn to the pass's end, so the passes tile.
+    5. An off clip keeps its notes, dimmed under a dashed outline. A pass whose part doesn't sound is ghosted, so a drumless break's fill pass reads as the one that plays.
+    6. The decisions list (Details) and the inspector stay in Song.
+  - **Open questions for Avery:**
+    1. Should the track auto-scroll to keep the playhead in view on a song wider than the window? It doesn't now.
+    2. Is a zoom wanted (the scale is fixed by those floors)? It would sit naturally with the seek.
+    3. The inspector still shows the selected matrix cell's context in Song. Should it show the selected clip or section instead, once clips can be selected?
+    4. Is the clean plot the right reading of "the background linear plot fully hidden"? It hides the row under the notes, not the plot's panel. The other reading would give the inspector the whole right column (in `PartitionsUI.js`).

@@ -17,13 +17,16 @@
 //           getFocus, or with null, the draw is exactly as before (the whole selected part ringed).
 // While the main page animates its own lights (LRCVisuals.isAnimating: main playback), no snapshot is taken: the
 // Composer is stopped then (one thing sounds at a time), and every main frame redraws the plot anyway.
+//   clean   (DESIGN_NOTES "Song UI (visual pass)") getClean () → true: the wash is opaque, so the plot's own dots, connectors
+//           and the rest are fully hidden and only the Composer's marks show (the invert button still clear); it washes
+//           even with nothing lit. A viewing flag: nothing else moves. Without getClean, or false, the draw is as before.
 //   scene   while Compose is animated (compose-animator.js), setScene(true): draw washes the plot and snapshots it with
 //           no lit node (the animation's base, even before there is a spec), and paint(fn) blits that base and lets
 //           fn draw the animation frame's few marks over it. setScene(false) and a redraw land on the lit nodes again.
 
 import { HIGHLIGHT_PARTS, playheadAt, playheadX, soundingAt } from './plot-highlights.js';
 
-export const OVERLAY_STYLE = Object.freeze({ wash: 'rgba(16, 16, 16, 0.62)', offAlpha: 0.25, ring: 3, glow: 6, playhead: 'rgba(255, 255, 255, 0.75)', snapTick: 1 });
+export const OVERLAY_STYLE = Object.freeze({ wash: 'rgba(16, 16, 16, 0.62)', cleanWash: 'rgb(16, 16, 16)', offAlpha: 0.25, ring: 3, glow: 6, playhead: 'rgba(255, 255, 255, 0.75)', snapTick: 1 });
 /** a lit dot's radius on a view */
 export const litRadius = (view) => Math.max(2, ((view && view.dotSize) || 4) * 0.9);
 
@@ -70,21 +73,22 @@ export function partOrder(selected) {
 }
 
 /**
- * createPlotOverlay({ getHighlights, getSelected, getFocus, makeCanvas })
+ * createPlotOverlay({ getHighlights, getSelected, getFocus, getClean, makeCanvas })
  *   getHighlights () → plot-highlights.js highlights for the plot as drawn now, or null (nothing lit)
  *   getSelected   () → the selected part's id (drawn on top, ringed)
  *   getFocus      () → the selected cell's { part, indices } (STEP 4e; ringed instead of the whole part), or null
+ *   getClean      () → whether the plot under the marks is fully hidden (the clean plot), false by default
  *   makeCanvas    () → a canvas for the snapshot (document.createElement('canvas') in the page)
  */
-export function createPlotOverlay({ getHighlights, getSelected = () => null, getFocus = () => null, makeCanvas = () => (typeof document !== 'undefined' ? document.createElement('canvas') : null) } = {}) {
+export function createPlotOverlay({ getHighlights, getSelected = () => null, getFocus = () => null, getClean = () => false, makeCanvas = () => (typeof document !== 'undefined' ? document.createElement('canvas') : null) } = {}) {
   let view = null, ctxOf = null, snap = null, snapOk = false, lit = null, scene = false, lastFocus = null;
 
-  const washOver = (ctx, { width, height, button }) => {
+  const washOver = (ctx, { width, height, button }, clean = false) => {
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, width, height);
     if (button) ctx.rect(button.x, button.y, button.width, button.height);   // a hole (even-odd): the invert button stays clear
-    ctx.fillStyle = OVERLAY_STYLE.wash;
+    ctx.fillStyle = clean ? OVERLAY_STYLE.cleanWash : OVERLAY_STYLE.wash;
     ctx.fill('evenodd');
     ctx.restore();
   };
@@ -95,10 +99,11 @@ export function createPlotOverlay({ getHighlights, getSelected = () => null, get
     draw(ctx, v) {
       view = v; ctxOf = ctx; snapOk = false; lastFocus = null;
       lit = getHighlights();
-      if (!lit && !scene) return;
-      washOver(ctx, v);
-      const focus = scene ? null : getFocus(), selected = focus ? focus.part : getSelected(), r = litRadius(v);
-      if (!scene) for (const id of order(selected)) {
+      const clean = !!getClean();
+      if (!lit && !scene && !clean) return;
+      washOver(ctx, v, clean);
+      const focus = scene || !lit ? null : getFocus(), selected = focus ? focus.part : getSelected(), r = litRadius(v);
+      if (!scene && lit) for (const id of order(selected)) {
         const h = lit.parts[id];
         if (!h || !h.indices.length) continue;
         if (focus && id === focus.part) { lastFocus = focus; drawLitPart(ctx, h, v.positions, r, false); if (focus.indices.length || focus.rings?.length) drawLitPart(ctx, h, v.positions, r + 1, true, focus.indices, focus.rings ?? null); }
