@@ -2751,6 +2751,61 @@ The playhead is a line over the track (`.alane-over`, under the sticky heads), m
 
 **Tests.** `assert-page-song.mjs`: 88 checks. The 73 are kept, their cell selectors now `.alane-clip`, and 15 are new: the matrix hidden in Song and back in Loop; a clip a section × part; every clip's marks against `songPasses` pass by pass, with the rules; the fill pass; one pitch range a part; an off clip; the ruler's bands and ticks on the one mapping; the playhead; the clean plot in Song and in Loop, moving nothing.
 
+## Song seek and section start (built 2026-11-04, branch `song/seek`)
+
+Avery: "the top timeline is clickable anywhere in the arrangement", and "double-clicking a Section puts the playhead there and starts from there when you press Perform". Only where playback starts and jumps moves: planning, the energies, the song's notes, undo and the export are untouched, and Loop is as it was. Not yet seen in a browser: the order's "Song seek and section start" checklist is Avery's.
+
+**The cue.** One place in the song, kept by the controller per entry (`cues`, a WeakMap) as `{ section, pass in the section, offset }` (spec seconds into the pass): where Song's Perform starts. It is transport, not the song: no undo step, not in the arrangement or the export.
+- **Set by** a click on the ruler (`cueSong(at, { snap })`, `at` the song position in passes, `timeline().fromX` of the click's share) or a section head's double-click (`cueSection(i)`: the section's first pass, offset 0).
+- **Playing in Song, setting it is a seek:** Perform again from it (`perform()` hands the player `{ pass, offset }`).
+- **The top drops it** (a cue at pass 0, 0 s is none), and so does **a new song** (a plan, Re-plan, the template, a load: its sections aren't the old one's). Loop ⇄ Song keeps it, so Song again starts from it (still a clean restart, the ruling). **Stop leaves it**, so the next Perform starts there again: the DAW's return-to-cue, and a drummer looping a section by Perform / Stop.
+- **Kept by its section**, so ± passes before it move it along with its section; a section that shrinks under it clamps it to its last pass. A section the song no longer has (an undo of a re-plan) drops it.
+- `songCue()` → `{ at, index, section, passInSection, offset, passes }` | null, for the lane.
+
+**The snap.** A ruler click snaps to **the downbeat of the bar it falls in** (the spec's `barStarts`): a click inside bar 3 plays bar 3 from its "1". Shift-click is the exact point (`snap: 'none'`; `'pass'` is there for a caller). A double-click on a section head is its first pass exactly. A click in the song's first bar is the top. A click at the very end is the last pass's last bar.
+
+**The player** (`play(spec, getParts, getDrums, { pass, offset })`, the head of `composer-player.js`, "start"):
+- **The clock map's first segment is at that spec time** (`pass·T + offset`), so the booking begins there and books only what starts at or after it. The voices, the drums, the duck's kicks and the MIDI all follow this. A chain or note begun before the start isn't struck: a held chord that started in the bar before is silent until its next note. Every later pass, the S12 boundary rule and the tempo map run as from the top.
+- **The song wraps as before.** The pass index counts on from the start (so it is the song's pass) and the controller's getters take it mod the song's length: a start mid-song plays to Home, then loops from the top.
+- **passAt and the playhead during the 50 ms lead-in** say the start's pass and its offset, never the pass before (the start is handed as a pass, not a float, so there's no rounding at a boundary).
+- **A seek is a play while playing:** `stop()`'s cut (every voice faded over 30 ms and stopped, so a voice booked ahead is stopped before it starts; every MIDI note off, All Sound/Notes Off, Stop), then the start, 50 ms on, as Perform.
+- **With no arguments it books byte for byte as before** (the frozen fixture's five cases still match).
+
+**MIDI at a jump.** Two things the cut couldn't do before, because the booking runs ~150 ms ahead and Web MIDI can't take back a queued message (`MIDIOutput.clear()` isn't in Chrome):
+- **A note-on still queued got its note-off before it** in `allOff`, and hung. Now a live note's off goes at max(now, its on + `MIN_NOTE_MS`), so a note booked ahead of a Stop or a jump blips ≤ 10 ms and ends. This also fixes a plain Stop.
+- **The old play's clock ticks and notes would interleave with the new one's.** So with the MIDI sink on, a restart waits out the old booking: the new start is at least the old horizon + 20 ms (≤ ~175 ms after the click, against 50 ms without MIDI). The DAW hears Stop, the old queue end, then Start.
+
+**The clock restarts at the jump:** Start, then a tick every 1/24 of a quarter from the start point, so the DAW's beat 1 is the jump. No Song Position Pointer is sent (open question).
+
+**The lane** (`arrangement-lane.js`):
+- **The ruler** takes a click (its title says so). The handler reads `shareOf(event, ruler.getBoundingClientRect())` → `fromX` → `core.cueSong`, through the window's edit door (an open audition is kept first, as Loop | Song). The second click of a double-click on it is let go, so it's one jump, not two restarts.
+- **The cue** is a flag on the ruler (`.alane-cue`, `--alane-cue`, the accent green: a triangle on a stem) while one is set, playing or not.
+- **Stopped, the playhead line waits at the cue** (`.cued`: dashed, the cue's colour, dimmer). It's hidden with no cue.
+- **A section's name:** a click selects. The second click of a double-click (`detail === 2`: the window is re-rendered between the two clicks, so the browser's `dblclick` on a replaced node isn't relied on) also cues.
+
+**Calls made (proposed):**
+1. **Bar snap, to the bar the click falls in** (floor, not the nearest line). Shift-click is exact.
+2. **Stop returns to the cue** (it leaves the cue where it was).
+3. **A seek is a clean restart** at the new place: the cut, then the start. Held notes from before aren't re-struck.
+4. **MIDI:** all-notes-off and Stop at the jump, then Start with the clock restarting from the jump. With MIDI on, the start waits out the old booking.
+5. **`allOff` ends a queued note after its own on** (also a plain Stop's fix).
+6. **The cue is transport**, per entry and kept by its section. Dropped by a new song and by the top, kept across Loop ⇄ Song.
+7. **No cue → the playhead is hidden when stopped**, as before.
+
+**Tests.**
+- `assert-song-player.mjs`, 44 checks (20 new):
+  - starts at pass 2, at pass 1 0.9 s in and at pass 4 (a wrap) 1.45 s in: exactly the chains and strokes from there, `passAt` through the lead-in, the playhead's share, the MIDI clock from the start;
+  - the duck from a drumless pass;
+  - a seek mid-play: every sounding or booked-ahead voice faded and stopped at the jump, the booked-ahead one before its start; then exactly the new chains, each once; Start after the old booking; no MIDI note on at the jump (this check fails with the old `allOff`); All Notes Off; the clock's Stop → Start with no interleaving; the MIDI notes after; without MIDI, 50 ms.
+- `assert-page-song.mjs`, 113 checks (22 new):
+  - a ruler click while playing → a new play at the bar's pass and offset, with the same getters;
+  - shift-click; a double click on the ruler counted once; the top; the end;
+  - Stop keeps the cue, with the flag and the dashed playhead at it; the cue is no undo step and not exported; Perform from it;
+  - a single click on a name still selects; a double-click cues its first pass, stopped and playing;
+  - the cue moves with its section;
+  - Loop refuses a cue, and its Perform hands no start; Song again starts from the cue;
+  - a re-plan drops it, and its undo doesn't bring it back.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:

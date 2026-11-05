@@ -38,6 +38,7 @@
 //   drums     M5: kick 36, snare 38, hat 42, perc 37, cymbal 49; a 50 ms note, no bend.
 //   clock     decision 2: MIDI clock (24 a quarter), Start and Stop, on the clock's port, for the DAW to follow.
 //   silence   M6: allOff() — every live note off, then All Sound Off and All Notes Off on every channel used, and Stop.
+//             A live note whose note-on is still queued (booked ahead) is ended just after it, never before (Song seek).
 //
 //   file      M11: midiFileOf — the composition as it plays now, one cycle, as a Standard MIDI File: a track a part,
 //             on the same channels with the same bends, lengths and velocities, at the spec's tempo.
@@ -205,7 +206,9 @@ export function createComposerMidi({ now = () => (globalThis.performance ? perfo
   }
   function allOff() {
     const ts = now();
-    for (const e of [...live.values()]) { e.off = true; send(e.port, [0x80 | e.channel, e.note, 0], ts); }
+    // a note booked ahead (its note-on's timestamp still to come: the player books ~150 ms ahead) is ended after its own
+    // on, MIN_NOTE_MS on, or the off would arrive first and the note hang (Song seek: a jump cuts with notes queued)
+    for (const e of [...live.values()]) { e.off = true; send(e.port, [0x80 | e.channel, e.note, 0], Math.max(ts, e.onTs + MIN_NOTE_MS)); }
     live.clear();
     const seen = new Set();
     for (const id of MIDI_PARTS) {
