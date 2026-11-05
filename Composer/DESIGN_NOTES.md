@@ -2751,6 +2751,61 @@ The playhead is a line over the track (`.alane-over`, under the sticky heads), m
 
 **Tests.** `assert-page-song.mjs`: 88 checks. The 73 are kept, their cell selectors now `.alane-clip`, and 15 are new: the matrix hidden in Song and back in Loop; a clip a section × part; every clip's marks against `songPasses` pass by pass, with the rules; the fill pass; one pitch range a part; an off clip; the ruler's bands and ticks on the one mapping; the playhead; the clean plot in Song and in Loop, moving nothing.
 
+## Song seek and section start (built 2026-11-04, branch `song/seek`)
+
+Avery: "the top timeline is clickable anywhere in the arrangement", and "double-clicking a Section puts the playhead there and starts from there when you press Perform". Only where playback starts and jumps moves: planning, the energies, the song's notes, undo and the export are untouched, and Loop is as it was. Not yet seen in a browser: the order's "Song seek and section start" checklist is Avery's.
+
+**The cue.** One place in the song, kept by the controller per entry (`cues`, a WeakMap) as `{ section, pass in the section, offset }` (spec seconds into the pass): where Song's Perform starts. It is transport, not the song: no undo step, not in the arrangement or the export.
+- **Set by** a click on the ruler (`cueSong(at, { snap })`, `at` the song position in passes, `timeline().fromX` of the click's share) or a section head's double-click (`cueSection(i)`: the section's first pass, offset 0).
+- **Playing in Song, setting it is a seek:** Perform again from it (`perform()` hands the player `{ pass, offset }`).
+- **The top drops it** (a cue at pass 0, 0 s is none), and so does **a new song** (a plan, Re-plan, the template, a load: its sections aren't the old one's). Loop ⇄ Song keeps it, so Song again starts from it (still a clean restart, the ruling). **Stop leaves it**, so the next Perform starts there again: the DAW's return-to-cue, and a drummer looping a section by Perform / Stop.
+- **Kept by its section**, so ± passes before it move it along with its section; a section that shrinks under it clamps it to its last pass. A section the song no longer has (an undo of a re-plan) drops it.
+- `songCue()` → `{ at, index, section, passInSection, offset, passes }` | null, for the lane.
+
+**The snap.** A ruler click snaps to **the downbeat of the bar it falls in** (the spec's `barStarts`): a click inside bar 3 plays bar 3 from its "1". Shift-click is the exact point (`snap: 'none'`; `'pass'` is there for a caller). A double-click on a section head is its first pass exactly. A click in the song's first bar is the top. A click at the very end is the last pass's last bar.
+
+**The player** (`play(spec, getParts, getDrums, { pass, offset })`, the head of `composer-player.js`, "start"):
+- **The clock map's first segment is at that spec time** (`pass·T + offset`), so the booking begins there and books only what starts at or after it. The voices, the drums, the duck's kicks and the MIDI all follow this. A chain or note begun before the start isn't struck: a held chord that started in the bar before is silent until its next note. Every later pass, the S12 boundary rule and the tempo map run as from the top.
+- **The song wraps as before.** The pass index counts on from the start (so it is the song's pass) and the controller's getters take it mod the song's length: a start mid-song plays to Home, then loops from the top.
+- **passAt and the playhead during the 50 ms lead-in** say the start's pass and its offset, never the pass before (the start is handed as a pass, not a float, so there's no rounding at a boundary).
+- **A seek is a play while playing:** `stop()`'s cut (every voice faded over 30 ms and stopped, so a voice booked ahead is stopped before it starts; every MIDI note off, All Sound/Notes Off, Stop), then the start, 50 ms on, as Perform.
+- **With no arguments it books byte for byte as before** (the frozen fixture's five cases still match).
+
+**MIDI at a jump.** Two things the cut couldn't do before, because the booking runs ~150 ms ahead and Web MIDI can't take back a queued message (`MIDIOutput.clear()` isn't in Chrome):
+- **A note-on still queued got its note-off before it** in `allOff`, and hung. Now a live note's off goes at max(now, its on + `MIN_NOTE_MS`), so a note booked ahead of a Stop or a jump blips ≤ 10 ms and ends. This also fixes a plain Stop.
+- **The old play's clock ticks and notes would interleave with the new one's.** So with the MIDI sink on, a restart waits out the old booking: the new start is at least the old horizon + 20 ms (≤ ~175 ms after the click, against 50 ms without MIDI). The DAW hears Stop, the old queue end, then Start.
+
+**The clock restarts at the jump:** Start, then a tick every 1/24 of a quarter from the start point, so the DAW's beat 1 is the jump. No Song Position Pointer is sent (open question).
+
+**The lane** (`arrangement-lane.js`):
+- **The ruler** takes a click (its title says so). The handler reads `shareOf(event, ruler.getBoundingClientRect())` → `fromX` → `core.cueSong`, through the window's edit door (an open audition is kept first, as Loop | Song). The second click of a double-click on it is let go, so it's one jump, not two restarts.
+- **The cue** is a flag on the ruler (`.alane-cue`, `--alane-cue`, the accent green: a triangle on a stem) while one is set, playing or not.
+- **Stopped, the playhead line waits at the cue** (`.cued`: dashed, the cue's colour, dimmer). It's hidden with no cue.
+- **A section's name:** a click selects. The second click of a double-click (`detail === 2`: the window is re-rendered between the two clicks, so the browser's `dblclick` on a replaced node isn't relied on) also cues.
+
+**Calls made (proposed):**
+1. **Bar snap, to the bar the click falls in** (floor, not the nearest line). Shift-click is exact.
+2. **Stop leaves the playhead where it stopped** (Avery, 11-04; it first returned to the cue): in Song, `stop()` sets the cue at `songPosition()`, exactly, so Perform resumes there. **Esc** in the window is `rewind()`, back to the top (Song: the cue dropped, a jump if playing; Loop playing: from its top). **Space** in the window is Perform / Stop (never Compose; no key repeat; a focused button let go so its own click doesn't press it again; a text field keeps it).
+3. **A seek is a clean restart** at the new place: the cut, then the start. Held notes from before aren't re-struck.
+4. **MIDI:** all-notes-off and Stop at the jump, then Start with the clock restarting from the jump. With MIDI on, the start waits out the old booking.
+5. **`allOff` ends a queued note after its own on** (also a plain Stop's fix).
+6. **The cue is transport**, per entry and kept by its section. Dropped by a new song and by the top, kept across Loop ⇄ Song.
+7. **No cue → the playhead is hidden when stopped**, as before.
+
+**Tests.**
+- `assert-song-player.mjs`, 44 checks (20 new):
+  - starts at pass 2, at pass 1 0.9 s in and at pass 4 (a wrap) 1.45 s in: exactly the chains and strokes from there, `passAt` through the lead-in, the playhead's share, the MIDI clock from the start;
+  - the duck from a drumless pass;
+  - a seek mid-play: every sounding or booked-ahead voice faded and stopped at the jump, the booked-ahead one before its start; then exactly the new chains, each once; Start after the old booking; no MIDI note on at the jump (this check fails with the old `allOff`); All Notes Off; the clock's Stop → Start with no interleaving; the MIDI notes after; without MIDI, 50 ms.
+- `assert-page-song.mjs`, 113 checks (22 new):
+  - a ruler click while playing → a new play at the bar's pass and offset, with the same getters;
+  - shift-click; a double click on the ruler counted once; the top; the end;
+  - Stop keeps the cue, with the flag and the dashed playhead at it; the cue is no undo step and not exported; Perform from it;
+  - a single click on a name still selects; a double-click cues its first pass, stopped and playing;
+  - the cue moves with its section;
+  - Loop refuses a cue, and its Perform hands no start; Song again starts from the cue;
+  - a re-plan drops it, and its undo doesn't bring it back.
+
 ## Layout (agreed earlier, 2026-10-21)
 
 - The Composer keeps the Partitions window frame:
@@ -2802,4 +2857,16 @@ Raised during the sprint:
 5. **The Composer window** in the LRC: built 2026-10-22 night as a tab of the Partitions window ("Composer tab on the main page"); Avery's browser pass is next.
 6. **v2:** bass-led composition; a full arpeggiator for the inner voice.
 7. **Outside the Composer:** `Core Interface/LRCModule.js:245` spread `Math.max(...spacesPlot)`, which overflowed the stack past ~124k onsets in Node. Fixed 2026-10-22 night, with the same spreads in `generateToneRowData` and in LRCVisuals' plot.
+
+## Live's MIDI clips and the grid (fixed 2026-11-04, branch `fix/midi-grid-live`)
+
+Avery's clips exported from Ableton Live 12 were refused with "The MIDI clip's grid is too fine: 192 steps a bar is past the 32 a line may hold." The files are sound. Live writes format 0 at 96 PPQ: one track, an empty or clip-named track name, a 4/4 time signature, no tempo event, every status byte, note-on velocity 100, and note-off `80` at velocity 64. The reader and the onsets-only grid decode read them correctly: test1, 2, 6, 7, 8 and 9 decode on sixteenths and place. Three things were wrong.
+
+- **The guess fell through to 48ths.** test4 is a loose performance: sixteenths up to half a step off, and a mean error of 0.17 of a sixteenth. No subdivision has every note-on within `UNQUANTIZED_SHARE` (0.3) of its step, so the guess fell through to `SUBDIVISIONS`' finest, 48ths. That is 192 steps a bar in 4/4, so it was refused every time. **Fix:** when the guess's rule finds nothing, the decode takes the subdivision a line can hold (`LINE_SLOTS` = lines.js `MAX_SLOTS`, 32 a bar) whose note-ons sit nearest their steps on average, as shares of the step. A grid that explains nothing averages about 0.25. The coarser grid wins a tie. test4 now reads on sixteenths, flagged as unquantized, with 5 graces merged.
+- **Exact only on a grid too fine for a line.** test3 and test5 are straight sixteenths, but whole phrases sit a 64th late (6 ticks, 0.0625 q). That is past `ONSET_TOLERANCE`, so the coarsest exact grid was 64ths, and 64 a bar was refused. **Fix:** when the exact grid is past a line, the decode applies the guess's own rule to the grids a line holds. It takes the coarsest grid with every note-on within 0.3 of its step and as many distinct steps as the exact grid (a nudge moves notes; it never merges two). The clip is then `exact: false` with `fine: { d, S }`, the exact grid set aside. The decode line says "nudged off the grid: exact only on 64ths (64 a bar, past a line), read on sixteenths (off by up to 0.06 of a quarter)". A real run of 64ths is half a step off every coarser grid, and four notes a 1/12-quarter apart would merge, so both stay exact and refused, as before.
+- **The glyph kept a refusal.** The lens's refusal (the glyph's red state and its "Compose — …" tip) was cleared only by a new rhythm or the next glyph press. So after one refused clip and a glyph press, every clip composed in the window afterwards still showed the first clip's "192 steps a bar". That is why every file seemed to fail. **Fix:** the refusal remembers the entry it was about (its spec and status). When that entry is composed again or its input changes, the refusal is dropped.
+
+**Unchanged.** A clip whose old read fits a line decodes exactly as before. `fine` is set only on the new path, and every probe clip and the unquantized Ode (still a guess on eighths) are pinned in assert-target.mjs. The synthetic Live-shaped clips (built byte by byte in the test; Avery's own files stay out of the public repo) are pinned there and in assert-page-target.mjs.
+
+**Open (for Avery):** swung clips (a groove committed into the notes) and loose performances read as a straight grid with misses; beat tracking or a swing read would be its own feature. When a guess merges two note-ons, the decode line says "chords reduced to their top note" even when the merged notes were graces.
 

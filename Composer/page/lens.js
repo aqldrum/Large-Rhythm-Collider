@@ -76,6 +76,11 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
   let skipQueued = false, animRecalled = false, animShort = false, loopGen = 0;
   let phase = 'idle', session = 0, lensKey = null, priorPlot = null, switching = false, ownScene = false, pace = 1;
   let looping = false, lastPlaying = false, finalLit = null, refusal = null, settle = null;
+  // what the refusal was said about: { key, spec, status } of that entry as it refused. A window Compose of the same
+  // rhythm (a new MIDI clip, a knob) moves the entry on, and the tip with it (the MIDI grid fix, DESIGN_NOTES "Live's
+  // MIDI clips and the grid"): it said one clip's 192 a bar over every clip after it, until the glyph was pressed again
+  let refusedOn = null;
+  const refuse = (key, st, words) => { refusal = words; refusedOn = { key, spec: st?.spec ?? null, status: st?.status ?? null }; };
 
   const emit = (type, detail = {}) => { for (const f of [...listeners]) f(type, detail); };
   const visuals = () => host.visuals?.() ?? null;
@@ -191,7 +196,7 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
         }
         land(my, { recalled: true }); return done;
       }
-      if (store.refused(lensKey)) { refusal = refusalText(store.state.spec); api.toRow(); return done; }   // known: no re-solve
+      if (store.refused(lensKey)) { refuse(lensKey, store.state, refusalText(store.state.spec)); api.toRow(); return done; }   // known: no re-solve
 
       // compose (or join the compose in flight for this rhythm)
       phase = 'composing';
@@ -203,7 +208,7 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
       if (my !== session || store.lens !== 'composition') return done;   // the lens moved on; the composition is cached
       const st = store.entry(key)?.state ?? null;
       if (!st || !st.spec || st.spec.refused || st.status === 'error') {
-        refusal = st?.status === 'error' ? `error: ${st.error}` : refusalText(st?.spec) || 'this rhythm can\'t be composed';
+        refuse(key, st, st?.status === 'error' ? `error: ${st.error}` : refusalText(st?.spec) || 'this rhythm can\'t be composed');
         api.toRow();
         return done;
       }
@@ -270,6 +275,11 @@ export function createLens({ tab, store, host = {}, overlay, seat, animator, raf
   // the composition changed under the lens (parts, drums, a window Compose, playback): the panels and the button
   // follow, and the lit nodes on the main canvas (the window redraws them itself while it is shown)
   tab.onChange(() => {
+    // the refused entry moved on (composed again, or an input changed under it): the glyph's tip and red go with it
+    if (refusal && refusedOn) {
+      const s = store.entry(refusedOn.key)?.state ?? null;
+      if (!s || s.spec !== refusedOn.spec || s.status !== refusedOn.status || (refusedOn.status === 'refused' && s.dirty)) { refusal = null; refusedOn = null; emit('glyph'); }
+    }
     if (store.lens !== 'composition') return;
     if (phase === 'landed' && !tabShown()) redraw();
     each('update');

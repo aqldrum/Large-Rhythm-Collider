@@ -42,7 +42,9 @@ export function decodeLine(clip, { tonic = null } = {}) {
     { text: `${Math.round(clip.tempoBpm ?? clip.bpm)} BPM`, tone: '' },
   ];
   if (clip.dropped) items.push({ text: `chords reduced to their top note: ${plural(clip.dropped, 'note')} dropped`, tone: 'amber' });
-  if (!clip.exact) items.push({ text: `unquantized: the grid is a guess (off by up to ${clip.residual.toFixed(2)} of a quarter)`, tone: 'amber' });
+  // a clip exact only on a grid too fine for a line, read on a coarser one (midi.js `fine`: passages nudged off it)
+  if (clip.fine) items.push({ text: `nudged off the grid: exact only on ${stepName(clip.fine.d)} (${clip.fine.S} a bar, past a line), read on ${stepName(clip.d)} (off by up to ${clip.residual.toFixed(2)} of a quarter)`, tone: 'amber' });
+  else if (!clip.exact) items.push({ text: `unquantized: the grid is a guess (off by up to ${clip.residual.toFixed(2)} of a quarter)`, tone: 'amber' });
   const title = `${clip.name}: ${clip.timeSig.join('/')}, ${clip.S} steps a bar (${stepName(clip.d)}), ${clip.B} bars from the first note's bar${clip.pickup ? ` (a pickup of ${plural(clip.pickup, 'step')})` : ''}; `
     + `${clip.notes.length} notes (the top line); the key estimate (Krumhansl) is weak on short tunes, so the tonic can be picked`;
   return { name: clip.name, grid, notes: clip.notes.length, tonic: asked ? tonic : est.tonic, dropped: clip.dropped, unquantized: !clip.exact, items, title };

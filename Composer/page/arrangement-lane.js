@@ -12,12 +12,16 @@
 //              shortest section; past it the lane scrolls sideways, the row heads sticky), so one mapping (timeline()) takes a pass position to x everywhere:
 //                ruler     ONE element across the columns: the sections' kind-coloured bands (their names are the heads
 //                          just under it, so they aren't said twice), a tick a section, a pass and a bar, and the time
-//                          in seconds at the playing tempo; later, click / drag to seek attaches here (timeline().fromX)
+//                          in seconds at the playing tempo; a click anywhere on it is the cue (Song seek: core.cueSong
+//                          of timeline().fromX of the click's share, snapped to the bar it falls in; shift-click the exact
+//                          point): playing, playback jumps there; stopped, the playhead waits there and Perform starts
+//                          there. The cue is a flag on the ruler (`.alane-cue`) while one is set
 //                energy    a slim band under the ruler: each section's energy (form.js energyOf on the loop as it plays:
 //                          solid) and its target (dotted), on one scale; a column draws its own step and the join from
 //                          the one before, so the line is continuous whatever the widths
-//                head      the name (a click selects the section: the strip below), "−  N  +" passes, "→ fill" before a
-//                          peak or drop, a dot when edited; the sounding section lit while Song plays (frame())
+//                head      the name (a click selects the section: the strip below; a double-click also cues its first
+//                          pass, core.cueSection: playing, a jump there), "−  N  +" passes, "→ fill" before a peak or
+//                          drop, a dot when edited; the sounding section lit while Song plays (frame())
 //                clips     a clip a section × part (`.alane-clip`, data-section, data-part: selection, copy and paste
 //                          attach to these later), the notes of every pass it spans drawn tiled (core.songClips(): what
 //                          the player gets), a faint rule at each pass: pitched parts as note bars, x the time in the
@@ -27,11 +31,12 @@
 //                          section has off is outlined, dim, and still a click toggles it; a part off in the loop is
 //                          hatched and can't be turned on. The density word, where it differs from the loop's, a label
 //                Layers    the row's layers as chips (A B C D), each in or out of the section (a click toggles)
-//                playhead  a line over the track at songPosition() (the song's pass + its share), moved every frame
+//                playhead  a line over the track at songPosition() (the song's pass + its share), moved every frame;
+//                          stopped, at the cue (`.cued`: dimmer, it marks where Perform starts), hidden with none
 //   the strip  the selected section: its kind, energy against its target, passes, the planner's why; a density select for
 //              the bass, the comp, the lead and the inner (the loop's own marked), each one undo step
 // PURE half: laneModel(songState, { selected, cycleSeconds }) → the lane as data; energyCell(col, prev, scale) → its SVG's
-// text; timeline(passes) the one mapping; rulerModel(m, …) → the ruler as data; pitchRanges(clips); clipSvg(…) → a clip's
+// text; timeline(passes) the one mapping; shareOf(event, box) a click's share; rulerModel(m, …) → the ruler as data; pitchRanges(clips); clipSvg(…) → a clip's
 // SVG text and its count. The DOM half createArrangementLane({ doc, core, view, edit, rerender }) → { root, render(), frame() }.
 
 import { PART_LABELS, PART_COLORS } from './plot-highlights.js';
@@ -105,10 +110,12 @@ export function laneModel(ss, { selected = 0, cycleSeconds = null, passSeconds =
   return { template: ss.template, templates: ss.templates, seed: ss.seed, stale: !!ss.stale, error: ss.error ?? null, total, seconds: cycleSeconds ? total * cycleSeconds : null, scale, columns, rows, layers,
     selected: sel, cols: S.map((s) => `minmax(0, ${s.passes}fr)`).join(' '), pxPerPass, minWidth: HEAD_PX + HEAD_GAP_PX + total * pxPerPass };
 }
+/** a click's share of an element's width (0..1), from its clientX and the element's box (the ruler's seek) */
+export const shareOf = (e, box) => (box && box.width > 0 ? Math.max(0, Math.min(1, ((Number(e.clientX) || 0) - box.left) / box.width)) : 0);
 const ordinal = (n) => `${n}${n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'}`;
 
 /**
- * The track's one mapping (the ruler, the clips, the playhead; a seek attaches to fromX later): a position in the song
+ * The track's one mapping (the ruler, the clips, the playhead, the cue; the ruler's seek reads fromX): a position in the song
  * in passes (0..passes; pass k's start is k, its middle k + ½) ↔ the share of the track's width (0..1). The columns are
  * exactly ∝ passes, so it holds in every row. seconds(at, cycleSeconds) the time there.
  */
@@ -231,7 +238,7 @@ export function createArrangementLane({ doc = globalThis.document, core, view = 
   const el = (tag, props = {}, ...kids) => { const e = Object.assign(doc.createElement(tag), props); for (const k of kids) if (k != null) e.append(k); return e; };
   const root = el('div', { className: 'alane' });
   root.style.display = 'none';
-  let said = null, colEls = [], lit = -1, playhead = null, tl = null, phLeft = '';
+  let said = null, colEls = [], lit = -1, playhead = null, tl = null, phLeft = '', cueFlag = null, cueLeft = '';
   // a clip's drawing kept by its place, reused while its SVG's text is the same (no re-parse on a re-render)
   const drawn = new Map();
   /** a click's edit: refused ones are said in the bar */
@@ -241,7 +248,7 @@ export function createArrangementLane({ doc = globalThis.document, core, view = 
   function render() {
     const ss = core.songState(), on = ss.mode === 'song';
     root.style.display = on ? '' : 'none';
-    colEls = []; lit = -1; playhead = null; tl = null; phLeft = '';
+    colEls = []; lit = -1; playhead = null; tl = null; phLeft = ''; cueFlag = null; cueLeft = '';
     if (!on) { root.replaceChildren(); return; }
     const spec = core.state.spec, okSpec = spec && !spec.refused, cycleSeconds = okSpec ? spec.knobs.cycleSeconds * core.tempoFactor() : null;
     const m = laneModel(ss, { selected: view.songSection ?? 0, cycleSeconds, passSeconds: okSpec ? spec.knobs.cycleSeconds : null });
@@ -273,7 +280,9 @@ export function createArrangementLane({ doc = globalThis.document, core, view = 
     const r = rulerModel(m, { cycleSeconds, barStarts: okSpec ? spec.timeline?.barStarts ?? [] : [], specCycle: okSpec ? spec.knobs.cycleSeconds : null });
     const ticks = el('div', { className: 'alane-ticks' });
     ticks.innerHTML = rulerSvg(r);
-    const ruler = el('div', { className: 'alane-ruler', title: `the song's time: ${m.columns.length} sections, ${m.total} passes${m.seconds ? `, ${Math.round(m.seconds)} s at this tempo` : ''} (a tick a pass and a bar)` },
+    cueFlag = el('div', { className: 'alane-cue', title: 'the cue: Perform starts here (a click on the ruler moves it; Stop comes back to it)' });
+    cueFlag.style.display = 'none';
+    const ruler = el('div', { className: 'alane-ruler', title: `the song's time: ${m.columns.length} sections, ${m.total} passes${m.seconds ? `, ${Math.round(m.seconds)} s at this tempo` : ''} (a tick a pass and a bar) — click: play from the bar there (shift-click: the exact point)` },
       el('div', { className: 'alane-ruler-secs' }, ...r.sections.map((s) => {
         const b = el('div', { className: 'alane-ruler-sec', title: `${s.name} (${s.kind})` });
         b.style.left = `${100 * s.x}%`; b.style.width = `${100 * s.w}%`; b.style.setProperty('--alane-kind', s.color);
@@ -281,13 +290,23 @@ export function createArrangementLane({ doc = globalThis.document, core, view = 
         return b;
       })),
       ticks,
-      el('div', { className: 'alane-ruler-labels' }, ...r.labels.map((L) => { const t = el('span', { className: 'alane-ruler-label', textContent: L.text }); t.style.left = `${100 * L.x}%`; return t; })));
+      el('div', { className: 'alane-ruler-labels' }, ...r.labels.map((L) => { const t = el('span', { className: 'alane-ruler-label', textContent: L.text }); t.style.left = `${100 * L.x}%`; return t; })),
+      cueFlag);
     ruler.dataset.passes = String(m.total);
+    // the seek (Avery, 11-04): a click anywhere is the cue there, a jump while playing; the second click of a double
+    // click is let go (one jump, not two restarts)
+    const seekTl = tl;
+    ruler.addEventListener('click', (e) => { if (e.detail > 1) return; run(() => core.cueSong(seekTl.fromX(shareOf(e, ruler.getBoundingClientRect())), { snap: e.shiftKey ? 'none' : 'bar' })); });
     const rulerRow = el('div', { className: 'alane-row alane-ruler-row' }, el('span', { className: 'ctab-muted alane-head', textContent: m.seconds ? 'time' : 'passes' }), ruler);
     const energy = rowOf(el('span', { className: 'ctab-muted alane-head', textContent: 'energy', title: 'each section\'s energy (solid) and the template\'s target (dotted), home = 1' }),
       m.columns.map((c, i) => { const e = el('div', { className: 'alane-energy', title: `${c.name}: E ${fmt(c.energy)} for ${fmt(c.target)}` }); e.innerHTML = energyCell(c, m.columns[i - 1], m.scale); return mark(i, e); }), 'alane-energy-row');
     const heads = rowOf(el('span', { className: 'ctab-muted alane-head', textContent: 'section' }), m.columns.map((c, i) => {
-      const name = btn(c.name, 'alane-name', `${c.name} (${c.kind}): E ${fmt(c.energy)} for ${fmt(c.target)} — a click shows it below`, () => { view.songSection = i; rerender(); });
+      // a click selects; the second click of a double-click (its detail: the window is rebuilt between the two) cues
+      // the section's first pass, a jump there while playing (Avery, 11-04)
+      const name = btn(c.name, 'alane-name', `${c.name} (${c.kind}): E ${fmt(c.energy)} for ${fmt(c.target)} — a click shows it below; a double-click starts from it`, (e) => {
+        view.songSection = i;
+        if (e?.detail === 2) run(() => core.cueSection(i)); else rerender();
+      });
       const passes = el('span', { className: 'alane-passes' },
         btn('−', 'alane-nudge', 'one pass fewer (one undo step)', () => run(() => core.nudgeSongPasses(i, -1)), { disabled: c.passes <= 1 }),
         el('span', { className: 'alane-n', textContent: String(c.passes), title: `${c.passes} pass${c.passes === 1 ? '' : 'es'} of the cycle` }),
@@ -367,10 +386,15 @@ export function createArrangementLane({ doc = globalThis.document, core, view = 
    *  (nothing is rebuilt) */
   function frame() {
     if (root.style.display === 'none' || !colEls.length) return;
-    const pos = core.songPosition?.() ?? null;
+    const pos = core.songPosition?.() ?? null, cue = core.songCue?.() ?? null;
     if (playhead) {
-      const left = pos && tl ? `${(100 * tl.toX(pos.at)).toFixed(3)}%` : '';
-      if (left !== phLeft) { phLeft = left; playhead.style.display = left ? 'block' : 'none'; if (left) playhead.style.left = left; }
+      // playing: where it sounds; stopped: at the cue (Perform starts there), dimmer; none: hidden
+      const at = pos ? pos.at : cue ? cue.at : null, left = at != null && tl ? `${(100 * tl.toX(at)).toFixed(3)}%` : '', key = `${left}|${pos ? '' : 'cued'}`;
+      if (key !== phLeft) { phLeft = key; playhead.style.display = left ? 'block' : 'none'; if (left) playhead.style.left = left; playhead.classList.toggle('cued', !pos && !!left); }
+    }
+    if (cueFlag) {
+      const left = cue && tl ? `${(100 * tl.toX(cue.at)).toFixed(3)}%` : '';
+      if (left !== cueLeft) { cueLeft = left; cueFlag.style.display = left ? 'block' : 'none'; if (left) cueFlag.style.left = left; }
     }
     const k = pos ? pos.section : -1;
     if (k === lit) return;
@@ -379,5 +403,5 @@ export function createArrangementLane({ doc = globalThis.document, core, view = 
     lit = k;
   }
 
-  return { root, render, frame, get lit() { return lit; }, get playhead() { return playhead; } };
+  return { root, render, frame, get lit() { return lit; }, get playhead() { return playhead; }, get cue() { return cueFlag; } };
 }

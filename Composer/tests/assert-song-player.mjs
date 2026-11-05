@@ -12,6 +12,11 @@
 //   • the duck follows each pass's kicks (the next pass's downbeat kick included); a drumless pass ducks nothing
 //   • MIDI sends only what sounds in each pass, no note of a muted part is held over the boundary, the clock runs on
 //   • passAt across a live tempo change (S13)
+//   • Song seek and section start (ARRANGEMENT_ORDER.md "Song seek and section start"): play(…, { pass, offset }) books
+//     exactly what starts from there (a wrap included), passAt and the playhead through the lead-in, the MIDI clock
+//     from the start point, the duck from a drumless pass; a seek mid-play: every sounding or booked-ahead voice cut at
+//     the jump (a booked-ahead one before its start), then the new chains each once, no MIDI note on at the jump (the
+//     queued one ended after its own on), the clock's Stop → Start with no two plays' ticks interleaved
 //   node Composer/tests/assert-song-player.mjs
 import { compose, rearticulate } from '../core/compose.js';
 import { createPlayer, chainsOf } from '../perform/composer-player.js';
@@ -26,6 +31,7 @@ import * as drumLibrary from '../../Audio/drums/index.js';
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };
 const near = (a, b, e = 1e-9) => Math.abs(a - b) <= e;
+const J = (x) => JSON.stringify(x);
 
 // ── the recording mock (assert-lab.mjs', with the master chain's wave shapers) ──
 function makeCtx() {
@@ -282,6 +288,122 @@ console.log('\n— the call: in a loop, a part switched off while its voice hold
   while (ctx.currentTime < P0 + 2.5) { ctx.currentTime += 0.025; p.tick(); }
   const held = recs.find((r) => near(r.when, P0 + 1.4));
   check('released at the loop\'s end instead of its own (2.3 s)', held && held.releases.length === 1 && near(held.releases[0][0], P0 + WT), JSON.stringify(held?.releases));
+  p.stop();
+}
+
+// ── Song seek and section start (ARRANGEMENT_ORDER.md "Song seek and section start"): play(…, { pass, offset }) ──
+console.log('\n— a start at pass c, offset s: only what starts from there, every later pass as from the top');
+/** a recording session on the song by hand: every voice (its start, part, pitch, stops and fades) and drum stroke, and
+ *  every MIDI message; run(s) advances the mock clock a tick at a time */
+function seekSession() {
+  const ctx = makeCtx(), now = () => ctx.currentTime * 1000, recs = [], hits = [];
+  const v = {
+    getRecipe, planVoice: (r, opts) => { const p = planVoice(r, opts); recs.push({ hz: opts.baseFreq, duration: opts.timing.duration, stops: [], fades: [], releases: [] }); return p; },
+    createInstrumentVoice: (args) => {
+      const h = createInstrumentVoice(args), rec = recs[recs.length - 1];
+      rec.when = args.when; rec.dest = args.destination;
+      return { ...h, stop: (at) => { rec.stops.push(at); return h.stop(at); }, fadeOut: (at, s) => { rec.fades.push(at); return h.fadeOut(at, s); }, release: (at, r) => { rec.releases.push(at); return h.release(at, r); } };
+    },
+  };
+  const dl = { ...drumLibrary, playMadeDrum: (id, o) => { hits.push({ id, at: o.at }); return drumLibrary.playMadeDrum(id, o); } };
+  const ports = Object.fromEntries(MIDI_PARTS.map((id) => [id, recorder(id)])), clock = recorder('clock'), sink = createComposerMidi({ now });
+  sink.setPorts(ports); sink.setClockPort(clock); sink.setEnabled(true);
+  for (const p of [...Object.values(ports), clock]) p.sent.length = 0;
+  const player = createPlayer({ ctx, voices: v, drums: dl, timers: {}, midi: sink, now, mix: { master: 'classic' } });
+  for (const id of MIDI_PARTS) player.setLevel(id, 1);
+  const run = (until) => { while (ctx.currentTime < until) { ctx.currentTime += 0.025; player.tick(); } };
+  const busOf = (d) => Object.keys(player.buses).find((id) => player.buses[id] === d);
+  return { ctx, recs, hits, ports, clock, player, run, busOf };
+}
+const gp = (c) => passOf(c).parts, gd = (c) => passOf(c).drums;
+/** the chain starts and strokes a play from spec time F should book over [F, F + span): keys at their clock times */
+function wanted(F, L0, span) {
+  const v = [], d = [];
+  for (let c = Math.floor(F / WT); c * WT < F + span; c++) {
+    for (const part of passOf(c).parts) if (part.enabled) for (const ch of chainsOf(part)) { const S = c * WT + ch.notes[0].time; if (S >= F - 1e-12 && S < F + span) v.push(key(L0 + S - F, part.id, ch.notes[0].hz)); }
+    const dr = passOf(c).drums;
+    if (dr.enabled) for (const h of dr.hits) { const S = c * WT + h.time; if (S >= F - 1e-12 && S < F + span) d.push(`${(L0 + S - F).toFixed(9)} ${MADE_OF[h.voice]}`); }
+  }
+  return { v: v.sort(), d: d.sort() };
+}
+for (const [pass, offset] of [[2, 0], [1, 0.9], [4, 1.45]]) {
+  const z = seekSession(), F = pass * WT + offset, span = 3 * WT;
+  z.player.play(wrapSpec, gp, gd, { pass, offset });
+  const L0 = z.player.loopStart, pre = z.player.passAt(L0 - 0.04), ph0 = z.player.playhead();
+  z.run(L0 + span + 0.3);
+  const w = wanted(F, L0, span), within = (t) => t < L0 + span - 1e-9;
+  const gotV = z.recs.filter((r) => within(r.when)).map((r) => key(r.when, z.busOf(r.dest), r.hz)).sort();
+  const gotD = z.hits.filter((h) => within(h.at)).map((h) => `${h.at.toFixed(9)} ${h.id}`).sort();
+  check(`pass ${pass}, ${offset} s in: the voices of every chain starting from there (${w.v.length}), at their clock times from Perform, none begun before it struck; the strokes the same (${w.d.length})`,
+    J(gotV) === J(w.v) && J(gotD) === J(w.d) && !z.recs.some((r) => r.when < L0 - 1e-9) && z.player.start.pass === pass && near(z.player.start.offset, offset), `${gotV.length}/${w.v.length} ${gotD.length}/${w.d.length}`);
+  const mid = L0 + ((Math.floor(F / WT) + 1) * WT - F) + 0.5;
+  check(`…passAt says pass ${pass} from the press (the lead-in too), then counts on (${z.player.passAt(mid)} at the next pass); the playhead starts at the offset's share`, pre === pass && z.player.passAt(L0 + 0.001) === pass
+    && z.player.passAt(mid) === Math.floor(F / WT) + 1 && near(ph0, offset / WT, 1e-12), `${pre} ${z.player.passAt(mid)} ${ph0}`);
+  const ticks = z.clock.sent.filter((m) => m.bytes[0] === 0xF8), dtMs = 60000 / wrapSpec.knobs.tempoBpm / 24, startMsg = z.clock.sent.find((m) => m.bytes[0] === 0xFA);
+  check('…the MIDI clock: Start at the start point, the first tick with it, a tick every 1/24 quarter from there', startMsg && near(startMsg.ts, L0 * 1000, 1e-6) && near(ticks[0].ts, L0 * 1000, 1e-6) && ticks.slice(1).every((t, i) => Math.abs(t.ts - ticks[i].ts - dtMs) < 1e-6));
+  z.player.stop();
+}
+{
+  const z = seekSession();
+  z.player.play(wrapSpec, gp, gd, { pass: 1, offset: 0 });
+  const L0 = z.player.loopStart;
+  z.run(L0 + 2 * WT + 0.3);
+  const D = DUCK_DEFAULTS, ramps = z.player.stages.inner.duck.gain.calls.filter((c) => c[0] === 'linearRampToValueAtTime');
+  const deep = ramps.filter((c) => near(20 * Math.log10(c[1]), -D.depthDb, 1e-6)).map((c) => c[2]);
+  check('a start in the drumless pass 1: the duck still at 1 until pass 2\'s downbeat kick, down there first', deep.length > 0 && near(Math.min(...deep), L0 + WT, 1e-9) && !ramps.some((c) => c[2] < L0 + WT - D.attackMs / 1000 - 1e-6 && c[1] < 1 - 1e-9), `${Math.min(...deep) - L0}`);
+  z.player.stop();
+}
+
+console.log('\n— a seek mid-play: the cut, then the start (no hanging note, no doubled note)');
+{
+  const z = seekSession();
+  z.player.play(wrapSpec, gp, gd);
+  const P0 = z.player.loopStart;
+  // to 1.52 s into pass 0: the lead's chain (1.4 → 1.7) and the inner's (1.5 → 1.8) hold, the bass's lone 1.6 is
+  // booked ahead (the booking reaches ~150 ms on), not yet sounding
+  z.run(P0 + 1.52);
+  const seekAt = z.ctx.currentTime, booked = z.player.booked, oldN = z.recs.length, oldTicks = z.clock.sent.filter((m) => m.bytes[0] === 0xF8).length;
+  // sounding or booked at the jump: a lone note not yet past its length's release, a chain not yet released
+  const live = (r) => (r.duration != null ? r.when + r.duration + 0.08 > seekAt : !r.releases.length || r.releases[r.releases.length - 1] + 0.08 > seekAt);
+  const heldOld = z.recs.filter(live).length;
+  z.player.play(wrapSpec, gp, gd, { pass: 2, offset: 0.5 });
+  const L1 = z.player.loopStart, F = 2 * WT + 0.5, span = 2 * WT;
+  z.run(L1 + span + 0.3);
+  const old = z.recs.slice(0, oldN), fresh = z.recs.slice(oldN), stopFade = 0.03;
+  check(`every voice of the play before still sounding or booked ahead at the jump (${heldOld} of ${oldN}) faded there and stopped within ${stopFade * 1000 + 20} ms of it`, heldOld >= 3 && old.filter(live).every((r) => r.fades.some((t) => near(t, seekAt)) && r.stops.some((t) => t <= seekAt + stopFade + 0.02 + 1e-9)),
+    J(old.map((r) => [r.when - P0, r.fades, r.stops])));
+  const ahead = old.filter((r) => r.when > seekAt);
+  check(`…a voice booked ahead of the jump (${ahead.length}: the bass at 1.6 s) stopped before its start: it never sounds`, ahead.length >= 1 && ahead.every((r) => r.stops.some((t) => t < r.when)), J(ahead.map((r) => [r.when - P0, r.stops])));
+  const w = wanted(F, L1, span), gotV = fresh.filter((r) => r.when < L1 + span - 1e-9).map((r) => key(r.when, z.busOf(r.dest), r.hz)).sort();
+  check(`…then exactly the chains from pass 2, 0.5 s in (${w.v.length}), each once, none before the start (the old play's booked-ahead voices never sound)`, J(gotV) === J(w.v) && new Set(gotV).size === gotV.length && fresh.every((r) => r.when >= L1 - 1e-9), `${gotV.length}/${w.v.length}`);
+  check('…with the MIDI on, the start waits out the old booking: Start after every booked-ahead message (≥ the old horizon + 20 ms)', L1 >= booked + 0.02 - 1e-9 && L1 <= booked + 0.03);
+  const all = (p) => [...p.sent].sort((a, b) => a.ts - b.ts);
+  const hanging = MIDI_PARTS.filter((id) => heldAt(z.ports[id], L1 - 1e-4) !== 0);
+  check('…no MIDI note left on at the jump: every note of the old play off before the new Start', hanging.length === 0 && MIDI_PARTS.some((id) => z.ports[id].sent.some((m) => kind(m.bytes) === 0x90 && m.ts < seekAt * 1000)), hanging.join());
+  check('…All Notes Off on the parts\' buses at the jump', ['lead', 'bass', 'inner'].every((id) => z.ports[id].sent.some((m) => kind(m.bytes) === 0xB0 && m.bytes[1] === 123 && near(m.ts, seekAt * 1000, 1e-6))));
+  const clk = all(z.clock), stopI = clk.findIndex((m) => m.bytes[0] === 0xFC), startI = clk.findIndex((m, i) => i > stopI && m.bytes[0] === 0xFA);
+  const after = clk.slice(startI + 1).filter((m) => m.bytes[0] === 0xF8), dtMs = 60000 / wrapSpec.knobs.tempoBpm / 24;
+  check(`…the clock: Stop at the jump, the old ticks (${oldTicks} booked) all before the new Start, then a tick every 1/24 quarter from it — never two plays' ticks interleaved`, stopI > 0 && startI > stopI && near(clk[startI].ts, L1 * 1000, 1e-6)
+    && clk.slice(0, startI).every((m) => m.ts <= L1 * 1000 + 1e-6) && near(after[0].ts, L1 * 1000, 1e-6) && after.slice(1).every((t, i) => Math.abs(t.ts - after[i].ts - dtMs) < 1e-6));
+  let midiMiss = '';
+  for (const id of ['lead', 'bass', 'inner']) {
+    const wantTs = [];
+    for (let c = 2; c * WT < F + span; c++) { const part = passOf(c).parts.find((p) => p.id === id && p.enabled); if (part) for (const n of midiNotesOf(part, WT)) { const S = c * WT + n.time; if (S >= F && S < F + span) wantTs.push((L1 + S - F).toFixed(6)); } }
+    const gotTs = z.ports[id].sent.filter((m) => kind(m.bytes) === 0x90 && m.bytes[2] > 0 && m.ts >= L1 * 1000 - 1e-6 && m.ts < (L1 + span) * 1000 - 1e-6).map((m) => (m.ts / 1000).toFixed(6));
+    if (J(gotTs.sort()) !== J(wantTs.sort())) midiMiss ||= `${id}: ${gotTs} ≠ ${wantTs}`;
+  }
+  check('…the MIDI notes after the jump: each pass\'s from the start point on, nothing of before it', !midiMiss, midiMiss);
+  check('…passAt and the playhead follow the new start', z.player.passAt(L1 + 0.01) === 2 && z.player.passAt(L1 + WT - 0.5 + 0.01) === 3 && near(z.player.passAt(L1 + 0.2) + 0, 2));
+  z.player.stop();
+}
+{
+  // without MIDI a seek is as quick as a Perform (50 ms): the audio's cut needs no waiting
+  const ctx = makeCtx(), p = createPlayer({ ctx, timers: {} });
+  p.play(wrapSpec, gp, gd);
+  while (ctx.currentTime < p.loopStart + 1) { ctx.currentTime += 0.025; p.tick(); }
+  const t = ctx.currentTime;
+  p.play(wrapSpec, gp, gd, { pass: 1, offset: 0 });
+  check('without the MIDI sink, a seek starts 50 ms on, as Perform does', near(p.loopStart, t + 0.05));
   p.stop();
 }
 

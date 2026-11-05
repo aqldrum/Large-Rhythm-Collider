@@ -240,6 +240,22 @@ check(`a grid too fine for a line: refused, said (${text('.ctab-refusal')})`, ta
   && q(left, '.ctab-clip-fit').style.display === 'none');
 check('targetError words the rest', /no notes/.test(targetError('composer/midi: no notes')) && /cut short/.test(targetError('composer/midi: unexpected end of file')) && /too fine/.test(targetError('targetGrid')));
 
+// DESIGN_NOTES "Live's MIDI clips and the grid": the glyph pressed on the refused clip says why in its tip; a clip that
+// then composes in the window takes the tip with it (it kept the refused clip's words over every clip after it, until
+// the glyph was pressed again); and a riff whose second bar is a 64th late reads on sixteenths, said so
+const lens = bridge.lens;
+bridge.hideTab(); await lens.toComposition(); await settle();
+const saidFine = lens.refusal, tipFine = lens.tip();
+bridge.showTab(); await settle();
+const riff = [60, 62, 64, 65, 67, 65, 64, 62, 60, 64, 67, 72, 67, 64, 60, 55], q16 = 120;   // sixteenths at 480 PPQ; a 64th is 30 ticks
+const nudgedNotes = [...riff, ...riff].map((pitch, i) => ({ tick: i * q16 + (i >= 16 ? 30 : 0), end: (i + 1) * q16 + (i >= 16 ? 30 : 0) - 10, pitch }));
+await chooseFile(fileOf('nudged.mid', writeMidi({ tracks: [{ name: 'nudged', notes: nudgedNotes }] })));
+check(`the glyph on the refused clip: refused, its tip says why ("${tipFine}"); the next clip composed in the window clears it ("${lens.tip()}")`, /grid is too fine/.test(saidFine) && /^Compose — .*too fine/.test(tipFine)
+  && tab.state.status === 'ready' && lens.refusal === null && lens.tip() === 'Compose');
+check(`a riff a 64th late from its second bar: read on sixteenths, not refused; the decode line says so (${text('.ctab-clip-decode')})`, tab.state.spec.target?.clip.S === 16 && J(tab.state.input.target.clip.fine) === J({ d: 16, S: 64 })
+  && text('.ctab-clip-decode').includes('4/4 on sixteenths (16 a bar)') && text('.ctab-clip-decode').includes('nudged off the grid: exact only on 64ths (64 a bar, past a line), read on sixteenths (off by up to 0.06 of a quarter)'));
+await chooseFile(fileOf('fine.mid', fine));   // the Clear below starts from the refused clip, as before
+
 console.log('\n— Clear');
 const cC = composes;
 q(left, '.ctab-clip-clear').click(); await settle();
