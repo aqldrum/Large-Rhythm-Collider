@@ -50,6 +50,17 @@
 //            enabled); a lone note's planned length is cut there the same way, so its start asks for the next pass
 //            when its note crosses the end. A part that plays on keeps its voice. MIDI needs no cut: midiNotesOf ends
 //            every note by the cycle's end. passAt(t) → the pass sounding at clock time t (S13).
+//   start    (Song seek, ARRANGEMENT_ORDER.md "Song seek and section start") play(…, { pass, offset }) starts at pass c,
+//            `offset` spec seconds into it, instead of the top: the clock map's first segment is at that spec time, so
+//            the booking begins there and books only what starts at or after it (a chain or a note begun before it is
+//            not struck; the drums, the duck's kicks and the MIDI likewise), every later pass and the tempo map as from
+//            the top. The MIDI clock's ticks run from the start point (Start, then a tick every 1/24 of a quarter from
+//            it), so the DAW's beat 1 is the jump. Until the start sounds (the 50 ms lead-in), passAt says the start's
+//            pass and playhead its place, never the pass before. A seek is a play while playing: stop()'s cut (every
+//            voice faded over 30 ms, every MIDI note off and Stop), then the start. With the MIDI sink on, a restart
+//            waits out what the old play booked ahead (≤ aheadSeconds: its note-ons and clock ticks are already queued
+//            with their timestamps and can't be taken back), so the DAW hears Stop, the old queue end, then Start, never
+//            the two plays' notes or ticks interleaved.
 
 import { getRecipe, normalizeNoteInstrumentId } from '../../Audio/voices/recipes.js';
 import { planVoice } from '../../Audio/voices/plan.js';
@@ -144,6 +155,8 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
   limiter.connect(destination ?? ctx.destination);
   const buses = {}, stages = {}, live = new Set();
   let spec = null, getParts = null, getDrums = null, loopStart = 0, timer = null, playing = false;
+  // where play started (Song seek): the pass, the offset into it (spec seconds), and their spec time
+  let fromPass = 0, fromOffset = 0, fromSpec = 0;
   const samples = new Map();   // url → AudioBuffer once loaded (null while loading or failed)
   // booked: the clock up to which everything is booked; bookedSpec: the same instant in spec time
   let booked = 0, bookedSpec = 0;
@@ -338,23 +351,30 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
   const passAt = (t = ctx.currentTime) => {
     if (!playing || !spec) return null;
     const s = specAt(t);
-    return s < 0 ? 0 : Math.floor(s / spec.knobs.cycleSeconds);
+    return s <= fromSpec ? fromPass : Math.floor(s / spec.knobs.cycleSeconds);
   };
 
   return {
     buses, master, limiter, chain, stages,
     get playing() { return playing; },
     /** start looping `spec` now (a little ahead, so the first notes are not late), at the current time factor;
-     *  theParts (c) / theDrums (c) → pass c's parts and drums (S10; the spec's own by default), read at every tick */
-    play(theSpec, theParts, theDrums) {
+     *  theParts (c) / theDrums (c) → pass c's parts and drums (S10; the spec's own by default), read at every tick;
+     *  start { pass, offset } → begin at pass `pass` (a whole number ≥ 0), `offset` spec seconds into it (0 ≤ offset
+     *  < the cycle), not the top (the head of this file, "start"); playing, it is a seek: the cut, then the start */
+    play(theSpec, theParts, theDrums, start = null) {
+      const restart = playing, wasBooked = booked;
       if (playing) this.stop();
       spec = theSpec; getParts = theParts || (() => theSpec.parts); getDrums = theDrums || (() => theSpec.drums);
       forgetPasses();
       for (const p of spec.parts) busOf(p.id);
       busOf('drums');
-      loopStart = ctx.currentTime + 0.05; booked = loopStart; bookedSpec = 0; playing = true;
-      segments = [{ t0: loopStart, s0: 0, factor: o.factor }]; holding = []; midiHeld = []; nextTick = 0;
-      if (mixState) { resetDuck(); duckKicks = []; duckScanned = 0; duckBooked = ctx.currentTime; }
+      const T = spec.knobs.cycleSeconds, pass = Math.max(0, Math.floor(Number(start?.pass) || 0)), offset = Math.max(0, Math.min(T * (1 - 1e-12), Number(start?.offset) || 0));
+      fromPass = pass; fromOffset = offset; fromSpec = pass === 0 && offset === 0 ? 0 : pass * T + offset;
+      loopStart = ctx.currentTime + 0.05;
+      if (restart && midi?.active) loopStart = Math.max(loopStart, wasBooked + 0.02);   // the old queue first (the head)
+      booked = loopStart; bookedSpec = fromSpec; playing = true;
+      segments = [{ t0: loopStart, s0: fromSpec, factor: o.factor }]; holding = []; midiHeld = []; nextTick = fromSpec;
+      if (mixState) { resetDuck(); duckKicks = []; duckScanned = fromSpec; duckBooked = ctx.currentTime; }
       master.gain.cancelScheduledValues(ctx.currentTime);
       master.gain.setValueAtTime(local ? o.master : 0, ctx.currentTime);
       if (midi?.active) midi.clockStart(msOf(loopStart));
@@ -412,13 +432,15 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
     },
     get factor() { return o.factor; },
     /** where the loop is, 0..1 of the cycle (null when stopped) */
-    playhead() { if (!playing || !spec) return null; const T = spec.knobs.cycleSeconds, s = specAt(ctx.currentTime); return s < 0 ? 0 : (s % T) / T; },
+    playhead() { if (!playing || !spec) return null; const T = spec.knobs.cycleSeconds, s = specAt(ctx.currentTime); return s <= fromSpec ? fromOffset / T : (s % T) / T; },
     /** the pass sounding at clock time t (now by default), counted from Perform: a song's section and pass (S13). Exact
      *  from the tempo segment sounding now on, through the lookahead; a time already sounded before a tempo change the
      *  map has let go of is read on the oldest segment kept. 0 before the loop starts, null when stopped. */
     passAt,
     get liveVoices() { return live.size; },
     get loopStart() { return loopStart; },
+    /** where this play started (Song seek): { pass, offset (spec seconds into it), spec (their spec time) } */
+    get start() { return { pass: fromPass, offset: fromOffset, spec: fromSpec }; },
     /** the clock up to which everything is booked (a tempo change takes over here) */
     get booked() { return booked; },
   };

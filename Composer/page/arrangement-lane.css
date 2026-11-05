@@ -9,7 +9,7 @@
 .alane {
   --alane-bg: #1f1f1f; --alane-cell: #2a2a2a; --alane-cell-on: #333; --alane-line: #444; --alane-dim: #333; --alane-text: #ccc; --alane-muted: #888;
   --alane-accent: #00ff88; --alane-amber: #ffb347; --alane-now: rgba(255, 255, 255, 0.10); --alane-target: #888;
-  --alane-track: #181818; --alane-rule: rgba(255, 255, 255, 0.07); --alane-pass-rule: rgba(255, 255, 255, 0.16); --alane-playhead: #fff;
+  --alane-track: #181818; --alane-rule: rgba(255, 255, 255, 0.07); --alane-pass-rule: rgba(255, 255, 255, 0.16); --alane-playhead: #fff; --alane-cue: #00ff88;
   --alane-head: 84px; --alane-clip-h: 46px; --alane-drum-h: 54px;
   display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; background: var(--alane-bg); border: 1px solid var(--alane-dim); border-radius: 4px; padding: 6px 8px; color: var(--alane-text);
 }
@@ -34,7 +34,8 @@
 .ctab-left .alane-part.selected { background: var(--alane-cell-on) !important; color: var(--alane-accent) !important; }
 
 /* the ruler: the sections' bands, the ticks (sections, passes, bars), the time */
-.alane-ruler { position: relative; height: 30px; background: var(--alane-track); border: 1px solid var(--alane-dim); border-radius: 3px; overflow: hidden; }
+.alane-ruler { position: relative; height: 30px; background: var(--alane-track); border: 1px solid var(--alane-dim); border-radius: 3px; overflow: hidden; cursor: pointer; }
+.alane-ruler:hover { border-color: var(--alane-line); }
 .alane-ruler-secs { position: absolute; left: 0; right: 0; top: 0; height: 4px; }
 .alane-ruler-sec { position: absolute; top: 0; bottom: 0; background: var(--alane-kind, var(--alane-muted)); opacity: .85; }
 .alane-ticks { position: absolute; left: 0; right: 0; bottom: 0; height: 24px; }
@@ -44,6 +45,9 @@
 .alane-tick-bar { stroke: var(--alane-dim); stroke-width: 1; fill: none; }
 .alane-ruler-labels { position: absolute; left: 0; right: 0; top: 5px; height: 12px; pointer-events: none; }
 .alane-ruler-label { position: absolute; top: 0; padding-left: 3px; font-family: monospace; font-size: 9px; line-height: 12px; color: var(--alane-muted); white-space: nowrap; }
+/* the cue (Song seek): a flag on the ruler where Perform starts, a downward triangle on a thin stem */
+.alane-cue { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid var(--alane-cue); pointer-events: none; z-index: 1; }
+.alane-cue::before { content: ''; position: absolute; top: 0; left: -5px; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid var(--alane-cue); }
 
 /* the energy line: a slim band under the ruler, each column its step and the join from the one before */
 .alane-energy { height: 18px; position: relative; background: var(--alane-track); border-bottom: 1px solid var(--alane-dim); }
@@ -96,6 +100,8 @@
 /* the playhead: one line over the track (the heads cover it as the track scrolls under them) */
 .alane-over { position: absolute; top: 0; bottom: 0; left: calc(var(--alane-head) + 6px); right: 0; pointer-events: none; z-index: 2; }
 .alane-playhead { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px solid var(--alane-playhead); box-shadow: 0 0 4px rgba(255, 255, 255, 0.5); }
+/* stopped, at the cue: where Perform starts, dashed and dimmer than the moving line */
+.alane-playhead.cued { border-left: 1.5px dashed var(--alane-cue); box-shadow: none; opacity: .7; }
 
 /* the Layers row */
 .alane-chips { display: flex; gap: 2px; flex-wrap: wrap; align-items: center; border-radius: 3px; padding: 1px; margin: 0 1px; }

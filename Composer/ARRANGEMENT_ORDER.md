@@ -263,6 +263,28 @@ only changes what you see.
 8. **A part's name selects it** (11-04 fix). In Song, click Bass, then Drums, in the lane's names on the left: each lights and the inspector shows it, as the matrix's names do in Loop. Nothing is edited (↶ has nothing new).
 9. **Song before Compose** (11-04 fix). On a fresh row, press Song, then Compose with "show the work" on: the animation plays on the matrix as in Loop, and the lane appears with its song when it ends (or at once on Skip), with no Perform needed. With "show the work" off, the lane is there as Compose lands.
 
+## Song seek and section start (for Avery; branch `song/seek`)
+Hard-reload first (`arrangement-lane.css?v=20261104.4`, `composer-bridge.js?v=20261104.4`). Composer window, Compose,
+then **Song**. Nothing the song plays changes: only where it starts and jumps.
+1. **The ruler takes a click.** On 119:42:15:8, Arch, Perform, then click the ruler halfway into the Break.
+   - The music jumps there at once, cleanly: the old notes cut, nothing hanging, nothing doubled, and the Break from the downbeat of the bar you clicked in (its "1", not mid-bar).
+   - The playhead line goes there and carries on. A green flag (the cue) sits on the ruler where you clicked.
+   - A chord that began before the bar you clicked isn't re-struck: it comes in at its next note.
+2. **Shift-click** on the ruler: the exact point, mid-bar.
+3. **Stopped.** Stop: the playhead line comes back to the flag, dashed and green, and waits there. Perform: it starts from there. Stop, Perform again: from the flag again.
+4. **Click the ruler while stopped:** the flag and the dashed line move there, nothing sounds, and Perform starts there. A click in the song's first bar takes the flag away (the top).
+5. **Double-click a section's name** (the heads under the ruler):
+   - Stopped: the flag at that section's first pass; Perform starts it from its downbeat.
+   - Playing: a jump there.
+   - A single click still only selects the section (the strip below).
+6. **To the end and round:** cue Peak 2, Perform. It plays Peak 2, then Home, then the Intro again (the song loops from the top as before).
+7. **Edits and the cue:** cue the Peak, then + a pass on the Intro: the flag moves along with the Peak. Re-plan or the template: the flag goes, and the new song starts from the top. ↶ has nothing new for any cue or jump, and the JSON export has no cue in it.
+8. **Loop is untouched:** press Loop while playing: it carries on, no jump. Perform in Loop starts at the loop's top. Song again restarts from the flag.
+9. **MIDI** (Send on, a DAW following the clock):
+   - At a jump the DAW gets all notes off and Stop, then Start. Its transport restarts at the jump, as at Perform: does your DAW want a Song Position Pointer instead (open question)?
+   - No note hangs on any bus across a jump or a Stop.
+   - With MIDI on, a jump comes ~0.15 s later than without, so the old queue can end first. Is that latency acceptable?
+
 ## Later (recorded, not ruled)
 - Re-mining parts from a section's layers (`allowNodes`).
 - Pulse modulation (which layer is the beat; a new meter).
@@ -446,4 +468,27 @@ only changes what you see.
 - **11-04, two fixes from Avery's first look at the visual pass** (planner, on arrange/song-v0):
   - *Stuck on Chords in Song.* The lane's part names were labels, and the matrix that selects a part in Loop is hidden in Song. They are now buttons that select the part (`createArrangementLane({ select })` → `tab.select`), lit when selected. Clip clicks still toggle the part on or off: clip selection waits for editable clips.
   - *The lane only appeared on Perform.* Song chosen before a Compose was planned only by Perform. `firstPlan` in the controller now plans it as the Compose lands too (still no undo step), and Perform keeps it as a fallback. While the animation plays in Song, the matrix shows (the animation builds it) and the lane is held back (`.ctab-animating .alane`), so the lane takes the room when the animation ends.
+- **11-04, Song seek and section start** (builder, branch `song/seek` off `arrange/song-v0` at b80556a; one commit: the code, the tests and these docs). Avery: "the top timeline is clickable anywhere in the arrangement", and "double-clicking a Section puts the playhead there and starts from there when you press Perform". `core/` (planning, energy, the song's notes) is untouched; Loop is as it was. Suites 87 + superrow, all PASS (the same 87 files: no new suite; `assert-song-player.mjs` 24 → 44 checks, `assert-page-song.mjs` 91 → 113). DESIGN_NOTES "Song seek and section start"; Avery's checklist is "Song seek and section start" above.
+  - **The player:** `play(spec, getParts, getDrums, { pass, offset })` starts at pass c, `offset` spec seconds into it. It books only what starts from there, the song wrapping after Home as before. A play while playing is the seek: `stop()`'s cut, then the start. No arguments = the frozen fixture's booking, byte for byte.
+  - **The controller:** the cue (`cueSong(at, { snap })`, `cueSection(i)`, `songCue()`); `perform()` starts from it in Song.
+  - **The lane:** the ruler's click, the name's double-click, the cue's flag, the playhead dashed at the cue while stopped.
+  - **`composer-midi.js` `allOff`:** a live note whose note-on is still queued is ended after it, not before (it hung).
+
+  **Calls made:**
+  1. **A ruler click snaps to the downbeat of the bar it falls in** (the bar's floor, not the nearest bar line). Shift-click is the exact point. A section head's double-click is its first pass exactly.
+  2. **The cue is a marker.** Perform starts at it, **Stop leaves it** (the next Perform starts there again: the DAW's return-to-cue), and while stopped the playhead line waits there, dashed. A click in the first bar is the top (no cue).
+  3. **A seek is a clean restart** at the new place (the ruling for Song ↔ Loop): every voice cut over 30 ms, every MIDI note off, then the start. A note or held chord that began before the target isn't re-struck.
+  4. **MIDI:** all notes off and Stop at the jump, then Start, the clock restarting at the jump (the DAW's beat 1 is the jump). With the MIDI sink on, a restart waits out what the old play booked ahead (~150 ms), so no queued note or tick interleaves with the new ones. Without MIDI a jump is 50 ms, as Perform.
+  5. **`allOff` ended a queued note before its on** (a latent hang at every Stop, made common by seeks). The off now goes at max(now, its on + 10 ms).
+  6. **The cue is transport, not the song:** no undo step, not exported, per entry. It's kept by its section (± passes before it move it along), dropped by a new song (a plan, Re-plan, the template, a load) and by the top, and kept across Loop ⇄ Song, so Song again starts from it.
+  7. **The double-click is read from the second click's `detail`,** because the window re-renders between the two clicks of a double-click. The second click of a double-click on the ruler is ignored (one jump).
+
+  **Open questions for Avery:**
+  1. **Floor or nearest?** A click just left of a bar line now plays the bar before it.
+  2. **Stop:** back to the cue (now), or leave the playhead where it stopped (Logic's way), so Perform resumes there?
+  3. **A held chord at the target** isn't re-struck. Should a seek re-strike what would be sounding there (chords, the bass), like a DAW's MIDI chase?
+  4. **MIDI:** a Song Position Pointer + Continue, so a slaved DAW lands at the same bar, instead of Stop / Start? It's only exact on a 16th grid of the spec's tempo.
+  5. **The ~150 ms wait** at a jump while MIDI is on: acceptable, or jump at once and accept a few queued notes and ticks overlapping?
+  6. **Should a cue survive a re-plan** (by section index, or by kind)? Now a new song starts from the top.
+  7. **Phase C's auto-scroll question stands:** a click far right on a wide song doesn't scroll the track.
 

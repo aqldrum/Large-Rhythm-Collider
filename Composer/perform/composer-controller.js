@@ -183,6 +183,14 @@
 //                songState() → the lane's data; songAt() → { pass, index, section, passInSection, passes } | null
 //                songClips() / songPosition()   READ-ONLY, for the Song UI's clips and playhead (DESIGN_NOTES "Song UI
 //                                            (visual pass)"): the cached passes as the getters hand them; the pass + its share
+//                cueSong(at, { snap }) / cueSection(i) / songCue()   the cue (DESIGN_NOTES "Song seek and section start"):
+//                                            where Song's Perform starts, a ruler click's bar (snap 'bar', the default;
+//                                            'none' the exact point; 'pass') or a section's first pass; playing in Song, it
+//                                            is also a seek (Perform again there: the player's cut, then its start). The
+//                                            cue is transport, not the song: no undo step, not exported, kept as { section,
+//                                            pass in it, offset } so a ± passes before it moves with its section; a new
+//                                            song (a plan, re-plan, template, load) drops it, Loop ⇄ Song keeps it, Stop
+//                                            leaves it (the next Perform starts there again: the DAW's return to the cue)
 //              The player gets getters that read the mode at every tick: in Song, pass c → the song's pass c mod its
 //              length (songPasses over the loop as it plays, cached until the song or the loop's CONTENT changes), with
 //              the user's sounds, legato and drum kit as they are now laid over it (S16: the lane owns on/off; levels
@@ -876,7 +884,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   /** a new song on the loop as it plays (S14), its loop's signature kept for "stale" */
   function planOn(st, template, seed) {
     const c = loopOf(st), song = planSong(c.loop, c.mats, { template, seed });
-    planErrors.delete(st);
+    planErrors.delete(st); cues.delete(st);   // a new song: the cue was the old one's
     st.arrangement = { ...arrOf(st), template, seed, song, loop: c.sig };
     return song;
   }
@@ -923,6 +931,39 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     const n = x.passes.length;
     return { x, e: x.passes[((c % n) + n) % n] };
   };
+  // the cue (Song seek and section start; the head of this file): per state, { section, pass (in the section), offset
+  // (spec seconds into the pass) }; none = the top. Transport only: never in the arrangement, an undo step or the export.
+  const cues = new WeakMap();
+  /** the cue resolved on the song as it is now → { at (the song's pass + share), index (the song's pass), section,
+   *  passInSection, offset, passes (the song's) } | null (none, no song, or a section the song no longer has) */
+  function cueOf(st) {
+    const q = cues.get(st), song = arrOf(st).song;
+    if (!q || !song || !(q.section < song.sections.length)) return null;
+    let from = 0;
+    for (let k = 0; k < q.section; k++) from += song.sections[k].passes;
+    const T = st.spec?.knobs?.cycleSeconds, pass = Math.min(q.pass, song.sections[q.section].passes - 1), index = from + pass;
+    const total = song.sections.reduce((a, x) => a + x.passes, 0), offset = T > 0 ? Math.min(q.offset, T * (1 - 1e-12)) : 0;
+    return { at: index + (T > 0 ? offset / T : 0), index, section: q.section, passInSection: pass, offset, passes: total };
+  }
+  /** a song position (passes from the top, 0..passes) as a cue: the bar it falls in ('bar'), its pass ('pass'), or the
+   *  point itself ('none') → { section, pass, offset } */
+  function cueAt(st, at, snap) {
+    const sections = arrOf(st).song.sections, T = st.spec.knobs.cycleSeconds, total = sections.reduce((a, x) => a + x.passes, 0);
+    const a = Math.max(0, Math.min(total * (1 - 1e-12), Number(at) || 0)), index = Math.min(total - 1, Math.floor(a));
+    let offset = Math.max(0, (a - index) * T);
+    if (snap === 'pass') offset = 0;
+    else if (snap !== 'none') { let b = 0; for (const x of st.spec.timeline?.barStarts ?? []) if (x <= offset + 1e-9 && x > b) b = x; offset = b; }
+    let section = 0, from = 0;
+    while (section < sections.length - 1 && from + sections[section].passes <= index) from += sections[section++].passes;
+    return { section, pass: index - from, offset };
+  }
+  /** set the cue (the top drops it); playing in Song, Perform again from it: the seek */
+  function cueTo(st, q) {
+    if (q && q.section === 0 && q.pass === 0 && q.offset === 0) cues.delete(st); else cues.set(st, q);
+    const seek = st === state && st.status === 'playing' && inSong(st);
+    if (seek) api.perform(); else changed(st);
+    return { ok: true, kind: 'cue', seek, cue: cueOf(st) };
+  }
   // the player's getters (S10): they read the mode at every tick, so Loop ⇄ Song needs no new booking; in Loop they are
   // the window's parts and drums exactly as before
   const playParts = (c) => { const p = songPassOf(c); return p ? liveParts(state, p.x, p.e.parts) : api.currentParts(); };
@@ -1159,7 +1200,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     /** back to the seed tempo (the spec's own; a target's, the clip's) */
     resetTempo() { if (api.specTempo() == null) return; state.tempoBpm = api.seedTempo(); player?.setTimeFactor(api.tempoFactor()); },
 
-    /** start playing from the top: the loop, or (Song) the song, its passes handed to the player per pass (S10) */
+    /** start playing from the top: the loop, or (Song) the song, its passes handed to the player per pass (S10), from
+     *  the cue when there is one (Song seek: the player's start); playing, it plays again from there */
     perform() {
       if (!state.spec || state.spec.refused) return;
       if (beforePerform) beforePerform();
@@ -1172,7 +1214,9 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       player.setTimeFactor(api.tempoFactor());
       // Song v0 (S14): Song with no song yet plans one now; a plan that can't be made leaves the loop playing (said)
       firstPlan(state);
-      player.play(state.spec, playParts, playDrums);
+      const cue = inSong(state) && ready(state) && expanded(state).passes ? cueOf(state) : null;
+      if (cue) player.play(state.spec, playParts, playDrums, { pass: cue.index, offset: cue.offset });
+      else player.play(state.spec, playParts, playDrums);
       state.status = 'playing'; changed();
     },
     stop() { player?.stop(); if (state.status === 'playing') state.status = 'ready'; changed(); },
@@ -1929,6 +1973,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       const arr = x?.edits?.arrangement ?? (x?.version === SONG_VERSION ? { song: x } : x?.arrangement ?? x);
       const r = songEdit('load', {}, (st, a) => {
         if (!arr?.song) throw new Error('composer: no song to load');
+        cues.delete(st);   // a new song: the cue was the old one's
         const song = copyOf(arr.song), c = loopOf(st);
         songPasses(song, c.loop, c.mats);   // throws with words on a song this loop can't play
         st.arrangement = { mode: arr.mode === 'song' || arr.mode === 'loop' ? arr.mode : a.mode, template: TEMPLATES[song.template] ? song.template : a.template,
@@ -1954,6 +1999,28 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       if (!a) return null;
       const f = Number(player?.playhead?.()) || 0, n = expanded(state).passes.length;
       return { at: a.index + Math.max(0, Math.min(1 - 1e-9, f)), passes: n, section: a.section, passInSection: a.passInSection };
+    },
+    /** the cue (Song seek and section start): where Perform starts in Song → { at (the song's pass + share), index,
+     *  section, passInSection, offset (spec seconds into the pass), passes (the song's) } | null (the top, or no song) */
+    songCue: () => (ready(state) ? cueOf(state) : null),
+    /**
+     * The ruler's click (Avery, 11-04: "the top timeline is clickable anywhere"): the cue at song position `at` (passes
+     * from the top, timeline().fromX's), snapped: 'bar' (the default: the downbeat of the bar the point falls in),
+     * 'pass', or 'none' (the point itself). Playing in Song, playback jumps there (Perform again from it: the player's
+     * cut, then its start); stopped, Perform starts there. No undo step. → { ok, kind: 'cue', seek, cue } | refused
+     */
+    cueSong(at, { snap = 'bar' } = {}) {
+      const st = state;
+      if (!inSong(st) || !ready(st) || !arrOf(st).song) return { ok: false, kind: 'cue', error: 'composer: the cue is a song\'s (Song, with a song planned)' };
+      if (!Number.isFinite(Number(at))) return { ok: false, kind: 'cue', error: `composer: a song position is a number of passes, not ${JSON.stringify(at)}` };
+      return cueTo(st, cueAt(st, at, snap));
+    },
+    /** a section head's double-click (Avery, 11-04): the cue at section i's first pass, exactly; playing, a jump there */
+    cueSection(i) {
+      const st = state, song = arrOf(st).song;
+      if (!inSong(st) || !ready(st) || !song) return { ok: false, kind: 'cue', error: 'composer: the cue is a song\'s (Song, with a song planned)' };
+      if (!(Number.isInteger(i) && i >= 0 && i < song.sections.length)) return { ok: false, kind: 'cue', error: `composer: the song has no section ${i}` };
+      return cueTo(st, { section: i, pass: 0, offset: 0 });
     },
     /**
      * READ-ONLY (the Song UI's clips): the song's passes as the player gets them (the getters' parts and drums: form.js
