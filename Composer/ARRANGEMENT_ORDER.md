@@ -264,14 +264,14 @@ only changes what you see.
 9. **Song before Compose** (11-04 fix). On a fresh row, press Song, then Compose with "show the work" on: the animation plays on the matrix as in Loop, and the lane appears with its song when it ends (or at once on Skip), with no Perform needed. With "show the work" off, the lane is there as Compose lands.
 
 ## Song seek and section start (for Avery; branch `song/seek`)
-Hard-reload first (`arrangement-lane.css?v=20261104.4`, `composer-bridge.js?v=20261104.4`). Composer window, Compose,
+Hard-reload first (`arrangement-lane.css?v=20261104.6`, `composer-bridge.js?v=20261104.6`). Composer window, Compose,
 then **Song**. Nothing the song plays changes: only where it starts and jumps.
 1. **The ruler takes a click.** On 119:42:15:8, Arch, Perform, then click the ruler halfway into the Break.
    - The music jumps there at once, cleanly: the old notes cut, nothing hanging, nothing doubled, and the Break from the downbeat of the bar you clicked in (its "1", not mid-bar).
    - The playhead line goes there and carries on. A green flag (the cue) sits on the ruler where you clicked.
    - A chord that began before the bar you clicked isn't re-struck: it comes in at its next note.
 2. **Shift-click** on the ruler: the exact point, mid-bar.
-3. **Stopped.** Stop: the playhead line comes back to the flag, dashed and green, and waits there. Perform: it starts from there. Stop, Perform again: from the flag again.
+3. **Stopped** (changed 11-04, Avery's ruling). Stop: the flag and the dashed playhead line stay exactly where the song stopped, mid-bar. Perform resumes from there. Stop, Perform again: it carries on from each stop.
 4. **Click the ruler while stopped:** the flag and the dashed line move there, nothing sounds, and Perform starts there. A click in the song's first bar takes the flag away (the top).
 5. **Double-click a section's name** (the heads under the ruler):
    - Stopped: the flag at that section's first pass; Perform starts it from its downbeat.
@@ -284,6 +284,10 @@ then **Song**. Nothing the song plays changes: only where it starts and jumps.
    - At a jump the DAW gets all notes off and Stop, then Start. Its transport restarts at the jump, as at Perform: does your DAW want a Song Position Pointer instead (open question)?
    - No note hangs on any bus across a jump or a Stop.
    - With MIDI on, a jump comes ~0.15 s later than without, so the old queue can end first. Is that latency acceptable?
+10. **The keys** (11-04), only while the full Composer window is open:
+    - **Space** is Perform / Stop, in Song and in Loop. Song: Space, Space, Space resumes each time where it stopped. A held Space doesn't flutter. With the Perform button just clicked (focused), Space presses it once, not twice. Typing in the seed or the chord field, Space is a space. Space never Composes (with "Compose" on the button it does nothing).
+    - **Esc** takes the playhead back to the top: stopped, the flag goes and the dashed line goes to the left; playing, a jump to the top. In Loop, playing, the loop from its top. Esc still skips the animation and reverts an audition first, as before.
+    - With the window closed, Space and Esc do nothing of the Composer's.
 
 ## Later (recorded, not ruled)
 - Re-mining parts from a section's layers (`allowNodes`).
@@ -491,4 +495,5 @@ then **Song**. Nothing the song plays changes: only where it starts and jumps.
   5. **The ~150 ms wait** at a jump while MIDI is on: acceptable, or jump at once and accept a few queued notes and ticks overlapping?
   6. **Should a cue survive a re-plan** (by section index, or by kind)? Now a new song starts from the top.
   7. **Phase C's auto-scroll question stands:** a click far right on a wide song doesn't scroll the track.
+- **11-04, Avery's rulings on the seek's open questions** (planner, on arrange/song-v0): the ruler's bar-it-falls-in snap stays; **Stop leaves the playhead where it stopped** (exact, the cue moved there), so Perform resumes; **Esc** (window open) back to the top; **Space** (window open) Perform / Stop. No re-strike at a jump. The DAW's song position waits for tempo following (Avery's own thread soon). No swing read for MIDI clips; the nudged read is right. Built: the controller's `stop()` sets the cue at `songPosition()` in Song, `rewind()` (Song: the cue dropped, a jump if playing; Loop playing: from the top); the window's `onKey` takes Space (never Compose, no repeat, a focused button or checkbox let go first, a text field keeps it) and Esc (after the animation skip and the audition reverts). Loop's Stop is as before (Perform from its top).
 

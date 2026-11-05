@@ -2785,7 +2785,7 @@ Avery: "the top timeline is clickable anywhere in the arrangement", and "double-
 
 **Calls made (proposed):**
 1. **Bar snap, to the bar the click falls in** (floor, not the nearest line). Shift-click is exact.
-2. **Stop returns to the cue** (it leaves the cue where it was).
+2. **Stop leaves the playhead where it stopped** (Avery, 11-04; it first returned to the cue): in Song, `stop()` sets the cue at `songPosition()`, exactly, so Perform resumes there. **Esc** in the window is `rewind()`, back to the top (Song: the cue dropped, a jump if playing; Loop playing: from its top). **Space** in the window is Perform / Stop (never Compose; no key repeat; a focused button let go so its own click doesn't press it again; a text field keeps it).
 3. **A seek is a clean restart** at the new place: the cut, then the start. Held notes from before aren't re-struck.
 4. **MIDI:** all-notes-off and Stop at the jump, then Start with the clock restarting from the jump. With MIDI on, the start waits out the old booking.
 5. **`allOff` ends a queued note after its own on** (also a plain Stop's fix).

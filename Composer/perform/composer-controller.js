@@ -189,8 +189,9 @@
 //                                            is also a seek (Perform again there: the player's cut, then its start). The
 //                                            cue is transport, not the song: no undo step, not exported, kept as { section,
 //                                            pass in it, offset } so a ± passes before it moves with its section; a new
-//                                            song (a plan, re-plan, template, load) drops it, Loop ⇄ Song keeps it, Stop
-//                                            leaves it (the next Perform starts there again: the DAW's return to the cue)
+//                                            song (a plan, re-plan, template, load) drops it, Loop ⇄ Song keeps it. Stop
+//                                            in Song moves it to where the song stopped, exactly (Avery, 11-04: the next
+//                                            Perform resumes there); rewind() (the window's Esc) drops it: back to the top
 //              The player gets getters that read the mode at every tick: in Song, pass c → the song's pass c mod its
 //              length (songPasses over the loop as it plays, cached until the song or the loop's CONTENT changes), with
 //              the user's sounds, legato and drum kit as they are now laid over it (S16: the lane owns on/off; levels
@@ -957,9 +958,11 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     while (section < sections.length - 1 && from + sections[section].passes <= index) from += sections[section++].passes;
     return { section, pass: index - from, offset };
   }
-  /** set the cue (the top drops it); playing in Song, Perform again from it: the seek */
+  /** the cue set quietly (none, or the top, drops it) */
+  function setCue(st, q) { if (!q || (q.section === 0 && q.pass === 0 && q.offset === 0)) cues.delete(st); else cues.set(st, q); }
+  /** set the cue; playing in Song, Perform again from it: the seek */
   function cueTo(st, q) {
-    if (q && q.section === 0 && q.pass === 0 && q.offset === 0) cues.delete(st); else cues.set(st, q);
+    setCue(st, q);
     const seek = st === state && st.status === 'playing' && inSong(st);
     if (seek) api.perform(); else changed(st);
     return { ok: true, kind: 'cue', seek, cue: cueOf(st) };
@@ -1219,7 +1222,14 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       else player.play(state.spec, playParts, playDrums);
       state.status = 'playing'; changed();
     },
-    stop() { player?.stop(); if (state.status === 'playing') state.status = 'ready'; changed(); },
+    stop() {
+      // Avery, 11-04: Stop in Song leaves the playhead where it stopped, exactly (the cue), so Perform resumes there
+      if (state.status === 'playing' && inSong(state) && ready(state) && arrOf(state).song && expanded(state).passes) {
+        const p = api.songPosition();
+        if (p) setCue(state, cueAt(state, p.at, 'none'));
+      }
+      player?.stop(); if (state.status === 'playing') state.status = 'ready'; changed();
+    },
     /** the MIDI sink (phase B), or null */
     get midi() { return midi; },
     /** the mix, live (MIX_MASTER_ORDER.md): { master: 'knock' | 'classic', staging, duck }; kept for the next Perform.
@@ -2014,6 +2024,15 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       if (!inSong(st) || !ready(st) || !arrOf(st).song) return { ok: false, kind: 'cue', error: 'composer: the cue is a song\'s (Song, with a song planned)' };
       if (!Number.isFinite(Number(at))) return { ok: false, kind: 'cue', error: `composer: a song position is a number of passes, not ${JSON.stringify(at)}` };
       return cueTo(st, cueAt(st, at, snap));
+    },
+    /** the window's Esc (Avery, 11-04): the playhead back to the top. Song: the cue dropped (playing, a jump there);
+     *  Loop: playing, the loop from its top again; stopped, nothing to move. No undo step. → { ok, kind: 'cue', seek, cue } */
+    rewind() {
+      const st = state;
+      if (inSong(st) && ready(st) && arrOf(st).song) return cueTo(st, null);
+      const seek = st.status === 'playing';
+      if (seek) api.perform();
+      return { ok: true, kind: 'cue', seek, cue: null };
     },
     /** a section head's double-click (Avery, 11-04): the cue at section i's first pass, exactly; playing, a jump there */
     cueSection(i) {

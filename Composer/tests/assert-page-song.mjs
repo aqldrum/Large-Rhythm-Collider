@@ -263,6 +263,7 @@ console.log('\n— Song seek and section start: the ruler clicks anywhere, a sec
   const brk = secs.findIndex((s) => s.kind === 'break'), idx = firstOf(brk) + (secs[brk].passes > 1 ? 1 : 0);
   // a bar's downbeat inside the pass: 0.6 of the way through it falls in bar ⌊0.6·bars⌋
   const barAt = (within) => bars.reduce((b, x) => (x <= within + 1e-9 && x > b ? x : b), 0);
+  core.rewind(); await settle();   // an earlier Stop left a cue where it stopped (Avery, 11-04): from the top
   check(`the setting: Song plays (8:7:6:5, ${bars.length} bars a ${T4} s pass), no cue yet; the ruler takes a click (its title says so)`, S().status === 'playing' && A().mode === 'song' && core.songCue() === null && bars.length >= 2 && /click: play from the bar/.test(rulerEl().title));
   let n0 = plays.length;
   await rulerClick(idx + 0.6);
@@ -280,16 +281,17 @@ console.log('\n— Song seek and section start: the ruler clicks anywhere, a sec
   check('a click in the first bar of the song: the top — the cue dropped, the play from the top (pass 0, 0 s)', core.songCue() === null && lastPlay().start === undefined && lastPlay().args === 3);
   await rulerClick(n);
   check('a click at the ruler\'s very end: the last pass\'s last bar', core.songCue().index === n - 1 && core.songCue().offset === barAt(T4));
-  // stopped: the cue waits; the playhead at it, dashed; Perform from it; Stop leaves it
+  // stopped: the cue is where the song stopped (Avery, 11-04: Perform resumes there); the playhead at it, dashed
   await rulerClick(idx + 0.6);
+  fake.pass = idx;   // the fake player: pass idx sounding, a quarter of the way through it (its playhead() 0.25)
   core.stop(); await settle();
   bridge.showTab(); dom.raf.flush(2);
   const cueEl = q(left, '.alane-cue'), phEl = q(left, '.alane-playhead'), cueX = `${(100 * tl.toX(core.songCue().at)).toFixed(3)}%`;
-  check('stopped: the cue kept (Stop leaves it); its flag on the ruler and the playhead waiting at it, dashed (.cued)', core.songCue()?.index === idx && !!cueEl && cueEl.parentNode === rulerEl() && cueEl.style.display === 'block' && cueEl.style.left === cueX
-    && phEl.style.display === 'block' && phEl.style.left === cueX && phEl.classList.contains('cued'), J([cueEl?.style.left, phEl?.style.left, cueX]));
+  check('Stop: the cue moves to where the song stopped, exactly (no snap); its flag on the ruler and the playhead waiting at it, dashed (.cued)', core.songCue()?.index === idx && Math.abs(core.songCue().at - (idx + 0.25)) < 1e-9 && !!cueEl && cueEl.parentNode === rulerEl() && cueEl.style.display === 'block' && cueEl.style.left === cueX
+    && phEl.style.display === 'block' && phEl.style.left === cueX && phEl.classList.contains('cued'), J([core.songCue(), cueEl?.style.left, phEl?.style.left, cueX]));
   check('…the cue is no undo step and not in the export (transport, not the song)', J({ arr: A(), undo: S().undo.length, edits: core.editsExport(), exp: core.exportJSON() }) === exp0);
   await tab.press(); await settle();   // Perform
-  check('Perform starts from the cue', S().status === 'playing' && lastPlay().was === false && lastPlay().start.pass === idx && lastPlay().start.offset === barAt(0.6 * T4));
+  check('Perform resumes where it stopped', S().status === 'playing' && lastPlay().was === false && lastPlay().start.pass === idx && Math.abs(lastPlay().start.offset - 0.25 * T4) < 1e-9, J(lastPlay().start));
   dom.raf.flush(2);
   check('…playing, the playhead is the sounding place again (not .cued); the cue\'s flag stays where Perform began', !q(left, '.alane-playhead').classList.contains('cued') && q(left, '.alane-cue').style.display === 'block');
   // the section heads: a double-click
@@ -330,6 +332,47 @@ console.log('\n— Song seek and section start: the ruler clicks anywhere, a sec
   await core.undo(); await settle();
   check('…its undo brings the song back, not the cue', J(A().song) === J(want) && core.songCue() === null && S().undo.length === 0);
   check('…and nothing of the cue was ever an undo step or exported', J({ arr: A(), undo: S().undo.length, edits: core.editsExport(), exp: core.exportJSON() }) === exp0);
+  // the keys (Avery, 11-04): Space is Perform / Stop and Esc the top, while the window is open
+  const key = async (k, extra = {}) => { const ev = { type: 'keydown', key: k, ...extra }; let stopped = false; ev.preventDefault = () => { stopped = true; }; doc.dispatchEvent(ev); await settle(); return stopped; };
+  const wasPass = fake.pass, wasPlaying = S().status === 'playing';
+  core.stop(); await settle();
+  fake.pass = firstOf(pk);
+  let k0 = plays.length;
+  const sp1 = await key(' ');
+  check('Space: Perform (from the cue), the key taken (no page scroll)', sp1 && S().status === 'playing' && plays.length === k0 + 1 && lastPlay().was === false);
+  await key(' ');
+  check('Space again: Stop, the cue where it stopped', S().status === 'ready' && !fake.playing && Math.abs(core.songCue().at - (firstOf(pk) + 0.25)) < 1e-9, J(core.songCue()));
+  k0 = plays.length;
+  await key(' ', { repeat: true });
+  check('a held Space doesn\'t repeat it', S().status === 'ready' && plays.length === k0);
+  const goBtn = q(left, '.ctab-go');
+  goBtn.focus();
+  await key(' ');
+  check('Space with a button focused: Perform once, the button let go (its own click would press it again)', S().status === 'playing' && plays.length === k0 + 1 && doc.activeElement !== goBtn);
+  await key(' ');
+  const seedEl = q(left, '.ctab-seed') ?? [...qa(left, 'input')].find((x) => (x.type ?? 'text') === 'text' || x.type === 'number');
+  seedEl?.focus(); k0 = plays.length;
+  const typed = await key(' ');
+  check('Space while typing in a field is the field\'s', !!seedEl && !typed && S().status === 'ready' && plays.length === k0);
+  seedEl?.blur();
+  const esc1 = await key('Escape');
+  check('Esc, stopped: the playhead back to the top (the cue dropped), nothing played', esc1 && core.songCue() === null && plays.length === k0 && S().status === 'ready');
+  await nameDbl(pk); await key(' ');
+  k0 = plays.length;
+  await key('Escape');
+  check('Esc, playing: a jump to the top (one new play, no start handed)', core.songCue() === null && plays.length === k0 + 1 && lastPlay().was === true && lastPlay().args === 3);
+  await key(' ');
+  await click(modeBtn('Loop')); await key(' ');
+  k0 = plays.length;
+  await key('Escape');
+  check('Esc in Loop, playing: the loop from its top again', plays.length === k0 + 1 && lastPlay().args === 3 && S().status === 'playing');
+  await key(' '); await click(modeBtn('Song'));
+  bridge.hideTab?.(); await settle();
+  k0 = plays.length;
+  await key(' '); await key('Escape');
+  check('the window closed: Space and Esc are the page\'s (nothing played)', plays.length === k0 && S().status !== 'playing');
+  bridge.showTab(); await settle();
+  fake.pass = wasPass; core.rewind(); if (wasPlaying) { await tab.press(); await settle(); }
   passes = songPasses(A().song, loopNow(), mats);
 }
 

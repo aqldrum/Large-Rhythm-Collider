@@ -866,7 +866,19 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (e.key === 'Escape') {
       if (anim.status === 'playing') { e.preventDefault?.(); skipAnimation(); return; }
       if (audition.state !== 'idle' && !typing(a)) { e.preventDefault?.(); audition.revert().then(said); return; }
-      if (core.placementAudition() && !typing(a)) { e.preventDefault?.(); revertPlacement(); }   // MIDI targets: a placement auditioned
+      if (core.placementAudition() && !typing(a)) { e.preventDefault?.(); revertPlacement(); return; }   // MIDI targets: a placement auditioned
+      // Avery, 11-04: otherwise the playhead back to the top (Song: the cue dropped; playing, a jump there)
+      if (!typing(a) && tab.state.spec && !tab.state.spec.refused) { e.preventDefault?.(); core.rewind(); }
+      return;
+    }
+    // Avery, 11-04: Space is Perform / Stop while the window is open (never Compose; a held key doesn't repeat it). A
+    // focused button is let go first, so the key's own click on it never presses it as well
+    if (e.key === ' ' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (typing(a) || a?.tagName === 'SELECT') return;
+      e.preventDefault?.();
+      if (e.repeat) return;
+      if (a?.tagName === 'BUTTON' || a?.tagName === 'INPUT') a.blur?.();
+      if (anim.status === 'playing' || tab.button() === 'Perform' || tab.button() === 'Stop') pressGo();
       return;
     }
     const k = String(e.key || '').toLowerCase();
