@@ -17,6 +17,10 @@
 //                          lets a fine enough grid explain anything). None does (an unquantized performance): a GUESS,
 //                          the coarsest subdivision with every note-on within UNQUANTIZED_SHARE of its step, flagged
 //                          `exact: false`. Real performances need beat tracking; v1 is scoped to quantized clips.
+//                          Both reads look for a grid a line can hold (LINE_SLOTS steps a bar; DESIGN_NOTES "Live's
+//                          MIDI clips and the grid"): a guess that finds none takes the line-holdable grid with the
+//                          least mean error (it took 48ths: 192 a bar, always refused), and a clip exact only past a
+//                          line is read on the coarsest line grid the guess's rule allows (`fine` says it was).
 //                steps     steps a bar from the time signature, the bars the clip spans, and each note's step and
 //                          note-off step (`until`). Rests are the steps between a note's note-off and the next note-on;
 //                          nothing else records them. Two note-ons rounded onto one step: the higher is kept (a grace
@@ -151,6 +155,9 @@ export const ONSET_TOLERANCE = 0.05;
 export const EXACT_SHARE = 0.15;
 /** an unquantized clip's guess: the share of its own step a note-on may sit from it */
 export const UNQUANTIZED_SHARE = 0.3;
+/** the steps a bar a line may hold (lines.js MAX_SLOTS; kept here so this file imports nothing, and pinned equal by
+ *  assert-target.mjs): a read past it is refused by compose (`targetGrid`), so the decode looks for one within it */
+export const LINE_SLOTS = 32;
 const PC_NAMES = Object.freeze(['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B']);
 /** a pitch class's name (flats where the probe spelled them) */
 export const pcName = (pc) => PC_NAMES[((pc % 12) + 12) % 12];
@@ -194,6 +201,7 @@ export function estimateKey(notes) {
  * → { version, name, ppq, bpm, tempoBpm (= bpm: the file's first tempo, 120 when none), timeSig: [num, den],
  *     d (steps per quarter), S (steps per bar), B (bars), pickup (steps before the first note in its bar),
  *     residual (largest note-on error, quarters), exact (every note-on within tolerance; false: the grid is a guess),
+ *     fine (only when the exact grid was too fine for a line and a coarser one read it: { d, S } of the exact one),
  *     notes: [{ step, until, midi, pc, velocity }], dropped (notes of the track not in the line: chords' lower notes
  *     and graces), key: { tonic, mode, r }, stepSeconds }
  */
@@ -203,22 +211,43 @@ export function decodeClip(file, { track = null, tolerance = ONSET_TOLERANCE } =
   const line = skyline(tr.notes), ppq = file.ppq;
   const ts = file.timeSigs[0] ?? { num: 4, den: 4 }, tempo = file.tempos[0]?.usPerQuarter ?? 500000;
   const errAt = (tick, d) => { const q = tick / ppq, s = Math.round(q * d); return Math.abs(q - s / d); };
-  let d = null, residual = Infinity;
+  const worstAt = (cand) => { let worst = 0; for (const n of line) worst = Math.max(worst, errAt(n.tick, cand)); return worst; };
+  // a subdivision a line can hold: a whole number of its steps a bar, and no more than LINE_SLOTS of them
+  const barOf = (cand) => (cand * ts.num * 4) / ts.den, holds = (cand) => Number.isInteger(barOf(cand)) && barOf(cand) >= 1 && barOf(cand) <= LINE_SLOTS;
+  let d = null, residual = Infinity, fine = null;
   for (const cand of SUBDIVISIONS) {
-    let worst = 0;
-    for (const n of line) worst = Math.max(worst, errAt(n.tick, cand));
+    const worst = worstAt(cand);
     if (worst <= tolerance + 1e-12 && worst * cand <= EXACT_SHARE + 1e-12) { d = cand; residual = worst; break; }
     if (worst < residual) residual = worst;
   }
-  const exact = d != null;
+  let exact = d != null;
   if (!exact) {   // nothing within tolerance (an unquantized performance): a GUESS — the coarsest subdivision whose every
     // note-on is within UNQUANTIZED_SHARE of its own step (a finer grid always errs less, so "least error" would pick the finest)
-    d = SUBDIVISIONS[SUBDIVISIONS.length - 1];
-    for (const cand of SUBDIVISIONS) {
-      let worst = 0; for (const n of line) worst = Math.max(worst, errAt(n.tick, cand));
-      if (worst * cand <= UNQUANTIZED_SHARE) { d = cand; break; }
+    d = null;
+    for (const cand of SUBDIVISIONS) if (worstAt(cand) * cand <= UNQUANTIZED_SHARE) { d = cand; break; }
+    // none (a loose performance, Live's test4: notes up to half a sixteenth off): it was the finest, 48ths — 192 steps
+    // a bar in 4/4, refused every time (targetGrid). Now the subdivision a line holds whose note-ons sit nearest their
+    // steps on AVERAGE, as shares of the step (a grid that explains nothing averages ~0.25; the coarser on a tie)
+    if (d == null) {
+      let best = Infinity;
+      for (const cand of SUBDIVISIONS) {
+        if (!holds(cand)) continue;
+        let sum = 0; for (const n of line) sum += errAt(n.tick, cand) * cand;
+        if (sum / line.length < best - 1e-9) { best = sum / line.length; d = cand; }
+      }
+      if (d == null) d = SUBDIVISIONS[SUBDIVISIONS.length - 1];   // no subdivision steps the bar within a line: as before
     }
-    residual = 0; for (const n of line) residual = Math.max(residual, errAt(n.tick, d));
+    residual = worstAt(d);
+  } else if (!holds(d)) {
+    // exact only on a grid a line can't hold: a quantized clip whose passages sit a hair off it (Live's test3: whole
+    // phrases a 64th late) reads exact on 64ths, refused. The guess's own rule on the grids a line holds: the coarsest
+    // with every note-on within UNQUANTIZED_SHARE of its step (sixteenths), AND as many steps as the exact grid (a nudge
+    // moves notes, it never merges two). A real run of 64ths is half a step off every coarser grid, and four notes a
+    // 1/12-quarter apart all round onto one quarter, so they stay exact and refused, as before. `fine` keeps the exact
+    // grid set aside.
+    const stepsAt = (c) => new Set(line.map((n) => Math.round((n.tick / ppq) * c))).size, own = stepsAt(d);
+    const cand = SUBDIVISIONS.find((c) => holds(c) && worstAt(c) * c <= UNQUANTIZED_SHARE + 1e-12 && stepsAt(c) === own);
+    if (cand != null) { fine = { d, S: barOf(d) }; d = cand; exact = false; residual = worstAt(d); }
   }
   const S = Math.round((d * ts.num * 4) / ts.den);
   if (!(S >= 1 && (d * ts.num * 4) % ts.den === 0)) fail(`a bar of ${ts.num}/${ts.den} is not a whole number of 1/${d}-quarter steps`);
@@ -236,11 +265,12 @@ export function decodeClip(file, { track = null, tolerance = ONSET_TOLERANCE } =
     version: COMPOSER_MIDI_VERSION, name: tr.name || 'clip', ppq, bpm, tempoBpm: bpm, timeSig: [ts.num, ts.den], d, S, B, pickup: notes[0].step, residual, exact, notes,
     dropped: tr.notes.length - notes.length, stepSeconds: tempo / 1e6 / d,
   };
+  if (fine) clip.fine = fine;   // only on a clip read coarser than its exact grid: every other clip is as it was
   clip.key = estimateKey(notes);
   return clip;
 }
 
 /** a clip in a line: its grid, its notes, its key */
 export function describeClip(c) {
-  return `${c.name}: ${c.timeSig.join('/')} d=${c.d} S=${c.S} B=${c.B} notes=${c.notes.length}${c.dropped ? ` (${c.dropped} dropped)` : ''} key=${pcName(c.key.tonic)} ${c.key.mode}${c.exact ? '' : ` (unquantized, residual ${c.residual.toFixed(3)} q)`}`;
+  return `${c.name}: ${c.timeSig.join('/')} d=${c.d} S=${c.S} B=${c.B} notes=${c.notes.length}${c.dropped ? ` (${c.dropped} dropped)` : ''} key=${pcName(c.key.tonic)} ${c.key.mode}${c.exact ? '' : ` (unquantized, residual ${c.residual.toFixed(3)} q)`}${c.fine ? ` (exact only at d=${c.fine.d} S=${c.fine.S}, past a line)` : ''}`;
 }

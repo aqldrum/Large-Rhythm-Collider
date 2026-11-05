@@ -11,7 +11,8 @@
 //     window spec, a lead swap is refused; a progression under a clip; the trace; refusals; no target is no change
 //   • timing: the 16,359-onset row places Frère Jacques (and Ode to Joy) under 1.5 s
 //   node Composer/tests/assert-target.mjs
-import { readMidi, writeMidi, decodeClip, skyline, estimateKey, EXACT_SHARE, ONSET_TOLERANCE } from '../core/midi.js';
+import { readMidi, writeMidi, decodeClip, skyline, estimateKey, EXACT_SHARE, ONSET_TOLERANCE, UNQUANTIZED_SHARE, SUBDIVISIONS, LINE_SLOTS } from '../core/midi.js';
+import { MAX_SLOTS } from '../core/lines.js';
 import { placeClip, evaluate, latticesOf, lanesOf, barCounts, laneReport, clipPhrases, targetRoot, DEFAULTS } from '../core/target.js';
 import { compose, rearticulate, TARGET_SETS } from '../core/compose.js';
 import { materialsOf, materialsKey, rearrange, applyRearrange } from '../core/rearrange.js';
@@ -69,6 +70,61 @@ console.log('\n— the decode (core/midi.js)');
   check(`the key estimate (Krumhansl): Twinkle C major, Frère Jacques F (${estimateKey(clip('frere-jacques').notes).tonic})`, tw.key.tonic === 0 && tw.key.mode === 'major' && clip('frere-jacques').key.tonic === 5);
   let threw = 0; for (const bad of [new Uint8Array([1, 2, 3, 4]), Uint8Array.from([0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 2, 0, 1, 0, 96])]) { try { readMidi(bad); } catch { threw++; } }
   check('not a MIDI file, and format 2, are refused with an error', threw === 2);
+}
+
+// ── 1b. Live 12's exports (DESIGN_NOTES "Live's MIDI clips and the grid") ──
+// A clip as Ableton Live 12 writes one (the shape of Avery's test files, 2026-11-04; the notes here are made up): format
+// 0, 96 PPQ, one track with an empty name (FF 03 00) and a 4/4 time signature (FF 58 04 04 02 24 08), NO tempo event;
+// every status byte written (no running status), note-on velocity 100, note-off 80 velocity 64, a note-on before the
+// note-off it follows when they share a tick; sixteenths held a few ticks short (19, 17 of 24).
+function liveBytes(notes) {
+  const ev = [];
+  for (const n of notes) { ev.push({ tick: n.tick, o: 0, b: [0x90, n.pitch, 100] }); ev.push({ tick: n.end, o: 1, b: [0x80, n.pitch, 64] }); }
+  ev.sort((a, b) => a.tick - b.tick || a.o - b.o);
+  const vlq = (v) => { const out = [v & 0x7f]; while ((v = Math.floor(v / 128)) > 0) out.unshift((v & 0x7f) | 0x80); return out; };
+  const body = [0, 0xff, 0x03, 0, 0, 0xff, 0x58, 4, 4, 2, 0x24, 8];
+  let last = 0; for (const e of ev) { body.push(...vlq(e.tick - last), ...e.b); last = e.tick; }
+  body.push(0, 0xff, 0x2f, 0);
+  const len = body.length;
+  return Uint8Array.from([0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0, 96, 0x4d, 0x54, 0x72, 0x6b, (len >>> 24) & 255, (len >>> 16) & 255, (len >>> 8) & 255, len & 255, ...body]);
+}
+/** a line on sixteenths at 96 PPQ: cells [[cell, length in cells, pitch]], each held `short` ticks less, nudged by nudge(i) ticks */
+const liveLine = (cells, { short = (i) => [0, 5, 7, 5][i % 4], nudge = () => 0 } = {}) => cells.map(([c, len, pitch], i) => ({ tick: c * 24 + nudge(i, c), end: (c + len) * 24 + nudge(i, c) - short(i), pitch }));
+// four bars of sixteenths, rests between phrases (64 cells, 4 bars)
+const LIVE_RIFF = [[0, 1, 60], [1, 1, 63], [2, 1, 67], [3, 1, 63], [4, 3, 65], [7, 1, 60], [8, 1, 63], [9, 1, 65], [10, 1, 58], [11, 2, 60],
+  [16, 1, 60], [17, 1, 63], [18, 1, 60], [19, 1, 55], [20, 2, 58], [22, 1, 55], [23, 1, 58], [24, 1, 60], [25, 1, 53], [26, 3, 55],
+  [32, 1, 55], [33, 1, 58], [34, 2, 55], [36, 1, 53], [37, 1, 51], [38, 1, 53], [39, 1, 55], [40, 1, 48], [41, 3, 51],
+  [48, 1, 55], [49, 1, 53], [50, 2, 51], [52, 1, 53], [53, 1, 55], [54, 1, 51], [55, 9, 53]];
+const LIVE = {};   // the Live clips as decoded, composed in section 3
+{
+  console.log('\n— Live 12\'s exports (96 PPQ, format 0, no tempo; the grid a line can hold)');
+  const live = decodeClip(readMidi(liveBytes(liveLine(LIVE_RIFF))));
+  check(`a Live 12 clip in sixteenths (test9's shape): 4/4 on sixteenths, 16 a bar, 4 bars, exact, 120 BPM with no tempo event (d ${live.d} S ${live.S} B ${live.B})`,
+    live.exact && live.d === 4 && live.S === 16 && live.B === 4 && live.notes.length === LIVE_RIFF.length && Math.abs(live.tempoBpm - 120) < 1e-9 && !('fine' in live)
+    && J(live.notes.map((n) => n.step)) === J(LIVE_RIFF.map(([c]) => c)));
+  // test3's shape: the riff twice, the second time a 64th late (6 ticks: 0.0625 q, past ONSET_TOLERANCE and a quarter of a step)
+  const twice = [...LIVE_RIFF, ...LIVE_RIFF.map(([c, l, p]) => [c + 64, l, p])];
+  const nudged = decodeClip(readMidi(liveBytes(liveLine(twice, { nudge: (i) => (i >= LIVE_RIFF.length ? 6 : 0) }))));
+  check(`… the riff again a 64th late (test3's shape): exact only on 64ths (64 a bar, refused before), now read on sixteenths, flagged (fine ${J(nudged.fine)}, residual ${nudged.residual} q)`,
+    !nudged.exact && nudged.d === 4 && nudged.S === 16 && nudged.B === 8 && J(nudged.fine) === J({ d: 16, S: 64 }) && Math.abs(nudged.residual - 0.0625) < 1e-12 && nudged.dropped === 0
+    && J(nudged.notes.map((n) => n.step)) === J(twice.map(([c]) => c)));
+  // test4's shape: a loose performance, every sixteenth of four bars: most notes a few ticks off, every eighth one up
+  // to 11 (two dice of ±5, and an outlier; a fixed LCG). Its mean error is about test4's (~0.17 of a sixteenth)
+  let x = 7; const die = (n) => { x = (x * 1103515245 + 12345) % 2147483648; return (x % (2 * n + 1)) - n; };
+  const jit = (i) => (i % 8 === 5 ? (i % 16 === 5 ? 11 : -10) : die(5) + die(5));
+  const loose = liveLine(Array.from({ length: 64 }, (_, c) => [c, 1, 60 + (c % 5)]), { nudge: jit, short: () => 3 });
+  const looseLine = skyline(readMidi(liveBytes(loose)).tracks[0].notes);
+  const share = (d) => Math.max(...looseLine.map((n) => { const q = n.tick / 96; return Math.abs(q - Math.round(q * d) / d) * d; }));
+  check('… a loose performance: no subdivision holds every note-on within UNQUANTIZED_SHARE of its step (the guess\'s rule finds nothing)', SUBDIVISIONS.every((d) => share(d) > UNQUANTIZED_SHARE));
+  const lc = decodeClip(readMidi(liveBytes(loose)));
+  check(`… read on the line grid nearest on average, sixteenths (d ${lc.d}, S ${lc.S}), not 48ths (192 a bar, refused every time)`, !lc.exact && lc.d === 4 && lc.S === 16 && lc.B === 4 && !('fine' in lc)
+    && J(lc.notes.map((n) => n.step)) === J(Array.from({ length: 64 }, (_, c) => c)));
+  // a real run of 64ths is half a step off every coarser grid: still exact on 64ths, still refused by Compose (as before)
+  const run = decodeClip(readMidi(liveBytes(Array.from({ length: 16 }, (_, i) => ({ tick: i * 6, end: i * 6 + 5, pitch: 60 + i })))));
+  check(`a real run of 64ths stays exact on 64ths (d ${run.d}, S ${run.S}), nothing set aside`, run.exact && run.d === 16 && run.S === 64 && !('fine' in run));
+  check(`every probe clip decodes as it did: none read coarser (no \`fine\`), the unquantized Ode still a guess on eighths; LINE_SLOTS is lines.js MAX_SLOTS (${LINE_SLOTS})`,
+    CLIPS.every((c) => !('fine' in clip(c.name))) && clip('ode-unquantized').d === 2 && LINE_SLOTS === MAX_SLOTS);
+  Object.assign(LIVE, { live, nudged, loose: lc, run });
 }
 
 // ── 2. the search ──
@@ -280,6 +336,10 @@ const specs = CASES.map((x) => ({ ...x, row: rowOf(x.L), clip: clip(x.name), spe
   const fine = decodeClip(readMidi(writeMidi({ tracks: [{ notes: seq([[60, 1 / 12], [62, 1 / 12], [64, 1 / 12], [65, 1 / 12]]) }] })));
   const r = compose(s.L, s.T, { target: { clip: fine } });
   check(`a clip on a grid finer than a line holds (S ${fine.S} > 32) is refused, not thrown: targetGrid`, r.refused === true && r.reason === 'targetGrid');
+  // Live 12's exports (1b): the sixteenths, the nudged riff and the loose performance compose on 16 slots a bar; the real 64ths are refused
+  const lives = ['live', 'nudged', 'loose'].map((k) => [k, compose(s.L, s.T, { target: { clip: LIVE[k] } })]), runR = compose(s.L, s.T, { target: { clip: LIVE.run } });
+  check(`Live's clips compose (${lives.map(([k, sp]) => `${k}: ${sp.refused ? sp.reason : `${sp.target.placement.hits}/${LIVE[k].notes.length} hit`}`).join(', ')}), 16 slots a bar; the 64ths run refused (targetGrid)`,
+    lives.every(([, sp]) => !sp.refused && sp.knobs.slotsPerBar === 16 && sp.target.clip.S === 16) && runR.refused === true && runR.reason === 'targetGrid' && runR.detail.slotsPerBar === 64);
   const plainA = compose(s.L, s.T, { seed: 3 }), plainB = compose(s.L, s.T, { seed: 3, target: null });
   check('no target (absent or null) is Compose as it was: the same spec, no `target` anywhere', J(plainA) === J(plainB) && !('target' in plainA) && !('target' in plainA.input) && !('cut' in plainA.knobs));
 }
