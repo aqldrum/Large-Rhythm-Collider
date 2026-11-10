@@ -2870,3 +2870,15 @@ Avery's clips exported from Ableton Live 12 were refused with "The MIDI clip's g
 
 **Open (for Avery):** swung clips (a groove committed into the notes) and loose performances read as a straight grid with misses; beat tracking or a swing read would be its own feature. When a guess merges two note-ons, the decode line says "chords reduced to their top note" even when the merged notes were graces.
 
+
+## Composer window: phrase strip, MIDI menu, View menu (2026-11-10)
+
+The header had grown to a dozen controls in two rows, a clip box that was always open, and Bars and Slots / bar buried in the inspector's Lines tab. This regroups them; nothing is composed, played, stored or exported differently.
+
+- **Phrase strip**, above the matrix and the song lane: "Phrase", Bars, Steps / bar, Seed, **New version**, and the clip. Bars and Steps / bar are the Lines tab's two knobs (`Slots / bar` is now `Steps / bar` in `KNOB_FIELDS`): the same `core.setKnob` and `recomposeIfQuick()`, the same locks by a clip or a typed chart. On auto the box says what Compose chose ("auto · 2"), Details or not; a clip or a chart sets it and says "4 · the clip's".
+- **New version** sets the seed to the current one + 1 (`core.setSeed`) and presses Compose through `pressGo()`, so the animation rules hold; a Compose animation in flight is skipped first. It is disabled with no rhythm.
+- **The clip** is a chip in the strip (name, Tonic, ✕: the old `clipTonic` and `clipClear`); the error, summary, decode, fit and alternates lines sit under the strip and exist only with a clip, a read in flight or an error. With no clip there is no clip box. Dropping a .mid on the window works as before.
+- **MIDI ▾** replaces the MIDI toggle, Details' MIDI file and the clip box's chooser. One panel (`ctab-midi-panel`), three sections, verbs first: Import a melody (.mid), Send live to a DAW (the phase B panel, unchanged), Download (Download .mid, now always there; JSON, still Details only). The button is never disabled: without Web MIDI only the live section says so. It still lights while sending.
+- **View ▾** holds show the work, clean plot and advanced details (Details renamed), the same stored keys. The dot for an asked knob the clean view hides shows on the View button too. MIDI and View open one at a time, in the same slot. Glide stays where it was, now Details only, so the clean header is one row from 700 px of the left half (it may wrap below that, or with Details).
+- **Lines tab removed.** Its Details-only knobs (Anchors) and the Table sit in Harmony under a "Lines" sub-heading. `setSection('lines')` opens the cell's context instead of throwing; the parts that opened on Lines (lead, comp, bass, inner) open on Harmony.
+- **Not done, on purpose:** the Compose / Perform button is not split, the inspector is otherwise as it was, and Details hides what it hid.

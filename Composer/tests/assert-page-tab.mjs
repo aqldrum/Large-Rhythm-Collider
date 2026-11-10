@@ -122,13 +122,15 @@ console.log('\n— the selection and the inspector');
 check('lead is selected, bar 1, on the cell\'s context (STEP 4e)', tab.view.selected === 'lead' && tab.view.bar === 0 && tab.view.section === CONTEXT_SECTION);
 tab.select('drums');
 check('select the drums: still the context, now the drums\' bar', tab.view.selected === 'drums' && tab.view.section === CONTEXT_SECTION);
-tab.setSection('lines');
+tab.setSection('harmony');
 tab.select('drums');
 check('on a settings section, select the drums: the Drums section', tab.view.selected === 'drums' && tab.view.section === 'drums');
 tab.select('chords');
 check('select the chords: Harmony', tab.view.section === 'harmony' && SECTION_OF.chords === 'harmony');
 tab.setSection('tuning');
-check('a section by hand', tab.view.section === 'tuning' && SECTIONS.length === 4);
+check('a section by hand', tab.view.section === 'tuning' && SECTIONS.length === 3 && !SECTIONS.includes('lines'));
+tab.setSection('lines');   // the Lines tab went into Harmony (2026-11-10): an old 'lines' opens the cell's context
+check('a section "lines" (the removed tab) falls back to the cell\'s context, and no part maps to it', tab.view.section === CONTEXT_SECTION && !Object.values(SECTION_OF).includes('lines'));
 let threw = 0;
 try { tab.select('kazoo'); } catch { threw++; }
 try { tab.setSection('mixing'); } catch { threw++; }

@@ -5,7 +5,7 @@
 //   • Perform: each part's notes on its own bus, Start on the clock's; a part set to "not sent" goes quiet there;
 //     local sound off silences the voices; Stop: All Notes Off and Stop
 //   • the choices kept (never Send itself); a bus vanishing drops its part
-//   • without Web MIDI the button is disabled and says so; Details' MIDI file is a .mid of the composition
+//   • the MIDI menu (2026-11-10): Import / Send live / Download sections; Download .mid is always there; without Web MIDI the menu still opens and the live section says so
 //   node Composer/tests/assert-page-midi.mjs
 import { makeDom, installGlobals } from './dom-stub.mjs';
 import { siteRhythm } from './site-scripts.mjs';
@@ -79,6 +79,8 @@ check('composed', spec && !spec.refused);
 const btn = q(left, '.ctab-midi'), panel = q(left, '.ctab-midi-panel');
 check('the MIDI button, the panel closed, nothing asked yet', btn && !btn.disabled && panel.style.display === 'none' && asked === 0 && !sink.enabled);
 btn.click(); await settle();
+check('the menu has three sections, verbs first: Import a melody (.mid), Send live to a DAW, Download', qa(panel, '.ctab-midi-sec').map((x) => q(x, '.ctab-sub').textContent).join('|') === 'Import a melody (.mid)|Send live to a DAW|Download'
+  && !!q(q(panel, '.ctab-midi-import'), '.ctab-clip-choose') && !!q(q(panel, '.ctab-midi-import'), '.ctab-clip-hint') && !!q(q(panel, '.ctab-midi-down'), '.ctab-midi-file') && btn.textContent === 'MIDI ▾');
 check('opened: the panel, a bus picker a part, the clock\'s, "send"', panel.style.display !== 'none' && qa(panel, '.ctab-midi-part').length === 6 && qa(panel, 'select').length === 7
   && qa(panel, '.ctab-toggle').some((b) => b.textContent === 'send'));
 const send = () => qa(panel, '.ctab-toggle').find((b) => /^send/.test(b.textContent));
@@ -119,9 +121,12 @@ check('the Bass bus gone: bass not sent, the status still counts the rest', !sin
 send().click(); await settle();
 check('Send off: not sending, the button unlit', !sink.enabled && !btn.classList.contains('on') && send().textContent === 'send');
 
-console.log('\n— the MIDI file (Details)');
+console.log('\n— Download .mid (no longer behind Details)');
 const fileBtn = q(left, '.ctab-midi-file');
-check('in Details, beside JSON', fileBtn.classList.contains('ctab-detail') && !fileBtn.disabled);
+const jsonBtn = qa(q(panel, '.ctab-midi-down'), '.ctab-btn').find((b) => b.textContent === 'JSON');
+const detailBound = (e) => { for (let x = e; x && x !== left; x = x.parentNode) if (x.classList?.contains('ctab-detail')) return true; return false; };
+check('Download .mid: in the Download section, not Details-only (JSON beside it is), enabled', fileBtn.textContent === 'Download .mid' && !detailBound(fileBtn) && !tab.view.details && !fileBtn.disabled
+  && !!jsonBtn && detailBound(jsonBtn));
 fileBtn.click();
 const f = files.at(-1), m = f && readMidi(f.data);
 check(`a .mid of the composition (${f?.name}): a track a playing part`, /\.mid$/.test(f?.name ?? '') && m.tracks.filter((t) => t.name).map((t) => t.name).join() === 'Lead,Chords,Comp,Bass,Inner,Drums');
@@ -131,7 +136,11 @@ const bridge2 = createComposerBridge(win, { runCompose: async (l, T, o) => compo
 const left2 = doc.createElement('div'), inspector2 = doc.createElement('div');
 doc.body.append(left2, inspector2);
 bridge2.mountTab({ left: left2, inspector: inspector2 });
-check('the button disabled, saying why', q(left2, '.ctab-midi').disabled && /isn't available/.test(q(left2, '.ctab-midi').title));
+const btn2 = q(left2, '.ctab-midi'), panel2 = q(left2, '.ctab-midi-panel');
+check('the menu button stays enabled, its title saying why there is no live send', !btn2.disabled && /isn't available/.test(btn2.title));
+btn2.click(); await settle();
+check('it opens: the live section says so in amber and points at Download .mid; Import and Download are there', panel2.style.display !== 'none' && /isn't available/.test(q(q(panel2, '.ctab-midi-live'), '.ctab-midi-status').textContent) && q(q(panel2, '.ctab-midi-live'), '.ctab-midi-status').classList.contains('amber')
+  && /Download \.mid/.test(q(panel2, '.ctab-midi-status').textContent) && qa(panel2, 'select').length === 0 && !!q(panel2, '.ctab-clip-choose') && !!q(panel2, '.ctab-midi-file') && !q(panel2, '.ctab-clip-choose').disabled);
 
 bridge.hideTab?.();
 restore?.();

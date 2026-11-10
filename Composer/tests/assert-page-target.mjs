@@ -100,15 +100,20 @@ console.log('\n— the MIDI clip control');
 win.lrcModule = null; tab.syncRhythm(); bridge.view?.render?.();
 const noRhythm = await tab.setTarget(bytesOf('ode-to-joy'), { name: 'ode-to-joy.mid' });
 check('no rhythm on the page: the clip is refused and the window says so; Choose is disabled', !noRhythm.ok && /Generate a rhythm/.test(text('.ctab-clip-error')) && q(left, '.ctab-clip-choose').disabled);
+check('no rhythm: New version is disabled, the Phrase strip is there', q(left, '.ctab-newversion').disabled && !!q(left, '.ctab-phrase'));
 const R = setRhythm([41, 42, 43, 0], 8);
 check('a rhythm: the control is there — Choose a .mid…, a file input for .mid, the drop hint; no lines yet', !q(left, '.ctab-clip-choose').disabled && /\.mid/.test(q(left, '.ctab-clip-file').accept)
   && /drop one on the window/.test(text('.ctab-clip-hint')) && q(left, '.ctab-clip-decode').style.display === 'none' && q(left, '.ctab-clip-error').style.display === 'none');
+check('no clip: no clip box (the lines container hidden, no "MIDI clip" label), no chip in the Phrase strip; Choose is in the MIDI menu', q(left, '.ctab-target').style.display === 'none' && !q(left, '.ctab-target-label')
+  && q(left, '.ctab-clip-chip').style.display === 'none' && q(q(left, '.ctab-midi-import'), '.ctab-clip-choose') === q(left, '.ctab-clip-choose') && q(left, '.ctab-midi-panel').contains(q(left, '.ctab-clip-choose')));
 
 const c0 = composes;
 await chooseFile(fileOf('ode-to-joy.mid', bytesOf('ode-to-joy')));
 const st = tab.state, spec = st.spec, ode = decoded['ode-to-joy'];
 const direct = compose([41, 42, 43, 0], 8, { seed: st.input.seed, target: { clip: ode }, worker: true });
 check('a .mid chosen: decoded, placed and composed (one Compose)', composes === c0 + 1 && st.status === 'ready' && !!spec?.target && spec.knobs.leader === 'target');
+check('… the clip is a chip in the Phrase strip: its name, the Tonic select, ✕; its lines come under the strip', q(left, '.ctab-clip-chip').style.display !== 'none' && text('.ctab-clip-name') === 'ode-to-joy' && q(left, '.ctab-phrase').contains(q(left, '.ctab-clip-chip'))
+  && q(left, '.ctab-phrase').contains(q(left, '.ctab-tonic')) && q(left, '.ctab-clip-clear').textContent === '✕' && q(left, '.ctab-target').style.display !== 'none');
 check('… the same composition as compose() with the clip (the parts, the chords, the placement)', J(spec.parts) === J(direct.parts) && J(spec.chords) === J(direct.chords) && J(spec.target.placement) === J(direct.target.placement));
 check('the entry holds the clip as decoded, no bytes (state.input.target: clip, tonic)', J(st.input.target.clip) === J(ode) && st.input.target.tonic === null && !Object.values(st.input.target).some((v) => v instanceof Uint8Array || v instanceof ArrayBuffer)
   && bridge.store.entry().state.input.target === st.input.target);
@@ -213,10 +218,8 @@ check('a chord swap on the window spec applies; undo takes it back and the targe
 const typed = await core.setProgressionField('Am'); await settle();
 check('the typed progression on a window spec: a live chord edit on bar 1', typed.ok && typed.live && !!tab.state.edits.chords[0]);
 await core.undo();
-tab.setSection('lines');
-const barsKnob = qa(inspector, '.ctab-knob').find((k) => k.textContent.startsWith('Bars'));
-check('the knobs the clip sets are disabled, "the clip\'s"', barsKnob && q(barsKnob, 'input').disabled && /the clip's/.test(barsKnob.textContent));
-tab.setSection('cell');
+const barsKnob = qa(left, '.ctab-phrase-field').find((k) => k.textContent.startsWith('Bars')), stepsKnob = qa(left, '.ctab-phrase-field').find((k) => k.textContent.startsWith('Steps / bar'));
+check('the knobs the clip sets (the Phrase strip\'s Bars and Steps / bar) are disabled, "the clip\'s"', barsKnob && q(barsKnob, 'input').disabled && /the clip's/.test(barsKnob.textContent) && stepsKnob && q(stepsKnob, 'input').disabled && /the clip's/.test(stepsKnob.textContent));
 
 console.log('\n— a clip dropped on the window; chords reduced (P1); a nameless clip takes the file\'s name');
 dom.fire(left, 'dragenter', { dataTransfer: { types: ['Files'] } });
@@ -261,6 +264,7 @@ const cC = composes;
 q(left, '.ctab-clip-clear').click(); await settle();
 check('Clear composes nothing (Avery, 2026-10-26): no target, the lines gone, the entry dirty, the button Compose', composes === cC && !tab.state.input.target && tab.state.placements === null && tab.state.dirty
   && tab.button() === 'Compose' && q(left, '.ctab-clip-decode').style.display === 'none' && q(left, '.ctab-clip-clear').style.display === 'none');
+check('… and the chip and the lines container are gone with it', q(left, '.ctab-clip-chip').style.display === 'none' && q(left, '.ctab-target').style.display === 'none');
 q(left, '.ctab-go').click(); await settle();
 const clearedSpec = tab.state.spec;
 check('…then Compose: an ordinary composition, at its own tempo', composes === cC + 1 && !tab.state.spec.target && tab.state.spec.knobs.leader !== 'target' && Math.abs(core.tempo() - core.specTempo()) < 1e-9);

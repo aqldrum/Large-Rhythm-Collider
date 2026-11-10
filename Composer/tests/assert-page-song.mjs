@@ -244,7 +244,7 @@ const before = stateNow(), specBefore = S().spec, playsBeforeClean = plays.lengt
 ctx2d.calls.length = 0;
 await click(cleanBtn);
 const w1 = washes();
-check('the clean plot (beside Details): the plot under the Composer\'s notes fully hidden (an opaque wash), kept as a view preference', !!cleanBtn && cleanBtn.nextSibling === q(left, '.ctab-midi') && tab.view.clean === true && cleanBtn.classList.contains('on')
+check('the clean plot (beside Details): the plot under the Composer\'s notes fully hidden (an opaque wash), kept as a view preference', !!cleanBtn && cleanBtn.nextSibling === q(left, '.ctab-details') && cleanBtn.parentNode === q(left, '.ctab-view-panel') && tab.view.clean === true && cleanBtn.classList.contains('on')
   && w1.length > 0 && w1.every((c) => c === 'rgb(16, 16, 16)') && stored['lrc.composer.cleanPlot'] === '1', J(w1));
 check('…and it moves nothing: the song, the undo stack, the edits, the export and the play are as they were', stateNow() === before && S().spec === specBefore && plays.length === playsBeforeClean);
 ctx2d.calls.length = 0;

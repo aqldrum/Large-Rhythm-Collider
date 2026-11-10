@@ -223,11 +223,10 @@
 .ctab-light.dark { background: none; border-left: 1px dashed #666; opacity: .6; }
 
 /* ── MIDI targets (phase B): the MIDI clip control, the lead row's clip marks, the clip's notes in the inspector ── */
-.ctab-target { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; background: rgba(255, 255, 255, 0.02); border: 1px solid #333; border-radius: 4px; padding: 5px 8px; }
-.ctab-target-label { color: #fff; font-size: 12px; letter-spacing: .5px; }
+.ctab-target { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; padding: 0 2px; }   /* the clip's lines, under the Phrase strip (2026-11-10) */
 .ctab-left .ctab-tonic { max-width: 140px; }
 .ctab-left.ctab-dropping { box-shadow: inset 0 0 0 2px #00ff88; }
-.ctab-left.ctab-dropping .ctab-target { border-color: #00ff88; background: rgba(0, 255, 136, 0.08); }
+.ctab-left.ctab-dropping .ctab-phrase { border-color: #00ff88; background: rgba(0, 255, 136, 0.08); }
 .ctab-clip-line { display: flex; flex-wrap: wrap; gap: 2px 6px; font-family: monospace; font-size: 11px; color: #aaa; }
 .ctab-clip-item.name { color: #fff; font-weight: 600; font-family: inherit; }
 .ctab-clip-item.ok { color: #00ff88; }
@@ -304,8 +303,7 @@
    before, and what only the clean view shows (its short forms) gives way */
 .ctab-left:not(.ctab-details-on) .ctab-detail, .ctab-inspector:not(.ctab-details-on) .ctab-detail { display: none !important; }
 .ctab-details-on .ctab-clean-only { display: none !important; }
-.ctab-details.has-hidden { border-color: #ffb347 !important; color: #ffb347 !important; }
-.ctab-summary { flex-shrink: 0; font-family: monospace; font-size: 11px; color: #888; }
+.ctab-details.has-hidden, .ctab-view.has-hidden { border-color: #ffb347 !important; color: #ffb347 !important; }
 /* the clean view's alternates mark: a dot, its count in the title */
 .ctab-left:not(.ctab-details-on) .ctab-badge { font-size: 0; min-width: 0; width: 6px; height: 6px; padding: 0; border-radius: 50%; right: 4px; bottom: 4px; }
 
@@ -314,3 +312,41 @@
 .ctab-midi-panel { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; border: 1px solid #444; border-radius: 4px; background: #222; }
 .ctab-midi-panel .ctab-knob select { max-width: 220px; }
 .ctab-midi-status.amber { color: #ffb347; }
+
+/* The header, one row (2026-11-10): rhythm, Compose, Loop | Song, Tempo, (Glide with Details), then Undo, Redo, MIDI ▾ and View ▾ at the right edge.
+   From 700 px of the left half (668 px of it inside its 16 px padding) the clean header does not wrap, the tempo slider and the rhythm giving way; below that, or with Details (Glide), it may. */
+.ctab-head-row { gap: 6px; }
+.ctab-head-row .ctab-tempo { width: 72px; }
+.ctab-left .ctab-head-row .ctab-go { min-width: 92px; padding: 5px 12px; }
+.ctab-head-row .ctab-num { width: 56px; }
+.ctab-group { display: inline-flex; align-items: center; gap: 6px; }   /* what wraps together */
+.ctab-head-right { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
+.ctab-head-row .ctab-rhythm { white-space: nowrap; }
+.ctab-head-row .ctab-status { min-width: 0; }
+@container ctab-left (min-width: 668px) {
+  .ctab-left:not(.ctab-details-on) .ctab-head-row { flex-wrap: nowrap; }   /* with Details the Glide slider is there too: that row may wrap */
+  .ctab-head-row .ctab-rhythm { flex-shrink: 0; }   /* the sliders give way, never the rhythm */
+  .ctab-head-row .ctab-tempo, .ctab-head-row .ctab-glide { min-width: 40px; flex-shrink: 1; }
+  .ctab-head-row .ctab-group { min-width: 0; flex-shrink: 1; }
+  .ctab-head-row .ctab-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+/* View ▾ and its panel (the three viewing toggles), in the MIDI panel's slot under the header */
+.ctab-view.open { border-color: #8fd9b5 !important; }
+.ctab-view-panel { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid #444; border-radius: 4px; background: #222; }
+
+/* the MIDI menu: three sections, a rule between */
+.ctab-midi-sec { display: flex; flex-direction: column; gap: 6px; }
+.ctab-midi-sec + .ctab-midi-sec { border-top: 1px solid #333; padding-top: 6px; }
+.ctab-midi-send { display: flex; flex-direction: column; gap: 6px; }
+
+/* the Phrase strip (2026-11-10), above the matrix and the song lane: Bars, Steps / bar, Seed, New version, and the MIDI clip as a chip */
+.ctab-phrase { flex-shrink: 0; gap: 6px 14px; padding: 5px 8px; border: 1px solid #333; border-radius: 4px; background: rgba(255, 255, 255, 0.02); }
+.ctab-phrase-field { display: inline-flex; align-items: center; gap: 5px; }
+.ctab-phrase-field label { color: #aaa; font-size: 11px; }
+.ctab-phrase-field input { width: 78px; }
+.ctab-phrase .ctab-seed { width: 64px; }
+.ctab-newversion { white-space: nowrap; }
+.ctab-clip-chip { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; padding: 1px 3px 1px 9px; border: 1px solid #2f8f62; border-radius: 12px; background: rgba(0, 255, 136, 0.06); }
+.ctab-clip-name { color: #fff; font-weight: 600; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctab-left .ctab-clip-clear { padding: 0 6px; border-radius: 10px; }

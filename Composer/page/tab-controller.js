@@ -8,8 +8,8 @@
 //              generated one: the button stays Compose and does nothing.
 //   one sound  Perform first stops main playback (host.stopMain; Partitions plays only under it). Main playback
 //              starting (host.onMainStarted) stops the Composer. Closing the tab stops it too (proposed).
-//   selection  one part is selected (lead by default): the inspector shows it, and its section (Harmony, Lines,
-//              Drums, Tuning) follows it unless picked by hand.
+//   selection  one part is selected (lead by default): the inspector shows it, and its section (Harmony,
+//              Drums, Tuning; the Lines tab went into Harmony, 2026-11-10) follows it unless picked by hand.
 //   plot       highlights(plot) → plot-highlights.js' lit nodes of the spec as it plays now (memoized on the spec, the
 //              parts, the drums and the plot), or null when the spec isn't of the plotted rhythm.
 //   show work  view.showWork (on by default; the view keeps it in localStorage): the Compose button asks for the compose
@@ -41,10 +41,10 @@ import { targetError } from './target-lines.js';
 export const TAB_VERSION = 'composer-tab-v1';
 /** the site's samples, relative to index.html */
 export const PAGE_SAMPLES_BASE = 'assets/audio/';
-export const SECTIONS = Object.freeze(['harmony', 'lines', 'drums', 'tuning']);
-export const SECTION_LABELS = Object.freeze({ harmony: 'Harmony', lines: 'Lines', drums: 'Drums', tuning: 'Tuning' });
+export const SECTIONS = Object.freeze(['harmony', 'drums', 'tuning']);
+export const SECTION_LABELS = Object.freeze({ harmony: 'Harmony', drums: 'Drums', tuning: 'Tuning' });
 /** the section a part opens on (proposed) */
-export const SECTION_OF = Object.freeze({ lead: 'lines', chords: 'harmony', comp: 'lines', bass: 'lines', inner: 'lines', drums: 'drums' });
+export const SECTION_OF = Object.freeze({ lead: 'harmony', chords: 'harmony', comp: 'harmony', bass: 'harmony', inner: 'harmony', drums: 'drums' });
 /** STEP 4e: the inspector's context section, the selected cell's (the default; proposed) */
 export const CONTEXT_SECTION = 'cell';
 export const kitChoices = (voice) => sharedKitChoices(voice, PAGE_SAMPLES_BASE);
@@ -152,6 +152,7 @@ export function createTabController({ host = {}, runCompose, createContext, time
       view.selected = id; view.bar = bar; view.section = CONTEXT_SECTION; changed();
     },
     setSection(name) {
+      if (name === 'lines') name = CONTEXT_SECTION;   // the Lines tab is gone (its knobs sit in Harmony): a stored or old 'lines' opens the cell's context
       if (!SECTIONS.includes(name) && name !== CONTEXT_SECTION) throw new Error(`composer tab: no section ${name}`);
       view.section = name; changed();
     },

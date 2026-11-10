@@ -1,36 +1,50 @@
 // composer-tab.js — the main page's Composer tab: DOM in, DOM out, over tab-controller.js (all state and actions live
 // there and in the shared controller). It fills the two hosts the Partitions window gives it (PartitionsUI.js):
 //
-//   left       the header (the page's rhythm and cycle, Seed, Compose → Perform ⇄ Stop, Undo, Redo, JSON, show the
-//              work, Tempo, Glide), the readouts, any refusal and what the last Compose dropped, the MATRIX (STEP 4e,
-//              decision 8: the lanes became it — a row a part, a column a bar as wide as it lasts, a cell a mini view
-//              of that part in that bar; the typed progression field across the top of the Chords row), and the
-//              decisions list
+//   left       the header, one row (the page's rhythm and cycle, Compose → Perform ⇄ Stop, Loop | Song, Tempo, Glide
+//              with Details, Undo, Redo, the MIDI ▾ and View ▾ menus), the readouts, any refusal and what the last
+//              Compose dropped, the PHRASE strip (Bars, Steps / bar, Seed, New version, the MIDI clip as a chip), the
+//              MATRIX (STEP 4e, decision 8: the lanes became it — a row a part, a column a bar as wide as it lasts, a
+//              cell a mini view of that part in that bar; the typed progression field across the top of the Chords
+//              row), and the decisions list
 //   inspector  a slim header row (the selected part: sound, legato, on/off, level; for the drums: mode, fills,
 //              on/off, level), then the CONTEXT of the selected cell (STEP 4e: chords → its 12 candidates; lead → the
 //              phrase's 8 runner-ups; bass, comping, inner → what they follow; drums → the bar's step grid, the
-//              presets and the prime strip), beside four settings sections: Harmony (the root picks and the harmony
-//              knobs), Lines (the meter and the table), Drums (mode, fills, the kit), Tuning (the frame, the root,
-//              baseHz, the retunes)
+//              presets and the prime strip), beside three settings sections: Harmony (the root picks, the harmony
+//              knobs, and under a Details-only "Lines" the anchors and the table), Drums (mode, fills, the kit),
+//              Tuning (the frame, the root, baseHz, the retunes)
 //
-// Details (CLEAN_MIDI_ORDER.md, phase A: a header toggle, off by default, kept in localStorage): off, the clean view —
+// Details (CLEAN_MIDI_ORDER.md, phase A: a toggle in the View menu, "advanced details", off by default, kept in localStorage): off, the clean view —
 // names over numbers, what you can act on, and the warnings that need you; on, the window as it was before. What only
 // Details shows carries `ctab-detail` (and what only the clean view shows, `ctab-clean-only`), and the CSS hides it by
 // the hosts' `ctab-details-on`, so the toggle changes what is seen and nothing else: no spec, no compose, no sound. A
-// knob only Details shows keeps its value; when one is asked (not auto), the toggle carries a dot and names it.
+// knob only Details shows keeps its value; when one is asked (not auto), the toggle carries a dot and names it, and the View
+// button carries the dot too.
 //
-// MIDI out (CLEAN_MIDI_ORDER.md, phase B): a MIDI button in the header opens the MIDI panel under it — Send (on or
+// The Phrase strip (2026-11-10, above the matrix and the song lane): "Phrase", then Bars and Steps / bar (they were the
+// inspector's Lines tab; the same writes and the same locks by a clip or a typed chart; left on auto the box says what
+// Compose chose, "auto · 2", Details or not), the Seed (it was in the header) and New version (the seed + 1, composed now
+// through pressGo, so the animation rules hold). With a MIDI clip loaded the strip shows it as a chip: its name, the Tonic
+// select and ✕; the clip's lines come under the strip, and without a clip there is no clip box at all.
+//
+// The MIDI ▾ menu (2026-11-10; it was the MIDI toggle, Details' MIDI file and the clip box's chooser): one header button
+// opens one panel with three sections, verbs first — "Import a melody (.mid)" (Choose, and the drop hint), "Send live to
+// a DAW" (MIDI out, below), "Download" (Download .mid, and JSON with Details). Never disabled: without Web MIDI only the
+// live section says so. The View ▾ button opens the panel of show the work, clean plot and advanced details in the same
+// slot; one of the two is open at a time.
+//
+// MIDI out (CLEAN_MIDI_ORDER.md, phase B): the MIDI menu's live section — Send (on or
 // off), a bus a part (matched on first use to a bus whose name holds the part's: "Composer Lead", …; "not sent"
 // leaves a part out), the clock's bus (the Lead's by default), the bend range, local sound, and what is going out.
 // The page's sink (composer-midi.js, the bridge's) does the sending; the choices are kept in localStorage
-// (lrc.composer.midi), never Send itself. Without Web MIDI (Safari) the button is disabled and says so. Details adds
-// "MIDI file" beside JSON: the composition as it plays now, one cycle, as a .mid (M11).
+// (lrc.composer.midi), never Send itself. Without Web MIDI (Safari) the section says so (and Download .mid, the
+// composition as it plays now, one cycle, as a .mid, M11, still works).
 //
 // The upper right stays the Partitions window's mirror of the Linear Plot. While the tab is shown, the plot carries the
 // Composer's lit nodes (plot-overlay.js, through LRCVisuals.setComposerOverlay), the selected cell ringed on it
 // (getFocus), and, during Perform, its playhead.
 //
-// Show the work (a header toggle, on by default, kept in localStorage): Compose is animated from its trace
+// Show the work (a View menu toggle, on by default, kept in localStorage): Compose is animated from its trace
 // (compose-animator.js, trace-frames.js). The plot shimmers while Compose runs, then plays the trace's steps over a
 // cached base, with a caption above the matrix and its rows filling in as the parts land; it ends exactly on the lit
 // nodes. The Compose button says Skip meanwhile; a click in the tab or on the plot, or Esc, skips to the end; any change
@@ -47,8 +61,8 @@
 // header's buttons), the keyboard on the matrix (arrows move, Enter opens the cell), and the narrow fallback (below
 // ~600 px of the left half the matrix shows one bar and a bar picker: a container query in composer-tab.css).
 //
-// MIDI targets (phase B; DESIGN_NOTES "MIDI targets (phase B)"): the MIDI clip control under the header. Choose a .mid
-// or drop one anywhere on the window: it is decoded, placed in the row and composed around (the controller's
+// MIDI targets (phase B; DESIGN_NOTES "MIDI targets (phase B)"): the MIDI clip control (the Phrase strip's chip; Choose is in
+// the MIDI menu). Choose a .mid or drop one anywhere on the window: it is decoded, placed in the row and composed around (the controller's
 // setTarget). The decode line (name, grid, bars, notes, the tonic with its 12-way override, the notes the skyline
 // dropped), the fit line (target-lines.js: hits, tight, note-offs, whole cycle or the window, substitutes, silent
 // notes, drift, the classes the row can't play), the placements to audition (the search's best and its alternates: a
@@ -130,7 +144,7 @@
 // The Song UI's visual pass (DESIGN_NOTES "Song UI (visual pass)"; Avery's first browser pass of Song v0):
 //   Song        the loop's matrix and its bar picker are hidden (the left host's `ctab-song-on`, a class swap: instant,
 //               and the matrix is still rendered underneath, so Loop comes back as it was); the lane is a clip timeline
-//   clean plot  a header toggle beside Details (off by default, kept in localStorage as Details is): while the window is
+//   clean plot  a View menu toggle beside Details (off by default, kept in localStorage as Details is): while the window is
 //               open the overlay's wash is opaque, so the Linear Plot's own drawing is fully hidden under the Composer's
 //               notes, in Loop and in Song. Named "clean plot", not "clean view": Details off is the clean view already
 
@@ -153,7 +167,7 @@ import { decodeLine, fitLine, placementRow, tonicChoices, clipMarks, noteName, K
 // Song v0 (phase C2): the arrangement lane
 import { createArrangementLane } from './arrangement-lane.js';
 
-const KNOBS_OF = Object.freeze({ harmony: ['modulation', 'settlePasses', 'presence'], lines: ['bars', 'slotsPerBar', 'anchors'], tuning: ['frameCentsEachSide'] });
+const KNOBS_OF = Object.freeze({ harmony: ['modulation', 'settlePasses', 'presence'], lines: ['anchors'], tuning: ['frameCentsEachSide'] });
 /** the caption's names for the trace's beats */
 const BEAT_NAMES = Object.freeze({ row: 'row', root: 'root', meter: 'meter', cells: 'cells', progression: 'progression', line: 'lead', chords: 'chords', line2: 'lead again',
   settle: 'settle', harmony: 'harmony', parts: 'parts', drums: 'drums', done: 'done' });
@@ -297,6 +311,13 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   function buildLeft(left) {
     const seed = el('input', { type: 'number', step: 1, className: 'ctab-seed', value: tab.state.input.seed, title: 'the seed: the same seed, the same composition' });
     seed.addEventListener('change', () => core.setSeed(seed.value));
+    // New version: the next seed, composed now (pressGo, so Compose's animation rules apply; a Compose animation in flight is skipped first)
+    const newVersion = button('🎲 New version', 'ctab-btn ctab-newversion', 'a different take on the same rhythm: the seed + 1, composed now (type the old seed back to get the old take)', () => {
+      if (anim.status === 'playing') skipAnimation();
+      const n = Number(tab.state.input.seed);
+      core.setSeed(Number.isFinite(n) ? n + 1 : 1);
+      pressGo();
+    });
     const go = el('button', { className: 'ctab-go', textContent: 'Compose' });
     go.addEventListener('click', pressGo);
     // Song v0 (S14): Loop | Song beside the transport
@@ -309,21 +330,26 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const redoBtn = button('↷', 'ctab-btn ctab-redo', `redo it (${isMac() ? '⇧⌘Z' : 'Ctrl+Shift+Z'})`, () => redo());
     undoBtn.append(el('span', { className: `ctab-word ${DETAIL}`, textContent: ' Undo' }));
     redoBtn.append(el('span', { className: `ctab-word ${DETAIL}`, textContent: ' Redo' }));
+    // View ▾ (2026-11-10): the three viewing toggles behind one button; the panel opens in the MIDI panel's slot, one of the two at a time
     const work = el('button', { className: 'ctab-toggle ctab-work', textContent: 'show the work', title: 'animate Compose: the root, the lead, the chords under it, the settling and the parts, on the Linear Plot' });
     work.addEventListener('click', () => { const on = !tab.view.showWork; writeShowWork(storage, on); tab.setShowWork(on); });
-    const details = el('button', { className: 'ctab-toggle ctab-details', textContent: 'details' });
+    const details = el('button', { className: 'ctab-toggle ctab-details', textContent: 'advanced details' });
     details.addEventListener('click', () => { const on = !tab.view.details; writeDetails(storage, on); tab.setDetails(on); });
     // the clean plot: a viewing flag (the plot redraws through tab.onChange); nothing composed, undone or exported moves
     const cleanPlot = el('button', { className: 'ctab-toggle ctab-cleanplot', textContent: 'clean plot' });
     cleanPlot.addEventListener('click', () => { const on = !tab.view.clean; writeClean(storage, on); tab.setClean(on); });
+    const viewBtn = el('button', { className: 'ctab-toggle ctab-view', textContent: 'View ▾' });
+    viewBtn.addEventListener('click', () => { viewOpen = !viewOpen; if (viewOpen) midiOpen = false; renderMidi(); renderDetails(); });
+    const viewPanel = el('div', { className: 'ctab-view-panel' }, work, cleanPlot, details);
+    viewPanel.style.display = 'none';
+    // MIDI ▾ (2026-11-10): import a melody, send live, download: one panel, its three sections below once the clip controls exist
     const json = el('button', { className: `ctab-btn ${DETAIL}`, textContent: 'JSON', title: 'download the spec as it plays now' });
     json.addEventListener('click', exportJSON);
-    const midiFile = el('button', { className: `ctab-btn ctab-midi-file ${DETAIL}`, textContent: 'MIDI file', title: 'download the composition as it plays now, one cycle, as a .mid: a track a part, in exact tuning (pitch bends)' });
+    const midiFile = el('button', { className: 'ctab-btn ctab-midi-file', textContent: 'Download .mid', title: 'download the composition as it plays now, one cycle, as a .mid: a track a part, in exact tuning (pitch bends)' });
     midiFile.addEventListener('click', exportMid);
-    const midiBtn = el('button', { className: 'ctab-toggle ctab-midi', textContent: 'MIDI' });
-    midiBtn.addEventListener('click', () => { midiOpen = !midiOpen; renderMidi(); });
-    const midiPanel = el('div', { className: 'ctab-midi-panel' });
-    midiPanel.style.display = 'none';
+    const midiBtn = el('button', { className: 'ctab-toggle ctab-midi', textContent: 'MIDI ▾' });
+    midiBtn.addEventListener('click', () => { midiOpen = !midiOpen; if (midiOpen) viewOpen = false; renderMidi(); renderDetails(); });
+    const midiSend = el('div', { className: 'ctab-midi-send' });
     const tempo = el('input', { type: 'range', min: TEMPO_LIMITS[0], max: TEMPO_LIMITS[1], step: 1, className: 'ctab-tempo' });
     const tempoBpm = el('input', { type: 'number', min: TEMPO_LIMITS[0], max: TEMPO_LIMITS[1], step: 0.1, title: 'BPM', className: 'ctab-num' });
     const tempoReset = el('button', { className: 'ctab-toggle', textContent: 'reset', title: 'back to the tempo Compose chose' });
@@ -335,7 +361,6 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     glide.addEventListener('input', () => { core.setGlide(glide.value); glideOut.textContent = `${tab.state.glideMs} ms`; });
     const rhythm = el('span', { className: 'ctab-rhythm' }), status = el('span', { className: 'ctab-status' });
     const note = el('div', { className: 'ctab-note' }), refusal = el('div', { className: 'ctab-refusal' }), readouts = el('div', { className: `ctab-readouts ${DETAIL}` }), dropped = el('div', { className: 'ctab-dropped' });
-    const summary = el('div', { className: `ctab-summary ${CLEAN}` });
     const capLabel = el('b', { className: 'ctab-caption-label' }), capDetail = el('span', { className: 'ctab-caption-detail' }), capBeats = el('div', { className: 'ctab-caption-beats' });
     const caption = el('div', { className: 'ctab-caption' }, el('div', { className: 'ctab-row' }, capLabel, capDetail), capBeats);
     caption.style.display = 'none';
@@ -346,32 +371,48 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const barPick = el('div', { className: 'ctab-barpick' });
     const table = el('table', { className: 'ctab-decisions-table' });
     const decisions = el('details', { className: `ctab-decisions ${DETAIL}` }, el('summary', { textContent: 'Decisions — what Compose chose, and why' }), table);
-    // MIDI targets (phase B): the MIDI clip control (a hidden file input behind a button; a drop anywhere on the window)
+    // MIDI targets (phase B): the MIDI clip control (a hidden file input behind the MIDI menu's Choose button; a drop anywhere on the window)
     const clipFile = el('input', { type: 'file', accept: '.mid,.midi,audio/midi,audio/x-midi', className: 'ctab-clip-file' });
     clipFile.style.display = 'none';
     clipFile.addEventListener('change', () => { const f = clipFile.files?.[0]; loadClip(f); clipFile.value = ''; });
     const clipChoose = button('Choose a .mid…', 'ctab-btn ctab-clip-choose', 'a monophonic 12EDO MIDI clip: the Composer finds where the row can play it, and composes everything else around it (or drop a .mid on the window)', () => clipFile.click());
     const clipTonic = el('select', { className: 'ctab-tonic', title: "the clip's tonic (P5): the key estimate, or any of the 12; the clip is placed again, and the chords' root follows it" });
     clipTonic.addEventListener('change', () => { audition.reset(); tab.setTargetTonic(clipTonic.value === '' ? null : Number(clipTonic.value)); });
-    const clipClear = button('Clear', 'ctab-btn ctab-clip-clear', 'drop the clip; Compose again for an ordinary composition', () => { audition.reset(); tab.setTarget(null); });
-    const clipTonicLabel = el('span', { className: 'ctab-muted', textContent: 'Tonic' });
-    const clipHint = el('span', { className: 'ctab-muted ctab-clip-hint' }), clipError = el('div', { className: 'ctab-clip-error' });
+    const clipClear = button('✕', 'ctab-btn ctab-clip-clear', 'drop the clip; Compose again for an ordinary composition', () => { audition.reset(); tab.setTarget(null); }, { ariaLabel: 'Clear the clip' });
+    const clipTonicLabel = el('span', { className: 'ctab-muted', textContent: 'Tonic' }), clipName = el('b', { className: 'ctab-clip-name' });
+    const clipChip = el('span', { className: 'ctab-clip-chip' }, clipName, clipTonicLabel, clipTonic, clipClear);
+    const clipHint = el('span', { className: 'ctab-muted ctab-clip-hint' }), clipNow = el('div', { className: 'ctab-muted ctab-clip-now' }), clipError = el('div', { className: 'ctab-clip-error' });
     const clipDecode = el('div', { className: `ctab-clip-line ctab-clip-decode ${DETAIL}` }), clipFit = el('div', { className: `ctab-clip-line ctab-clip-fit ${DETAIL}` }), clipAlts = el('div', { className: 'ctab-clip-alts' });
     const clipSummary = el('div', { className: `ctab-clip-line ctab-clip-summary ${CLEAN}` });
-    const target = el('div', { className: 'ctab-target' },
-      el('div', { className: 'ctab-row' }, el('b', { className: 'ctab-target-label', textContent: 'MIDI clip' }), clipChoose, clipFile, clipTonicLabel, clipTonic, clipClear, clipHint),
-      clipError, clipSummary, clipDecode, clipFit, clipAlts);
+    // the clip's lines under the Phrase strip: only with a clip loaded (or being read), or an error to say
+    const target = el('div', { className: 'ctab-target' }, clipNow, clipError, clipSummary, clipDecode, clipFit, clipAlts);
+    const midiSec = (cls, title, ...kids) => el('div', { className: `ctab-midi-sec ${cls}` }, el('b', { className: 'ctab-sub', textContent: title }), ...kids);
+    const midiPanel = el('div', { className: 'ctab-midi-panel' },
+      midiSec('ctab-midi-import', 'Import a melody (.mid)', el('div', { className: 'ctab-row' }, clipChoose, clipFile, clipHint)),
+      midiSec('ctab-midi-live', 'Send live to a DAW', midiSend),
+      midiSec('ctab-midi-down', 'Download', el('div', { className: 'ctab-row' }, midiFile, json)));
+    midiPanel.style.display = 'none';
+    // the Phrase strip (2026-11-10): the meter's two knobs (they were the inspector's Lines tab; same writes, same locks), the seed and New version, the clip
+    const phraseKnob = (name) => {
+      const f = KNOB_FIELDS.find((x) => x.name === name), input = field(f, ''), said = el('span', { className: 'ctab-chosen' });
+      input.addEventListener('change', () => { core.setKnob(name, f.read(input.value)); recomposeIfQuick(); });
+      return { name, f, input, said, box: el('div', { className: 'ctab-phrase-field' }, el('label', { textContent: f.label, title: f.title || '' }), input, said) };
+    };
+    const phraseBars = phraseKnob('bars'), phraseSteps = phraseKnob('slotsPerBar');
+    const phrase = el('div', { className: 'ctab-phrase ctab-row' }, el('b', { className: 'ctab-sub', textContent: 'Phrase', title: 'the meter, the seed and the clip: what Compose is given' }), phraseBars.box, phraseSteps.box,
+      el('span', { className: 'ctab-group' }, el('label', { className: 'ctab-muted', textContent: 'Seed' }), seed, newVersion), clipChip);
     left.replaceChildren(
       el('div', { className: 'ctab-head' },
-        el('div', { className: 'ctab-row' }, rhythm, el('label', { className: 'ctab-muted', textContent: 'Seed' }), seed, go, modes, undoBtn, redoBtn, json, midiFile, work, details, cleanPlot, midiBtn, status),
-        el('div', { className: 'ctab-row' }, el('label', { className: 'ctab-muted', textContent: 'Tempo', title: 'playback tempo: the composed cycle faster or slower, live (pitch unchanged)' }), tempo, tempoBpm, tempoReset,
-          el('label', { className: 'ctab-muted', textContent: 'Glide' }), glide, glideOut)),
-      midiPanel, target, note, refusal, dropped, caption, summary, readouts,
+        el('div', { className: 'ctab-row ctab-head-row' }, rhythm, go, modes,
+          el('span', { className: 'ctab-group' }, el('label', { className: 'ctab-muted', textContent: 'Tempo', title: 'playback tempo: the composed cycle faster or slower, live (pitch unchanged)' }), tempo, tempoBpm, tempoReset),
+          el('span', { className: `ctab-group ${DETAIL}` }, el('label', { className: 'ctab-muted', textContent: 'Glide' }), glide, glideOut), status,
+          el('span', { className: 'ctab-head-right' }, undoBtn, redoBtn, midiBtn, viewBtn))),
+      midiPanel, viewPanel, note, refusal, dropped, caption, readouts, phrase, target,
       el('div', { className: 'ctab-scroll' }, lane.root, barPick, el('div', { className: 'ctab-matrix-wrap' }, lanes), decisions));
-    // a click anywhere in the tab skips the animation (the button and the toggle do their own thing)
-    left.addEventListener('click', (e) => { if (anim.status === 'playing' && !e.target?.closest?.('.ctab-go, .ctab-work')) skipAnimation(); });
-    return { seed, go, modeLoop, modeSong, undoBtn, redoBtn, json, midiFile, midiBtn, midiPanel, work, details, cleanPlot, summary, clipSummary, tempo, tempoBpm, tempoReset, glide, glideOut, rhythm, status, note, refusal, dropped, caption, capLabel, capDetail, capBeats, readouts, lanes, barPick, table,
-      target, clipFile, clipChoose, clipTonic, clipTonicLabel, clipClear, clipHint, clipError, clipDecode, clipFit, clipAlts };
+    // a click anywhere in the tab skips the animation (the button and the toggles do their own thing)
+    left.addEventListener('click', (e) => { if (anim.status === 'playing' && !e.target?.closest?.('.ctab-go, .ctab-work, .ctab-view, .ctab-view-panel')) skipAnimation(); });
+    return { seed, go, newVersion, modeLoop, modeSong, undoBtn, redoBtn, json, midiFile, midiBtn, midiPanel, midiSend, viewBtn, viewPanel, work, details, cleanPlot, phraseBars, phraseSteps, clipSummary, tempo, tempoBpm, tempoReset, glide, glideOut, rhythm, status, note, refusal, dropped, caption, capLabel, capDetail, capBeats, readouts, lanes, barPick, table,
+      target, clipFile, clipChoose, clipChip, clipName, clipTonic, clipTonicLabel, clipClear, clipHint, clipNow, clipError, clipDecode, clipFit, clipAlts };
   }
   function showTempo() {
     if (!ui) return;
@@ -406,7 +447,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
 
   // ── MIDI out (phase B, B3): the button, the panel, the ports ──
   const sink = core.midi;
-  let midiOpen = false, access = null, midiError = null, asking = null, panelKey = null;
+  let midiOpen = false, viewOpen = false, access = null, midiError = null, asking = null, panelKey = null;
   const readPrefs = () => { try { const v = JSON.parse(storage?.getItem?.(MIDI_KEY) ?? 'null'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } };
   const prefs = { ports: {}, ...readPrefs() };
   const savePrefs = () => { try { storage?.setItem?.(MIDI_KEY, JSON.stringify(prefs)); } catch { /* storage refused: the choices last the page */ } };
@@ -447,7 +488,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     return out;
   };
   function midiStatus() {
-    if (!midiAccess) return { text: "Web MIDI isn't available in this browser (Chrome, Edge or Firefox): Details' MIDI file still works", tone: 'amber' };
+    if (!midiAccess) return { text: "Web MIDI isn't available in this browser (Chrome, Edge or Firefox): Import and Download .mid still work", tone: 'amber' };
     if (midiError) return { text: midiError, tone: 'amber' };
     if (!access) return { text: 'Send asks the browser for MIDI access', tone: '' };
     if (!outputs().length) return { text: 'no MIDI outputs: add IAC buses in Audio MIDI Setup (IAC Driver → +)', tone: 'amber' };
@@ -458,11 +499,12 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   function renderMidi() {
     if (!ui) return;
     const b = ui.midiBtn;
-    b.disabled = !sink || !midiAccess;
+    // never disabled: Import and Download work without Web MIDI, only the live section needs it
     b.className = `ctab-toggle ctab-midi${sink?.enabled ? ' on' : ''}${midiOpen ? ' open' : ''}`;
-    b.title = !midiAccess ? "Web MIDI isn't available in this browser (Chrome, Edge or Firefox)" : sink?.enabled ? 'MIDI out: sending (the panel)' : 'MIDI out: each part on its own bus (the panel)';
-    ui.midiPanel.style.display = midiOpen && midiAccess ? '' : 'none';
-    if (!midiOpen || !midiAccess) { panelKey = null; return; }
+    b.title = !midiAccess ? "MIDI: import a melody, download a .mid (Web MIDI isn't available in this browser, so no live send)" : sink?.enabled ? 'MIDI: sending live (the menu: import, send, download)' : 'MIDI: import a melody, send live to a DAW, download a .mid';
+    ui.midiPanel.style.display = midiOpen ? '' : 'none';
+    if (!midiOpen) { panelKey = null; return; }
+    if (!midiAccess) { panelKey = null; ui.midiSend.replaceChildren(el('span', { className: 'ctab-muted ctab-midi-status amber', textContent: midiStatus().text })); return; }
     const outs = outputs(), st = midiStatus();
     // rebuilt only when what it shows changes (a render mid-choice must not close an open select)
     const key = JSON.stringify([!!sink?.enabled, core.localSound(), outs.map((o) => o.name), prefs, st, sink?.bendRange, !!access]);
@@ -482,8 +524,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const clockSel = pick(clockOf(), (v) => { prefs.clock = v; savePrefs(); applyMidi(); renderMidi(); }, { none: 'no clock', auto: 'MIDI clock, Start and Stop, for the DAW to follow the tempo (its Sync on this bus)' });
     const bend = el('input', { type: 'number', min: 1, max: 96, step: 1, className: 'ctab-num', value: String(sink?.bendRange ?? 48), title: 'the pitch-bend range, in semitones, for synths set by hand (48 is MPE\'s)' });
     bend.addEventListener('change', () => { const v = Math.round(Number(bend.value)); if (v >= 1 && v <= 96) { prefs.bend = v; savePrefs(); sink?.setBendRange(v); } renderMidi(); });
-    ui.midiPanel.replaceChildren(
-      el('div', { className: 'ctab-row' }, el('b', { className: 'ctab-sub', textContent: 'MIDI out' }),
+    ui.midiSend.replaceChildren(
+      el('div', { className: 'ctab-row' },
         toggle(sink?.enabled ? 'sending' : 'send', !!sink?.enabled, 'send each part to its bus (turn it on before Perform, so the DAW gets Start)', () => { toggleSend(); }),
         toggle('local sound', core.localSound(), "on: the Composer's own voices play too; off: only the DAW sounds", () => core.setLocalSound(!core.localSound())),
         el('span', { className: `ctab-muted ctab-midi-status${st.tone ? ` ${st.tone}` : ''}`, textContent: st.text })),
@@ -515,8 +557,26 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const on = !!tab.view.details, hidden = on ? [] : hiddenSettings(tab.state.knobs);
     for (const h of [hosts?.left, hosts?.inspector]) h?.classList?.toggle('ctab-details-on', on);
     ui.details.className = `ctab-toggle ctab-details${on ? ' on' : ''}${hidden.length ? ' has-hidden' : ''}`;
-    ui.details.textContent = hidden.length ? 'details •' : 'details';
+    ui.details.textContent = hidden.length ? 'advanced details •' : 'advanced details';
     ui.details.title = hidden.length ? `settings hidden: ${hidden.join(', ')}` : on ? 'hide the detail: the clean view' : 'show every readout, the decisions and the advanced knobs';
+    // View ▾ carries the dot too, so an asked knob the clean view hides is signalled with the panel closed
+    ui.viewBtn.className = `ctab-toggle ctab-view${viewOpen ? ' open' : ''}${hidden.length ? ' has-hidden' : ''}`;
+    ui.viewBtn.textContent = hidden.length ? 'View • ▾' : 'View ▾';
+    ui.viewBtn.title = hidden.length ? `settings hidden by the clean view: ${hidden.join(', ')} (advanced details shows them)` : 'show the work, clean plot, advanced details';
+    ui.viewPanel.style.display = viewOpen ? '' : 'none';
+  }
+  /** the Phrase strip's Bars and Steps / bar: the value typed, else what Compose chose ("auto · 2" in the box, clean view too); a clip or a chart sets them */
+  function renderPhrase() {
+    const s = tab.state.spec, ok = !!s && !s.refused;
+    for (const p of [ui.phraseBars, ui.phraseSteps]) {
+      const asked = tab.state.knobs[p.name], got = ok ? s.knobs[p.name] : null, lock = knobLock(p.name);
+      p.input.disabled = lock.byClip || lock.byChart;
+      p.input.title = lock.title ?? p.f.title ?? '';
+      if (doc.activeElement !== p.input) p.input.value = fieldValue(p.name, asked);
+      p.input.placeholder = got != null && asked == null && !lock.title ? `auto · ${got}` : 'auto';
+      const set = lock.byChart ? lock.chart.bars : got;
+      p.said.textContent = lock.title && set != null ? `${set} · the ${lock.byClip ? "clip's" : "chart's"}` : '';
+    }
   }
   function renderLeft() {
     const label = tab.button(), s = tab.state.spec;
@@ -528,6 +588,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     ui.go.className = `ctab-go${skipping ? ' skip' : label === 'Stop' ? ' stop' : ''}`;
     ui.go.disabled = skipping ? false : !tab.canPress();
     ui.go.title = skipping ? 'skip to the end (or click the plot, or press Esc)' : '';
+    ui.newVersion.disabled = !tab.view.hasRhythm;
     const song = core.songMode() === 'song';
     ui.modeLoop.className = `ctab-toggle ctab-mode${song ? '' : ' on'}`;
     ui.modeSong.className = `ctab-toggle ctab-mode${song ? ' on' : ''}`;
@@ -542,6 +603,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     renderMidi();
     ui.midiFile.disabled = !s || s.refused;
     ui.status.textContent = tab.state.status === 'error' ? `error: ${tab.state.error}` : core.applying() ? 'applying the edit in the worker…' : tab.state.dirty && s ? 'changed — Compose again' : '';
+    ui.status.style.display = ui.status.textContent ? '' : 'none';   // an empty status takes no room (nor its gap) in the one-row header
     // the plot note: no rhythm yet, or a plot that isn't the Linear Plot
     const v = visuals(), notes = [];
     if (!tab.view.hasRhythm) notes.push(el('span', { textContent: 'Generate a rhythm on the main page first: Compose reads its layers and its Playback cycle.' }));
@@ -558,9 +620,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     ui.dropped.replaceChildren(el('div', { className: CLEAN, textContent: `Compose couldn't keep ${drop.length} of the edits`, title: drop.join('\n') }),
       ...drop.map((t) => el('div', { className: DETAIL, textContent: t })));
     ui.dropped.style.display = drop.length ? '' : 'none';
-    ui.summary.textContent = s && !s.refused ? `${s.knobs.bars} bar${s.knobs.bars === 1 ? '' : 's'} × ${s.knobs.slotsPerBar}` : '';
-    ui.summary.title = s && !s.refused ? 'the meter: bars × slots a bar (Details shows every readout)' : '';
-    ui.summary.style.display = ui.summary.textContent ? '' : 'none';
+    renderPhrase();
     ui.readouts.replaceChildren(...readoutItems(s, { lastMs: tab.state.lastMs, drums: tab.state.drums }).map(([k, val]) => el('span', {}, `${k} `, el('b', { textContent: val }))));
     ui.table.replaceChildren(...decisionRows(s, tab.state.drums).map((d) => el('tr', {}, el('td', { textContent: d.what }), el('td', { textContent: d.value }), el('td', { textContent: d.why }))));
     renderTarget();
@@ -606,10 +666,16 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const fit = t && !composing && s && !s.refused && s.target ? s.target : null;
     ui.clipChoose.disabled = !tab.view.hasRhythm;
     ui.clipChoose.textContent = t ? 'Another .mid…' : 'Choose a .mid…';
-    ui.clipHint.textContent = clipBusy ? `reading ${clipBusy}…` : composing && t ? 'placing the clip in the row…'
-      : t ? '' : tab.view.hasRhythm ? 'or drop one on the window: the clip becomes the lead, and everything else is composed around it' : 'generate a rhythm first';
-    for (const e of [ui.clipTonic, ui.clipTonicLabel, ui.clipClear]) e.style.display = t ? '' : 'none';
+    // the menu's hint says how; the strip's own line (the clip's lines, under it) says what is happening
+    const now = clipBusy ? `reading ${clipBusy}…` : composing && t ? 'placing the clip in the row…' : '';
+    ui.clipHint.textContent = now || (t ? '' : tab.view.hasRhythm ? 'or drop one on the window: the clip becomes the lead, and everything else is composed around it' : 'generate a rhythm first');
+    ui.clipNow.textContent = now;
+    ui.clipNow.style.display = now ? '' : 'none';
+    // the clip as a chip in the Phrase strip, and its lines under the strip, only with a clip (or an error to say)
+    for (const e of [ui.clipChip, ui.clipName, ui.clipTonic, ui.clipTonicLabel, ui.clipClear]) e.style.display = t ? '' : 'none';
+    ui.target.style.display = t || tab.view.targetError || now ? '' : 'none';
     if (t) {
+      ui.clipName.textContent = t.clip.name ?? 'the clip';
       ui.clipTonic.replaceChildren(...tonicChoices(t.clip).map((o) => el('option', { value: o.value, textContent: o.label })));
       ui.clipTonic.value = t.tonic == null ? '' : String(t.tonic);
       ui.clipTonic.disabled = composing;
@@ -935,16 +1001,19 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   tab.onMainStarted(() => { if (anim.status !== 'idle') endAnimation(true); });
 
   // ── the inspector ──
+  /** what stops a knob being typed: the MIDI clip sets it (MIDI targets), or a typed chord chart sets the bars (decided, CHART_ORDER.md) → { byClip, byChart, chart, title } */
+  function knobLock(name) {
+    const byClip = !!tab.state.input.target && TARGET_SETS.includes(name);
+    const chart = name === 'bars' && !byClip ? core.chartShape() : null, byChart = !!chart && !chart.error;
+    return { byClip, byChart, chart, title: byClip ? 'set by the MIDI clip (its meter, its placement, its pinned lead)' : byChart ? 'set by the typed chord chart: its bars, every repeat played' : null };
+  }
   function knobRow(names) {
     const chosen = knobChosen(tab.state.spec, tab.state.knobs);
     return el('div', { className: 'ctab-knobs' }, ...names.map((name) => {
       const f = KNOB_FIELDS.find((x) => x.name === name), input = field(f, fieldValue(name, tab.state.knobs[name]));
       input.addEventListener('change', () => { core.setKnob(name, f.read(input.value)); recomposeIfQuick(); });
-      const c = chosen[name], byClip = !!tab.state.input.target && TARGET_SETS.includes(name);   // MIDI targets: the clip sets it
-      if (byClip) { input.disabled = true; input.title = 'set by the MIDI clip (its meter, its placement, its pinned lead)'; }
-      // a typed chord chart sets the bars (decided, CHART_ORDER.md)
-      const chart = name === 'bars' && !byClip ? core.chartShape() : null, byChart = !!chart && !chart.error;
-      if (byChart) { input.disabled = true; input.title = 'set by the typed chord chart: its bars, every repeat played'; }
+      const c = chosen[name], { byClip, byChart, chart, title } = knobLock(name);
+      if (title) { input.disabled = true; input.title = title; }
       const said = byClip ? `${c.text.replace(/^asked: /, 'chose ')} · the clip's` : byChart ? `${chart.bars} · the chart's` : c.text;
       // the clean view: the knob alone, unless the clip or the chart set it (C5)
       return el('div', { className: `ctab-knob${DETAIL_KNOBS.includes(name) ? ` ${DETAIL}` : ''}` }, el('label', { textContent: f.label, title: f.title || '' }), input,
@@ -1528,11 +1597,13 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     }));
     let body;
     if (section === CONTEXT_SECTION) body = contextBody();
-    else if (section === 'harmony') body = [progressionEditor(), el('div', { className: 'ctab-sub', textContent: 'Harmony' }), knobRow(KNOBS_OF.harmony)];
-    else if (section === 'lines') {
+    else if (section === 'harmony') {
+      // the old Lines tab's knobs, under their own sub-heading and, as they were, Details only (Bars and Steps / bar are the Phrase strip's now)
       const table = field(TABLE_FIELD, tab.state.table), chosen = knobChosen(tab.state.spec, tab.state.knobs).table;
       table.addEventListener('change', () => core.setTable(table.value));
-      body = [knobRow(KNOBS_OF.lines), el('div', { className: 'ctab-knobs' }, el('div', { className: `ctab-knob ${DETAIL}` }, el('label', { textContent: TABLE_FIELD.label }), table, el('span', { className: 'ctab-chosen', textContent: chosen.text })))];
+      body = [progressionEditor(), el('div', { className: 'ctab-sub', textContent: 'Harmony' }), knobRow(KNOBS_OF.harmony),
+        el('div', { className: `ctab-sub ${DETAIL}`, textContent: 'Lines' }), knobRow(KNOBS_OF.lines),
+        el('div', { className: 'ctab-knobs' }, el('div', { className: `ctab-knob ${DETAIL}` }, el('label', { textContent: TABLE_FIELD.label }), table, el('span', { className: 'ctab-chosen', textContent: chosen.text })))];
     } else if (section === 'drums') body = [el('div', { className: 'ctab-row' }, el('span', { className: 'ctab-sub', textContent: 'Drums' }), ...drumControls()), el('div', { className: 'ctab-sub', textContent: 'Kit — a sound a voice (the made kit, or the site\'s samples)' }), kitRow()];
     else body = [knobRow(KNOBS_OF.tuning), tuningReadout()];
     // the body keeps its scroll while it shows the same thing (a click on the 9th alternate doesn't jump to the top)

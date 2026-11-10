@@ -75,10 +75,9 @@ const keydown = (key, extra = {}) => doc.dispatchEvent({ type: 'keydown', key, .
 console.log('Chord charts in the Composer window (CHART_ORDER.md, phase B)');
 const fieldEl = () => q(left, '.ctab-field');
 const chordCells = () => qa(lane('chords'), '.ctab-cell');
-const barsKnob = () => qa(inspector, '.ctab-knob').find((k) => q(k, 'label')?.textContent === 'Bars');
+const barsKnob = () => qa(left, '.ctab-phrase-field').find((k) => q(k, 'label')?.textContent === 'Bars');   // the Phrase strip's (it was the Lines tab's)
 
 console.log('\n— the Bars knob is a number');
-tab.select('chords'); tab.setSection('lines');
 check('the Bars knob is a number input, 1..64, blank for auto', !!barsKnob() && q(barsKnob(), 'input')?.type === 'number' && String(q(barsKnob(), 'input').max) === '64' && !q(barsKnob(), 'select'));
 core.setKnob('bars', 12);
 q(left, '.ctab-go').click(); await settle();
@@ -90,7 +89,6 @@ const TEXT = '| C | Am F | G . . C | Dm7 G7 |';
 fieldEl().value = TEXT;
 fieldEl().dispatchEvent({ type: 'keydown', key: 'Enter' }); await settle();
 check('a chart of other bars is not live: the entry goes dirty (Compose to hear it)', tab.state.field?.text === TEXT && tab.state.dirty);
-tab.select('chords'); tab.setSection('lines');
 check('the Bars knob is set by the chart: disabled, "4 · the chart\'s"', q(barsKnob(), 'input').disabled && /4 · the chart's/.test(barsKnob().textContent));
 q(left, '.ctab-go').click(); await settle();
 const spec = tab.state.spec;
