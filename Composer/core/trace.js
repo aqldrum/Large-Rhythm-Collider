@@ -103,6 +103,13 @@ export function createTrace(row, { cycleSeconds, meter: M = null, caps = {} } = 
           ...(c.outside ? { ranked: false } : {}) })) });
     },
     meter(meter, asked) {
+      if (M.from === 'layers') {
+        // METER_TEMPO_ORDER.md: the meter from the layers' factors; the tempo is measured at the end (the 'done' event)
+        emit('meter', { from: 'layers', asked: { bars: asked.bars ?? null, slotsPerBar: asked.slotsPerBar ?? null }, candidates: meter.candidates ?? 0,
+          bars: meter.bars, slotsPerBar: meter.slotsPerBar, P: meter.bars * meter.slotsPerBar, beats: meter.shape ? [...meter.shape.beats] : null, timeSig: meter.shape ? [...meter.shape.timeSig] : [4, 4],
+          tempoBpm: r3(meter.tempoBpm), onsetsPerSlot: r3(row.n / (meter.bars * meter.slotsPerBar)), notes: [...meter.notes] });
+        return;
+      }
       const tempo = (N) => (60 * N * M.beatsPerBar) / T, [lo, hi] = M.tempoRange;
       emit('meter', { asked: { bars: asked.bars ?? null, slotsPerBar: asked.slotsPerBar ?? null }, tempoRange: [lo, hi],
         candidates: M.bars.map((N) => ({ bars: N, tempoBpm: r3(tempo(N)), inRange: tempo(N) >= lo - 1e-9 && tempo(N) <= hi + 1e-9 })),
@@ -227,7 +234,7 @@ export function createTrace(row, { cycleSeconds, meter: M = null, caps = {} } = 
         hits: d.hits.slice(0, cap.drumHits).map((x) => ({ voice: x.voice, bar: x.bar, slot: x.slot, pos: r3(x.pos), tick: x.tick, node: atTick(x.tick), velocity: r3(x.velocity), snap: x.snap })) });
     },
     done(spec) {
-      emit('done', { leader: spec.knobs.leader, tempoBpm: r3(spec.knobs.tempoBpm), baseHz: r3(spec.knobs.baseHz), notes: { ...spec.stats.notes }, drums: spec.drums ? spec.drums.hits.length : 0 });
+      emit('done', { leader: spec.knobs.leader, tempoBpm: r3(spec.knobs.tempoBpm), ...(spec.seedTempo ? { seedTempoBpm: spec.seedTempo.bpm } : {}), baseHz: r3(spec.knobs.baseHz), notes: { ...spec.stats.notes }, drums: spec.drums ? spec.drums.hits.length : 0 });
     },
     finish() {
       const nodeTable = {}; for (const i of [...nodes.keys()].sort((a, b) => a - b)) nodeTable[i] = nodes.get(i);
@@ -313,7 +320,7 @@ function labelOf(ev, trace) {
   switch (ev.kind) {
     case 'row': return `the row: ${ev.onsets} onsets, ${ev.tones} tones`;
     case 'root': { const c = ev.candidates.find((x) => x.tone === ev.pick); return `the root: ${ratioOrDash(c)}${ev.asked ? ' (asked)' : `, of ${ev.eligible} candidates`}`; }
-    case 'meter': return `the meter: ${ev.bars} × ${ev.slotsPerBar} at ${ev.tempoBpm} BPM`;
+    case 'meter': return ev.from === 'layers' ? `the meter: ${ev.bars} × ${ev.slotsPerBar} (${ev.timeSig.join('/')})` : `the meter: ${ev.bars} × ${ev.slotsPerBar} at ${ev.tempoBpm} BPM`;
     case 'phase': return `the downbeat${ev.asked ? ' (asked)' : `: ${ev.pick + 1} of ${ev.candidates.length}`}`;
     case 'cells': return `${ev.P} slots on ${ev.anchors} anchors`;
     case 'progression': return `a progression: ${ev.bars.filter((b) => !b.auto).length} bars pinned (${ev.leader})`;

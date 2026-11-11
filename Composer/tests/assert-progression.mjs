@@ -19,7 +19,7 @@ import { buildRow } from '../core/row.js';
 import { buildCells } from '../core/cells.js';
 import { classOfCents } from '../core/frame.js';
 import { PC_NAMES, CHORD_QUALITIES } from '../core/harmony.js';
-import { compose } from '../core/compose.js';
+import { compose } from './compose-cycle.mjs';
 import { rootCandidates, readProgression, chooseChordOnRoot, FALLBACK_QUALITIES, MAX_MISSING } from '../core/progression.js';
 import { composeCases, normSpec, sha, COMPOSE_HASHES } from './settle-baseline.mjs';
 import { RHYTHMS } from './rhythms.mjs';
@@ -173,7 +173,7 @@ const SMALL = [[[8, 7, 6, 5], 4], [[11, 9, 7, 5], 6], [[19, 17, 16, 15], 6], [[1
   check(`${n} rhythms of the shared set, every other bar pinned: roots kept, qualities supported, notes onsets`, !bad, bad);
   // the worker carries the progression
   const w = await import('../core/compose-worker.js'), asked = ['7/4', '1/1'];
-  const got = w.answer({ id: 1, layers: [8, 7, 6, 5], cycleSeconds: 4, options: { seed: 2, progression: asked } });
+  const got = w.answer({ id: 1, layers: [8, 7, 6, 5], cycleSeconds: 4, options: { seed: 2, progression: asked, overrides: { meterFrom: 'cycle' } } });
   check('the worker\'s answer honours options.progression', got.ok && got.spec.chords.map((c) => c.rootTone).join() === asked.join() && got.spec.knobs.table === 'full');
 }
 

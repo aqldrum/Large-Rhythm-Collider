@@ -43,6 +43,8 @@
 //                swapLead(phrase, lineId, { chordsFollow, smooth })  a phrase's lead for a runner-up line (decision 2)
 //                setProgressionField(text)   the typed field: resolved per bar (chord-symbols.js), its chords typed edits
 //                setDrumGrid(grid) / setDrumCell(bar, voice, place, value) / applyDrumPreset(mode)   the step grid
+//                setDrumCells(cells) / duplicateDrumBars(from, to)   (2026-11-11) a paint stroke, ⌘D: one step each
+//                copyDrumBars(from, to) → clip / pasteDrumBars(at, clip)   (2026-11-11) ⌘C / ⌘V: the paste one step
 //                undo() / redo()             (at most UNDO_LIMIT steps; a Compose clears them)
 //              Each returns a Promise of { ok, changedBars, retunedBars, … }; on this thread it has applied before it
 //              returns. `state.composed` is Compose's spec, untouched; `state.spec` is composed + edits (rearrange.js,
@@ -201,7 +203,7 @@
 //              undo restores the song alone (the fold isn't run); a loop step's undo never touches the song. MIDI is the
 //              player's (S17): a muted part sends nothing, a filtered note isn't sent, the clock runs on.
 
-import { compose, rearticulate, chooseMeter, PART_IDS, TARGET_SETS, VOICINGS, COMP_TOLERANCES, COMP_GATES, COMP_ROLLS, compStrumOf, strumSetting, nextStrum, strumOverrides, sameStrum, heardGateMs } from '../core/compose.js';
+import { compose, rearticulate, chooseMeter, PART_IDS, TARGET_SETS, VOICINGS, COMP_TOLERANCES, COMP_GATES, COMP_ROLLS, compStrumOf, strumSetting, nextStrum, strumOverrides, sameStrum, heardGateMs, seedTempoOf as specSeedTempoOf, gateTempoOf } from '../core/compose.js';
 import { arrangeBass, bassLockRefusal, BASS_DENSITIES, BASS_LOCKS } from '../core/bass.js';   // phase H: the bass's densities and lock
 import { arrangeArp, arpRefusal, arpTimes, ARP_PARTS, ARP_TIMES, ARP_DEFAULTS } from '../core/arp.js';   // B2: the Arp mode (phase D: mined)
 import { rootCandidates, chooseChordOnRoot, qualityById } from '../core/progression.js';
@@ -693,7 +695,17 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   }
   /** the drum grid as it plays now: the entry's own (mode grid or prime), else the arrangement written as one */
   const gridNow = (st) => ((st.drumOptions.mode === 'grid' || st.drumOptions.mode === 'prime') && st.drumOptions.grid ? JSON.parse(JSON.stringify(st.drumOptions.grid)) : gridOf(st.drums));
-  const gridWidth = (spec) => spec.knobs.slotsPerBar * beatsOf(spec.knobs.slotsPerBar).m;
+  const gridWidth = (spec) => spec.knobs.slotsPerBar * beatsOf(spec.knobs.slotsPerBar, spec.knobs.beats ?? null).m;
+  /** one cell's edit checked against the spec → its character (x X .; true / false a stroke / off): setDrumCell's and
+   *  setDrumCells' one reading of a cell */
+  const drumCellChar = (spec, bar, voice, place, value) => {
+    const N = spec.knobs.bars, W = gridWidth(spec), ch = value === true ? GRID_CHARS.stroke : value === false || value == null ? GRID_CHARS.off : String(value);
+    if (!(Number.isInteger(bar) && bar >= 0 && bar < N)) throw new Error(`composer: no bar ${bar}`);
+    if (!DRUM_VOICES.includes(voice)) throw new Error(`composer: no drum voice ${voice}`);
+    if (!(Number.isInteger(place) && place >= 0 && place < W)) throw new Error(`composer: no place ${place} (a bar has ${W})`);
+    if (!Object.values(GRID_CHARS).includes(ch)) throw new Error(`composer: a cell is x, X or . (not ${JSON.stringify(value)})`);
+    return ch;
+  };
   const noteGrid = (st) => { st.edits.grid ??= { bars: st.composed.knobs.bars, slotsPerBar: st.composed.knobs.slotsPerBar, from: st.drumOptions.mode === 'grid' ? 'backbeat' : st.drumOptions.mode }; };
   /** decision 5, as a compose starts: the chord edits written into the pin list as { ratio, quality } */
   function bakePins(st) {
@@ -792,7 +804,8 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
   // ── MIDI targets (phase B) ──────────────────────────────────────────────────────────────────────────────────────
   const clampTempo = (v) => Math.min(TEMPO_LIMITS[1], Math.max(TEMPO_LIMITS[0], v));
   /** the playback tempo a compose lands with: a target's clip tempo (decided 1/4), else the spec's own */
-  const seedTempoOf = (spec) => (spec?.target?.tempoBpm > 0 ? clampTempo(spec.target.tempoBpm) : spec.knobs.tempoBpm);
+  // a MIDI target's clip tempo, else the density tempo (METER_TEMPO_ORDER.md), else the spec's own: compose.js `seedTempoOf`, clamped here
+  const seedTempoOf = (spec) => specSeedTempoOf(spec);
   /** as a compose lands: a search's placements become the list (current: the best); a compose given its placement
    *  keeps the list it came from; no target, or a refusal, none */
   function landPlacements(st, spec) {
@@ -1259,7 +1272,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
       if (ch && !ch.error) return ch.bars;   // decided: a chart sets the bars
       if (state.knobs.bars != null) return state.knobs.bars;
       const rc = api.rootChoices();
-      return rc.refused ? 0 : chooseMeter(rc.onsets, state.input.cycleSeconds, { slotsPerBar: state.knobs.slotsPerBar ?? null }).bars;
+      return rc.refused ? 0 : chooseMeter(rc.onsets, state.input.cycleSeconds, { slotsPerBar: state.knobs.slotsPerBar ?? null, from: state.knobs.meterFrom ?? 'layers', layers: state.input.layers, seed: state.input.seed }).bars;
     },
     /** how many chords the editor shows: a typed chart's (a split bar has several), else one a bar */
     progressionUnits() {
@@ -1444,7 +1457,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     drumGrid() {
       if (!ready(state) || !state.drums) return null;
       const own = (state.drumOptions.mode === 'grid' || state.drumOptions.mode === 'prime') && !!state.drumOptions.grid;
-      return { grid: gridNow(state), mode: state.drumOptions.mode, own, bars: state.spec.knobs.bars, places: gridWidth(state.spec), m: beatsOf(state.spec.knobs.slotsPerBar).m, silentCells: state.drums.silentCells ?? [] };
+      return { grid: gridNow(state), mode: state.drumOptions.mode, own, bars: state.spec.knobs.bars, places: gridWidth(state.spec), m: beatsOf(state.spec.knobs.slotsPerBar, state.spec.knobs.beats ?? null).m, silentCells: state.drums.silentCells ?? [] };
     },
     /** the whole grid ({ voice: [one string a bar] }, x X .): the mode turns to 'grid' (a prime mode stays prime: the
      *  grid's perc row is its selection) */
@@ -1463,15 +1476,123 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     /** one cell: value 'x' | 'X' | '.' (or true / false); the grid starts from the drums as they play now */
     setDrumCell(bar, voice, place, value) {
       requireSpec(state);
-      const N = state.spec.knobs.bars, W = gridWidth(state.spec), ch = value === true ? GRID_CHARS.stroke : value === false || value == null ? GRID_CHARS.off : String(value);
-      if (!(Number.isInteger(bar) && bar >= 0 && bar < N)) throw new Error(`composer: no bar ${bar}`);
-      if (!DRUM_VOICES.includes(voice)) throw new Error(`composer: no drum voice ${voice}`);
-      if (!(Number.isInteger(place) && place >= 0 && place < W)) throw new Error(`composer: no place ${place} (a bar has ${W})`);
-      if (!Object.values(GRID_CHARS).includes(ch)) throw new Error(`composer: a cell is x, X or . (not ${JSON.stringify(value)})`);
+      const ch = drumCellChar(state.spec, bar, voice, place, value);
       return drumEdit('drums', { bar, voice, place }, (st) => {
         const g = gridNow(st), line = g[voice][bar];
         if (line[place] === ch && (st.drumOptions.mode === 'grid' || st.drumOptions.mode === 'prime') && st.drumOptions.grid) return false;
         g[voice][bar] = line.slice(0, place) + ch + line.slice(place + 1);
+        noteGrid(st);
+        st.drumOptions.grid = g;
+        if (st.drumOptions.mode !== 'prime') st.drumOptions.mode = 'grid';
+        return true;
+      });
+    },
+    /**
+     * several cells as ONE undo step (2026-11-11: the window's shift-drag paint stroke, PartitionsBlocks.js' shift
+     * toggle): cells [{ bar, voice, place, value }] (value as setDrumCell's), every one checked before any is written;
+     * a later cell of the same place wins. The grid starts from the drums as they play now, the mode turns to 'grid'
+     * (prime stays prime), as setDrumCell. Nothing changed (or no cells) → a noop, no undo step.
+     */
+    setDrumCells(cells) {
+      requireSpec(state);
+      if (!Array.isArray(cells)) throw new Error('composer: setDrumCells takes [{ bar, voice, place, value }]');
+      const list = cells.map((c) => ({ bar: c?.bar, voice: c?.voice, place: c?.place, ch: drumCellChar(state.spec, c?.bar, c?.voice, c?.place, c?.value) }));
+      const bars = [...new Set(list.map((c) => c.bar))].sort((a, b) => a - b);
+      return drumEdit('drums', { cells: list.length, changedBars: bars }, (st) => {
+        if (!list.length) return false;
+        const g = gridNow(st), own = (st.drumOptions.mode === 'grid' || st.drumOptions.mode === 'prime') && !!st.drumOptions.grid;
+        let any = false;
+        for (const { bar, voice, place, ch } of list) {
+          const line = g[voice][bar];
+          if (line[place] === ch) continue;
+          g[voice][bar] = line.slice(0, place) + ch + line.slice(place + 1); any = true;
+        }
+        if (!any && own) return false;
+        noteGrid(st);
+        st.drumOptions.grid = g;
+        if (st.drumOptions.mode !== 'prime') st.drumOptions.mode = 'grid';
+        return true;
+      });
+    },
+    /**
+     * Duplicate drum bars (2026-11-11, the window's ⌘D; proposed): bars [from, to) copied, every voice, onto the bars
+     * right after them, [to, to + (to − from)), as ONE undo step. The bar count is the composition's (fixed), so the
+     * copies STOP at the last bar — no wrap onto bar 1 (a loop's downbeat bar is too easily lost that way, and a
+     * selection over half the bars would wrap onto itself): what doesn't fit is left out and said (`cut`). A selection
+     * that ends on the last bar has nowhere to go → { ok: false, error }, nothing changed. The grid starts from the drums
+     * as they play now and the mode turns to 'grid' (prime stays prime), as setDrumCell.
+     * → { ok, kind: 'drums', from, to, onto: { from, to } (the bars written, end exclusive), cut (bars left out),
+     *   changedBars, silentCells }
+     */
+    duplicateDrumBars(from, to = from + 1) {
+      requireSpec(state);
+      const N = state.spec.knobs.bars;
+      if (!(Number.isInteger(from) && Number.isInteger(to) && from >= 0 && to > from && to <= N)) throw new Error(`composer: no bars ${from}..${to} to duplicate (the composition has ${N})`);
+      const k = to - from, end = Math.min(N, to + k), onto = { from: to, to: end }, cut = k - (end - to);
+      if (end <= to) return Promise.resolve({ ok: false, kind: 'drums', from, to, onto, cut, error: `no bar after bar ${N} to copy onto (copies stop at the last bar)` });
+      const changedBars = Array.from({ length: end - to }, (_, i) => to + i);
+      return drumEdit('drums', { duplicate: true, from, to, onto, cut, changedBars }, (st) => {
+        const g = gridNow(st), own = (st.drumOptions.mode === 'grid' || st.drumOptions.mode === 'prime') && !!st.drumOptions.grid;
+        let any = false;
+        for (const v of DRUM_VOICES) {
+          if (!g[v]) continue;
+          for (let i = 0; i < end - to; i++) { if (g[v][to + i] !== g[v][from + i]) any = true; g[v][to + i] = g[v][from + i]; }
+        }
+        if (!any && own) return false;
+        noteGrid(st);
+        st.drumOptions.grid = g;
+        if (st.drumOptions.mode !== 'prime') st.drumOptions.mode = 'grid';
+        return true;
+      });
+    },
+    /**
+     * Copy drum bars (2026-11-11, the window's ⌘C): bars [from, to), every voice, as they play now (a preset read as
+     * its grid). Nothing changes. → { places (a bar's), bars (how many), grid: { voice: [one string a bar] } }
+     */
+    copyDrumBars(from, to = from + 1) {
+      requireSpec(state);
+      const N = state.spec.knobs.bars;
+      if (!(Number.isInteger(from) && Number.isInteger(to) && from >= 0 && to > from && to <= N)) throw new Error(`composer: no bars ${from}..${to} to copy (the composition has ${N})`);
+      const g = gridNow(state);
+      return { places: gridWidth(state.spec), bars: to - from, grid: Object.fromEntries(DRUM_VOICES.filter((v) => g[v]).map((v) => [v, g[v].slice(from, to)])) };
+    },
+    /**
+     * Paste drum bars (2026-11-11, the window's ⌘V; proposed): a clip (copyDrumBars') written from bar `at` on, every
+     * voice it carries, as ONE undo step. As ⌘D's copies, the paste stops at the last bar (no wrap onto bar 1): what
+     * doesn't fit is left out and said (`cut`). A clip of another bar width (copied from a composition of another meter)
+     * is laid by place in the bar: place i of W' lands on round(i·W / W') (the last place at most), an accent winning
+     * over a stroke where two meet (`remapped`) — as the curated patterns land, a step a share of the bar. The grid
+     * starts from the drums as they play now and the mode turns to 'grid' (prime stays prime), as setDrumCell.
+     * → { ok, kind: 'drums', paste: true, at, onto: { from, to } (end exclusive), cut, remapped ({ from, to } places, or
+     *   null), changedBars, silentCells }
+     */
+    pasteDrumBars(at, clip) {
+      requireSpec(state);
+      const N = state.spec.knobs.bars, W = gridWidth(state.spec);
+      if (!(Number.isInteger(at) && at >= 0 && at < N)) throw new Error(`composer: no bar ${at} to paste at (the composition has ${N})`);
+      const Wc = clip?.places, k = clip?.bars, lines = clip?.grid;
+      if (!(Number.isInteger(Wc) && Wc >= 1 && Number.isInteger(k) && k >= 1 && lines && typeof lines === 'object')) throw new Error('composer: a drum clip is copyDrumBars\' { places, bars, grid }');
+      for (const [v, bars] of Object.entries(lines)) {
+        if (!DRUM_VOICES.includes(v)) throw new Error(`composer: no drum voice ${v}`);
+        if (!Array.isArray(bars) || bars.length !== k || !bars.every((b) => typeof b === 'string' && b.length === Wc && [...b].every((c) => Object.values(GRID_CHARS).includes(c)))) throw new Error(`composer: the clip's ${v} is not ${k} bar${k === 1 ? '' : 's'} of ${Wc} places`);
+      }
+      const rank = { [GRID_CHARS.off]: 0, [GRID_CHARS.stroke]: 1, [GRID_CHARS.accent]: 2 };
+      const lay = (line) => {
+        if (Wc === W) return line;
+        const out = new Array(W).fill(GRID_CHARS.off);
+        for (let i = 0; i < Wc; i++) { const c = line[i], j = Math.min(W - 1, Math.round((i * W) / Wc)); if (rank[c] > rank[out[j]]) out[j] = c; }
+        return out.join('');
+      };
+      const end = Math.min(N, at + k), onto = { from: at, to: end }, cut = k - (end - at), remapped = Wc === W ? null : { from: Wc, to: W };
+      const changedBars = Array.from({ length: end - at }, (_, i) => at + i);
+      return drumEdit('drums', { paste: true, at, onto, cut, remapped, changedBars }, (st) => {
+        const g = gridNow(st), own = (st.drumOptions.mode === 'grid' || st.drumOptions.mode === 'prime') && !!st.drumOptions.grid;
+        let any = false;
+        for (const [v, bars] of Object.entries(lines)) {
+          if (!g[v]) continue;
+          for (let i = 0; i < end - at; i++) { const line = lay(bars[i]); if (g[v][at + i] !== line) any = true; g[v][at + i] = line; }
+        }
+        if (!any && own) return false;
         noteGrid(st);
         st.drumOptions.grid = g;
         if (st.drumOptions.mode !== 'prime') st.drumOptions.mode = 'grid';
@@ -1609,7 +1730,7 @@ export function createComposerController({ runCompose = async (l, T, o) => compo
     compStrumOf() {
       const s = ready(state) ? state.spec : null;
       if (s && !s.clave) return null;
-      const comp = s?.parts?.find((p) => p.id === 'comp'), mine = strumOfEntry(state), seed = s ? seedTempoOf(s) : null, tempo = s ? api.tempo() : null;
+      const comp = s?.parts?.find((p) => p.id === 'comp'), mine = strumOfEntry(state), seed = s ? gateTempoOf(s) : null, tempo = s ? api.tempo() : null;
       return { ...mine, playing: s ? compStrumOf(s) : null, tones: s?.stats?.compTones ?? null, singles: s?.stats?.compSingles ?? null, moved: s?.stats?.compMovedMs ?? null,
         strokes: comp?.strokes?.length ?? null, heard: mine.gate != null && seed && tempo ? { gate: heardGateMs(mine.gate, seed, tempo), seedTempo: seed, tempo } : null,
         gates: [...COMP_GATES], rolls: [...COMP_ROLLS], tolerances: [...COMP_TOLERANCES] };

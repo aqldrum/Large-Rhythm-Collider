@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { makeDom, installGlobals } from './dom-stub.mjs';
 import { siteRhythm, ROOT } from './site-scripts.mjs';
-import { compose } from '../core/compose.js';
+import { compose } from './compose-cycle.mjs';
 import { answer } from '../core/compose-worker.js';
 import { ALL_DRUM_MODES } from '../core/drums.js';
 import { highlightsOf, plotOf, indexOfTick } from '../page/plot-highlights.js';

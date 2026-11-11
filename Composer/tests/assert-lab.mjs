@@ -21,7 +21,8 @@ import { chainsOf, createPlayer } from '../perform/composer-player.js';
 import { planVoice } from '../../Audio/voices/plan.js';
 import { createInstrumentVoice } from '../../Audio/voices/voice.js';
 import { getRecipe } from '../../Audio/voices/recipes.js';
-import { compose, rearticulate, PART_IDS } from '../core/compose.js';
+import { compose, rearticulate, PART_IDS } from './compose-cycle.mjs';
+import { compose as composeLive } from '../core/compose.js';   // the default meter (plab below composes with it)
 import { arrangeDrums, DEFAULT_KIT } from '../core/drums.js';
 import * as drumLibrary from '../../Audio/drums/index.js';
 import { drumModeChoices, kitChoices } from '../perform/composer-controller.js';
@@ -66,6 +67,9 @@ function busOf(osc, buses) {
 console.log('Composer lab');
 const ctx = makeCtx(), timers = { setInterval: () => 1, clearInterval: () => {} };
 const lab = createLabController({ createContext: () => ctx, timers });
+// the player's timing checks below are written on a spec at its own tempo (factor 1): the meter of before
+// (METER_TEMPO_ORDER.md P7); the density tempo's playback is assert-meter.mjs'
+lab.setKnob('meterFrom', 'cycle');
 
 console.log('\n— the controller');
 check('the default rhythm is 41:42:43 in 8 s; the button says Compose', lab.state.input.layers.join() === '41,42,43,0' && lab.state.input.cycleSeconds === 8 && lab.button() === 'Compose');
@@ -75,7 +79,7 @@ check('layers as typed: blanks and zeros are absent', readLayers(['41', '', '0',
 await lab.press();
 const spec = lab.state.spec;
 check(`Compose (the full table, as in the worker): ${spec.chords.map((c) => c.name).join(' ')} at ${spec.knobs.tempoBpm} BPM; the button says Perform`, !spec.refused && spec.knobs.table === 'full' && lab.button() === 'Perform' && lab.state.status === 'ready');
-check('the same spec as Compose itself', JSON.stringify(spec) === JSON.stringify(compose([41, 42, 43, 0], 8, { seed: 1, worker: true })));
+check('the same spec as Compose itself', JSON.stringify(spec) === JSON.stringify(compose([41, 42, 43, 0], 8, { seed: 1, worker: true, overrides: { meterFrom: 'cycle' } })));
 
 console.log('\n— one full cycle, scheduled');
 lab.perform();
@@ -138,7 +142,7 @@ check('the second cycle starts booking after the first (loop)', oscs.some((o) =>
 
 console.log('\n— the Glide control (portamento)');
 {
-  const gctx = makeCtx(), glab = createLabController({ createContext: () => gctx, timers });
+  const gctx = makeCtx(), glab = createLabController({ createContext: () => gctx, timers }); glab.setKnob('meterFrom', 'cycle');
   await glab.press();
   glab.setGlide(200);
   glab.perform();
@@ -164,7 +168,7 @@ console.log('\n— the Glide control (portamento)');
 
 console.log('\n— live tempo');
 {
-  const tctx = makeCtx(), tlab = createLabController({ createContext: () => tctx, timers });
+  const tctx = makeCtx(), tlab = createLabController({ createContext: () => tctx, timers }); tlab.setKnob('meterFrom', 'cycle');
   check('no playback tempo before a spec', tlab.tempo() === null && tlab.tempoFactor() === 1);
   await tlab.press();
   const tspec = tlab.state.spec, ST = tspec.knobs.tempoBpm, TT = tspec.knobs.cycleSeconds, CEIL = 48000 * 0.45;
@@ -349,7 +353,7 @@ check('rearticulate needs the cycle', (() => { try { rearticulate(spec.parts[0],
 
 console.log('\n— back to Compose');
 lab.setKnob('bars', 2);
-check('a knob change: back to Compose, the knob an override', lab.button() === 'Compose' && JSON.stringify(lab.overrides()) === '{"bars":2}');
+check('a knob change: back to Compose, the knob an override', lab.button() === 'Compose' && JSON.stringify(lab.overrides()) === '{"bars":2,"meterFrom":"cycle"}');
 await lab.press();
 check('…and Compose honours it', lab.state.spec.knobs.bars === 2 && lab.button() === 'Perform');
 lab.setKnob('settlePasses', 0); lab.setKnob('presence', 'exact');
@@ -375,11 +379,11 @@ console.log('\n— the progression editor (targeted progressions)');
   const plab = createLabController({ createContext: () => makeCtx(), timers });
   plab.loadPreset(PRESETS.findIndex((p) => p.layers.join() === '8,7,6,5'));
   const rc = plab.rootChoices(), N = plab.progressionBars();
-  check(`root choices before any compose: ${rc.candidates.length} clusters of 8:7:6:5, the root first; ${N} bars, as Compose's meter`, rc.candidates.length >= 3 && rc.candidates[0].isRoot && N === compose([8, 7, 6, 5], 4).knobs.bars);
+  check(`root choices before any compose: ${rc.candidates.length} clusters of 8:7:6:5, the root first; ${N} bars, as Compose's meter`, rc.candidates.length >= 3 && rc.candidates[0].isRoot && N === composeLive([8, 7, 6, 5], 4).knobs.bars);
   check('every bar auto by default, and nothing sent to Compose', plab.progression().length === N && plab.progression().every((x) => x === null) && plab.progressionInput() === null);
   await plab.press();
   const auto = plab.state.spec;
-  check('an all-auto compose is Compose without a progression', JSON.stringify(auto) === JSON.stringify(compose([8, 7, 6, 5], 4, { seed: 1, worker: true })) && !auto.input.progression);
+  check('an all-auto compose is Compose without a progression', JSON.stringify(auto) === JSON.stringify(composeLive([8, 7, 6, 5], 4, { seed: 1, worker: true })) && !auto.input.progression);
   plab.setProgressionRoot(0, rc.candidates[1].ratio);
   check('a pick sends the whole list, auto bars null; the button goes back to Compose', plab.button() === 'Compose' && plab.progressionInput().length === N && plab.progressionInput()[0] === rc.candidates[1].ratio && plab.progressionInput().slice(1).every((x) => x === null));
   await plab.press();

@@ -31,11 +31,11 @@
 //   node Composer/tests/assert-page-bass.mjs
 import { makeDom, installGlobals } from './dom-stub.mjs';
 import { siteRhythm } from './site-scripts.mjs';
-import { compose, compSourceOf } from '../core/compose.js';
+import { compose, compSourceOf } from './compose-cycle.mjs';
 import { answer } from '../core/compose-worker.js';
 import { arrangeBass, bassLockOf, bassLockRefusal, BASS_ALTERNATES, walkClock, COMPOSE_BASS } from '../core/bass.js';
 import { materialsOf, rearrange, applyRearrange, chordRecordsOf } from '../core/rearrange.js';
-import { partContext } from '../core/compose.js';
+import { partContext } from './compose-cycle.mjs';
 import { arrangeDrums } from '../core/drums.js';
 import { plotOf, highlightsOf } from '../page/plot-highlights.js';
 import { buildScene, bassDetail, chordsDetail } from '../page/trace-frames.js';

@@ -27,6 +27,11 @@
 //              context section ('cell', the default) follows it; selectCell(part, bar) picks one (a lead cell is its
 //              phrase). select(part) keeps the bar. cellFocus(plot) → the cell's lit nodes, which the overlay rings
 //              on the mirrored plot while the context section is shown (its getFocus seam).
+//   drum bars  (2026-11-11, proposed) a run of drum bars: selectCell('drums', bar, { extend: true }) (the window's
+//              Shift+click, Shift+←/→) selects from the anchor (the last plain pick) to bar, view.range { from, to }
+//              (end exclusive; null for one bar); cell() then spans it (the label "Bars 2–4 · Drums", the plot lights
+//              them all), the inspector still shows view.bar's steps. Any plain pick, or another part, drops it. It is
+//              what ⌘D duplicates (the controller's duplicateDrumBars).
 //   target     (MIDI targets, phase B) setTarget(bytes | null, { name, tonic }) → the shared controller's, on the
 //              page's rhythm (no rhythm: refused, said); setTargetTonic(pc | null); auditionPlacement(i),
 //              keepPlacement(), revertPlacement(). A file that won't decode leaves the entry as it was and says why
@@ -58,7 +63,7 @@ export const kitChoices = (voice) => sharedKitChoices(voice, PAGE_SAMPLES_BASE);
  */
 export function createTabController({ host = {}, runCompose, createContext, timers, clock, store = createCompositionStore(), keepPlaying = () => false, midi = null, createPlayer } = {}) {
   const core = createComposerController({ runCompose, createContext, timers, clock, beforePerform: () => host.stopMain?.(), midi, ...(createPlayer ? { createPlayer } : {}) });
-  const view = { open: false, selected: 'lead', bar: 0, section: CONTEXT_SECTION, hasRhythm: false, showWork: true, details: false, clean: false, targetError: null };
+  const view = { open: false, selected: 'lead', bar: 0, range: null, anchor: 0, section: CONTEXT_SECTION, hasRhythm: false, showWork: true, details: false, clean: false, targetError: null };
   const listeners = new Set(), mainListeners = new Set();
   const changed = () => { for (const f of listeners) f(core.state, view); };
   // a change to any entry the controller acts on (the bound one, or one whose compose just landed) is the store's too
@@ -141,14 +146,20 @@ export function createTabController({ host = {}, runCompose, createContext, time
     select(id) {
       if (!HIGHLIGHT_PARTS.includes(id)) throw new Error(`composer tab: no part ${id}`);
       view.selected = id;
+      if (id !== 'drums') view.range = null;
       if (view.section !== CONTEXT_SECTION) view.section = SECTION_OF[id];
       changed();
     },
-    /** STEP 4e: a cell of the matrix (part, bar): the inspector's context section shows it */
-    selectCell(id, bar) {
+    /** STEP 4e: a cell of the matrix (part, bar): the inspector's context section shows it. 2026-11-11: { extend } on a
+     *  drum bar while the drums are selected runs the selection from the anchor to bar (view.range); else the anchor */
+    selectCell(id, bar, { extend = false } = {}) {
       if (!HIGHLIGHT_PARTS.includes(id)) throw new Error(`composer tab: no part ${id}`);
       const N = api.bars();
       if (!(Number.isInteger(bar) && bar >= 0 && (N === 0 || bar < N))) throw new Error(`composer tab: no bar ${bar}`);
+      if (extend && id === 'drums' && view.selected === 'drums') {
+        const a = Math.min(view.anchor ?? view.bar, N ? N - 1 : Infinity), from = Math.min(a, bar), to = Math.max(a, bar) + 1;
+        view.range = to - from > 1 ? { from, to } : null;
+      } else { view.anchor = bar; view.range = null; }
       view.selected = id; view.bar = bar; view.section = CONTEXT_SECTION; changed();
     },
     setSection(name) {
@@ -158,12 +169,16 @@ export function createTabController({ host = {}, runCompose, createContext, time
     },
     /** the composition's bars (0 with none) */
     bars: () => (core.state.spec && !core.state.spec.refused ? core.state.spec.knobs.bars : 0),
-    /** the selected cell: { part, bar, from, to } (a lead cell spans its phrase), the bar kept inside the meter */
+    /** the selected cell: { part, bar, from, to } (a lead cell spans its phrase; drums, a run of bars when one is
+     *  selected), the bar kept inside the meter */
     cell() {
       const N = api.bars();
       if (N && view.bar >= N) view.bar = N - 1;
       const spans = N ? phraseSpans(core.state.spec) : [];
-      return { part: view.selected, bar: view.bar, ...cellSpan(view.selected, view.bar, spans) };
+      const span = cellSpan(view.selected, view.bar, spans), r = view.selected === 'drums' ? view.range : null;
+      // a run of drum bars (kept inside the meter: a re-compose to fewer bars clips it)
+      if (r && N && r.from < N && Math.min(r.to, N) - r.from > 1) return { part: view.selected, bar: view.bar, ...span, from: r.from, to: Math.min(r.to, N) };
+      return { part: view.selected, bar: view.bar, ...span };
     },
     /** the selected cell's lit nodes on the plot: { part, from, to, indices, rings (a borrowed comp tone's source onsets,
      *  ringed hollow: A4) } (null: no context shown, or nothing to light) */

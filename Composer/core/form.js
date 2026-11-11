@@ -519,7 +519,7 @@ function withCrash(cx, a, d) {
 }
 /** the fill alone (a section with the drums off, into a peak): the fill bar's kick and snare from beat 3 */
 function fillAlone(cx, d) {
-  const from = d.beats.positions[2], k = cx.N - 1;
+  const from = d.beats.fillFrom ?? d.beats.positions[2], k = cx.N - 1;
   return rehit({ ...d, enabled: true }, d.hits.filter((h) => h.bar === k && (h.voice === 'kick' || h.voice === 'snare') && h.pos >= from - EPS));
 }
 function filterPart(cx, part, M) {

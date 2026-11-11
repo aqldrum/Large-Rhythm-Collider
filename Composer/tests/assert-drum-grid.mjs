@@ -9,7 +9,7 @@
 //   • the prime mode as a preset of the grid (gridOf round trip); the prime partition itself is assert-drum-prime.mjs
 //   • determinism; refusals
 //   node Composer/tests/assert-drum-grid.mjs
-import { compose } from '../core/compose.js';
+import { compose } from './compose-cycle.mjs';
 import { buildRow } from '../core/row.js';
 import { buildCells } from '../core/cells.js';
 import {

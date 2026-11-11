@@ -372,7 +372,7 @@ export function frameAt(scene, t) {
         const a = clamp01(u * scene.bars * 1.2 - b);
         if (i >= 0 && a > 0) f.rules.push({ index: i, color: C.rule, alpha: 0.35 + 0.6 * pulse(a) , width: b === 0 ? 1.5 : 1 });
       });
-      detail = `${event.bars} bar${event.bars === 1 ? '' : 's'} × ${event.slotsPerBar} slots at ${event.tempoBpm} BPM, ${event.onsetsPerSlot} onsets a slot`;
+      detail = `${event.bars} bar${event.bars === 1 ? '' : 's'} × ${event.slotsPerBar} slots ${event.from === 'layers' ? `in ${event.timeSig.join('/')}` : `at ${event.tempoBpm} BPM`}, ${event.onsetsPerSlot} onsets a slot`;
       break;
     }
     case 'phase': {

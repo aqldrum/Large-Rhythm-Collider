@@ -61,6 +61,18 @@
 // header's buttons), the keyboard on the matrix (arrows move, Enter opens the cell), and the narrow fallback (below
 // ~600 px of the left half the matrix shows one bar and a bar picker: a container query in composer-tab.css).
 //
+// The drum steps (2026-11-11; DESIGN_NOTES "Drum steps: paint, duplicate, copy and paste"): Shift+click-and-drag paints, the way
+// Partitions' blocks do (Playback/Partitions/PartitionsBlocks.js renderBlocks, the shift toggle): Shift+press a step and
+// every step the pointer passes over while Shift and the button are held takes its own click's edit (. → x → X → .),
+// once a stroke; the stroke ends on the button's release, the pointer leaving the grid, or Shift let go, and lands as
+// ONE edit (setDrumCells: one undo step). Shift+click a drum bar (or Shift+←/→ on the matrix) selects a run of bars from
+// the last one picked; ⌘D (Ctrl+D elsewhere) duplicates the selected bars onto the bars after them (duplicateDrumBars:
+// one undo step, the copies stop at the last bar) and selects the copies, so ⌘D again fills on. The browser's own ⌘D
+// (a bookmark) is never let through while the window has the keys. ⌘C copies the selected drum bars into the window's
+// own clipboard (`drumClip`: it outlives a Compose and another rhythm, not the page) and ⌘V pastes them from the selected
+// bar on (pasteDrumBars: one undo step, stopping at the last bar, a clip of another bar width laid by place in the
+// bar), the pasted bars selected; both are the browser's own unless the drums are selected and no text is.
+//
 // MIDI targets (phase B; DESIGN_NOTES "MIDI targets (phase B)"): the MIDI clip control (the Phrase strip's chip; Choose is in
 // the MIDI menu). Choose a .mid or drop one anywhere on the window: it is decoded, placed in the row and composed around (the controller's
 // setTarget). The decode line (name, grid, bars, notes, the tonic with its 12-way override, the notes the skyline
@@ -272,6 +284,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
   let animFinal = null, laneEls = {}, laneKey = null, captionKey = null, lastFrame = null, plotEl = null;
   // STEP 4e: the last edit's result (said in the inspector), "chords follow" for the next lead swap, the bar now playing
   let lastEdit = null, followPref = false, nowBar = -1, pickEls = [], headEls = [], inspWhere = null;
+  const modKey = isMac() ? '⌘' : 'Ctrl+';   // the shortcuts' modifier, in the window's words
   tab.view.showWork = readShowWork(storage);
   tab.view.details = readDetails(storage);
   tab.view.clean = readClean(storage);
@@ -776,7 +789,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (c.retune) cell.append(el('span', { className: `ctab-retune ${DETAIL}`, textContent: `↻ retunes ${barsLabel(c.retune)}`, title: `this edit's modulation re-pitches ${barsLabel(c.retune)}: their notes stay, their tuning moves` }));
   }
   function cellView(c, row) {
-    const sel = tab.view.selected === c.part && tab.view.bar >= c.from && tab.view.bar < c.to;
+    const run = c.part === 'drums' && tab.view.selected === 'drums' ? tab.view.range : null;   // 2026-11-11: a run of drum bars
+    const sel = tab.view.selected === c.part && ((tab.view.bar >= c.from && tab.view.bar < c.to) || (!!run && c.from >= run.from && c.from < run.to));
     const cell = el('div', { className: `ctab-bar ctab-cell${sel ? ' selected' : ''}${c.edited ? ' edited' : ''}${c.retuned ? ' retuned' : ''}${tab.view.bar >= c.from && tab.view.bar < c.to ? ' in-pick' : ''}`, title: c.title });
     cell.setAttribute('role', 'gridcell');
     cell.dataset.part = c.part; cell.dataset.bar = String(c.from); cell.dataset.to = String(c.to);
@@ -820,7 +834,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     }
     if (c.badge) cell.append(el('span', { className: 'ctab-badge', textContent: String(c.badge), title: `${c.badge} alternate${c.badge === 1 ? '' : 's'}: select the cell to hear them` }));
     if (c.edited) cell.append(el('span', { className: 'ctab-edited', textContent: '✎', title: `edited${c.editKind ? `: ${c.editKind}` : ''} (not Compose's own)` }));
-    cell.addEventListener('click', () => { tab.selectCell(c.part, c.from); ui?.lanes.focus?.({ preventScroll: true }); });
+    cell.addEventListener('click', (e) => { tab.selectCell(c.part, c.from, { extend: !!e?.shiftKey && c.part === 'drums' }); ui?.lanes.focus?.({ preventScroll: true }); });
     return cell;
   }
   function renderMatrix() {
@@ -954,14 +968,97 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       if (k === 'y' || e.shiftKey) redo(); else undo();
       return;
     }
+    // 2026-11-11: ⌘D (Ctrl+D elsewhere) duplicates the selected drum bars. Never the browser's bookmark while the window
+    // has the keys (any part selected); a held key doesn't repeat it (a copy lands, then the next ⌘D fills on)
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && k === 'd') {
+      if (typing(a) || !inWindow(a)) return;
+      e.preventDefault?.();
+      if (!e.repeat) duplicateDrums();
+      return;
+    }
+    // 2026-11-11: ⌘C / ⌘V (Ctrl elsewhere) copy and paste drum bars — only with the drums selected, no text field
+    // focused and no text selected on the page; otherwise the browser's own copy and paste
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && (k === 'c' || k === 'v')) {
+      if (typing(a) || !inWindow(a) || tab.view.selected !== 'drums' || !tab.state.spec || tab.state.spec.refused || !core.drumGrid()) return;
+      if (k === 'c' && String(doc.getSelection?.() ?? '').length) return;
+      e.preventDefault?.();
+      if (e.repeat) return;
+      if (k === 'c') copyDrums(); else pasteDrums();
+      return;
+    }
     if (!ui || !(a === ui.lanes || ui.lanes.contains?.(a)) || !tab.state.spec || tab.state.spec.refused || typing(a)) return;
     if (e.key === 'Enter') { e.preventDefault?.(); openCell(); return; }
     if (e.key?.startsWith?.('Arrow')) {
       e.preventDefault?.();
       const s = tab.state.spec, next = moveCell({ part: tab.view.selected, bar: tab.view.bar }, e.key, { bars: s.knobs.bars, spans: phraseSpans(s) });
-      tab.selectCell(next.part, next.bar);
+      tab.selectCell(next.part, next.bar, { extend: !!e.shiftKey && next.part === 'drums' });   // Shift+←/→ on the drums: a run of bars
     }
   };
+  /** ⌘D: the selected drum bars (a run, or the one bar) onto the bars after them, then the copies selected (so ⌘D again
+   *  fills on). Not on the drums, or nothing composed: nothing */
+  function duplicateDrums() {
+    const s = tab.state.spec;
+    if (!s || s.refused || tab.view.selected !== 'drums' || !core.drumGrid()) return null;
+    const c = tab.cell();
+    return doEdit(() => core.duplicateDrumBars(c.from, c.to)).then((r) => {
+      if (r?.ok && r.onto && r.onto.to > r.onto.from && tab.view.selected === 'drums') {
+        tab.selectCell('drums', r.onto.from);
+        if (r.onto.to - r.onto.from > 1) tab.selectCell('drums', r.onto.to - 1, { extend: true });
+      }
+      return r;
+    });
+  }
+  /** ⌘C: the selected drum bars (a run, or the one bar) into the window's clipboard; nothing changes, it is said */
+  let drumClip = null;
+  function copyDrums() {
+    const c = tab.cell();
+    drumClip = core.copyDrumBars(c.from, c.to);
+    return said({ ok: true, kind: 'drums', copied: { from: c.from, to: c.to }, places: drumClip.places });
+  }
+  /** ⌘V: the clipboard's bars from the selected bar on (the run's first), then the pasted bars selected; nothing
+   *  copied yet: said in amber */
+  function pasteDrums() {
+    if (!drumClip) return Promise.resolve(said({ ok: false, kind: 'drums', error: `nothing copied yet: select drum bars and ${modKey}C` }));
+    const c = tab.cell();
+    return doEdit(() => core.pasteDrumBars(c.from, drumClip)).then((r) => {
+      if (r?.ok && r.onto && r.onto.to > r.onto.from && tab.view.selected === 'drums') {
+        tab.selectCell('drums', r.onto.from);
+        if (r.onto.to - r.onto.from > 1) tab.selectCell('drums', r.onto.to - 1, { extend: true });
+      }
+      return r;
+    });
+  }
+  // ── the drum steps' paint stroke (2026-11-11): Partitions' shift toggle (PartitionsBlocks.js renderBlocks), copied —
+  // Shift+press a step, or enter one with Shift and a button held, and it takes its own click's edit, once a stroke (a
+  // step already in the stroke is left alone, so dragging back over it doesn't undo it). The steps change on screen as
+  // the pointer passes; the stroke lands on its end as ONE edit (setDrumCells, one undo step), so the drums are heard
+  // painted from then. The stroke ends as Partitions' does: the button released (anywhere), the pointer leaving the
+  // grid, Shift let go. The click that ends a Shift+press is the stroke's, not a second edit (`painted`). ──
+  let stroke = null, painted = null;   // stroke: Map key → { bar, voice, place, value }; painted: the last stroke's keys
+  const stepKey = (bar, v, i) => `${bar}:${v}:${i}`;
+  /** a step button as it shows char ch */
+  function showStep(b, v, i, ch, hollow) {
+    b.className = `ctab-step ${v}${ch === 'X' ? ' accent' : ch === 'x' ? ' on' : ''}${hollow ? ' silent' : ''}`;
+    b.title = `${v}, place ${i + 1}: ${ch === 'X' ? 'an accent' : ch === 'x' ? 'a stroke' : 'off'}${hollow ? ' — no onset here (silent)' : ''}; click: off → x → X; Shift+drag: paint`;
+  }
+  function strokeStep(b, bar, v, i, ch, hollow) {
+    stroke ??= new Map();
+    const key = stepKey(bar, v, i);
+    if (stroke.has(key)) return;
+    const value = nextStep(ch);
+    stroke.set(key, { bar, voice: v, place: i, value });
+    showStep(b, v, i, value, hollow);
+  }
+  /** the stroke ended: its cells as one edit (nothing painted: nothing) */
+  function endStroke() {
+    const s = stroke;
+    stroke = null;
+    if (!s?.size) return null;
+    painted = new Set(s.keys());
+    return doEdit(() => core.setDrumCells([...s.values()]));
+  }
+  const onStrokeUp = () => { endStroke(); };
+  const onStrokeKey = (e) => { if (e.key === 'Shift') endStroke(); };
   const onPlotClick = () => { if (anim.status === 'playing') skipAnimation(); };
   function buildBeats(groups) {
     if (!ui) return;
@@ -1108,7 +1205,11 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     if (r.ok === false && !r.empty) return el('div', { className: 'ctab-editnote amber', textContent: `couldn't apply it: ${r.error ?? 'no change'}` });
     if (r.superseded || r.noop || r.empty || r.pending) return null;
     const parts = [];
-    if (r.changedBars?.length) parts.push(`changed ${barsLabel({ from: Math.min(...r.changedBars), to: Math.max(...r.changedBars) })}`);
+    // 2026-11-11: ⌘D's copy, and what didn't fit
+    if (r.copied) parts.push(`${barsLabel({ from: r.copied.from, to: r.copied.to - 1 })} copied: ${modKey}V pastes ${r.copied.to - r.copied.from === 1 ? 'it' : 'them'} from the selected bar`);
+    else if (r.paste && r.onto) parts.push(`pasted onto ${barsLabel({ from: r.onto.from, to: r.onto.to - 1 })}${r.cut ? ` (the last ${r.cut === 1 ? 'one' : r.cut} left out: a paste stops at the last bar)` : ''}${r.remapped ? ` (copied at ${r.remapped.from} places a bar, laid on ${r.remapped.to} by place in the bar)` : ''}`);
+    else if (r.duplicate && r.onto) parts.push(`${barsLabel({ from: r.from, to: r.to - 1 })} copied onto ${barsLabel({ from: r.onto.from, to: r.onto.to - 1 })}${r.cut ? ` (the last ${r.cut === 1 ? 'one' : r.cut} left out: copies stop at the last bar)` : ''}`);
+    else if (r.changedBars?.length) parts.push(`changed ${barsLabel({ from: Math.min(...r.changedBars), to: Math.max(...r.changedBars) })}`);
     if (r.retunedBars?.length) parts.push(`retunes ${retuneRanges(r.retunedBars).map(barsLabel).join(', ')}`);
     // phase L: a chord swap re-reads the clave under the new frame (phase I, P20): the comp and the perc moved there
     if (r.reclavedBars?.length) parts.push(`the clave re-read in ${r.reclavedBars.length === 1 ? `bar ${r.reclavedBars[0] + 1}` : `bars ${r.reclavedBars.map((k) => k + 1).join(', ')}`} (its new frame)`);
@@ -1524,7 +1625,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
     const out = [head];
     if (g) {
       const silent = new Set(g.silentCells.filter((x) => x.bar === bar).map((x) => `${x.voice}:${x.place}`));
-      const { m } = beatsOf(s.knobs.slotsPerBar);
+      const { m } = beatsOf(s.knobs.slotsPerBar, s.knobs.beats ?? null);
       const gridEl = el('div', { className: 'ctab-steps' });
       gridEl.style.gridTemplateColumns = `48px repeat(${g.places}, 1fr)`;
       gridEl.append(el('span', {}), ...Array.from({ length: g.places }, (_, i) => el('span', { className: 'ctab-step-num', textContent: i % m === 0 ? String(i / m + 1) : '·' })));
@@ -1532,14 +1633,32 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
         gridEl.append(el('span', { className: 'ctab-step-voice', textContent: v }));
         const line = g.grid[v][bar];
         for (let i = 0; i < g.places; i++) {
-          const ch = line[i], hollow = silent.has(`${v}:${i}`);
-          const b = el('button', { className: `ctab-step ${v}${ch === 'X' ? ' accent' : ch === 'x' ? ' on' : ''}${hollow ? ' silent' : ''}`, title: `${v}, place ${i + 1}: ${ch === 'X' ? 'an accent' : ch === 'x' ? 'a stroke' : 'off'}${hollow ? ' — no onset here (silent)' : ''}; click: off → x → X` });
+          const ch = line[i], hollow = silent.has(`${v}:${i}`), key = stepKey(bar, v, i);
+          const b = el('button', {});
+          showStep(b, v, i, stroke?.get(key)?.value ?? ch, hollow);   // a stroke open across a re-render shows as painted
           b.dataset.voice = v; b.dataset.place = String(i);
-          b.addEventListener('click', () => doEdit(() => core.setDrumCell(bar, v, i, nextStep(ch))));
+          b.addEventListener('click', (e) => {
+            if (painted?.has(key) && e?.shiftKey) { painted = null; return; }   // the click of the stroke's own press
+            doEdit(() => core.setDrumCell(bar, v, i, nextStep(ch)));
+          });
+          b.addEventListener('mousedown', (e) => {
+            painted = null;
+            if (!e?.shiftKey) return;
+            e.preventDefault?.();   // no text selection while painting (Partitions' too)
+            endStroke();   // a stroke left open (a release outside the page) lands first
+            strokeStep(b, bar, v, i, ch, hollow);
+          });
+          b.addEventListener('mouseenter', (e) => { if (e?.shiftKey && e.buttons) strokeStep(b, bar, v, i, ch, hollow); });
           gridEl.append(b);
         }
       }
+      gridEl.addEventListener('mouseleave', onStrokeUp);
       out.push(gridEl);
+      const c = tab.cell(), run = c.to - c.from > 1;
+      // a run of bars is said always (it's what ⌘D acts on); the one-bar hint only with Details
+      out.push(run
+        ? el('div', { className: 'ctab-muted ctab-dup-hint', textContent: `${barsLabel({ from: c.from, to: c.to - 1 })} selected (bar ${bar + 1} shown): ${modKey}D copies them onto ${c.to >= g.bars ? 'nothing — they end on the last bar' : barsLabel({ from: c.to, to: Math.min(g.bars, c.to + (c.to - c.from)) - 1 })}` })
+        : el('div', { className: `ctab-muted ctab-dup-hint ${DETAIL}`, textContent: `Shift+drag paints steps · Shift+click another drum bar selects a run · ${modKey}C / ${modKey}V copy and paste bars · ${modKey}D copies ${c.to >= g.bars ? 'nothing from the last bar' : `this bar onto bar ${c.to + 1}`}` }));
       if (silent.size) out.push(el('div', { className: 'ctab-muted ctab-silent-note', textContent: `${silent.size} step${silent.size === 1 ? '' : 's'} hollow: no onset here, so silent` }));
     }
     const mode = tab.state.drumOptions.mode;
@@ -1695,6 +1814,7 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       claimPlot();
       if (!was) {
         doc.addEventListener?.('keydown', onKey);
+        doc.addEventListener?.('mouseup', onStrokeUp); doc.addEventListener?.('keyup', onStrokeKey);   // the paint stroke's ends
         doc.addEventListener?.('dragover', guardDrop); doc.addEventListener?.('drop', guardDrop);
         plotEl = doc.getElementById?.('partitions-mirror-canvas') ?? null;   // the plot as the window shows it
         plotEl?.addEventListener?.('click', onPlotClick);
@@ -1706,6 +1826,8 @@ export function createComposerTab({ tab, doc = globalThis.document, visuals = ()
       shown = false;
       endAnimation(false);
       doc.removeEventListener?.('keydown', onKey);
+      doc.removeEventListener?.('mouseup', onStrokeUp); doc.removeEventListener?.('keyup', onStrokeKey);
+      stroke = null;   // a stroke open as the window hides is dropped (never landed unseen)
       doc.removeEventListener?.('dragover', guardDrop); doc.removeEventListener?.('drop', guardDrop);
       plotEl?.removeEventListener?.('click', onPlotClick); plotEl = null;
       tab.close();

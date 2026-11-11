@@ -6,10 +6,16 @@
 // Every note any part plays is an onset the row plays, at its own place in the cycle, with its own ratio; register is
 // free (decided). v1 is one cycle (decided). What Compose decides, each overridable and each logged in `decisions`:
 //
-//   meter      N bars of S slots: the tempo is 60·N·b / T BPM for a cycle of T seconds, b = 4 beats a bar. N is the
-//              one of 1, 2, 4, 8 that lands in 90–130 BPM (the nearest 110 when several do; the nearest the range when
-//              none does). S is 8, lowered (to 6, 4, then 3) and then N halved while the slots would hold fewer than
-//              3 onsets each on average (Sprint default 1): the tempo is kept before the slots.
+//   meter      N bars of S slots, from the layers' factors (METER_TEMPO_ORDER.md, decided 1–2; meter.js): the slot
+//              counts weighed by how the layers sit on them (8 / 16 / 4 first, 6 / 9 / 12 / 15 lifted by a factor of 3,
+//              5 / 7 only on a layer carrying them and rarely), then the bars, drawn by the seed's own generator; at
+//              least 3 onsets a slot. The bar's beats are the meter's (`meterShape`: 6 is 6/8, 9 is 9/8, 7 is
+//              2 + 2 + 3), and the spec's natural tempo 60·N·b / T for a cycle of T seconds, b its beats.
+//   tempo      the seed tempo (decided 3–4): the finished composition's distinct attacks at a goal of 5–8 a second,
+//              drawn by the seed, clamped to 70–150 BPM (`spec.seedTempo`; playback starts there, not at the cycle's).
+//              `meterFrom: 'cycle'` is the meter of before: N the one of 1, 2, 4, 8 that lands in 90–130 BPM (the
+//              nearest 110), S = 8 lowered (to 6, 4, then 3) and then N halved while the slots would hold fewer than
+//              3 onsets each (Sprint default 1), 4 beats a bar, the cycle's tempo.
 //   anchors    partitioned (DESIGN_NOTES: "it starts with partitioned anchors").
 //   phase      one of the root's first three downbeats, by the seed. Times count from that phase — bar 1's downbeat —
 //              and the cycle loops, so a note in bar 1's first window that falls just before it sounds at the cycle's end.
@@ -135,6 +141,7 @@ import { arrangeBass, bassWhy, BASS_DENSITIES, BASS_LOCKS, COMPOSE_BASS } from '
 import { createTrace, refusedTrace, traceCapsOf } from './trace.js';
 import { placeClip, targetRoot, registerOf, DEFAULTS as TARGET_DEFAULTS } from './target.js';
 import { pcName } from './midi.js';
+import { meterShape, meterCandidates, drawCandidate, attacksOf, tempoForDensity, seedTempoOf, gateTempoOf, playFactorOf, METER_FROM, DENSITY_GOAL, attacksPerSlotOf, SEED_TEMPO_RANGE } from './meter.js';
 
 export const COMPOSER_SPEC_VERSION = 'composer-spec-v2';
 export const BEATS_PER_BAR = 4;
@@ -244,16 +251,13 @@ export function compStrumOf(spec) {
   if (spec?.version !== COMPOSER_SPEC_VERSION && ov.compGate == null && ov.compSnap == null) return strumSetting({ tolerance: ov.compTolerance ?? DEFAULT_COMP_TOLERANCE, borrow: ov.compBorrow ?? false });
   return strumOfOverrides(ov);
 }
-/** the tempos a playback is seeded at stay inside these (the controller's TEMPO_LIMITS, composer-controller.js) */
-const SEED_TEMPO_LIMITS = Object.freeze([30, 300]);
-/** the tempo a spec's playback is seeded with (G2): a MIDI target's clip tempo (clamped as the controller clamps it),
- *  else the spec's own natural tempo */
-export const seedTempoOf = (spec) => (spec?.target?.tempoBpm > 0 ? Math.min(SEED_TEMPO_LIMITS[1], Math.max(SEED_TEMPO_LIMITS[0], spec.target.tempoBpm)) : spec?.knobs?.tempoBpm ?? null);
-/** heard ms → spec ms for a spec (G2): seedTempo / specTempo (1 at a spec's natural tempo; a MIDI target's at its clip's) */
-export const heardScaleOf = (spec) => { const s = spec?.knobs?.tempoBpm, t = seedTempoOf(spec); return s > 0 && t > 0 ? t / s : 1; };
+// seedTempoOf, gateTempoOf, playFactorOf: meter.js (light, for Cosmos's main thread), re-exported here
+export { seedTempoOf, gateTempoOf, playFactorOf };
+/** heard ms → spec ms for a spec (G2): gateTempo / specTempo (1 at a spec's natural tempo; a MIDI target's at its clip's) */
+export const heardScaleOf = (spec) => { const s = spec?.knobs?.tempoBpm, t = gateTempoOf(spec); return s > 0 && t > 0 ? t / s : 1; };
 /** the gate as heard at a playing tempo (G2's readout): g × seedTempo / playTempo, in ms */
 export const heardGateMs = (gate, seedTempo, playTempo) => (playTempo > 0 && seedTempo > 0 ? (gate * seedTempo) / playTempo : gate);
-const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses', 'compStyle', 'clave', 'compRelation', 'voicing', 'claveFrom', 'compDensity', 'bass', 'compTolerance', 'compBorrow', 'compGate', 'compSnap', 'compRoll']);
+const OVERRIDES = Object.freeze(['bars', 'slotsPerBar', 'anchors', 'phase', 'frameCentsEachSide', 'root', 'modulation', 'foldOffsets', 'table', 'sounds', 'legato', 'enabled', 'baseHz', 'compLayer', 'presence', 'settlePasses', 'compStyle', 'clave', 'compRelation', 'voicing', 'claveFrom', 'compDensity', 'bass', 'compTolerance', 'compBorrow', 'compGate', 'compSnap', 'compRoll', 'meterFrom']);
 /** the chords' two voicings (BASS_VOICING_ORDER.md, decided 3–4, P1–P7): led (the default: each tone the octave nearest
  *  the chord before, inside a window, clear of the mud limit) and close (root position from an octave under the root, as before) */
 export const VOICINGS = Object.freeze(['led', 'close']);
@@ -288,9 +292,42 @@ export function seededRandom(seed) {
 }
 
 /**
- * N bars and S slots for n onsets in a cycle of T seconds, unless asked. → { bars, slotsPerBar, tempoBpm, notes: [why] }
+ * N bars and S slots for n onsets in a cycle of T seconds, unless asked.
+ *   opts { bars, slotsPerBar (asked), from ('layers', the default: METER_TEMPO_ORDER.md; 'cycle': the meter of before),
+ *          layers (the rhythm's layer values: 'layers' reads their factors), seed (the draw's) }
+ * → { bars, slotsPerBar, tempoBpm (the natural tempo, 60·N·b / T), shape (meter.js `meterShape`, or null: 'cycle', or
+ *     under 3 slots), notes: [why], candidates ('layers': how many were weighed) }
  */
-export function chooseMeter(n, T, { bars = null, slotsPerBar = null } = {}) {
+export function chooseMeter(n, T, { bars = null, slotsPerBar = null, from = 'layers', layers = null, seed = 1 } = {}) {
+  if (!METER_FROM.includes(from)) fail(`meterFrom must be one of ${METER_FROM.join(', ')}, not ${JSON.stringify(from)}`);
+  if (from === 'cycle') return cycleMeter(n, T, { bars, slotsPerBar });
+  if (!Array.isArray(layers)) fail('a meter from the layers needs the layers');
+  const values = layers.filter((v) => v > 0), notes = [];
+  let N = bars, S = slotsPerBar, drawn = null, list = [];
+  if (N == null || S == null) {
+    list = meterCandidates(n, values, { bars, slotsPerBar, minOnsetsPerSlot: MIN_ONSETS_PER_SLOT });
+    if (list.length) {
+      drawn = drawCandidate(list, seededRandom(`${seed}/meter`)());
+      N = drawn.bars; S = drawn.slotsPerBar;
+    } else {
+      N ??= 1;
+      S ??= [4, 3].find((x) => n / (N * x) >= MIN_ONSETS_PER_SLOT - EPS) ?? 2;
+    }
+  }
+  const shape = meterShape(S), b = shape ? shape.beatsPerBar : BEATS_PER_BAR, sig = shape ? shape.timeSig.join('/') : '4/4';
+  if (bars != null) notes.push(`${N} bars asked`);
+  if (slotsPerBar != null) notes.push(`${S} slots a bar asked`);
+  if (drawn) {
+    const pct = (x) => `${Math.round(100 * x.weight)} %`, others = list.filter((x) => x !== drawn).slice(0, 3).map((x) => `${x.bars} × ${x.slotsPerBar} ${pct(x)}`).join(', ');
+    notes.push(`${N} bar${N > 1 ? 's' : ''} of ${S} slots (${sig}), drawn by the seed from ${list.length} meter${list.length > 1 ? 's' : ''} weighed by the layers' factors (decided: factor-led, odd rare): ${pct(drawn)} of the draw, the layers' fit ${drawn.affinity.toFixed(2)}${others ? `; next ${others}` : ''}`);
+    notes.push(`${S} slots a bar hold ${(n / (N * S)).toFixed(1)} onsets each on average`);
+  } else if (bars == null || slotsPerBar == null) notes.push(`the row has only ${n} onsets: no meter holds ${MIN_ONSETS_PER_SLOT} a slot; ${N} × ${S}, ${(n / (N * S)).toFixed(2)} a slot`);
+  notes.push(`${b} beat${b > 1 ? 's' : ''} a bar (${shape ? shape.beats.join(' + ') + ' slots' : 'cut on sub-slots'}; decided: beats from the meter)`);
+  return { bars: N, slotsPerBar: S, tempoBpm: (60 * N * b) / T, shape, notes, candidates: list.length };
+}
+
+/** the meter of before (`meterFrom: 'cycle'`): the bars that put the cycle's tempo in TEMPO_RANGE, then the slots */
+function cycleMeter(n, T, { bars = null, slotsPerBar = null } = {}) {
   const tempo = (N) => (60 * N * BEATS_PER_BAR) / T, [lo, hi] = TEMPO_RANGE, notes = [];
   let N = bars;
   if (N == null) {
@@ -312,7 +349,7 @@ export function chooseMeter(n, T, { bars = null, slotsPerBar = null } = {}) {
     if (sparse()) notes.push(`the row has only ${n} onsets: ${(n / (N * S)).toFixed(2)} a slot even so`);
     else if (S === SLOT_CHOICES[0]) notes.push(`8 slots a bar hold ${(n / (N * S)).toFixed(1)} onsets each on average`);
   } else notes.push(`${S} slots a bar asked`);
-  return { bars: N, slotsPerBar: S, tempoBpm: tempo(N), notes };
+  return { bars: N, slotsPerBar: S, tempoBpm: tempo(N), shape: null, notes };
 }
 
 const sum = (xs) => xs.reduce((a, b) => a + b, 0);
@@ -331,7 +368,7 @@ export function checkChanges(changes) {
  * Compose's own S for N bars (raised to the most shares a bar has), each bar's shares spread over it (chart.js `spread`).
  * A Slots / bar asked is kept. → chooseMeter's + { even, spans: [{ bar, from (slot of the cycle), slots }] }
  */
-export function chartMeter(n, T, changes, { slotsPerBar = null } = {}) {
+export function chartMeter(n, T, changes, { slotsPerBar = null, from = 'layers', layers = null, seed = 1 } = {}) {
   const N = changes.length, most = Math.max(...changes.map(sum)), notes = [`${N} bar${N > 1 ? 's' : ''}: the chart's (decided: a chart sets the bars)`];
   let S = slotsPerBar;
   if (S == null) {
@@ -339,7 +376,7 @@ export function chartMeter(n, T, changes, { slotsPerBar = null } = {}) {
     S = CHART_SLOT_CHOICES.find((x) => x >= most && evenIn(changes, x) && dense(x)) ?? null;
     if (S != null) notes.push(`${S} slots a bar: every bar's chords split it evenly, ${(n / (N * S)).toFixed(1)} onsets a slot`);
     else {
-      S = chooseMeter(n, T, { bars: N }).slotsPerBar;
+      S = chooseMeter(n, T, { bars: N, from, layers, seed }).slotsPerBar;
       if (S < most) S = CHART_SLOT_CHOICES.filter((x) => x >= most).sort((a, b) => a - b)[0];
       notes.push(`no slot count splits every bar evenly at ${MIN_ONSETS_PER_SLOT}+ onsets a slot: ${S} slots a bar, ${evenIn(changes, S) ? 'even' : 'each bar\'s chords spread over them as evenly as whole slots allow (Euclid)'}`);
     }
@@ -348,7 +385,8 @@ export function chartMeter(n, T, changes, { slotsPerBar = null } = {}) {
     notes.push(`${S} slots a bar asked${evenIn(changes, S) ? '' : ': the chords spread over them as evenly as whole slots allow (Euclid)'}`);
   }
   const spans = changes.flatMap((shares, b) => spread(shares, S).map((x) => ({ bar: b, from: b * S + x.from, slots: x.slots })));
-  return { bars: N, slotsPerBar: S, tempoBpm: (60 * N * BEATS_PER_BAR) / T, notes, even: evenIn(changes, S), spans };
+  const shape = from === 'cycle' ? null : meterShape(S);
+  return { bars: N, slotsPerBar: S, tempoBpm: (60 * N * (shape ? shape.beatsPerBar : BEATS_PER_BAR)) / T, shape, notes, even: evenIn(changes, S), spans };
 }
 
 /** the recipe's own envelope: struck sounds die away and retrigger in legato */
@@ -941,7 +979,7 @@ export const strumWindowWords = (strum) => (strum.snap ? `Snap (${toleranceWords
  *   struck on its root onset), found, tones, singles, moved ({ n, sum, max }: Snap's) }; opts { asked (the strum asked),
  *   seedTempo (a MIDI target's clip tempo, its playback's seed: the gate said as heard there; else none) }
  */
-export function compStrumWhy(strum, got, { asked = false, seedTempo = null } = {}) {
+export function compStrumWhy(strum, got, { asked = false, seedTempo = null, seedFrom = 'clip' } = {}) {
   const { strokes, relation, rooted, found, tones, singles } = got, share = tones ? found / tones : 0;
   const head = `the clave's ${strokes} stroke${strokes === 1 ? '' : 's'} (${relation}${rooted ? '; a bar or span with none struck once on its root onset' : ''}), each the bar's chord`;
   const { compTones: mean, compSingles: single } = compStrumStats(strokes, tones, singles);
@@ -951,7 +989,7 @@ export function compStrumWhy(strum, got, { asked = false, seedTempo = null } = {
       + (strum.borrow ? `; ${found} of ${tones} tones (${(100 * share).toFixed(0)} %) from the row, the rest borrowed from the chord voices` : '; nothing borrowed (compBorrow fills from the chords)');
   }
   if (strum.gate != null) {
-    const heard = seedTempo ? ` (heard at the clip's ${+seedTempo.toFixed(1)} BPM)` : '';
+    const heard = seedTempo ? ` (heard at the ${seedFrom === 'clip' ? 'clip\'s' : 'provisional'} ${+seedTempo.toFixed(1)} BPM)` : '';
     if (strum.borrow) return `${head}: ${found} of ${tones} tones (${(100 * share).toFixed(0)} %) from the row within a ${strum.gate} ms gate${heard}, the rest borrowed from the chord voices`;
     return `${head} from the row alone (${asked ? 'asked' : 'COMP_GATE_ORDER.md, decided 1 (Avery): a 25 ms gate and nothing borrowed by default'}): ${strumWindowWords(strum)}${heard}: ${mean.toFixed(1)} tones a stroke, ${Math.round(100 * single)} % single notes; nothing borrowed (compBorrow fills from the chords)`;
   }
@@ -1223,6 +1261,9 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     input.target = JSON.parse(JSON.stringify(target));
   }
   const ov = overrides || {}, T = cycleSeconds;
+  // the meter's source (METER_TEMPO_ORDER.md P7): the layers' factors and a density tempo, or the cycle's (as before)
+  const meterFrom = ov.meterFrom ?? 'layers';
+  if (!METER_FROM.includes(meterFrom)) fail(`meterFrom must be one of ${METER_FROM.join(', ')}, not ${JSON.stringify(meterFrom)}`);
 
   const traceCaps = trace ? traceCapsOf(trace) : null;   // STEP 4a: true → TRACE_CAPS; { caps } → ALTERNATE_CAPS + caps
   const refusal = (r) => (trace ? { ...r, trace: refusedTrace(r, { cycleSeconds, caps: traceCaps }) } : r);
@@ -1235,7 +1276,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   const tg = target != null ? targetMaterials(row, T, input.target, ov) : null;
   if (tg?.refused) return refusal({ version: COMPOSER_SPEC_VERSION, input, refused: true, reason: tg.refused, detail: tg.detail });
   // the trace's recorder (trace.js), or null: every `rec?.` below is skipped, arguments and all, when it is off
-  const rec = trace ? createTrace(row, { cycleSeconds: tg ? tg.loop : T, meter: { bars: BAR_CHOICES, slots: SLOT_CHOICES, tempoRange: TEMPO_RANGE, beatsPerBar: BEATS_PER_BAR }, caps: traceCaps }) : null;
+  const rec = trace ? createTrace(row, { cycleSeconds: tg ? tg.loop : T, meter: { bars: BAR_CHOICES, slots: SLOT_CHOICES, tempoRange: TEMPO_RANGE, beatsPerBar: BEATS_PER_BAR, from: meterFrom }, caps: traceCaps }) : null;
   rec?.row();
 
   const rng = seededRandom(seed), decisions = [];
@@ -1289,17 +1330,26 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     decide('root', row.tones[rootTone], ov.root != null ? 'asked' : presence === 'exact'
       ? `the tone heard at least max(2, 1%) of the onsets (or half the most heard) whose ±${e}¢ frame holds the most onsets; heard ${row.toneCount[rootTone]} times`
       : `the loudest tone of its ±${e}¢ cluster, the cluster heard at least max(2, 1%) of the onsets (or half the largest cluster), whose ±${e}¢ frame holds the most onsets; heard ${row.toneCount[rootTone]} times, its cluster ${heardAs}`);
-    meter = input.changes ? chartMeter(row.n, T, input.changes, { slotsPerBar: ov.slotsPerBar ?? null }) : chooseMeter(row.n, T, { bars: ov.bars ?? null, slotsPerBar: ov.slotsPerBar ?? null });
+    const meterOpts = { from: meterFrom, layers: row.layers, seed };
+    meter = input.changes ? chartMeter(row.n, T, input.changes, { slotsPerBar: ov.slotsPerBar ?? null, ...meterOpts }) : chooseMeter(row.n, T, { bars: ov.bars ?? null, slotsPerBar: ov.slotsPerBar ?? null, ...meterOpts });
     if (input.changes) {
       decide('bars', meter.bars, `the chart's (decided: a chart sets the bars)${ov.bars != null && ov.bars !== meter.bars ? `, not the ${ov.bars} asked` : ''}`);
       decide('slotsPerBar', meter.slotsPerBar, meter.notes.slice(1).join('; '));
       spans = isPlain(input.changes) ? null : meter.spans;
       if (spans) decide('changes', meter.spans.map((x) => `${x.bar + 1}:${x.from % meter.slotsPerBar}+${x.slots}`), `${spans.length} chords over ${meter.bars} bars, a span each (bar:slot+slots): ${meter.even ? 'every bar split evenly' : 'a bar its chords cannot split evenly spreads them as evenly as whole slots allow (Euclid, decided)'}`);
-    } else {
+    } else if (meterFrom === 'cycle') {
       decide('bars', meter.bars, ov.bars != null ? 'asked' : meter.notes.filter((x) => /bar|BPM/.test(x) && !/slot/.test(x)).join('; '));
       decide('slotsPerBar', meter.slotsPerBar, ov.slotsPerBar != null ? 'asked' : meter.notes.filter((x) => /slot|onsets/.test(x)).join('; '));
+    } else {
+      const own = meter.notes.filter((x) => !/asked$/.test(x));
+      decide('bars', meter.bars, ov.bars != null ? 'asked' : own[0]);
+      decide('slotsPerBar', meter.slotsPerBar, ov.slotsPerBar != null ? 'asked' : own.slice(ov.bars != null ? 0 : 1, -1).join('; ') || own[0]);
     }
-    decide('tempoBpm', meter.tempoBpm, `60 × ${meter.bars} bars × ${BEATS_PER_BAR} beats / ${T} s`);
+    if (meterFrom === 'cycle') decide('tempoBpm', meter.tempoBpm, `60 × ${meter.bars} bars × ${BEATS_PER_BAR} beats / ${T} s`);
+    else {
+      decide('beats', meter.shape ? [...meter.shape.beats] : null, meter.notes[meter.notes.length - 1]);
+      decide('tempoBpm', meter.tempoBpm, `60 × ${meter.bars} bars × ${meter.shape ? meter.shape.beatsPerBar : BEATS_PER_BAR} beats / ${T} s: the spec's natural tempo; playback is seeded from the composition's own density (decided: the tempo is decoupled from the cycle)`);
+    }
     rec?.meter(meter, { bars: ov.bars, slotsPerBar: ov.slotsPerBar });
     anchors = decide('anchors', ov.anchors ?? 'partitioned', ov.anchors ? 'asked' : 'partitioned pulses first (decided: "it starts with partitioned anchors")');
     if (!ANCHOR_MODES.includes(anchors)) fail(`anchors must be one of ${ANCHOR_MODES.join(', ')}`);
@@ -1377,7 +1427,13 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   // the comp's window and borrowing (COMP_GATE_ORDER.md G1–G4; Amendment 3, rules 15–16): a 25 ms gate heard at the seed
   // tempo (G2: a MIDI target's at its clip's), nothing borrowed; Snap, or the old window in slots, when asked
   const strumAsked = COMP_STRUM_KEYS.some((k) => ov[k] != null);
-  const seeded = { knobs: { tempoBpm: meter.tempoBpm }, ...(tg ? { target: { tempoBpm: tg.clip.tempoBpm ?? tg.clip.bpm ?? null } } : {}) };
+  // a density tempo (METER_TEMPO_ORDER.md, decided 3–4): the goal drawn now, the gate laid at the provisional tempo the
+  // goal gives at meter.js `attacksPerSlotOf(S)` attacks a slot; the seed tempo itself is measured on the finished spec below
+  const density = !tg && meterFrom === 'layers' ? (() => {
+    const goal = DENSITY_GOAL[0] + (DENSITY_GOAL[1] - DENSITY_GOAL[0]) * seededRandom(`${seed}/tempo`)(), b = meter.shape ? meter.shape.beatsPerBar : BEATS_PER_BAR;
+    return { goal, b, gate: tempoForDensity(goal, attacksPerSlotOf(meter.slotsPerBar) * meter.bars * meter.slotsPerBar, meter.bars, b) };
+  })() : null;
+  const seeded = { knobs: { tempoBpm: meter.tempoBpm }, ...(tg ? { target: { tempoBpm: tg.clip.tempoBpm ?? tg.clip.bpm ?? null } } : {}), ...(density ? { seedTempo: { gateBpm: density.gate.bpm } } : {}) };
   const strum = { ...strumOfOverrides(ov), scale: heardScaleOf(seeded) };
   if (chordsStyle) decide('compStyle', compStyle, ov.compStyle != null ? 'asked' : `chords by default (decided, Avery): the clave's strokes (Amendment 1), each the chord strummed from the row${strum.borrow ? ', then borrowed' : ' around it, down to a single note (Amendment 3)'}`);
   let comp = null, compChoices = null, clave = null, claveChoice = null;
@@ -1446,7 +1502,7 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
   const compStrum = compTones ? compFound / compTones : 0;
   const compStats = chordsStyle ? compStrumStats(compStrokes.length, compTones, compSingles, strum.snap ? compMoved : null) : null;
   if (chordsStyle) decide('compStrum', compStrum, compStrumWhy(strum, { strokes: compStrokes.length, relation: clave.relation, rooted: compStrokes.length > compSourceOf(clave).length, found: compFound, tones: compTones, singles: compSingles, moved: compMoved },
-    { asked: strumAsked, seedTempo: strum.scale !== 1 ? seedTempoOf(seeded) : null }));
+    { asked: strumAsked, seedTempo: strum.scale !== 1 ? gateTempoOf(seeded) : null, seedFrom: density ? 'provisional' : 'clip' }));
   // bass (BASS_VOICING_ORDER.md Amendment 2, rule 11, P28): Moving · Kick by default, arranged by bass.js `arrangeBass`
   // over the finished spec once its drums are (below: it covers their kick, and falls back to Free, saying why, with the
   // drums off or no kick in the mode). Asked Sparse · Free (`bass` override), Compose's own bass, mined here bar by bar,
@@ -1503,7 +1559,8 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
       bars: N, slotsPerBar: S, beatsPerBar: tg.beatsPerBar, anchors, phase: [...phase], frameCentsEachSide: e, root: row.tones[rootTone], modulation, table,
       tempoBpm: meter.tempoBpm, leader, baseHz, cycleSeconds: tg.loop, rowCycleSeconds: T, cut: { bars: tg.N },
     } : {
-      bars: N, slotsPerBar: S, beatsPerBar: BEATS_PER_BAR, anchors, phase: [...phase], frameCentsEachSide: e, root: row.tones[rootTone], modulation, table,
+      bars: N, slotsPerBar: S, beatsPerBar: meter.shape ? meter.shape.beatsPerBar : BEATS_PER_BAR,
+      ...(meter.shape ? { beats: [...meter.shape.beats], timeSig: [...meter.shape.timeSig], quartersPerBar: meter.shape.quartersPerBar } : {}), anchors, phase: [...phase], frameCentsEachSide: e, root: row.tones[rootTone], modulation, table,
       tempoBpm: meter.tempoBpm, leader, baseHz, cycleSeconds: T, ...(input.changes ? { changes: JSON.parse(JSON.stringify(input.changes)) } : {}),
     },
     chords: h.chords.map((c) => specChordOf(c, { fundamentalRatio: c.fundamentalRatio, targeted: targeted ? prog.roots[c.slots != null ? c.span : c.bar] != null : undefined })),
@@ -1538,6 +1595,12 @@ export function compose(layers, cycleSeconds, { seed = 1, overrides = {}, worker
     spec.stats.bassRooted = `${B.stats.rooted}/${N}`;
     decisions.splice(bassDecisionAt, 0, { what: 'bass', value: `${B.density} · ${B.stats.lock}`, why: bassWhy(B, ov.bass != null) });
     if (rec) for (const b of B.bars) rec.bassBar(b.bar, bassLineOf(b), b.rooted);
+  }
+  // ── the seed tempo (METER_TEMPO_ORDER.md, decided 3–4): the finished composition's distinct attacks at the goal ──
+  if (density) {
+    const attacks = attacksOf(spec), t = tempoForDensity(density.goal, attacks, N, density.b), perSecond = (attacks * t.bpm) / (60 * N * density.b);
+    spec.seedTempo = { bpm: t.bpm, goal: Math.round(density.goal * 100) / 100, attacks, perSecond: Math.round(perSecond * 100) / 100, raw: Math.round(t.raw * 10) / 10, clamped: t.clamped, gateBpm: density.gate.bpm };
+    decide('seedTempo', t.bpm, `${attacks} attacks a loop (every part's notes and the drums' strokes) at a goal of ${density.goal.toFixed(2)} a second, drawn by the seed from ${DENSITY_GOAL.join('–')}: ${t.raw.toFixed(1)} BPM${t.clamped ? `, held to ${SEED_TEMPO_RANGE[t.clamped === 'low' ? 0 : 1]} (the ${SEED_TEMPO_RANGE.join('–')} range), ${spec.seedTempo.perSecond} a second` : ''}; the comp's gate was laid at the provisional ${density.gate.bpm} BPM (${attacksPerSlotOf(S)} attacks a slot) (decided: measure the finished piece)`);
   }
   rec?.parts(partList, { ...(chordsStyle ? { clave, alternates: claveAlternates(claveChoice.ranks), asked: ov.clave != null, tier: claveChoice.ranks.tier, density: claveChoice.ranks.density ?? null } : { comp, compChoices, compAsked: ov.compLayer != null }), voicing: led ? voicingStats(voiced) : null });
   if (rec) { rec.drums(spec); rec.done(spec); spec.trace = rec.finish(); }

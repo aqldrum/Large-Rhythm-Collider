@@ -17,7 +17,7 @@
 //     spec rearranges the same (the store's)
 //   • the 16,359-onset row: the comp's own cost (the bars built on the clave's strokes), and Compose lean with it
 //   node Composer/tests/assert-comp.mjs
-import { compose as composeLive, partContext, compChordsOfBar, compNodesOf, rearticulate, STRUM_WINDOW, COMP_VELOCITY, MAX_COMP_VOICES } from '../core/compose.js';
+import { compose as composeLive, partContext, compChordsOfBar, compNodesOf, rearticulate, STRUM_WINDOW, COMP_VELOCITY, MAX_COMP_VOICES } from './compose-cycle.mjs';
 import { compose as composeBefore } from './fixtures/compose-before.js';
 import { rearrange, applyRearrange, materialsOf } from '../core/rearrange.js';
 import { arrangeDrums } from '../core/drums.js';

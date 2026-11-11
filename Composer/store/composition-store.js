@@ -118,7 +118,9 @@ export const STORE_VERSION = 'composition-store-v1';
 /** how many rhythms the store keeps (proposed) */
 export const STORE_CAPACITY = 4;
 export const LENSES = Object.freeze(['row', 'composition']);
-export const KNOB_NAMES = Object.freeze(['bars', 'slotsPerBar', 'frameCentsEachSide', 'modulation', 'anchors', 'settlePasses', 'presence']);
+/** meterFrom (METER_TEMPO_ORDER.md P7): 'layers' (null: the default) or 'cycle', the meter and tempo of before; no field
+ *  in the tab yet (the lab and JSON) */
+export const KNOB_NAMES = Object.freeze(['bars', 'slotsPerBar', 'frameCentsEachSide', 'modulation', 'anchors', 'settlePasses', 'presence', 'meterFrom']);
 /** how many edits an entry's undo stack keeps (proposed) */
 export const UNDO_LIMIT = 50;
 /** no edits (phase E: `clave`, the comp's clave and relation chosen in the window, or null: Compose's own) */

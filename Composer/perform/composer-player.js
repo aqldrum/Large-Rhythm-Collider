@@ -336,9 +336,10 @@ export function createPlayer({ ctx, destination = null, voices = { planVoice, cr
         }
       }
     }
-    // MIDI clock (decision 2): 24 a quarter of the spec's tempo, on spec time, so it follows a live tempo
+    // MIDI clock (decision 2): 24 a quarter of the spec's tempo, on spec time, so it follows a live tempo; a meter's
+    // quarters (METER_TEMPO_ORDER.md P8: 6/8's beat is 1½ quarters)
     if (m && m.clocking && spec.knobs.tempoBpm > 0) {
-      const dt = 60 / spec.knobs.tempoBpm / 24;
+      const K = spec.knobs, dt = 60 / (K.tempoBpm * (K.quartersPerBar ?? K.beatsPerBar ?? 4) / (K.beatsPerBar ?? 4)) / 24;
       if (nextTick < bookedSpec - dt) nextTick = Math.ceil(bookedSpec / dt) * dt;   // the clock came on mid-play
       for (; nextTick < until; nextTick += dt) m.clockTick(msOf(clockOf(nextTick)));
     }

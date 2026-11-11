@@ -19,7 +19,7 @@
 //   • an edited song (phase C's plain data changes) plays as written; bad songs refused
 //   • the cost on the 16,359-onset row (planSong ≤ 1.5 s); the per-row table for the order's log
 //   node Composer/tests/assert-form.mjs
-import { compose, rearticulate } from '../core/compose.js';
+import { compose, rearticulate } from './compose-cycle.mjs';
 import { materialsOf, reclave, applyRearrange } from '../core/rearrange.js';
 import { arrangeDrums, beatsOf } from '../core/drums.js';
 import { arrangeBass } from '../core/bass.js';

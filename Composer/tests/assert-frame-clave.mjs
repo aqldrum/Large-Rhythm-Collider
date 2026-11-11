@@ -30,7 +30,7 @@
 //   node Composer/tests/assert-frame-clave.mjs
 import crypto from 'node:crypto';
 import { buildRow } from '../core/row.js';
-import { compose, partContext } from '../core/compose.js';
+import { compose, partContext } from './compose-cycle.mjs';
 import { classOfCents } from '../core/frame.js';
 import { euclidPattern } from '../core/cells.js';
 import { claveText, claveSource, claveOf, rankFrameClaves, chooseFrameClave, COMP_RULES } from '../core/claves.js';

@@ -9,10 +9,16 @@
 //   onsets     the row's onsets are its layers' pulses: layer v strikes every grid / v ticks (the grid is the layers'
 //              lcm), so the onset nearest any place in the cycle is the nearest pulse of one of at most four layers,
 //              found without the row (`drumGrid`). A stroke's strikes are the layers striking its tick, as row.js counts.
-//   beats      the bar's S slots cut in 4 beats as Partitions cuts a block (cells.js `partitionSizes`, ported from
-//              PartitionsBlocks.calculatePartitionSizes): any S, odd or prime too (S = 7: 1, 2, 2, 2 slots). Under 4
-//              slots a bar is cut on half or quarter slots (S·m sub-slots, m = ceil(4 / S), as cells.js subdivides a
-//              grid smaller than P), and a sub-slot beat lands on a real onset inside its slot (`beatsOf`).
+//   beats      the meter's own (METER_TEMPO_ORDER.md, decided 2: `knobs.beats`, meter.js `meterShape`: 6/8 is 3 + 3,
+//              7/8 2 + 2 + 3), whole slots. A spec without them (`meterFrom: 'cycle'`, under 3 slots, a spec of
+//              before) has the bar's S slots cut in 4 beats as Partitions cuts a block (cells.js `partitionSizes`,
+//              ported from PartitionsBlocks.calculatePartitionSizes): any S, odd or prime too (S = 7: 1, 2, 2, 2 slots).
+//              Under 4 slots that bar is cut on half or quarter slots (S·m sub-slots, m = ceil(4 / S), as cells.js
+//              subdivides a grid smaller than P), and a sub-slot beat lands on a real onset inside its slot (`beatsOf`).
+//              The backbeat is kick, snare in pairs over the beats, an odd last beat a snare (2: K S, 3: K S S,
+//              4: K S K S, 5: K S K S S); the fill runs from beat ⌈b/2⌉ + 1. The curated patterns are written in 4/4
+//              and land through the 4-cut whatever the beats (proposed, P5). In 4, 8, 16 the meter's beats are the
+//              4-cut's, so those drums are the 4-cut's byte for byte but for the beats' words.
 //   landing    a stroke aims at a place in the bar (slot units: a whole slot is its anchor, a half slot the midpoint to
 //              the next anchor) and lands on the row's onset nearest it inside that place's window: half-way to the
 //              neighbouring places of the bar's 1/m-slot grid (for whole slots, the swing-0.5 window of cells.js, a
@@ -125,11 +131,17 @@ function seeded(seed) {
 }
 
 /**
- * The bar's 4 beats: S slots (S·m sub-slots under 4 slots) cut in 4 as Partitions cuts a block.
- * → { S, m, sizes (sub-slots), startU (sub-slots), pos (slot units: where each beat starts) }
+ * The bar's beats: the meter's `sizes` (whole slots, METER_TEMPO_ORDER.md), else S slots (S·m sub-slots under 4 slots)
+ * cut in 4 as Partitions cuts a block.
+ * → { S, m, sizes (sub-slots), startU (sub-slots), pos (slot units: where each beat starts), meter (the sizes were the meter's) }
  */
-export function beatsOf(S) {
+export function beatsOf(S, given = null) {
   if (!(Number.isInteger(S) && S >= 1)) fail(`bad slots per bar ${S}`);
+  if (given) {
+    if (!Array.isArray(given) || !given.length || !given.every((x) => Number.isInteger(x) && x >= 1) || given.reduce((a, b) => a + b, 0) !== S) fail(`the beats ${JSON.stringify(given)} are not ${S} slots`);
+    const startU = []; let at = 0; for (const s of given) { startU.push(at); at += s; }
+    return { S, m: 1, sizes: [...given], startU, pos: [...startU], meter: true };
+  }
   const m = Math.max(1, Math.ceil(4 / S)), { sizes } = partitionSizes(S * m, 4), startU = [];
   let at = 0; for (const s of sizes) { startU.push(at); at += s; }
   return { S, m, sizes: [...sizes], startU, pos: startU.map((u) => u / m) };
@@ -178,7 +190,7 @@ export function drumGrid(spec) {
     }
     return best;
   };
-  return { T, rowT, W, N, S, P, grid, phase: [pn, pd], phaseX, layers, starts, barStarts, relOf, timeOf, rAt, strikesAt, nearest };
+  return { T, rowT, W, N, S, P, grid, phase: [pn, pd], phaseX, layers, starts, barStarts, relOf, timeOf, rAt, strikesAt, nearest, beats: knobs.beats ?? null };
 }
 
 /**
@@ -275,7 +287,7 @@ export function primeSelection(p, C) {
 }
 
 /** the grid's places a bar and its cells over the cycle: S·m places a bar (decision 6), C = N·S·m cells */
-export function gridShape(g) { const m = beatsOf(g.S).m; return { m, places: g.S * m, cells: g.N * g.S * m }; }
+export function gridShape(g) { const m = beatsOf(g.S, g.beats ?? null).m; return { m, places: g.S * m, cells: g.N * g.S * m }; }
 
 /**
  * Level 1 of the prime partition: p lights evenly over the cycle from the downbeat, light i aimed at i/p of it and
@@ -434,7 +446,7 @@ function checkGridShape(grid, N, W) {
  * → { voice: [one string a bar] }, every voice
  */
 export function gridOf(d) {
-  const S = d.beats.slotsPerBar, m = d.beats.subdivide, N = d.bars.length, W = S * m, fillFrom = beatsOf(S).pos[2];
+  const S = d.beats.slotsPerBar, m = d.beats.subdivide, N = d.bars.length, W = S * m, fillFrom = d.beats.fillFrom ?? beatsOf(S).pos[2];
   const rows = Object.fromEntries(DRUM_VOICES.map((v) => [v, Array.from({ length: N }, () => new Array(W).fill('.'))]));
   for (const h of d.hits) {
     let bar, place;
@@ -479,12 +491,15 @@ export function arrangeDrums(spec, options = {}) {
   // STEP 4d: `against` draws from a generator of its bar's own (`${seed}/drums/${bar}`), so an edit to one bar (a chord
   // swap rebuilds its comping) never re-draws a later bar's strokes; before 4d one generator ran in bar order
   const seed = opt.seed ?? spec.input?.seed ?? 1, rngOfBar = (k) => seeded(`${seed}/drums/${k}`);
-  const beats = beatsOf(S), m = beats.m, h = 1 / (2 * m);
+  const beats = beatsOf(S, g.beats), m = beats.m, h = 1 / (2 * m), B = beats.sizes.length;
+  // the curated patterns' 4/4 lands through the 4-cut (P5); the meter's beats are the 4-cut's in 4, 8, 16
+  const cut4 = beats.meter ? beatsOf(S) : beats, same4 = cut4.m === m && JSON.stringify(cut4.sizes) === JSON.stringify(beats.sizes);
   const decisions = [];
   const decide = (what, value, why) => { decisions.push({ what, value, why }); return value; };
   // what is decided depends on the options as resolved, never on how they were spelled ({} and the defaults agree)
   decide('drums.mode', opt.mode, opt.mode !== 'backbeat' ? 'asked' : 'the steady backbeat by default (the sprint brief): kick on beats 1 and 3, snare on 2 and 4, a hat on every slot');
-  decide('drums.beats', beats.pos, m === 1
+  decide('drums.beats', beats.pos, beats.meter ? `the meter's ${B} beat${B === 1 ? '' : 's'} (${beats.sizes.join(' + ')} slots; decided: beats from the meter)`
+    : m === 1
     ? `the bar's ${S} slots cut in 4 beats as Partitions cuts a block (${beats.sizes.join(', ')} slots)`
     : `${S} slot${S === 1 ? '' : 's'} a bar is under 4 beats: cut on 1/${m} slots (${beats.sizes.map((s) => `${s}/${m}`).join(', ')}), a beat between anchors landing on a real onset inside its slot`);
 
@@ -500,10 +515,14 @@ export function arrangeDrums(spec, options = {}) {
   const beatSet = new Set(beats.pos.map((x) => x.toFixed(6)));
   /** a fraction of the bar → its place through the beats (slot units on the 1/m grid), or null past the bar's end */
   const placeOfF = (f) => {
-    const x = 4 * f, b = Math.min(3, Math.floor(x + EPS)), u = Math.round(beats.startU[b] + (x - b) * beats.sizes[b] + EPS);
-    return u >= S * m ? null : u / m;
+    const x = 4 * f, b = Math.min(3, Math.floor(x + EPS)), u = Math.round(cut4.startU[b] + (x - b) * cut4.sizes[b] + EPS);
+    return u >= S * cut4.m ? null : u / cut4.m;
   };
-  const fillFrom = beats.pos[2];
+  const fillFrom = beats.meter ? beats.pos[Math.ceil(B / 2)] : beats.pos[2];
+  /** the fill's half bar (f in [½, 1)) laid over the bar from fillFrom: the 4-cut's where the beats are its, else even */
+  const fillPlaceOf = same4 ? placeOfF : (f) => { const u = Math.round((fillFrom + (f - 0.5) * 2 * (S - fillFrom)) * m + EPS); return u >= S * m ? null : u / m; };
+  /** the backbeat's kicks then snares: beats in pairs, kick then snare, an odd last beat a snare */
+  const kickBeat = (i) => i % 2 === 0 && !(B % 2 === 1 && i === B - 1 && B > 1);
 
   // ── a mode a bar, fills at the phrase ends ──
   const phrases = phrasesOf({ bars: N, slotsPerBar: S });
@@ -542,7 +561,7 @@ export function arrangeDrums(spec, options = {}) {
     const what = pat ? `${pat.label}${pat.bars > 1 ? ` (bar ${patBar + 1} of ${pat.bars})` : ''}` : mode === 'backbeat' ? 'backbeat'
       : mode === 'grid' ? 'the step grid' : mode === 'prime' ? `${opt.grid ? 'the step grid' : 'backbeat'} + the prime partition` : `backbeat + ${mode}`;
     const fillWhy = phraseFills.has(k) ? `the last bar of a ${ph.bars}-bar phrase` : 'asked (fillBars)';
-    bars.push({ bar: k, mode, fill, crash, why: `${what}${opt.perBar[k] ? ' (asked for this bar)' : ''}${fill ? `; fills from beat 3: ${fillWhy}` : ''}${crash ? '; a crash on the downbeat: the phrase opens after a fill' : ''}` });
+    bars.push({ bar: k, mode, fill, crash, why: `${what}${opt.perBar[k] ? ' (asked for this bar)' : ''}${fill ? `; fills from beat ${beats.meter ? Math.ceil(B / 2) + 1 : 3}: ${fillWhy}` : ''}${crash ? '; a crash on the downbeat: the phrase opens after a fill' : ''}` });
 
     // the bar's groove: the backbeat, or the pattern's strokes through the beats
     const strokes = [];
@@ -550,13 +569,18 @@ export function arrangeDrums(spec, options = {}) {
     else if (pat) {
       for (const s of patternStrokes(pat)) if (s.bar === patBar) { const q = placeOfF(s.f); if (q != null) strokes.push({ voice: s.voice, q, velocity: DRUM_VELOCITY[s.voice] + (s.accent ? ACCENT : 0) }); }
     } else {
-      strokes.push({ voice: 'kick', q: beats.pos[0], velocity: DRUM_VELOCITY.kick + ACCENT }, { voice: 'kick', q: beats.pos[2], velocity: DRUM_VELOCITY.kick });
-      strokes.push({ voice: 'snare', q: beats.pos[1], velocity: DRUM_VELOCITY.snare }, { voice: 'snare', q: beats.pos[3], velocity: DRUM_VELOCITY.snare });
+      if (beats.meter) {
+        for (let i = 0; i < B; i++) if (kickBeat(i)) strokes.push({ voice: 'kick', q: beats.pos[i], velocity: DRUM_VELOCITY.kick + (i === 0 ? ACCENT : 0) });
+        for (let i = 0; i < B; i++) if (!kickBeat(i)) strokes.push({ voice: 'snare', q: beats.pos[i], velocity: DRUM_VELOCITY.snare });
+      } else {
+        strokes.push({ voice: 'kick', q: beats.pos[0], velocity: DRUM_VELOCITY.kick + ACCENT }, { voice: 'kick', q: beats.pos[2], velocity: DRUM_VELOCITY.kick });
+        strokes.push({ voice: 'snare', q: beats.pos[1], velocity: DRUM_VELOCITY.snare }, { voice: 'snare', q: beats.pos[3], velocity: DRUM_VELOCITY.snare });
+      }
       for (let q = 0; q < S; q++) strokes.push({ voice: 'hat', q, velocity: DRUM_VELOCITY.hat + (beatSet.has(q.toFixed(6)) ? 0.08 : 0) });
     }
     for (const s of strokes) if (!(fill && s.voice !== 'cym' && s.voice !== 'perc' && s.q >= fillFrom - EPS)) land(s.voice, k, s.q, s.velocity, !!s.cell);
     if (fill) for (const s of patternStrokes(FILL)) if (s.f >= 0.5 - EPS) {
-      const q = placeOfF(s.f);
+      const q = fillPlaceOf(s.f);
       if (q == null) continue;
       const rise = (s.f - 0.5) / 0.5;
       land(s.voice, k, q, s.voice === 'snare' ? 0.55 + 0.4 * rise : DRUM_VELOCITY[s.voice]);
@@ -637,7 +661,7 @@ export function arrangeDrums(spec, options = {}) {
   return {
     version: COMPOSER_DRUMS_VERSION, enabled: !!opt.enabled, mode: opt.mode,
     options: { ...opt, seed, kit: { ...opt.kit }, perBar: { ...opt.perBar }, ...(opt.grid ? { grid: readGrid(opt.grid) } : {}) }, kit: { ...opt.kit },
-    beats: { slotsPerBar: S, subdivide: m, sizes: beats.sizes, positions: beats.pos },
+    beats: { slotsPerBar: S, subdivide: m, sizes: beats.sizes, positions: beats.pos, ...(beats.meter ? { fillFrom } : {}) },
     partition: partition && { layer: partition.name, value: partition.value, from: partition.from, hits: partition.hits, candidates: partition.candidates },
     bars, hits: out, decisions,
     stats: { hits: perVoice, total: out.length, wide: stats.wide, silent: stats.silent, merged: hits.length - out.length },

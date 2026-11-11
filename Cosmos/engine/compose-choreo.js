@@ -54,6 +54,7 @@
 
 import { traceTimeline } from '../../Composer/core/trace.js';
 import { classOfCents } from '../../Composer/core/frame.js';
+import { playFactorOf } from '../../Composer/core/meter.js';
 import { ANIMATION_BUDGETS } from '../../Composer/page/trace-frames.js';
 import { PART_COLORS } from '../../Composer/page/plot-highlights.js';
 
@@ -147,7 +148,7 @@ const shortTurn = (f) => (f > 0.5 ? f - 1 : f);
 export function buildDustScene({ trace = null, spec, composed = {}, caps = dustCaps(), origins = null } = {}) {
   if (!spec || spec.refused || !spec.knobs) return null;
   const sr = composed.superrow || null, dust = composed.dust || null, kind = sr ? 'grid' : 'rhythm';
-  const T = spec.knobs.cycleSeconds, ph = spec.knobs.phase || trace?.phase || [0, 1], phaseFrac = ph[0] / ph[1];
+  const T = spec.knobs.cycleSeconds * playFactorOf(spec), ph = spec.knobs.phase || trace?.phase || [0, 1], phaseFrac = ph[0] / ph[1];
   const G = sr?.grid ?? trace?.grid ?? dust?.grid ?? (spec.input?.layers || []).filter((v) => v > 0).reduce((a, b) => (a / gcd(a, b)) * b, 1);
   const tnodes = trace?.nodes || {};
 

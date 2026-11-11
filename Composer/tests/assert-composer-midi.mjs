@@ -13,7 +13,7 @@
 //     stop, the voices silenced by localSound(false) while the MIDI goes on
 //   node Composer/tests/assert-composer-midi.mjs
 import { readFileSync } from 'node:fs';
-import { compose, rearticulate } from '../core/compose.js';
+import { compose, rearticulate } from './compose-cycle.mjs';
 import { createPlayer } from '../perform/composer-player.js';
 import { readMidi, writeMidi } from '../core/midi.js';
 import { createComposerMidi, midiNotesOf, midiFileOf, setupBytes, matchPort, noteAndBend, bendFromSemitones, channelOf, velocityOf, MIDI_PARTS, GM_DRUMS, CHORD_MEMBERS, COMP_MEMBERS, DRUM_CHANNEL, DRUM_NOTE_MS } from '../perform/composer-midi.js';

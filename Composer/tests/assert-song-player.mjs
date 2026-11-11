@@ -18,7 +18,7 @@
 //     the jump (a booked-ahead one before its start), then the new chains each once, no MIDI note on at the jump (the
 //     queued one ended after its own on), the clock's Stop → Start with no two plays' ticks interleaved
 //   node Composer/tests/assert-song-player.mjs
-import { compose, rearticulate } from '../core/compose.js';
+import { compose, rearticulate } from './compose-cycle.mjs';
 import { createPlayer, chainsOf } from '../perform/composer-player.js';
 import { createPlayer as createPlayerBefore } from './fixtures/player-before.js';
 import { createComposerMidi, midiNotesOf, MIDI_PARTS, DRUM_CHANNEL } from '../perform/composer-midi.js';

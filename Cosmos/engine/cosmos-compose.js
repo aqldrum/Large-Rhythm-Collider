@@ -12,7 +12,9 @@
 // falls out of range; the Composer's drums as they are.
 //
 // Proposed here (the planner's defaults, not ruled):
-//   tempo      a cycle that lands the Composer's meter on 110 BPM (superrow.js cycleSecondsForTempo), never n / rate.
+//   tempo      the composition's own density tempo (METER_TEMPO_ORDER.md: `spec.seedTempo`), played through the player's
+//              time factor (cosmos-composer-player.js); the cycle handed to Compose (superrow.js cycleSecondsForTempo,
+//              never n / rate) sets only the spec's natural tempo.
 //   window     inside the Grid card's cardinality band, the rhythms nearest the focus first — the clicked node of that
 //              bloom, else the eye — fixed at press time; Θ by quality tier (composeBudget), Σ ≤ 2^21 source onsets.
 //   gathering  a Grid Compose waits for its bloom to finish streaming (cancel: press again).
@@ -31,6 +33,7 @@
 // { target, spec (plain), trace, dust, window?, superrow? }. Off (the default), the spec goes through untouched.
 
 import { onsetCount, ONSET_GATE, MAX_LAYERS } from '../../Composer/core/row.js';
+import { seedTempoOf, playFactorOf } from '../../Composer/core/meter.js';
 import { cycleSecondsForTempo, barometer, flattenLayers, DEFAULT_BUDGET, DEFAULT_SOURCE_BUDGET, DEFAULT_TEMPO_BPM } from '../../Composer/core/superrow.js';
 
 export const COMPOSE_STATES = Object.freeze({ IDLE: 'idle', GATHERING: 'gathering', COMPOSING: 'composing', PERFORMING: 'performing', STOPPING: 'stopping' });
@@ -146,7 +149,7 @@ export function createComposeMode({ composer, performer, gather = null, now = ()
     if (!ok) { refuse('audio', null, 'the audio is not running'); return; }
     level = 1; outSince = null;
     setState(S.PERFORMING);
-    emit('perform', { target: t, spec, startedAt: performer.startedAt ?? null, cycleSeconds: spec.knobs.cycleSeconds });
+    emit('perform', { target: t, spec, startedAt: performer.startedAt ?? null, cycleSeconds: spec.knobs.cycleSeconds * playFactorOf(spec) });
   }
   function onSpec(my, t, spec, extra) {
     if (my !== token) return;   // cancelled or replaced meanwhile
@@ -184,7 +187,7 @@ export function createComposeMode({ composer, performer, gather = null, now = ()
     get state() { return state; },
     get target() { return target; },
     get active() { return state !== S.IDLE; },
-    info() { return { state, target, progress, notice, barometer: result?.barometer || null, tempoBpm: result?.spec?.knobs?.tempoBpm ?? null, level }; },
+    info() { return { state, target, progress, notice, barometer: result?.barometer || null, tempoBpm: result?.spec ? seedTempoOf(result.spec) : null, level }; },
     /** is the composition about grid G (any kind)? */
     concerns(grid) { return !!target && target.grid === grid; },
     on(type, fn) { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(fn); return () => listeners.get(type)?.delete(fn); },

@@ -25,7 +25,7 @@
 //     an asked bass; the override checked; the trace; a chord swap of the default
 //   (Sparse · Free in the first bullet is now the pin: Compose is asked for it)
 //   node Composer/tests/assert-bass.mjs
-import { compose, partContext } from '../core/compose.js';
+import { compose, partContext } from './compose-cycle.mjs';
 import { materialsOf, chordRecordsOf, rearrange, applyRearrange } from '../core/rearrange.js';
 import { buildCells, cropCells } from '../core/cells.js';
 import { targetsOf } from '../core/harmony.js';

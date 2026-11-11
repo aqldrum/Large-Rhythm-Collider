@@ -17,7 +17,7 @@
 //   • deterministic; Back to Line restores the part byte for byte; the options checked
 //   • the 16,359-onset row at ×1, ×2, ×3 (materials prebuilt), and the report's rows
 //   node Composer/tests/assert-arp.mjs
-import { compose, VELOCITY } from '../core/compose.js';
+import { compose, VELOCITY } from './compose-cycle.mjs';
 import { materialsOf, chordRecordsOf } from '../core/rearrange.js';
 import { buildCells, cropCells } from '../core/cells.js';
 import { phrasesOf, isStrongBeat } from '../core/harmony.js';

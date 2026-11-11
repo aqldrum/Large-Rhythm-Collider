@@ -19,6 +19,7 @@ import {
 import { QUALITY_ORDER, QUALITY_TIERS } from '../engine/cosmos-quality.js';
 import { ONSET_GATE } from '../../Composer/core/row.js';
 import { compose } from '../../Composer/core/compose.js';
+import { playFactorOf } from '../../Composer/core/meter.js';
 
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };
@@ -272,13 +273,15 @@ console.log('\n  The Composer player inside Cosmos');
   const limiter = ctx.nodes.filter((n) => n.kind === 'DynamicsCompressor').at(-1);
   check('its limiter feeds the composition bus (the player\'s destination), not ctx.destination', limiter.outs.includes(nodes.compositionGain) && !limiter.outs.includes(ctx.destination));
   const startedAt = player.startedAt, oscBefore = ctx.nodes.filter((n) => n.kind === 'Oscillator').length;
-  advance(spec.knobs.cycleSeconds + 0.5);
+  // the composition plays at its seed tempo (METER_TEMPO_ORDER.md P9): spec seconds × f on the clock
+  const f = playFactorOf(spec);
+  advance(spec.knobs.cycleSeconds * f + 0.5);
   const oscs = ctx.nodes.filter((n) => n.kind === 'Oscillator').length - oscBefore;
   check(`Cosmos's pulse books it: ${oscs} oscillators started across a cycle`, oscs > 0);
   const expected = bookingEvents(spec).filter((e) => e.time < spec.knobs.cycleSeconds).length;
   const firstCycle = notes.filter((e) => e.cycle === 0);
   check(`the note hook: every note and stroke of the first cycle reported once (${firstCycle.length} of ${expected}), with part, node and when`, firstCycle.length === expected &&
-    firstCycle.every((e) => e.part && (e.kind === 'drum' || Number.isInteger(e.node)) && near(e.when, startedAt + e.time, 1e-9)) && notes.some((e) => e.kind === 'drum'));
+    firstCycle.every((e) => e.part && (e.kind === 'drum' || Number.isInteger(e.node)) && near(e.when, startedAt + e.time * f, 1e-9)) && notes.some((e) => e.kind === 'drum'));
   check('…reported ahead of their time (at booking, inside the 250 ms horizon)', notes.every((e) => e.when <= ctx.currentTime + 0.25 + 1e-9));
   check('…and the loop goes on into the next cycle', notes.some((e) => e.cycle === 1));
   check('perform refuses while one plays', !player.perform(spec));

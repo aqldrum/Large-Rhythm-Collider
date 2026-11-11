@@ -14,7 +14,8 @@ import { buildCells } from '../core/cells.js';
 import { classOfCents, defaultRoot } from '../core/frame.js';
 import { downbeats } from '../core/lines.js';
 import { composeCases, normSpec, sha, COMPOSE_HASHES } from './settle-baseline.mjs';
-import { compose, chooseMeter, articulate, isStruck, seededRandom, PART_IDS, SOUND_PAIRS, TEMPO_RANGE, BAR_CHOICES, BEATS_PER_BAR, LEAD_TARGET_HZ, COMPOSER_SPEC_VERSION } from '../core/compose.js';
+import { compose as composeLive } from '../core/compose.js';   // the worker composes on the default meter
+import { compose, chooseMeter, articulate, isStruck, seededRandom, PART_IDS, SOUND_PAIRS, TEMPO_RANGE, BAR_CHOICES, BEATS_PER_BAR, LEAD_TARGET_HZ, COMPOSER_SPEC_VERSION } from './compose-cycle.mjs';
 
 let PASS = true, checks = 0;
 const check = (label, ok, detail = '') => { checks++; if (!ok) PASS = false; console.log(`  ${ok ? '✓' : '✗'} ${label}${detail && !ok ? ` — ${detail}` : ''}`); };
@@ -237,7 +238,7 @@ console.log('\n— the module worker, in a fake worker scope');
   const w = await import('../core/compose-worker.js');
   check('it listens on its scope', typeof globalThis.self.onmessage === 'function');
   globalThis.self.onmessage({ data: { id: 7, layers: [8, 7, 6, 5], cycleSeconds: 4, options: { seed: 3 } } });
-  const got = posted[0], direct = compose([8, 7, 6, 5], 4, { seed: 3, worker: true });
+  const got = posted[0], direct = composeLive([8, 7, 6, 5], 4, { seed: 3, worker: true });
   check('a message gets the same spec as the call, with the full table', got.id === 7 && got.ok && got.spec.knobs.table === 'full' && JSON.stringify(got.spec) === JSON.stringify(direct));
   globalThis.self.onmessage({ data: { id: 8, layers: [3, 2], cycleSeconds: 4 } });
   globalThis.self.onmessage({ data: { id: 9, layers: [8, 7, 6, 5], cycleSeconds: -1 } });

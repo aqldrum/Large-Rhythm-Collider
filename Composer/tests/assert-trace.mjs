@@ -12,7 +12,8 @@
 //   node Composer/tests/assert-trace.mjs
 import { buildRow } from '../core/row.js';
 import { defaultRoot, rankRoots } from '../core/frame.js';
-import { compose } from '../core/compose.js';
+import { compose } from './compose-cycle.mjs';
+import { compose as composeLive } from '../core/compose.js';   // the worker composes on the default meter
 import { traceTimeline, createTrace, TRACE_CAPS, COMPOSER_TRACE_VERSION } from '../core/trace.js';
 import { CHORD_QUALITIES } from '../core/harmony.js';
 import { MAX_MISSING } from '../core/progression.js';
@@ -310,7 +311,7 @@ console.log('\n— the module worker');
   globalThis.self = { postMessage: () => {} };
   const w = await import('../core/compose-worker.js');
   delete globalThis.self;
-  const got = w.answer({ id: 3, layers: [11, 9, 7, 5], cycleSeconds: 6, options: { seed: 2, trace: true } }).spec, direct = compose([11, 9, 7, 5], 6, { seed: 2, worker: true, trace: true });
+  const got = w.answer({ id: 3, layers: [11, 9, 7, 5], cycleSeconds: 6, options: { seed: 2, trace: true } }).spec, direct = composeLive([11, 9, 7, 5], 6, { seed: 2, worker: true, trace: true });
   const plain = w.answer({ id: 4, layers: [11, 9, 7, 5], cycleSeconds: 6, options: { seed: 2 } }).spec;
   const cloned = structuredClone(got.trace);
   check('asked, the worker sends the trace (the full table\'s), and it survives a structured clone; not asked, none', JSON.stringify(got.trace) === JSON.stringify(direct.trace) && JSON.stringify(cloned) === JSON.stringify(got.trace) && !('trace' in plain) && JSON.stringify(without(got)) === JSON.stringify(plain));

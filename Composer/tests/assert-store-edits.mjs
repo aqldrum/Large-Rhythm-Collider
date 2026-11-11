@@ -19,13 +19,16 @@ import { makeDom, installGlobals } from './dom-stub.mjs';
 import { siteRhythm } from './site-scripts.mjs';
 // imported before the stub's globals exist, so the bridge module's own page boot doesn't run
 import { createComposerBridge } from '../page/composer-bridge.js';
-import { compose, PART_IDS } from '../core/compose.js';
+import { compose, PART_IDS } from './compose-cycle.mjs';
 import { rearrange, applyRearrange, materialsOf } from '../core/rearrange.js';
 import { arrangeDrums, gridOf, ALL_DRUM_MODES, beatsOf, drawPrime, nextPrime } from '../core/drums.js';
 import { answer, keptMaterials } from '../core/compose-worker.js';
 import { createComposeRunner } from '../perform/compose-runner.js';
 import { createComposerController, drumModeChoices, MAIN_THREAD_ONSETS } from '../perform/composer-controller.js';
-import { createCompositionStore, newCompositionState, UNDO_LIMIT } from '../store/composition-store.js';
+import { createCompositionStore, newCompositionState as newState, UNDO_LIMIT } from '../store/composition-store.js';
+// every controller here composes on the meter of before (METER_TEMPO_ORDER.md P7: the bars and slots its edits reach),
+// through the shim's compose and through the worker runner alike
+const newCompositionState = (o) => { const st = newState(o); st.knobs.meterFrom = 'cycle'; return st; };
 import { rewriteToken, orderedEdits } from '../store/composition-edits.js';
 import { createTabController } from '../page/tab-controller.js';
 import { stripRows } from '../page/part-strips.js';

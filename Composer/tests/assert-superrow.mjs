@@ -5,11 +5,12 @@
 //   • the window: Θ nodes and the source budget respected; a rhythm over the gate or the budget alone skipped; the
 //     near-focus order kept; a rhythm that does not fit passed over for a later one that does; the whole grid fits
 //     when Θ allows; the work cap bounds what is examined
-//   • the barometer's counts and text; node → source members; the tempo cycle lands the meter on 110 BPM
+//   • the barometer's counts and text; node → source members; the tempo cycle lands the meter of before (`meterFrom:
+//     'cycle'`) on 110 BPM; the worker composes on the default meter, at a density seed tempo
 //   • superrow-worker.js' answer, run in Node
 //   node Composer/tests/assert-superrow.mjs
 import { buildRow, onsetCount, ONSET_GATE } from '../core/row.js';
-import { compose } from '../core/compose.js';
+import { compose } from './compose-cycle.mjs';
 import { buildSuperrow, barometer, cycleSecondsForTempo, orderByDistance, membersOf, flattenLayers, unflattenLayers, DEFAULT_BUDGET } from '../core/superrow.js';
 import { answerSuperrow } from '../core/superrow-worker.js';
 
@@ -147,7 +148,8 @@ console.log('\n— superrow-worker.js, run in Node');
 {
   const rhythms = bloomOf(840, { maxRhythms: 200 }), dist = Float64Array.from(rhythms, (_, i) => (i * 7919) % 200);
   const { message, transfer } = answerSuperrow({ id: 9, grid: 840, layersFlat: flattenLayers(rhythms), dist, budget: 2000 });
-  check(`a composed superrow: ${message.window.fitted} of ${message.window.visible} rhythms, ${message.superrow?.n} nodes ≤ 2,000, 110 BPM`, message.ok && message.id === 9 && !message.spec.refused && message.superrow.n <= 2000 && Math.abs(message.spec.knobs.tempoBpm - 110) < 1e-9);
+  // the worker composes on the default meter (METER_TEMPO_ORDER.md): the meter from the layers, a density seed tempo
+  check(`a composed superrow: ${message.window.fitted} of ${message.window.visible} rhythms, ${message.superrow?.n} nodes ≤ 2,000, seeded at ${message.spec.seedTempo?.bpm} BPM (70–150)`, message.ok && message.id === 9 && !message.spec.refused && message.superrow.n <= 2000 && message.spec.seedTempo?.bpm >= 70 && message.spec.seedTempo?.bpm <= 150);
   check('its arrays go as transfers (tick, tone, toneCents, octave — E2\'s dust — and the three source arrays)', transfer.length === 7 && transfer.every((b) => b instanceof ArrayBuffer));
   check('…with each tone\'s cents and each node\'s octave, for the dust\'s clock face (E2)', message.superrow.toneCents.length === message.superrow.tones.length && message.superrow.octave.length === message.superrow.n);
   const traced = answerSuperrow({ id: 10, grid: 840, layersFlat: flattenLayers(rhythms), dist, budget: 2000, options: { trace: true } }).message;

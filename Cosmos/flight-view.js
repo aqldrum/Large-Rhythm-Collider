@@ -4,6 +4,7 @@
 // district suns; connectors tether each zone to its anchor. Camera is free-fly with the
 // integer-spine floating origin, so precision holds at any grid.
 import { M } from './ui/mode.js';
+import { seedTempoOf } from '../Composer/core/meter.js';
 import { Cosmos } from './engine/cosmos-runtime.js';
 import { renderPosCam, setPlacement, macroCell, macroScale, backboneHash, SPACING, CELL } from './engine/spine.js';
 import { hilbertDecode, hilbertEncode, neighborGrids, INDEX_COUNT, SIDE } from './engine/hilbert.js';
@@ -962,7 +963,7 @@ export function cosmosComposeMode() { return composeMode; }
 composeMode.on('state', () => renderComposeControl());
 composeMode.on('gathering', () => renderComposeControl());
 composeMode.on('perform', ({ spec }) => {
-  setKnobInert('speed', true, { readout: `${Math.round(spec.knobs.tempoBpm)} BPM`, title: 'SPEED is held while a composition plays: it keeps its own tempo' });
+  setKnobInert('speed', true, { readout: `${Math.round(seedTempoOf(spec))} BPM`, title: 'SPEED is held while a composition plays: it keeps its own tempo' });
   refreshComposeCard();
 });
 composeMode.on('stop', () => { setKnobInert('speed', false); markFieldDirty(); refreshComposeCard(); });

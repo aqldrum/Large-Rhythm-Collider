@@ -20,7 +20,7 @@
 //     among the sparsest of the best (the seed breaks only what is left)
 //   • the probe's table (seed 1, ±½, nothing borrowed) and the 16,359-onset row's cost (Compose ≤ 1 s, a restrum ≤ ~15 ms)
 //   node Composer/tests/assert-strum.mjs
-import { compose, partContext, COMP_TOLERANCES, COMP_GATES, COMP_ROLLS, toleranceWords, compStrumOf, COMPOSER_SPEC_VERSION } from '../core/compose.js';
+import { compose, partContext, COMP_TOLERANCES, COMP_GATES, COMP_ROLLS, toleranceWords, compStrumOf, COMPOSER_SPEC_VERSION } from './compose-cycle.mjs';
 import { rearrange, restrum, applyRearrange, materialsOf } from '../core/rearrange.js';
 import { classOfCents } from '../core/frame.js';
 import { readMidi, decodeClip } from '../core/midi.js';

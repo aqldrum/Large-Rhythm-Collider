@@ -20,11 +20,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { ROOT } from './site-scripts.mjs';
-import { parseChordSymbol, tokenizeField, readToken, AUTO_TOKENS, barMaterials, resolveSymbols, progressionOf, pinsToField, fieldToPins, qualityOfIntervals } from '../core/chord-symbols.js';
+import { parseChordSymbol, tokenizeField, readToken, AUTO_TOKENS, barMaterials as barMaterialsOf, resolveSymbols, progressionOf, pinsToField, fieldToPins, qualityOfIntervals } from '../core/chord-symbols.js';
 import { buildRow } from '../core/row.js';
 import { buildCells } from '../core/cells.js';
 import { classOfCents, clusterPresence } from '../core/frame.js';
-import { compose } from '../core/compose.js';
+import { compose } from './compose-cycle.mjs';
+// the materials on the meter of before, as compose-cycle.mjs composes (METER_TEMPO_ORDER.md P7)
+const barMaterials = (L, T, k = {}, o) => barMaterialsOf(L, T, { meterFrom: 'cycle', ...k }, o);
 import { CHORD_QUALITIES, PC_NAMES, harmonize } from '../core/harmony.js';
 import { chooseChordOnRoot, readProgression, harmonyPins, qualityById, FALLBACK_QUALITIES } from '../core/progression.js';
 

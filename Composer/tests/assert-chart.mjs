@@ -13,7 +13,7 @@
 //     Compose, the alternates per chord
 //   node Composer/tests/assert-chart.mjs
 import { parseChart, readChart, isChart, spread, evenIn, writeChart, transposeSymbol } from '../core/chart.js';
-import { compose, chartMeter, MAX_BARS } from '../core/compose.js';
+import { compose, chartMeter, MAX_BARS } from './compose-cycle.mjs';
 import { barMaterials, resolveSymbols, progressionOf, pinsToField } from '../core/chord-symbols.js';
 import { rearrange, applyRearrange, materialsOf } from '../core/rearrange.js';
 import { CHORD_QUALITIES } from '../core/harmony.js';

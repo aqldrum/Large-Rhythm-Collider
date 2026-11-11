@@ -33,7 +33,7 @@
 //   • the probe rows (8:7:6:5, 11:9:7:5, 19:17:16:15, 7:5:3:2, 119:42:15:8, 768:769, 768:784), charts, and the
 //     16,359-onset row; close, greedy and the loop's motion, wrap and muddy chords printed
 //   node Composer/tests/assert-voicing.mjs
-import { compose, voiceLead, partContext } from '../core/compose.js';
+import { compose, voiceLead, partContext } from './compose-cycle.mjs';
 import { compose as composeBefore } from './fixtures/compose-before.js';
 import { rearrange, reclave, revoice, applyRearrange, materialsOf } from '../core/rearrange.js';
 import { midiNotesOf, channelOf } from '../perform/composer-midi.js';

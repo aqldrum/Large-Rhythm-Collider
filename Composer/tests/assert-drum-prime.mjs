@@ -13,7 +13,7 @@
 //   node Composer/tests/assert-drum-prime.mjs
 import fs from 'node:fs';
 import path from 'node:path';
-import { compose } from '../core/compose.js';
+import { compose } from './compose-cycle.mjs';
 import { buildRow } from '../core/row.js';
 import { euclidPattern } from '../core/cells.js';
 import {

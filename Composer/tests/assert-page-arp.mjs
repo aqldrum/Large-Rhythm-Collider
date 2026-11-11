@@ -23,7 +23,7 @@
 //   node Composer/tests/assert-page-arp.mjs
 import { makeDom, installGlobals } from './dom-stub.mjs';
 import { siteRhythm } from './site-scripts.mjs';
-import { compose } from '../core/compose.js';
+import { compose } from './compose-cycle.mjs';
 import { answer } from '../core/compose-worker.js';
 import { arrangeArp, arpRefusal, arpGeometry, lineOf } from '../core/arp.js';
 import { materialsOf, rearrange, applyRearrange } from '../core/rearrange.js';

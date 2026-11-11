@@ -204,7 +204,9 @@ export function barometer(window) {
 }
 
 /**
- * A cycle that puts the Composer's meter at `bpm` (110 by default, proposed): N bars of 4 beats in T = 60·N·4 / bpm
+ * A cycle for `meterFrom: 'cycle'` (the meter of before; METER_TEMPO_ORDER.md P7) that puts the Composer's meter at
+ * `bpm` (110 by default, proposed). On the default meter (from the layers) the cycle sets only the spec's natural
+ * tempo: playback runs at the composition's density tempo (`spec.seedTempo`), whatever T is. N bars of 4 beats in T = 60·N·4 / bpm
  * seconds, N the most of 8, 4, 2, 1 the row's n onsets hold without going sparse (n ≥ 3 onsets a slot at the fewest
  * slots compose.js lowers to, 3 a bar). compose.js' chooseMeter then lands on exactly N bars at `bpm`, since N/2 and
  * 2N bars fall outside its 90–130 range, and never halves N. → seconds

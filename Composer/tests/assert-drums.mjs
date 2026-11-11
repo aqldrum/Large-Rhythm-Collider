@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
-import { compose } from '../core/compose.js';
+import { compose } from './compose-cycle.mjs';
 import { buildRow } from '../core/row.js';
 import { buildCells, partitionSizes } from '../core/cells.js';
 import { arrangeDrums, beatsOf, drumGrid, downbeatLayers, partitionLine, selectLights, levelOneLights, isPrime, DRUM_MODES, LAYERED_MODES, DEFAULT_KIT, FILL_MIN_PHRASE_BARS } from '../core/drums.js';

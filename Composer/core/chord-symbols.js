@@ -233,7 +233,7 @@ const devLabel = (d) => (Math.abs(d) < 0.05 ? '' : ` ${d > 0 ? '+' : '−'}${Mat
 
 /**
  * The bars' material before a compose.
- *   knobs  { seed (1), bars, slotsPerBar, anchors ('partitioned'), phase, frameCentsEachSide (15), root, presence
+ *   knobs  { seed (1), bars, slotsPerBar, meterFrom ('layers'), anchors ('partitioned'), phase, frameCentsEachSide (15), root, presence
  *          ('cluster'), modulation (true) }: a spec's `knobs` reproduce its cells; Compose's overrides + seed the
  *          cells that compose would build
  *   opts   { row: a row already built for these layers (skips the build), cells: the spec's own cells (MIDI targets,
@@ -256,7 +256,8 @@ export function barMaterials(layers, cycleSeconds, knobs = {}, { row: given = nu
   if (!PRESENCE_MODES.includes(presence)) fail(`presence must be one of ${PRESENCE_MODES.join(', ')}`);
   const rootTone = k.root != null ? toneIndexOf(row, k.root) : defaultRoot(row, e, { presence });
   const changes = givenChanges ?? k.changes ?? null, chart = changes ? checkChanges(changes) : null;
-  const meter = chart ? chartMeter(row.n, cycleSeconds, chart, { slotsPerBar: k.slotsPerBar ?? null }) : chooseMeter(row.n, cycleSeconds, { bars: k.bars ?? null, slotsPerBar: k.slotsPerBar ?? null });
+  const meterOpts = { from: k.meterFrom ?? 'layers', layers: row.layers, seed: k.seed ?? 1 };
+  const meter = chart ? chartMeter(row.n, cycleSeconds, chart, { slotsPerBar: k.slotsPerBar ?? null, ...meterOpts }) : chooseMeter(row.n, cycleSeconds, { bars: k.bars ?? null, slotsPerBar: k.slotsPerBar ?? null, ...meterOpts });
   const anchors = k.anchors ?? 'partitioned', P = meter.bars * meter.slotsPerBar;
   let phase = k.phase;
   if (!phase) {   // Compose's own draw: the seed's first, over the root's first three downbeats

@@ -13,7 +13,7 @@
 //   • lines.js `rules: { before, after }`: the picker and the scorer agree on every boundary cost; absent, nothing moves
 //   • the cost on the 16,359-onset row: a chord swap (lean and full table), a lead swap, `materialsOf`
 //   node Composer/tests/assert-rearrange.mjs
-import { compose as composeAny, PART_IDS } from '../core/compose.js';
+import { compose as composeAny, PART_IDS } from './compose-cycle.mjs';
 import { rearrange, applyRearrange, materialsOf } from '../core/rearrange.js';
 import { phrasesOf } from '../core/harmony.js';
 import { classOfCents, frameAt } from '../core/frame.js';

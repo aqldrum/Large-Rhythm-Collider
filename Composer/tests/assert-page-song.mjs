@@ -41,7 +41,7 @@
 //   node Composer/tests/assert-page-song.mjs
 import { makeDom, installGlobals } from './dom-stub.mjs';
 import { siteRhythm } from './site-scripts.mjs';
-import { compose, PART_IDS } from '../core/compose.js';
+import { compose, PART_IDS } from './compose-cycle.mjs';
 import { materialsOf } from '../core/rearrange.js';
 import { planSong, songPasses, energyOf, TEMPLATES } from '../core/form.js';
 import { createComposerController } from '../perform/composer-controller.js';
@@ -549,6 +549,7 @@ const sink = createComposerMidi({ now });
 sink.setPorts(ports); sink.setClockPort(clockPort); sink.setEnabled(true);
 // the player on the mock's clock (its Web MIDI timestamps from the mock's time, as assert-song-player.mjs runs it)
 const mc = createComposerController({ createContext: () => actx, timers: {}, midi: sink, mix: null, createPlayer: (o) => createPlayer({ ...o, now }), state: newCompositionState({ layers: L, cycleSeconds: T, seed: 1 }) });
+mc.setKnob('meterFrom', 'cycle');   // the clock and spans below are timed on the spec's own tempo (factor 1): the meter of before (METER_TEMPO_ORDER.md P7)
 await mc.compose();
 mc.setMode('song');
 const msong = mc.arrangement().song, intro = msong.sections[0];

@@ -134,10 +134,14 @@ export function setupBytes(partId, range = MIDI_BEND_RANGE) {
  * M11: the composition as it plays now, one cycle, as a Standard MIDI File (format 1, 480 a quarter, the spec's
  * tempo): a track a part, enabled parts only, each note at its MIDI length on its channel with its bend before it,
  * and each track's set-up (setupBytes) at the start; the drums on 10, 50 ms strokes. levels: { [part]: 0..1 }
+ * METER_TEMPO_ORDER.md P8: the file's time signature is `knobs.timeSig` (4/4 without), its notes on the spec's own
+ * quarters (BPM × quarters a bar / beats a bar), its tempo the seed tempo's quarters (`tempoBpm` to say another).
  * → Uint8Array
  */
-export function midiFileOf(spec, parts, drums = null, { levels = {}, bendRange = MIDI_BEND_RANGE, ppq = 480 } = {}) {
-  const T = spec.knobs.cycleSeconds, bpm = spec.knobs.tempoBpm, tick = (sec) => Math.round(sec * (bpm / 60) * ppq);
+export const quarterTempoOf = (knobs, bpm = knobs.tempoBpm) => bpm * (knobs.quartersPerBar ?? knobs.beatsPerBar ?? 4) / (knobs.beatsPerBar ?? 4);
+export function midiFileOf(spec, parts, drums = null, { levels = {}, bendRange = MIDI_BEND_RANGE, ppq = 480, tempoBpm = null } = {}) {
+  const K = spec.knobs, T = K.cycleSeconds, own = quarterTempoOf(K), tick = (sec) => Math.round(sec * (own / 60) * ppq);
+  const bpm = quarterTempoOf(K, tempoBpm ?? spec.seedTempo?.bpm ?? K.tempoBpm);
   const tracks = [];
   for (const id of MIDI_PARTS) {
     if (id === 'drums') {
@@ -157,7 +161,7 @@ export function midiFileOf(spec, parts, drums = null, { levels = {}, bendRange =
     }
     tracks.push({ name: BUS_WORDS[id], notes, events: setupBytes(id, bendRange).map((bytes) => ({ tick: 0, bytes })) });
   }
-  return writeMidi({ ppq, bpm, tracks });
+  return writeMidi({ ppq, bpm, timeSig: K.timeSig ? [...K.timeSig] : [4, 4], tracks });
 }
 
 /** the output a part is matched to on first use: the first whose name holds the part's word (M8), else null */

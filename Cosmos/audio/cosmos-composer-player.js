@@ -17,6 +17,7 @@
 // the `destination` it's given (here Cosmos's composition bus).
 
 import { createPlayer } from '../../Composer/perform/composer-player.js';
+import { playFactorOf } from '../../Composer/core/meter.js';
 import { suspendFlight, resumeFlight, compositionOutput, setCompositionLevel } from './cosmos-audio.js';
 import { SCHEDULE_AHEAD_SECONDS } from './transport-clock.js';
 
@@ -34,18 +35,18 @@ export function bookingEvents(spec) {
 const defaultAudio = { suspendFlight, resumeFlight, compositionOutput, setCompositionLevel };
 
 export function createCosmosComposerPlayer({ audio = defaultAudio, makePlayer = createPlayer, schedule } = {}) {
-  let player = null, spec = null, events = [], cursor = 0, cycle = 0, onNote = null;
+  let player = null, spec = null, events = [], cursor = 0, cycle = 0, onNote = null, factor = 1;
   const aheadSeconds = schedule?.aheadSeconds ?? SCHEDULE_AHEAD_SECONDS;
 
   // the hook: everything the player has booked, from where it last reached, cycle by cycle (the player's own clock map
-  // at factor 1: clock = loopStart + spec seconds)
+  // at one factor, the spec's seed tempo (METER_TEMPO_ORDER.md P9): clock = loopStart + spec seconds × factor)
   function report() {
     if (!onNote || !events.length) return;
-    const T = spec.knobs.cycleSeconds, until = player.booked - player.loopStart;
+    const T = spec.knobs.cycleSeconds, until = (player.booked - player.loopStart) / factor;
     while (cycle * T + (cursor < events.length ? events[cursor].time : T) < until) {
       if (cursor >= events.length) { cursor = 0; cycle++; continue; }
       const e = events[cursor++];
-      try { onNote({ ...e, cycle, when: player.loopStart + cycle * T + e.time }); } catch (err) { console.warn('[cosmos compose] onNote hook threw', err); }
+      try { onNote({ ...e, cycle, when: player.loopStart + (cycle * T + e.time) * factor }); } catch (err) { console.warn('[cosmos compose] onNote hook threw', err); }
     }
   }
   function tick() { if (!player) return; player.tick(); report(); }
@@ -64,6 +65,8 @@ export function createCosmosComposerPlayer({ audio = defaultAudio, makePlayer = 
       if (!audio.suspendFlight({ onTick: tick })) return false;
       spec = theSpec; events = bookingEvents(spec); cursor = 0; cycle = 0; onNote = hook;
       player = makePlayer({ ctx: out.ctx, destination: out.destination, timers: {}, options: { aheadSeconds } });
+      factor = playFactorOf(spec);
+      if (factor !== 1) player.setTimeFactor?.(factor);
       audio.setCompositionLevel(1, 0.01);
       player.play(spec);
       report();

@@ -20,7 +20,7 @@
 //   node Composer/tests/assert-page-target.mjs
 import { makeDom, installGlobals } from './dom-stub.mjs';
 import { siteRhythm } from './site-scripts.mjs';
-import { compose } from '../core/compose.js';
+import { compose } from './compose-cycle.mjs';
 import { answer } from '../core/compose-worker.js';
 import { readMidi, writeMidi, decodeClip } from '../core/midi.js';
 import { buildRow } from '../core/row.js';

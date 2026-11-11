@@ -95,7 +95,7 @@ import { CHORD_QUALITIES, pickFor, chordRecord, spanRecord, spanMaterial, harmon
 import { FALLBACK_QUALITIES } from './progression.js';
 import { arrangeDrums } from './drums.js';
 import { partContext, chordVoicesOfBar, compOfBar, compChordsOfBar, compNodesOf, compUnitsOf, compSourceOf, layCompClave, bassOfBar, innerOf, leadAvoidOf, partOf, specChordOf, voiceLead, voicingStats, voicingWhy, densityWhy, seededRandom, VOICINGS, PART_IDS,
-  compStrumOf, compStrumStats, compStrumWhy, addMoved, nextStrum, strumOverrides, sameStrum, heardScaleOf, seedTempoOf, COMP_STRUM_KEYS, COMPOSER_SPEC_VERSION } from './compose.js';
+  compStrumOf, compStrumStats, compStrumWhy, addMoved, nextStrum, strumOverrides, sameStrum, heardScaleOf, gateTempoOf, COMP_STRUM_KEYS, COMPOSER_SPEC_VERSION } from './compose.js';
 import { readRhythm, rankRowClaves, chooseClave, rankFrameClaves, chooseFrameClave, rereadClave, claveText, claveSource, claveAlternates, densityWords, COMP_RELATIONS, COMP_DENSITIES, DEFAULT_COMP_DENSITY } from './claves.js';
 import { bassBarOf, bassLockOf, bassWalkCells, bassBarRecord, bassStatsOf } from './bass.js';
 
@@ -570,7 +570,7 @@ function statsMoved(stats, moved) {
  *  scale (G2: its gate in spec time) */
 const playingStrum = (spec) => ({ ...compStrumOf(spec), scale: heardScaleOf(spec) });
 /** the strum decision's options for a spec (G2, G6): asked, and a MIDI target's seed tempo when it isn't the natural one */
-const strumWordsOf = (spec, asked) => ({ asked, seedTempo: heardScaleOf(spec) !== 1 ? seedTempoOf(spec) : null });
+const strumWordsOf = (spec, asked) => ({ asked, seedTempo: heardScaleOf(spec) !== 1 ? gateTempoOf(spec) : null, seedFrom: spec.target?.tempoBpm > 0 ? 'clip' : 'provisional' });
 /** stats with `voicing` in Compose's place (right after chordVoices), or without it (close) */
 function statsVoiced(stats, voicing) {
   const out = {};
