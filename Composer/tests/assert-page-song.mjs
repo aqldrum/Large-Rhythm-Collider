@@ -411,6 +411,10 @@ await click(q(left, '.alane-name'));   // select the intro
 const nameOf = (i) => [...qa(left, '.alane-name')][i];
 await click(nameOf(2));
 check('a section\'s name selects it: the strip shows its kind, energy, passes and why', tab.view.songSection === 2 && q(left, '.alane-strip-name').textContent === secs[2].name && q(left, '.alane-why').textContent === secs[2].why);
+q(left, '.alane-grid').scrollLeft = 240;   // the track scrolled sideways, then a selection re-renders the window
+await click(nameOf(3));
+check('a selection keeps the track\'s sideways scroll (the lane is rebuilt, not scrolled back to the left)', tab.view.songSection === 3 && q(left, '.alane-grid').scrollLeft === 240);
+await click(nameOf(2));
 const densSel = (part) => q(left, `.alane-density[data-part="${part}"]`);
 await edit('a density (the peak\'s bass at Roots, from the strip)', () => pick(densSel('bass'), 'roots'), (song) => song.sections[2].density.bass === 'roots');
 const own = core.songState().own;

@@ -238,7 +238,7 @@ export function createArrangementLane({ doc = globalThis.document, core, view = 
   const el = (tag, props = {}, ...kids) => { const e = Object.assign(doc.createElement(tag), props); for (const k of kids) if (k != null) e.append(k); return e; };
   const root = el('div', { className: 'alane' });
   root.style.display = 'none';
-  let said = null, colEls = [], lit = -1, playhead = null, tl = null, phLeft = '', cueFlag = null, cueLeft = '';
+  let said = null, colEls = [], lit = -1, playhead = null, tl = null, phLeft = '', cueFlag = null, cueLeft = '', trackEl = null, scrollX = 0;
   // a clip's drawing kept by its place, reused while its SVG's text is the same (no re-parse on a re-render)
   const drawn = new Map();
   /** a click's edit: refused ones are said in the bar */
@@ -246,6 +246,9 @@ export function createArrangementLane({ doc = globalThis.document, core, view = 
   const btn = (label, className, title, onClick, extra = {}) => { const b = el('button', { className, textContent: label, title, ...extra }); b.addEventListener('click', onClick); return b; };
 
   function render() {
+    // the track's sideways scroll, kept across the rebuild (a selection, an edit or Perform re-renders the window)
+    if (trackEl) scrollX = trackEl.scrollLeft || 0;
+    trackEl = null;
     const ss = core.songState(), on = ss.mode === 'song';
     root.style.display = on ? '' : 'none';
     colEls = []; lit = -1; playhead = null; tl = null; phLeft = ''; cueFlag = null; cueLeft = '';
@@ -357,7 +360,9 @@ export function createArrangementLane({ doc = globalThis.document, core, view = 
     // every row the same width, so the columns line up (each row its own grid on one template); narrower, it scrolls
     const grid = el('div', { className: 'alane-grid-rows' }, rulerRow, energy, heads, ...parts, layers, over);
     grid.style.minWidth = `${m.minWidth}px`;
-    root.replaceChildren(bar, ...notes, el('div', { className: 'alane-grid' }, grid), strip(m, ss));
+    trackEl = el('div', { className: 'alane-grid' }, grid);
+    root.replaceChildren(bar, ...notes, trackEl, strip(m, ss));
+    if (scrollX) trackEl.scrollLeft = scrollX;   // clamped by the browser if the song got shorter
     lit = m.columns.findIndex((c) => c.sounding);
     for (const e of colEls[lit] ?? []) e.classList.add('now');
     frame();

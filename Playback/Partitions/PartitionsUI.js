@@ -871,7 +871,9 @@ class PartitionsUI {
             if (!this.isActive || !this.expandedContainer) return;
             if (!this.expandedContainer.contains(event.target)) return;
             if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
-            const scrollContainer = event.target.closest('.partition-blocks-scroll');
+            // the nearest box under the pointer that scrolls sideways (the partition blocks, the Composer tab's Song lane
+            // and loop matrix, ...): a horizontal swipe scrolls it, and is only swallowed where it would page back/forward
+            const scrollContainer = this.horizontalScrollerAt(event.target);
             if (!scrollContainer) {
                 event.preventDefault();
                 return;
@@ -888,6 +890,20 @@ class PartitionsUI {
             }
         };
         document.addEventListener('wheel', this.navigationGuardHandler, { passive: false });
+    }
+
+    /** the nearest element from `node` up to the expanded view that can scroll horizontally (overflow-x auto/scroll,
+     *  wider inside than out), or null */
+    horizontalScrollerAt(node) {
+        const stop = this.expandedContainer;
+        for (let el = node && node.nodeType === 1 ? node : node?.parentElement; el; el = el.parentElement) {
+            if (el.scrollWidth - el.clientWidth > 0) {
+                const ox = getComputedStyle(el).overflowX;
+                if (ox === 'auto' || ox === 'scroll') return el;
+            }
+            if (el === stop) break;
+        }
+        return null;
     }
 
     removeEventListeners() {
